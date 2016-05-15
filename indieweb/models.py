@@ -15,7 +15,7 @@ class Auth(TimeStampedModel):
     scope = models.CharField(max_length=256)
     me = models.CharField(max_length=512)
     key = models.CharField(max_length=128)
-    
+
 
 class Token(TimeStampedModel):
     pass
