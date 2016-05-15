@@ -6,6 +6,7 @@ dependencies:
 - coverage
 - flake8
 - wheel
+- pytz
 - pip:
     - tox
     - bumpversion

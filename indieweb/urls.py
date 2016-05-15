@@ -20,6 +20,6 @@ from . import views
 app_name = 'indieweb'
 urlpatterns = [
     url(r'^auth/$', views.AuthView.as_view(), name="auth"),
-#    url(r'^token/$', views.TokenView.as_view(), name="token"),
+    url(r'^token/$', views.TokenView.as_view(), name="token"),
 #    url(r'^micropub/$', views.MicropubView.as_view(), name="micropub"),
 ]
