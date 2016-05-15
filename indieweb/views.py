@@ -35,10 +35,10 @@ class TokenView(View):
         token, created = Token.objects.get_or_create(
             me=me, client_id=client_id, scope=scope, owner=owner)
         response_values = {
-           'access_token': token.key,
-           'expires_in': 10,
-           'scope': token.scope,
-           'me': token.me,
+            'access_token': token.key,
+            'expires_in': 10,
+            'scope': token.scope,
+            'me': token.me,
         }
         response = urlencode(response_values)
         status_code = 201 if created else 200
