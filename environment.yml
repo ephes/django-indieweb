@@ -1,0 +1,14 @@
+name: django-indieweb
+dependencies:
+- python
+- django
+- mock
+- coverage
+- flake8
+- wheel
+- pytz
+- pip:
+    - tox
+    - bumpversion
+    - django-model-utils
+    - django-braces
