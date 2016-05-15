@@ -15,12 +15,16 @@ try:
         ROOT_URLCONF="indieweb.urls",
         INSTALLED_APPS=[
             "django.contrib.auth",
+            'django.contrib.sessions',
             "django.contrib.contenttypes",
             "django.contrib.sites",
             "indieweb",
         ],
         SITE_ID=1,
-        MIDDLEWARE_CLASSES=(),
+        MIDDLEWARE_CLASSES=(
+            'django.contrib.sessions.middleware.SessionMiddleware',
+            'django.contrib.auth.middleware.AuthenticationMiddleware',
+        ),
     )
 
     try:
