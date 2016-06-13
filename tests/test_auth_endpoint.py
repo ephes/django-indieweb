@@ -13,8 +13,6 @@ from django.utils.http import urlencode
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 
-from indieweb import models
-
 
 class TestIndiewebAuthEndpoint(TestCase):
 
@@ -33,7 +31,7 @@ class TestIndiewebAuthEndpoint(TestCase):
             'scope': 'post',
         }
         self.endpoint_url = '{}?{}'.format(url, urlencode(url_params))
-        
+
     def test_not_authenticated(self):
         '''
         Assure we are redirected to login if we try to get an auth-code

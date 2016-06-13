@@ -11,7 +11,6 @@ from datetime import timedelta
 
 from django.test import TestCase
 from django.conf import settings
-from django.utils.http import urlencode
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 
@@ -36,7 +35,7 @@ class TestIndiewebTokenEndpoint(TestCase):
             owner=self.user, key=self.auth_code, state=self.state, me=self.me,
             scope=self.scope)
         self.endpoint_url = reverse('token')
-        
+
     def test_wrong_auth_code(self):
         '''Assert we can't get a token with the wrong auth code.'''
         payload = {

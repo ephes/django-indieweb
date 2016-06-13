@@ -10,7 +10,7 @@ Tests for `django-indieweb` models module.
 
 from django.test import TestCase
 
-from indieweb import models
+# from indieweb import models
 
 
 class TestIndieweb(TestCase):
