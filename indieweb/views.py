@@ -24,9 +24,13 @@ class AuthView(LoginRequiredMixin, View):
         # FIXME scope is optional
         scope = request.GET['scope']
         me = request.GET['me']
-        auth, created = Auth.objects.get_or_create(
-            owner=request.user, client_id=client_id, redirect_uri=redirect_uri,
-            state=state, scope=scope, me=me)
+        try:
+            auth = Auth.objects.get(
+                owner=request.user, client_id=client_id, scope=scope, me=me)
+        except Auth.DoesNotExist:
+            auth = Auth.objects.create(
+                owner=request.user, client_id=client_id,
+                redirect_uri=redirect_uri, state=state, scope=scope, me=me)
         url_params = {'code': auth.key, 'state': state, 'me': me}
         target = '{}?{}'.format(redirect_uri, urlencode(url_params))
         return redirect(target)
