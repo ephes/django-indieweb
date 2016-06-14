@@ -5,6 +5,8 @@ from django.http import HttpResponse
 from django.views.generic import View
 from django.shortcuts import redirect
 from django.utils.http import urlencode
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 
 from braces.views import LoginRequiredMixin
 
@@ -57,3 +59,7 @@ class TokenView(View):
                 # auth code is still valid
                 return self.send_token(me, client_id, scope, auth.owner)
         return HttpResponse('authentication error', status=401)
+
+    @method_decorator(csrf_exempt)
+    def dispatch(self, request, *args, **kwargs):
+        return super().dispatch(request, *args, **kwargs)
