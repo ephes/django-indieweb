@@ -7,14 +7,15 @@ test_django-indieweb
 
 Tests for `django-indieweb` auth endpoint.
 '''
+import pytz
 
 from datetime import datetime
-from datetime import timezone
 from datetime import timedelta
 
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
+from django.conf import settings
 from django.test import TestCase
 from django.utils.http import urlencode
 from django.contrib.auth.models import User
@@ -71,9 +72,10 @@ class TestIndiewebAuthEndpoint(TestCase):
         response = self.client.get(self.endpoint_url)
         data = parse_qs(urlparse(response.url).query)
         auth = Auth.objects.get(owner=self.user, me=data['me'][0])
-        auth.created = auth.created - timedelta(minutes=10)
+        timeout = getattr(settings, 'INDIWEB_AUTH_CODE_TIMEOUT', 60)
+        auth.created = auth.created - timedelta(seconds=timeout + 10)
         auth.save()
         response = self.client.get(self.endpoint_url)
         auth = Auth.objects.get(owner=self.user, me=data['me'][0])
         self.assertTrue(
-            datetime.now(timezone.utc) - auth.created < timedelta(minutes=1))
+            (datetime.now(pytz.utc) - auth.created).seconds <= timeout)
