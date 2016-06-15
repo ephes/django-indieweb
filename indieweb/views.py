@@ -26,6 +26,28 @@ class CSRFExemptMixin:
         return super().dispatch(*args, **kwargs)
 
 
+class TokenAuthMixin:
+    def authenticated(self, request, me):
+        token = None
+        auth_string = request.META.get(
+            'Authorization', request.POST.get('Authorization'))
+        if auth_string is not None:
+            token = auth_string.split()[-1]
+
+        token_queryset = Token.objects.filter(me=me)
+
+        if len(token_queryset) == 1:
+            db_token = token_queryset[0]
+            print(db_token.key)
+            if db_token.key == token:
+                return True
+        return False
+
+    def authorized(self, client_id, scope):
+        # TODO implement access control based on client_id
+        return 'post' in scope
+
+
 class AuthView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
         client_id = request.GET['client_id']
@@ -77,27 +99,7 @@ class TokenView(CSRFExemptMixin, View):
         return HttpResponse('authentication error', status=401)
 
 
-class MicropubView(CSRFExemptMixin, View):
-    def authenticated(self, request, me):
-        token = None
-        auth_string = request.META.get(
-            'Authorization', request.POST.get('Authorization'))
-        if auth_string is not None:
-            token = auth_string.split()[-1]
-
-        token_queryset = Token.objects.filter(me=me)
-
-        if len(token_queryset) == 1:
-            db_token = token_queryset[0]
-            print(db_token.key)
-            if db_token.key == token:
-                return True
-        return False
-
-    def authorized(self, client_id, scope):
-        # TODO implement access control based on client_id
-        return 'post' in scope
-
+class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
     def post(self, request, *args, **kwargs):
         me = request.POST.getlist('me', default=[None])[0]
         if not self.authenticated(request, me):
