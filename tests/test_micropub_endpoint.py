@@ -96,3 +96,14 @@ class TestIndiewebMicropubEndpoint(TestCase):
         response = self.client.post(self.endpoint_url, data=payload)
         self.assertEqual(response.status_code, 403)
         self.assertTrue('error' in response.content.decode('utf-8'))
+
+    def test_no_content(self):
+        ''' Test post without content. '''
+        auth_body = 'Bearer {}'.format(self.token.key)
+        payload = {
+            'h': 'entry', 'client_id': self.client_id, 'scope': self.scope,
+            'me': self.me, 'Authorization': auth_body,
+        }
+        response = self.client.post(self.endpoint_url, data=payload)
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue('created' in response.content.decode('utf-8'))
