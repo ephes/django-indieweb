@@ -54,10 +54,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
 
     def test_wrong_token(self):
         '''Assert we can't post to the endpoint without the right token.'''
-        payload = {
-            'content': self.content, 'h': 'entry', 'client_id': self.client_id,
-            'scope': self.scope, 'me': self.me
-        }
+        payload = {'content': self.content, 'h': 'entry'}
         auth_header = 'Bearer {}'.format('wrongtoken')
         response = self.client.post(
             self.endpoint_url, data=payload, Authorization=auth_header)
@@ -69,10 +66,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         Assert we can post to the endpoint with the right token
         submitted in the requests header.
         '''
-        payload = {
-            'content': self.content, 'h': 'entry', 'client_id': self.client_id,
-            'scope': self.scope, 'me': self.me
-        }
+        payload = {'content': self.content, 'h': 'entry'}
         auth_header = 'Bearer {}'.format(self.token.key)
         response = self.client.post(
             self.endpoint_url, data=payload, Authorization=auth_header)
@@ -86,8 +80,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         '''
         auth_body = 'Bearer {}'.format(self.token.key)
         payload = {
-            'content': self.content, 'h': 'entry', 'client_id': self.client_id,
-            'scope': self.scope, 'me': self.me, 'Authorization': auth_body,
+            'content': self.content, 'h': 'entry', 'Authorization': auth_body,
         }
         response = self.client.post(self.endpoint_url, data=payload)
         self.assertEqual(response.status_code, 201)
@@ -96,13 +89,17 @@ class TestIndiewebMicropubEndpoint(TestCase):
     def test_not_authorized(self):
         '''Assure we cant post if we don't have the right scope. '''
         auth_body = 'Bearer {}'.format(self.token.key)
+        old_scope = self.token.scope
+        self.token.scope = 'foo'
+        self.token.save()
         payload = {
-            'content': self.content, 'h': 'entry', 'client_id': self.client_id,
-            'scope': 'foobar', 'me': self.me, 'Authorization': auth_body,
+            'content': self.content, 'h': 'entry', 'Authorization': auth_body,
         }
         response = self.client.post(self.endpoint_url, data=payload)
         self.assertEqual(response.status_code, 403)
         self.assertTrue('error' in response.content.decode('utf-8'))
+        self.token.scope = old_scope
+        self.token.save()
 
     def test_content(self):
         ''' Test post with content. '''

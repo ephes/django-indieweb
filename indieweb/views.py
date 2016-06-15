@@ -27,33 +27,33 @@ class CSRFExemptMixin:
 
 
 class TokenAuthMixin:
-    def authenticated(self, request, me):
-        token = None
-        auth_string = request.META.get(
+    def authenticated(self, request):
+        key = None
+        auth_token = request.META.get(
             'Authorization', request.POST.get('Authorization'))
-        if auth_string is not None:
-            token = auth_string.split()[-1]
-
-        token_queryset = Token.objects.filter(me=me)
-
-        if len(token_queryset) == 1:
-            db_token = token_queryset[0]
-            if db_token.key == token:
-                return True
-        return False
+        if auth_token is not None:
+            key = auth_token.split()[-1]
+        if key is not None:
+            try:
+                self.token = Token.objects.select_related('owner').get(key=key)
+                if self.token.owner.is_active:
+                    return True
+                else:
+                    return False
+            except Token.DoesNotExist:
+                return False
+        else:
+            return False
 
     def authorized(self, client_id, scope):
         # TODO implement access control based on client_id
         return 'post' in scope
 
     def dispatch(self, request, *args, **kwargs):
-        me = request.POST.getlist('me', default=[None])[0]
-        if not self.authenticated(request, me):
+        if not self.authenticated(request):
             return HttpResponse('authentication error', status=401)
 
-        client_id = request.POST.getlist('client_id', default=[None])[0]
-        scope = request.POST.getlist('scope', default=[None])[0]
-        if not self.authorized(client_id, scope):
+        if not self.authorized(self.token.client_id, self.token.scope):
             return HttpResponse('authorization error', status=403)
 
         return super().dispatch(request, *args, **kwargs)
