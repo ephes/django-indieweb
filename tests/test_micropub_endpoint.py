@@ -47,3 +47,15 @@ class TestIndiewebMicropubEndpoint(TestCase):
             self.endpoint_url, data=payload)
         self.assertEqual(response.status_code, 401)
         self.assertTrue('error' in response.content.decode('utf-8'))
+
+    def test_wrong_token(self):
+        '''Assert we can't post to the endpoint without the right token.'''
+        payload = {
+            'content': self.content, 'h': 'entry', 'client_id': self.client_id,
+            'scope': self.scope, 'me': self.me
+        }
+        auth_header = 'Bearer {}'.format('wrongtoken')
+        response = self.client.post(
+            self.endpoint_url, data=payload, Authorization=auth_header)
+        self.assertEqual(response.status_code, 401)
+        self.assertTrue('error' in response.content.decode('utf-8'))
