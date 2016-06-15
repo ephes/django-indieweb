@@ -27,10 +27,12 @@ class AuthView(LoginRequiredMixin, View):
         try:
             auth = Auth.objects.get(
                 owner=request.user, client_id=client_id, scope=scope, me=me)
+            auth.delete()
         except Auth.DoesNotExist:
-            auth = Auth.objects.create(
-                owner=request.user, client_id=client_id,
-                redirect_uri=redirect_uri, state=state, scope=scope, me=me)
+            pass
+        auth = Auth.objects.create(
+            owner=request.user, client_id=client_id,
+            redirect_uri=redirect_uri, state=state, scope=scope, me=me)
         url_params = {'code': auth.key, 'state': state, 'me': me}
         target = '{}?{}'.format(redirect_uri, urlencode(url_params))
         return redirect(target)

@@ -8,10 +8,19 @@ test_django-indieweb
 Tests for `django-indieweb` auth endpoint.
 '''
 
+from datetime import datetime
+from datetime import timezone
+from datetime import timedelta
+
+from urllib.parse import parse_qs
+from urllib.parse import urlparse
+
 from django.test import TestCase
 from django.utils.http import urlencode
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
+
+from indieweb.models import Auth
 
 
 class TestIndiewebAuthEndpoint(TestCase):
@@ -55,3 +64,16 @@ class TestIndiewebAuthEndpoint(TestCase):
             response = self.client.get(self.endpoint_url)
             self.assertEqual(response.status_code, 302)
             self.assertTrue('code' in response.url)
+
+    def test_auth_timeout_reset(self):
+        ''' Test timeout is resetted on new authentication. '''
+        self.client.login(username=self.username, password=self.password)
+        response = self.client.get(self.endpoint_url)
+        data = parse_qs(urlparse(response.url).query)
+        auth = Auth.objects.get(owner=self.user, me=data['me'][0])
+        auth.created = auth.created - timedelta(minutes=10)
+        auth.save()
+        response = self.client.get(self.endpoint_url)
+        auth = Auth.objects.get(owner=self.user, me=data['me'][0])
+        self.assertTrue(
+            datetime.now(timezone.utc) - auth.created < timedelta(minutes=1))
