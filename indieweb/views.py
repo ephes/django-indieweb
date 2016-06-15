@@ -1,3 +1,5 @@
+import logging
+
 from datetime import datetime
 
 from django.conf import settings
@@ -14,6 +16,8 @@ import pytz
 
 from .models import Auth
 from .models import Token
+
+logger = logging.getLogger(__name__)
 
 
 class CSRFExemptMixin:
