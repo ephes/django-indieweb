@@ -38,7 +38,6 @@ class TokenAuthMixin:
 
         if len(token_queryset) == 1:
             db_token = token_queryset[0]
-            print(db_token.key)
             if db_token.key == token:
                 return True
         return False
@@ -112,9 +111,21 @@ class TokenView(CSRFExemptMixin, View):
 
 
 class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
+    @property
+    def content(self):
+        return self.request.POST.get('content')
+
+    @property
+    def categories(self):
+        category_str = self.request.POST.get('category', '')
+        return [c for c in category_str.split(',') if len(c) > 0]
+
     def post(self, request, *args, **kwargs):
-        print('request: {}'.format(request))
-        print('post: {}'.format(request.POST))
-        print('files: {}'.format(request.FILES))
-        print('meta: {}'.format(request.META))
+        #print('request: {}'.format(request))
+        #print('post: {}'.format(request.POST))
+        #print('files: {}'.format(request.FILES))
+        #print('meta: {}'.format(request.META))
+        self.request = request
+        #self.handle_post()
+        print(self.categories)
         return HttpResponse('created', status=201)
