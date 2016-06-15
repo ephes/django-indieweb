@@ -16,6 +16,12 @@ from .models import Auth
 from .models import Token
 
 
+class CSRFExemptMixin:
+    @method_decorator(csrf_exempt)
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
+
+
 class AuthView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
         client_id = request.GET['client_id']
@@ -38,7 +44,7 @@ class AuthView(LoginRequiredMixin, View):
         return redirect(target)
 
 
-class TokenView(View):
+class TokenView(CSRFExemptMixin, View):
     def send_token(self, me, client_id, scope, owner):
         token, created = Token.objects.get_or_create(
             me=me, client_id=client_id, scope=scope, owner=owner)
@@ -65,7 +71,3 @@ class TokenView(View):
                 # auth code is still valid
                 return self.send_token(me, client_id, scope, auth.owner)
         return HttpResponse('authentication error', status=401)
-
-    @method_decorator(csrf_exempt)
-    def dispatch(self, request, *args, **kwargs):
-        return super().dispatch(request, *args, **kwargs)
