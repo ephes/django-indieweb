@@ -59,3 +59,18 @@ class TestIndiewebMicropubEndpoint(TestCase):
             self.endpoint_url, data=payload, Authorization=auth_header)
         self.assertEqual(response.status_code, 401)
         self.assertTrue('error' in response.content.decode('utf-8'))
+
+    def test_correct_token_header(self):
+        '''
+        Assert we can post to the endpoint with the right token
+        submitted in the requests header.
+        '''
+        payload = {
+            'content': self.content, 'h': 'entry', 'client_id': self.client_id,
+            'scope': self.scope, 'me': self.me
+        }
+        auth_header = 'Bearer {}'.format(self.token.key)
+        response = self.client.post(
+            self.endpoint_url, data=payload, Authorization=auth_header)
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue('created' in response.content.decode('utf-8'))
