@@ -126,3 +126,24 @@ class TestIndiewebMicropubEndpoint(TestCase):
 
         mv.request.POST['category'] = ''
         self.assertEqual(mv.categories, []) 
+
+    def test_location(self):
+        ''' Test post with location. '''
+        mv = MicropubView()
+        mv.request = DummyRequest()
+        self.assertEqual(mv.location, {})
+
+        mv.request.POST['location'] = 'foo,bar,baz'
+        self.assertEqual(mv.location, {})
+
+        lat, lng = 37.786971, -122.399677
+        mv.request.POST['location'] = 'geo:{},{}'.format(lat, lng)
+        self.assertEqual(mv.location, {'latitude': lat, 'longitude': lng})
+
+        uncertainty = 35
+        result = {
+            'latitude': lat, 'longitude': lng, 'uncertainty': uncertainty
+        }
+        mv.request.POST['location'] = 'geo:{},{};crs=Moon-2011;u={}'.format(
+            lat, lng, uncertainty)
+        self.assertEqual(mv.location, result)

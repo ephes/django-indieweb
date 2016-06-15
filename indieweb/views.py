@@ -120,12 +120,26 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         category_str = self.request.POST.get('category', '')
         return [c for c in category_str.split(',') if len(c) > 0]
 
+    @property
+    def location(self):
+        location = {}
+        location_str = self.request.POST.get('location', '')
+        if len(location_str) > 0:
+            if ';' in location_str:
+                location['uncertainty'] = \
+                    int(location_str.split(';')[-1].split('=')[-1])
+            if location_str.startswith('geo:'):
+                lat, lng = location_str.split(';')[0].split(':')[-1].split(',')
+                location['latitude'] = float(lat)
+                location['longitude'] = float(lng)
+        return location
+
     def post(self, request, *args, **kwargs):
         #print('request: {}'.format(request))
         #print('post: {}'.format(request.POST))
         #print('files: {}'.format(request.FILES))
         #print('meta: {}'.format(request.META))
         self.request = request
-        #self.handle_post()
+        #location = self.get_location()
         print(self.categories)
         return HttpResponse('created', status=201)
