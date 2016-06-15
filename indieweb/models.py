@@ -29,7 +29,7 @@ class Auth(GenKeyMixin, TimeStampedModel):
 
 
 class Token(GenKeyMixin, TimeStampedModel):
-    key = models.CharField(max_length=32)
+    key = models.CharField(max_length=32, db_index=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, related_name='indieweb_token')
     client_id = models.CharField(max_length=512)
