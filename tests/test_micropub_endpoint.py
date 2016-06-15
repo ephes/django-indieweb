@@ -88,3 +88,14 @@ class TestIndiewebMicropubEndpoint(TestCase):
         response = self.client.post(self.endpoint_url, data=payload)
         self.assertEqual(response.status_code, 201)
         self.assertTrue('created' in response.content.decode('utf-8'))
+
+    def test_not_authorized(self):
+        '''Assure we cant post if we don't have the right scope. '''
+        auth_body = 'Bearer {}'.format(self.token.key)
+        payload = {
+            'content': self.content, 'h': 'entry', 'client_id': self.client_id,
+            'scope': 'foobar', 'me': self.me, 'Authorization': auth_body,
+        }
+        response = self.client.post(self.endpoint_url, data=payload)
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue('error' in response.content.decode('utf-8'))
