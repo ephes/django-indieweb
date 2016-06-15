@@ -105,7 +105,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         self.assertTrue('error' in response.content.decode('utf-8'))
 
     def test_content(self):
-        ''' Test post without content. '''
+        ''' Test post with content. '''
         mv = MicropubView()
         mv.request = DummyRequest()
         self.assertEqual(mv.content, None)
@@ -119,6 +119,13 @@ class TestIndiewebMicropubEndpoint(TestCase):
         ''' Test post with categories. '''
         mv = MicropubView()
         mv.request = DummyRequest()
+        self.assertEqual(mv.categories, [])
+
         mv.request.POST['category'] = 'foo,bar,baz'
-        print(mv.categories)
         self.assertEqual(len(mv.categories), 3)
+
+        mv.request.POST['category'] = 'foo'
+        self.assertEqual(mv.categories, ['foo'])
+
+        mv.request.POST['category'] = ''
+        self.assertEqual(mv.categories, []) 
