@@ -22,7 +22,6 @@ from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 
 from indieweb.models import Auth
-from indieweb.models import Token
 
 
 class TestIndiewebAuthEndpoint(TestCase):
