@@ -80,9 +80,8 @@ class TokenView(CSRFExemptMixin, View):
 class MicropubView(CSRFExemptMixin, View):
     def authenticated(self, request, me):
         token = None
-        auth_string = request.META.get('Authorization')
-        if auth_string is None:
-            auth_string = request.POST.get('Authorization')
+        auth_string = request.META.get(
+            'Authorization', request.POST.get('Authorization'))
         if auth_string is not None:
             token = auth_string.split()[-1]
 
