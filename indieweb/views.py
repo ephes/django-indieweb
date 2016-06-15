@@ -47,6 +47,18 @@ class TokenAuthMixin:
         # TODO implement access control based on client_id
         return 'post' in scope
 
+    def dispatch(self, request, *args, **kwargs):
+        me = request.POST.getlist('me', default=[None])[0]
+        if not self.authenticated(request, me):
+            return HttpResponse('authentication error', status=401)
+
+        client_id = request.POST.getlist('client_id', default=[None])[0]
+        scope = request.POST.getlist('scope', default=[None])[0]
+        if not self.authorized(client_id, scope):
+            return HttpResponse('authorization error', status=403)
+
+        return super().dispatch(request, *args, **kwargs)
+
 
 class AuthView(LoginRequiredMixin, View):
     def get(self, request, *args, **kwargs):
@@ -101,15 +113,6 @@ class TokenView(CSRFExemptMixin, View):
 
 class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
     def post(self, request, *args, **kwargs):
-        me = request.POST.getlist('me', default=[None])[0]
-        if not self.authenticated(request, me):
-            return HttpResponse('authentication error', status=401)
-
-        client_id = request.POST.getlist('client_id', default=[None])[0]
-        scope = request.POST.getlist('scope', default=[None])[0]
-        if not self.authorized(client_id, scope):
-            return HttpResponse('authorization error', status=403)
-
         print('request: {}'.format(request))
         print('post: {}'.format(request.POST))
         print('files: {}'.format(request.FILES))
