@@ -12,6 +12,13 @@ from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
 
 from indieweb import models
+from indieweb.views import MicropubView
+
+
+class DummyRequest:
+    GET = {}
+    POST = {}
+    META = {}
 
 
 class TestIndiewebMicropubEndpoint(TestCase):
@@ -99,11 +106,14 @@ class TestIndiewebMicropubEndpoint(TestCase):
 
     def test_no_content(self):
         ''' Test post without content. '''
-        auth_body = 'Bearer {}'.format(self.token.key)
-        payload = {
-            'h': 'entry', 'client_id': self.client_id, 'scope': self.scope,
-            'me': self.me, 'Authorization': auth_body,
-        }
-        response = self.client.post(self.endpoint_url, data=payload)
-        self.assertEqual(response.status_code, 201)
-        self.assertTrue('created' in response.content.decode('utf-8'))
+        mv = MicropubView()
+        mv.request = DummyRequest()
+        self.assertEqual(mv.content, None)
+
+    def test_categories(self):
+        ''' Test post with categories. '''
+        mv = MicropubView()
+        mv.request = DummyRequest()
+        mv.request.POST['category'] = 'foo,bar,baz'
+        print(mv.categories)
+        self.assertEqual(len(mv.categories), 3)
