@@ -60,13 +60,22 @@ class TokenAuthMixin:
 
 
 class AuthView(LoginRequiredMixin, View):
+    required_params = ['client_id', 'redirect_uri', 'state', 'me']
+
     def get(self, request, *args, **kwargs):
-        client_id = request.GET['client_id']
-        redirect_uri = request.GET['redirect_uri']
-        state = request.GET['state']
+        client_id = request.GET.get('client_id')
+        redirect_uri = request.GET.get('redirect_uri')
+        state = request.GET.get('state')
+        me = request.GET.get('me')
+        required = [client_id, redirect_uri, state, me]
+
+        for name, val in zip(self.required_params, required):
+            if val is None:
+                err_msg = 'missing parameter {}'.format(name)
+                return HttpResponse(err_msg, status=404)
+
         # FIXME scope is optional
-        scope = request.GET['scope']
-        me = request.GET['me']
+        scope = request.GET.get('scope')
         try:
             auth = Auth.objects.get(
                 owner=request.user, client_id=client_id, scope=scope, me=me)
