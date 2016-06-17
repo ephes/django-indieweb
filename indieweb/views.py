@@ -147,3 +147,7 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         #location = self.get_location()
         #print(self.categories)
         return HttpResponse('created', status=201)
+
+    def get(self, request, *args, **kwargs):
+        params = {'me': self.token.me,}
+        return HttpResponse(urlencode(params), status=200)

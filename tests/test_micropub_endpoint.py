@@ -7,6 +7,7 @@ test_django-indieweb
 
 Tests for `django-indieweb` micropub endpoint.
 '''
+from urllib.parse import unquote
 from django.test import TestCase
 from django.contrib.auth.models import User
 from django.core.urlresolvers import reverse
@@ -147,3 +148,14 @@ class TestIndiewebMicropubEndpoint(TestCase):
         mv.request.POST['location'] = 'geo:{},{};crs=Moon-2011;u={}'.format(
             lat, lng, uncertainty)
         self.assertEqual(mv.location, result)
+
+    def test_token_verification_on_get(self):
+        '''
+        Test authentication tokens via get request to micropub endpoint.
+        '''
+        auth_header = 'Bearer {}'.format(self.token.key)
+        response = self.client.get(
+            self.endpoint_url, Authorization=auth_header)
+        response_text = unquote(response.content.decode('utf-8'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.me in response_text)
