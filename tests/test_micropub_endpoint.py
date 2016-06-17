@@ -159,3 +159,12 @@ class TestIndiewebMicropubEndpoint(TestCase):
         response_text = unquote(response.content.decode('utf-8'))
         self.assertEqual(response.status_code, 200)
         self.assertTrue(self.me in response_text)
+
+    def test_token_verification_on_get_wrong(self):
+        '''
+        Test wrong authentication tokens via get request to micropub endpoint.
+        '''
+        auth_header = 'Bearer {}'.format('wrong_token')
+        response = self.client.get(
+            self.endpoint_url, Authorization=auth_header)
+        self.assertEqual(response.status_code, 401)
