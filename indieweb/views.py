@@ -134,6 +134,10 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
                 location['longitude'] = float(lng)
         return location
 
+    @property
+    def in_reply_to(self):
+        url = self.request.POST.get('in-reply-to', '')
+
     def post(self, request, *args, **kwargs):
         #print('request: {}'.format(request))
         #print('post: {}'.format(request.POST))
@@ -141,5 +145,5 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         #print('meta: {}'.format(request.META))
         self.request = request
         #location = self.get_location()
-        print(self.categories)
+        #print(self.categories)
         return HttpResponse('created', status=201)
