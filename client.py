@@ -64,6 +64,16 @@ class Client:
         data = parse_qs(unquote(r.content.decode('utf-8')))
         return data['access_token'][0]
 
+    def post_entry(self, token):
+        micropub_url = urljoin(self.base_url, 'indieweb/micropub/')
+        payload = {
+           'Authorization': token,
+           'h': 'entry',
+           'content': 'blub bla',
+        }
+        r = self.session.post(micropub_url, payload)
+        print(r.status_code)
+
 
 def main(args):
     username = os.environ['USERNAME']
@@ -75,6 +85,7 @@ def main(args):
     print(auth_code)
     token = client.get_token(auth_code)
     print(token)
+    client.post_entry(token)
 
 
 if __name__ == '__main__':
