@@ -146,17 +146,18 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
     @property
     def in_reply_to(self):
         url = self.request.POST.get('in-reply-to', '')
+        return url
 
     def post(self, request, *args, **kwargs):
-        #print('request: {}'.format(request))
-        #print('post: {}'.format(request.POST))
-        #print('files: {}'.format(request.FILES))
-        #print('meta: {}'.format(request.META))
+        # print('request: {}'.format(request))
+        # print('post: {}'.format(request.POST))
+        # print('files: {}'.format(request.FILES))
+        # print('meta: {}'.format(request.META))
         self.request = request
-        #location = self.get_location()
-        #print(self.categories)
+        # location = self.get_location()
+        # print(self.categories)
         return HttpResponse('created', status=201)
 
     def get(self, request, *args, **kwargs):
-        params = {'me': self.token.me,}
+        params = {'me': self.token.me}
         return HttpResponse(urlencode(params), status=200)

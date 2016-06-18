@@ -126,7 +126,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         self.assertEqual(mv.categories, ['foo'])
 
         mv.request.POST['category'] = ''
-        self.assertEqual(mv.categories, []) 
+        self.assertEqual(mv.categories, [])
 
     def test_location(self):
         ''' Test post with location. '''
