@@ -9,6 +9,9 @@ Tests for `django-indieweb` auth endpoint.
 '''
 from datetime import timedelta
 
+from urllib.parse import unquote
+from urllib.parse import parse_qs
+
 from django.test import TestCase
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -56,7 +59,8 @@ class TestIndiewebTokenEndpoint(TestCase):
         }
         response = self.client.post(self.endpoint_url, data=payload)
         self.assertEqual(response.status_code, 201)
-        self.assertTrue('access_token' in response.content.decode('utf-8'))
+        data = parse_qs(unquote(response.content.decode('utf-8')))
+        self.assertTrue('access_token' in data)
 
     def test_auth_code_timeout(self):
         '''Assert we can't get a token when the auth code is outdated.'''
