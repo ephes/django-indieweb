@@ -19,7 +19,7 @@ from django.conf import settings
 from django.test import TestCase
 from django.utils.http import urlencode
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 
 from indieweb.models import Auth
 
@@ -32,7 +32,7 @@ class TestIndiewebAuthEndpoint(TestCase):
         self.password = 'password'
         self.user = User.objects.create_user(
             self.username, self.email, self.password)
-        self.base_url = reverse('auth')
+        self.base_url = reverse('indieweb:auth')
         url_params = {
             'me': 'http://example.org',
             'client_id': 'https://webapp.example.org',

@@ -15,7 +15,7 @@ from urllib.parse import parse_qs
 from django.test import TestCase
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 
 from indieweb import models
 
@@ -37,7 +37,7 @@ class TestIndiewebTokenEndpoint(TestCase):
         self.auth = models.Auth.objects.create(
             owner=self.user, key=self.auth_code, state=self.state, me=self.me,
             scope=self.scope)
-        self.endpoint_url = reverse('token')
+        self.endpoint_url = reverse('indieweb:token')
 
     def test_wrong_auth_code(self):
         '''Assert we can't get a token with the wrong auth code.'''

@@ -1,7 +1,9 @@
-django>=1.9.1
+django>=2
 coverage
-mock>=1.0.1
-flake8>=2.1.0
-tox>=1.7.0
-
-# Additional test requirements go here
+mock
+flake8
+tox
+django-model-utils
+django-environ
+pytest
+pytest-django

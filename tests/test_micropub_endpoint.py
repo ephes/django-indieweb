@@ -10,7 +10,7 @@ Tests for `django-indieweb` micropub endpoint.
 from urllib.parse import unquote
 from django.test import TestCase
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 
 from indieweb import models
 from indieweb.views import MicropubView
@@ -42,7 +42,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         self.token = models.Token.objects.create(
             me=self.me, client_id=self.client_id, scope=self.scope,
             owner=self.user)
-        self.endpoint_url = reverse('micropub')
+        self.endpoint_url = reverse('indieweb:micropub')
         self.content = 'foobar'
 
     def test_no_token(self):
