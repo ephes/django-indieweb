@@ -17,7 +17,7 @@ class GenKeyMixin:
 class Auth(GenKeyMixin, TimeStampedModel):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, related_name='indieweb_auth', on_delete=models.CASCADE)
-    state = models.IntegerField()
+    state = models.CharField(max_length=32)
     client_id = models.CharField(max_length=512)
     redirect_uri = models.CharField(max_length=1024)
     scope = models.CharField(max_length=256)
