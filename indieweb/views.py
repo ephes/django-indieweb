@@ -59,7 +59,7 @@ class TokenAuthMixin:
         return super().dispatch(request, *args, **kwargs)
 
 
-class AuthView(LoginRequiredMixin, View):
+class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
     required_params = ['client_id', 'redirect_uri', 'state', 'me']
 
     def get(self, request, *args, **kwargs):
@@ -88,6 +88,19 @@ class AuthView(LoginRequiredMixin, View):
         url_params = {'code': auth.key, 'state': state, 'me': me}
         target = '{}?{}'.format(redirect_uri, urlencode(url_params))
         return redirect(target)
+
+    def post(self, request, *args, **kwargs):
+        auth_code = request.POST['code']
+        client_id = request.POST['client_id']
+        print("code and client id: ", auth_code, client_id)
+        auth = Auth.objects.get(key=auth_code, client_id=client_id)
+        # if auth.key == key:
+        response_values = {
+            'me': auth.me,
+        }
+        response = urlencode(response_values)
+        status_code = 200
+        return HttpResponse(response, status=status_code)
 
 
 class TokenView(CSRFExemptMixin, View):
