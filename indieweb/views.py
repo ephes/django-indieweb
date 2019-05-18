@@ -73,6 +73,7 @@ class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
         for name, val in zip(self.required_params, required):
             if val is None:
                 err_msg = 'missing parameter {}'.format(name)
+                logger.info(f"missing parameter: {name}")
                 return HttpResponse(err_msg, status=404)
 
         # FIXME scope is optional
@@ -88,6 +89,7 @@ class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
             redirect_uri=redirect_uri, state=state, scope=scope, me=me)
         url_params = {'code': auth.key, 'state': state, 'me': me}
         target = '{}?{}'.format(redirect_uri, urlencode(url_params))
+        logger.info(f"auth view get complete: {target}")
         return redirect(target)
 
     def post(self, request, *args, **kwargs):
