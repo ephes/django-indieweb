@@ -10,6 +10,7 @@ from django.utils.http import urlencode
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
+from braces.views import AccessMixin
 from braces.views import LoginRequiredMixin
 
 import pytz
@@ -59,10 +60,12 @@ class TokenAuthMixin:
         return super().dispatch(request, *args, **kwargs)
 
 
-class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
+class AuthView(CSRFExemptMixin, AccessMixin, View):
     required_params = ['client_id', 'redirect_uri', 'state', 'me']
 
     def get(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return self.handle_no_permission(request)
         client_id = request.GET.get('client_id')
         redirect_uri = request.GET.get('redirect_uri')
         state = request.GET.get('state')
