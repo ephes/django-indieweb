@@ -10,8 +10,8 @@ from django.utils.http import urlencode
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
-from braces.views import AccessMixin
 from braces.views import LoginRequiredMixin
+from braces.views._access import AccessMixin
 
 import pytz
 
