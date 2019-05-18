@@ -93,6 +93,7 @@ class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
         return redirect(target)
 
     def post(self, request, *args, **kwargs):
+        logger.info(f"auth view post: {request}, {args}, {kwargs}")
         auth_code = request.POST['code']
         client_id = request.POST['client_id']
         logger.info(f"auth view post: {client_id}, {auth_code}")
@@ -104,6 +105,10 @@ class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
         response = urlencode(response_values)
         status_code = 200
         return HttpResponse(response, status=status_code)
+
+    def dispatch(self, request, *args, **kwargs):
+        logger.info(f"auth view dispatch: {request}, {args}, {kwargs}")
+        return super().dispatch(request, *args, **kwargs)
 
 
 class TokenView(CSRFExemptMixin, View):
