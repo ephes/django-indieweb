@@ -7,3 +7,4 @@ django-model-utils
 django-environ
 pytest
 pytest-django
+sphinx
