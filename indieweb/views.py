@@ -95,6 +95,7 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         logger.info(f"auth view get complete: {target}")
         return redirect(target)
 
+    @method_decorator(csrf_exempt)
     def post(self, request, *args, **kwargs):
         logger.info(f"auth view post: {request}, {args}, {kwargs}")
         auth_code = request.POST['code']
@@ -109,6 +110,7 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         status_code = 200
         return HttpResponse(response, status=status_code)
 
+    @method_decorator(csrf_exempt)
     def dispatch(self, request, *args, **kwargs):
         logger.info(f"auth view dispatch: {request}, {args}, {kwargs}")
         return super().dispatch(request, *args, **kwargs)
