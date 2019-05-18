@@ -23,6 +23,8 @@ class Client:
         if not hasattr(self, '_csrftoken'):
             login_url = urljoin(self.base_url, 'accounts/login/')
             r = self.session.get(login_url)
+            print(r.status_code)
+            print(r.cookies)
             self._csrftoken = r.cookies['csrftoken']
         return self._csrftoken
 
@@ -32,35 +34,49 @@ class Client:
             'login': self.username, 'password': self.password,
             'csrfmiddlewaretoken': self.csrftoken,
         }
-        r = self.session.post(login_url, payload)
+        r = self.session.post(login_url, payload, headers=dict(Referer=login_url))
+        print(r.status_code)
         open('/tmp/blubber.html', 'w').write(r.content.decode('utf-8'))
         print(r.cookies)
 
     def get_auth(self):
         url_params = {
-            'me': '{}/users/jochen/'.format(self.base_url),
+            'me': '{}/jochen/'.format(self.base_url),
             'client_id': 'testclient',
-            'redirect_uri': 'http://localhost:8000/',
-            'state': 1234567890,
+            'redirect_uri': self.base_url,
+            'state': "1234567890foo",
             'scope': 'post',
         }
         auth_url = '{}?{}'.format(
             urljoin(self.base_url, 'indieweb/auth/'), urlencode(url_params))
         r = self.session.get(auth_url, allow_redirects=True)
         data = parse_qs(urlparse(r.url).query)
+        print(data)
         return data['code'][0]
+
+    def post_auth(self, auth_code):
+        auth_url = urljoin(self.base_url, 'indieweb/auth/')
+        payload = {
+            'code': auth_code,
+            'client_id': 'testclient',
+            'redirect_uri': self.base_url,
+        }
+        r = self.session.post(auth_url, payload)
+        data = parse_qs(unquote(r.content.decode('utf-8')))
+        return data
 
     def get_token(self, auth_code):
         token_url = urljoin(self.base_url, 'indieweb/token/')
         payload = {
-            'me': '{}/users/jochen/'.format(self.base_url),
+            'me': '{}/jochen/'.format(self.base_url),
             'client_id': 'testclient',
-            'redirect_uri': 'http://localhost:8000/',
-            'state': 1234567890,
+            'redirect_uri': self.base_url,
+            'state': "1234567890foo",
             'scope': 'post',
             'code': auth_code,
         }
         r = self.session.post(token_url, payload)
+        print(r.status_code)
         data = parse_qs(unquote(r.content.decode('utf-8')))
         return data['access_token'][0]
 
@@ -84,7 +100,9 @@ def main(args):
     auth_code = client.get_auth()
     print(auth_code)
     token = client.get_token(auth_code)
-    print(token)
+    print("token: ", token)
+    data = client.post_auth(auth_code)
+    print(data)
     client.post_entry(token)
 
 
