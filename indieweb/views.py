@@ -116,6 +116,8 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         logger.info(f"auth view dispatch post: {request.POST}") 
         logger.info(f"auth view dispatch get: {request.GET}") 
         logger.info(f"auth view dispatch authenticated: {request.user.is_authenticated}") 
+        body = request.body.decode("utf-8")
+        logger.info(f"auth view dispatch request body: \n {body}") 
         return super().dispatch(request, *args, **kwargs)
 
 
