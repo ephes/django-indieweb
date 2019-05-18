@@ -20,7 +20,7 @@ class Auth(GenKeyMixin, TimeStampedModel):
     state = models.CharField(max_length=32)
     client_id = models.CharField(max_length=512)
     redirect_uri = models.CharField(max_length=1024)
-    scope = models.CharField(max_length=256)
+    scope = models.CharField(max_length=256, null=True, blank=True)
     me = models.CharField(max_length=512)
     key = models.CharField(max_length=32)
 
@@ -34,7 +34,7 @@ class Token(GenKeyMixin, TimeStampedModel):
         settings.AUTH_USER_MODEL, related_name='indieweb_token', on_delete=models.CASCADE)
     client_id = models.CharField(max_length=512)
     me = models.CharField(max_length=512, unique=True)
-    scope = models.CharField(max_length=256)
+    scope = models.CharField(max_length=256, null=True, blank=True)
 
     class Meta:
         unique_together = (('me', 'client_id', 'scope', 'owner'))
