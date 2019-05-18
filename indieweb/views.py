@@ -113,9 +113,11 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
     @method_decorator(csrf_exempt)
     def dispatch(self, request, *args, **kwargs):
         logger.info(f"auth view dispatch: {request}, {args}, {kwargs}")
-        logger.info(f"auth view dispatch post: {request.POST}") 
-        logger.info(f"auth view dispatch get: {request.GET}") 
+        logger.info(f"auth view dispatch method : {request.method}")
+        logger.info(f"auth view dispatch post vars: {request.POST}") 
+        logger.info(f"auth view dispatch get vars: {request.GET}") 
         logger.info(f"auth view dispatch authenticated: {request.user.is_authenticated}") 
+        logger.info(f"auth view dispatch request headers: {request.headers}") 
         body = request.body.decode("utf-8")
         logger.info(f"auth view dispatch request body: \n {body}") 
         return super().dispatch(request, *args, **kwargs)
