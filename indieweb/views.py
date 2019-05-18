@@ -67,6 +67,7 @@ class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
         redirect_uri = request.GET.get('redirect_uri')
         state = request.GET.get('state')
         me = request.GET.get('me')
+        logger.info(f"auth view get: {client_id}, {redirect_uri}, {state}, {me}")
         required = [client_id, redirect_uri, state, me]
 
         for name, val in zip(self.required_params, required):
@@ -92,7 +93,7 @@ class AuthView(CSRFExemptMixin, LoginRequiredMixin, View):
     def post(self, request, *args, **kwargs):
         auth_code = request.POST['code']
         client_id = request.POST['client_id']
-        print("code and client id: ", auth_code, client_id)
+        logger.info(f"auth view post: {client_id}, {auth_code}")
         auth = Auth.objects.get(key=auth_code, client_id=client_id)
         # if auth.key == key:
         response_values = {
@@ -123,6 +124,7 @@ class TokenView(CSRFExemptMixin, View):
         scope = request.POST['scope']
         client_id = request.POST['client_id']
         auth = Auth.objects.get(me=me)
+        logger.info(f"token view post: {client_id}, {me}, {key} {scope}")
         if auth.key == key:
             # auth code is correct
             timeout = getattr(settings, 'INDIWEB_AUTH_CODE_TIMEOUT', 60)
