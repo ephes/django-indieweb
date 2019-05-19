@@ -27,6 +27,9 @@ class Auth(GenKeyMixin, TimeStampedModel):
     class Meta:
         unique_together = (('me', 'client_id', 'scope', 'owner'))
 
+    def __str__(self):
+        return f"{client_id} {me} {scope} {owner.username}"
+
 
 class Token(GenKeyMixin, TimeStampedModel):
     key = models.CharField(max_length=32, db_index=True)
