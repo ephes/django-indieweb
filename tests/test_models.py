@@ -14,7 +14,6 @@ from django.test import TestCase
 
 
 class TestIndieweb(TestCase):
-
     def setUp(self):
         pass
 

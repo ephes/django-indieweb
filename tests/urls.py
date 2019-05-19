@@ -5,5 +5,5 @@ from django.conf.urls import url, include
 
 urlpatterns = [
     # indieweb
-    url(r"^indieweb/", include("indieweb.urls")),
+    url(r"^indieweb/", include("indieweb.urls"))
 ]

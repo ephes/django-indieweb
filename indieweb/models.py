@@ -16,7 +16,8 @@ class GenKeyMixin:
 
 class Auth(GenKeyMixin, TimeStampedModel):
     owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, related_name='indieweb_auth', on_delete=models.CASCADE)
+        settings.AUTH_USER_MODEL, related_name="indieweb_auth", on_delete=models.CASCADE
+    )
     state = models.CharField(max_length=32)
     client_id = models.CharField(max_length=512)
     redirect_uri = models.CharField(max_length=1024)
@@ -25,7 +26,7 @@ class Auth(GenKeyMixin, TimeStampedModel):
     key = models.CharField(max_length=32)
 
     class Meta:
-        unique_together = (('me', 'client_id', 'scope', 'owner'))
+        unique_together = ("me", "client_id", "scope", "owner")
 
     def __str__(self):
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
@@ -34,10 +35,13 @@ class Auth(GenKeyMixin, TimeStampedModel):
 class Token(GenKeyMixin, TimeStampedModel):
     key = models.CharField(max_length=32, db_index=True)
     owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, related_name='indieweb_token', on_delete=models.CASCADE)
+        settings.AUTH_USER_MODEL,
+        related_name="indieweb_token",
+        on_delete=models.CASCADE,
+    )
     client_id = models.CharField(max_length=512)
     me = models.CharField(max_length=512, unique=True)
     scope = models.CharField(max_length=256, null=True, blank=True)
 
     class Meta:
-        unique_together = (('me', 'client_id', 'scope', 'owner'))
+        unique_together = ("me", "client_id", "scope", "owner")
