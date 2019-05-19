@@ -8,4 +8,3 @@ django-environ
 pytest
 pytest-django
 sphinx
-coverage==4.5.3
