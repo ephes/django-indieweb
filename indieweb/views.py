@@ -109,17 +109,6 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         status_code = 200
         return HttpResponse(response, status=status_code)
 
-#    def dispatch(self, request, *args, **kwargs):
-#        logger.info(f"auth view dispatch: {request}, {args}, {kwargs}")
-#        logger.info(f"auth view dispatch method : {request.method}")
-#        logger.info(f"auth view dispatch post vars: {request.POST}") 
-#        logger.info(f"auth view dispatch get vars: {request.GET}") 
-#        logger.info(f"auth view dispatch authenticated: {request.user.is_authenticated}") 
-#        logger.info(f"auth view dispatch request headers: {request.headers}") 
-#        body = request.body.decode("utf-8")
-#        logger.info(f"auth view dispatch request body: \n {body}") 
-#        return super().dispatch(request, *args, **kwargs)
-
 
 class TokenView(CSRFExemptMixin, View):
     def send_token(self, me, client_id, scope, owner):
@@ -140,7 +129,7 @@ class TokenView(CSRFExemptMixin, View):
         key = request.POST['code']
         scope = request.POST['scope']
         client_id = request.POST['client_id']
-        auth = Auth.objects.get(me=me)
+        auth = Auth.objects.get(me=me, client_id=client_id, scope=scope, key=key)
         logger.info(f"token view post: {client_id}, {me}, {key} {scope}")
         if auth.key == key:
             # auth code is correct
