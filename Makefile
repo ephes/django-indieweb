@@ -31,7 +31,7 @@ lint: ## check style with flake8
 	flake8 --exclude=migrations --ignore=W503 indieweb tests
 
 black: ## paint it black
-	black cast tests
+	black indieweb tests
 
 test: ## run tests quickly with the default Python
 	python runtests.py tests
