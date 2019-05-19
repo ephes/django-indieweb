@@ -1,3 +1,5 @@
-django>=1.9.1
+django>=2.1
 django-braces
 pytz
+twine
+black

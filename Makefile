@@ -28,7 +28,10 @@ clean-pyc: ## remove Python file artifacts
 	find . -name '*~' -exec rm -f {} +
 
 lint: ## check style with flake8
-	flake8 --exclude=migrations indieweb tests
+	flake8 --exclude=migrations --ignore=W503 indieweb tests
+
+black: ## paint it black
+	black cast tests
 
 test: ## run tests quickly with the default Python
 	python runtests.py tests
@@ -51,8 +54,9 @@ docs: ## generate Sphinx HTML documentation, including API docs
 	$(BROWSER) docs/_build/html/index.html
 
 release: clean ## package and upload a release
-	python setup.py sdist upload
-	python setup.py bdist_wheel upload
+	python setup.py sdist
+	python setup.py bdist_wheel
+	twine upload dist/*
 
 sdist: clean ## package
 	python setup.py sdist
