@@ -28,6 +28,10 @@ class Client:
             self._csrftoken = r.cookies['csrftoken']
         return self._csrftoken
 
+    def get_csrftoken(self, url):
+        r = self.session.get(url)
+        return r.cookies['csrftoken']
+
     def login(self):
         login_url = urljoin(self.base_url, 'accounts/login/')
         payload = {
@@ -38,6 +42,13 @@ class Client:
         print(r.status_code)
         open('/tmp/blubber.html', 'w').write(r.content.decode('utf-8'))
         print(r.cookies)
+
+    def logout(self):
+        logout_url = urljoin(self.base_url, 'accounts/logout/')
+        csrftoken = self.get_csrftoken(logout_url)
+        payload = {'csrfmiddlewaretoken': csrftoken}
+        r = self.session.post(logout_url, payload, headers=dict(Referer=logout_url))
+        print(r.status_code)
 
     def get_auth(self):
         url_params = {
@@ -101,9 +112,13 @@ def main(args):
     print(auth_code)
     token = client.get_token(auth_code)
     print("token: ", token)
+    client.post_entry(token)
+    # new client to test auth verification without login
+    print("logout..")
+    client.logout()
+    # client = Client(base_url, username, password)
     data = client.post_auth(auth_code)
     print(data)
-    client.post_entry(token)
 
 
 if __name__ == '__main__':
