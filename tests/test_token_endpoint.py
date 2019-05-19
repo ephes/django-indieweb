@@ -38,6 +38,7 @@ class TestIndiewebTokenEndpoint(TestCase):
             state=self.state,
             me=self.me,
             scope=self.scope,
+            client_id=self.client_id,
         )
         self.endpoint_url = reverse("indieweb:token")
 

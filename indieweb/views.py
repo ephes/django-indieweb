@@ -134,8 +134,12 @@ class TokenView(CSRFExemptMixin, View):
         key = request.POST["code"]
         scope = request.POST["scope"]
         client_id = request.POST["client_id"]
-        auth = Auth.objects.get(me=me, client_id=client_id, scope=scope, key=key)
-        logger.info(f"token view post: {client_id}, {me}, {key} {scope}")
+        try:
+            auth = Auth.objects.get(me=me, client_id=client_id, scope=scope)
+            logger.info(f"token view post: {client_id}, {me}, {key} {scope}")
+        except Auth.DoesNotExist:
+            logger.info(f"auth does not exist: {client_id}, {me}, {scope}")
+            return HttpResponse("authentication error", status=401)
         if auth.key == key:
             # auth code is correct
             timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
