@@ -28,7 +28,7 @@ class Auth(GenKeyMixin, TimeStampedModel):
         unique_together = (('me', 'client_id', 'scope', 'owner'))
 
     def __str__(self):
-        return f"{client_id} {me} {scope} {owner.username}"
+        return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
 
 
 class Token(GenKeyMixin, TimeStampedModel):
