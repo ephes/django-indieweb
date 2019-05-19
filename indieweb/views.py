@@ -109,7 +109,7 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         status_code = 200
         return HttpResponse(response, status=status_code)
 
-    def dispatch(self, request, *args, **kwargs):
+#    def dispatch(self, request, *args, **kwargs):
 #        logger.info(f"auth view dispatch: {request}, {args}, {kwargs}")
 #        logger.info(f"auth view dispatch method : {request.method}")
 #        logger.info(f"auth view dispatch post vars: {request.POST}") 
@@ -118,7 +118,7 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
 #        logger.info(f"auth view dispatch request headers: {request.headers}") 
 #        body = request.body.decode("utf-8")
 #        logger.info(f"auth view dispatch request body: \n {body}") 
-        return super().dispatch(request, *args, **kwargs)
+#        return super().dispatch(request, *args, **kwargs)
 
 
 class TokenView(CSRFExemptMixin, View):
