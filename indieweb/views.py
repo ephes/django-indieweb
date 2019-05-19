@@ -95,7 +95,6 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         logger.info(f"auth view get complete: {target}")
         return redirect(target)
 
-    @method_decorator(csrf_exempt)
     def post(self, request, *args, **kwargs):
         logger.info(f"auth view post: {request}, {args}, {kwargs}")
         auth_code = request.POST['code']
@@ -110,16 +109,15 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         status_code = 200
         return HttpResponse(response, status=status_code)
 
-    @method_decorator(csrf_exempt)
     def dispatch(self, request, *args, **kwargs):
-        logger.info(f"auth view dispatch: {request}, {args}, {kwargs}")
-        logger.info(f"auth view dispatch method : {request.method}")
-        logger.info(f"auth view dispatch post vars: {request.POST}") 
-        logger.info(f"auth view dispatch get vars: {request.GET}") 
-        logger.info(f"auth view dispatch authenticated: {request.user.is_authenticated}") 
-        logger.info(f"auth view dispatch request headers: {request.headers}") 
-        body = request.body.decode("utf-8")
-        logger.info(f"auth view dispatch request body: \n {body}") 
+#        logger.info(f"auth view dispatch: {request}, {args}, {kwargs}")
+#        logger.info(f"auth view dispatch method : {request.method}")
+#        logger.info(f"auth view dispatch post vars: {request.POST}") 
+#        logger.info(f"auth view dispatch get vars: {request.GET}") 
+#        logger.info(f"auth view dispatch authenticated: {request.user.is_authenticated}") 
+#        logger.info(f"auth view dispatch request headers: {request.headers}") 
+#        body = request.body.decode("utf-8")
+#        logger.info(f"auth view dispatch request body: \n {body}") 
         return super().dispatch(request, *args, **kwargs)
 
 
