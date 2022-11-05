@@ -3,6 +3,13 @@
 History
 -------
 
+0.0.6 (2022-11-05)
+++++++++++++++++++
+
+* Use flit and pyproject.toml instead of setup.py
+* Support recent Django versions
+* Even better package infrastructure
+
 0.0.5 (2019-05-19)
 ++++++++++++++++++
 
