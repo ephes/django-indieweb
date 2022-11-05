@@ -42,3 +42,9 @@ Does the code actually work?
     (myenv) $ pip install flit
     (myenv) $ flit install -s
     (myenv) $ pytest
+
+Show coverage:
+
+::
+
+    $ coverage run -m pytest tests && coverage html && open htmlcov/index.html
