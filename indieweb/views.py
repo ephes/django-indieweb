@@ -1,21 +1,17 @@
 import logging
-
 from datetime import datetime
 
+import pytz
+from braces.views._access import AccessMixin
 from django.conf import settings
 from django.http import HttpResponse
-from django.views.generic import View
 from django.shortcuts import redirect
-from django.utils.http import urlencode
 from django.utils.decorators import method_decorator
+from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
+from django.views.generic import View
 
-from braces.views._access import AccessMixin
-
-import pytz
-
-from .models import Auth
-from .models import Token
+from .models import Auth, Token
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +25,7 @@ class CSRFExemptMixin:
 class TokenAuthMixin:
     def authenticated(self, request):
         key = None
-        auth_token = request.META.get(
-            "Authorization", request.POST.get("Authorization")
-        )
+        auth_token = request.META.get("Authorization", request.POST.get("Authorization"))
         if auth_token is not None:
             key = auth_token.split()[-1]
         if key is not None:
@@ -75,16 +69,14 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
 
         for name, val in zip(self.required_params, required):
             if val is None:
-                err_msg = "missing parameter {}".format(name)
+                err_msg = f"missing parameter {name}"
                 logger.info(f"missing parameter: {name}")
                 return HttpResponse(err_msg, status=404)
 
         # FIXME scope is optional
         scope = request.GET.get("scope")
         try:
-            auth = Auth.objects.get(
-                owner=request.user, client_id=client_id, scope=scope, me=me
-            )
+            auth = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
             auth.delete()
         except Auth.DoesNotExist:
             pass
@@ -97,7 +89,7 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
             me=me,
         )
         url_params = {"code": auth.key, "state": state, "me": me}
-        target = "{}?{}".format(redirect_uri, urlencode(url_params))
+        target = f"{redirect_uri}?{urlencode(url_params)}"
         logger.info(f"auth view get complete: {target}")
         return redirect(target)
 
@@ -116,9 +108,7 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
 
 class TokenView(CSRFExemptMixin, View):
     def send_token(self, me, client_id, scope, owner):
-        token, created = Token.objects.get_or_create(
-            me=me, client_id=client_id, scope=scope, owner=owner
-        )
+        token, created = Token.objects.get_or_create(me=me, client_id=client_id, scope=scope, owner=owner)
         response_values = {
             "access_token": token.key,
             "expires_in": 10,
@@ -165,9 +155,7 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         location_str = self.request.POST.get("location", "")
         if len(location_str) > 0:
             if ";" in location_str:
-                location["uncertainty"] = int(
-                    location_str.split(";")[-1].split("=")[-1]
-                )
+                location["uncertainty"] = int(location_str.split(";")[-1].split("=")[-1])
             if location_str.startswith("geo:"):
                 lat, lng = location_str.split(";")[0].split(":")[-1].split(",")
                 location["latitude"] = float(lat)

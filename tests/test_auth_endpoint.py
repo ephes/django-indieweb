@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 test_django-indieweb
@@ -7,19 +6,15 @@ test_django-indieweb
 
 Tests for `django-indieweb` auth endpoint.
 """
+from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlparse
+
 import pytz
-
-from datetime import datetime
-from datetime import timedelta
-
-from urllib.parse import parse_qs
-from urllib.parse import urlparse
-
 from django.conf import settings
-from django.test import TestCase
-from django.utils.http import urlencode
 from django.contrib.auth.models import User
+from django.test import TestCase
 from django.urls import reverse
+from django.utils.http import urlencode
 
 from indieweb.models import Auth
 
@@ -38,7 +33,7 @@ class TestIndiewebAuthEndpoint(TestCase):
             "state": 1234567890,
             "scope": "post",
         }
-        self.endpoint_url = "{}?{}".format(self.base_url, urlencode(url_params))
+        self.endpoint_url = f"{self.base_url}?{urlencode(url_params)}"
 
     def test_not_authenticated(self):
         """
@@ -50,7 +45,7 @@ class TestIndiewebAuthEndpoint(TestCase):
         self.assertTrue("login" in response.url)
 
     def test_authenticated_without_params(self):
-        """ Assure get without proper parameters raises an error. """
+        """Assure get without proper parameters raises an error."""
         self.client.login(username=self.username, password=self.password)
         response = self.client.get(self.base_url)
         self.assertEqual(response.status_code, 404)
@@ -64,7 +59,7 @@ class TestIndiewebAuthEndpoint(TestCase):
         self.assertTrue("code" in response.url)
 
     def test_get_or_create(self):
-        """ Test get or create logic for Auth object. """
+        """Test get or create logic for Auth object."""
         self.client.login(username=self.username, password=self.password)
         for i in range(2):
             response = self.client.get(self.endpoint_url)
@@ -72,7 +67,7 @@ class TestIndiewebAuthEndpoint(TestCase):
             self.assertTrue("code" in response.url)
 
     def test_auth_timeout_reset(self):
-        """ Test timeout is resetted on new authentication. """
+        """Test timeout is resetted on new authentication."""
         self.client.login(username=self.username, password=self.password)
         response = self.client.get(self.endpoint_url)
         data = parse_qs(urlparse(response.url).query)
