@@ -79,3 +79,11 @@ filterwarnings = [
     "ignore::django.utils.deprecation.RemovedInDjango50Warning",
     "ignore::DeprecationWarning",
 ]
+addopts = [
+    "--reuse-db",
+    "--no-migrations",
+]
+norecursedirs = [
+    ".git",
+    "docs",
+]
