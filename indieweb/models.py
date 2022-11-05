@@ -1,9 +1,6 @@
-# -*- coding: utf-8 -*-
-
-from django.db import models
 from django.conf import settings
+from django.db import models
 from django.utils.crypto import get_random_string
-
 from model_utils.models import TimeStampedModel
 
 
@@ -15,9 +12,7 @@ class GenKeyMixin:
 
 
 class Auth(GenKeyMixin, TimeStampedModel):
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, related_name="indieweb_auth", on_delete=models.CASCADE
-    )
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="indieweb_auth", on_delete=models.CASCADE)
     state = models.CharField(max_length=32)
     client_id = models.CharField(max_length=512)
     redirect_uri = models.CharField(max_length=1024)
