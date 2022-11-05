@@ -1,0 +1,7 @@
+[flake8]
+ignore = D203
+exclude =
+    .git,
+    .tox,
+    docs/conf.py,
+max-line-length = 119
