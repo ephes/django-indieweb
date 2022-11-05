@@ -27,24 +27,6 @@ clean-pyc: ## remove Python file artifacts
 	find . -name '*.pyo' -exec rm -f {} +
 	find . -name '*~' -exec rm -f {} +
 
-lint: ## check style with flake8
-	flake8 --exclude=migrations --ignore=W503 indieweb tests
-
-black: ## paint it black
-	black indieweb tests
-
-test: ## run tests quickly with the default Python
-	python runtests.py tests
-
-test-all: ## run tests on every Python version with tox
-	tox
-
-coverage: ## check code coverage quickly with the default Python
-	coverage run --source indieweb runtests.py tests
-	coverage report -m
-	coverage html
-	open htmlcov/index.html
-
 docs: ## generate Sphinx HTML documentation, including API docs
 	rm -f docs/django-indieweb.rst
 	rm -f docs/modules.rst
@@ -52,12 +34,3 @@ docs: ## generate Sphinx HTML documentation, including API docs
 	$(MAKE) -C docs clean
 	$(MAKE) -C docs html
 	$(BROWSER) docs/_build/html/index.html
-
-release: clean ## package and upload a release
-	python setup.py sdist
-	python setup.py bdist_wheel
-	twine upload dist/*
-
-sdist: clean ## package
-	python setup.py sdist
-	ls -l dist
