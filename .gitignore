@@ -48,3 +48,6 @@ docs/_build
 
 # vim
 *.swp
+
+# virtualenv
+.venv
