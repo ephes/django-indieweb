@@ -3,6 +3,11 @@
 History
 -------
 
+0.0.7 (2023-01-07)
+++++++++++++++++++
+* Added migration for auto field
+* Updated pre-commit hooks
+
 0.0.6 (2022-11-05)
 ++++++++++++++++++
 
