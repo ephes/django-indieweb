@@ -38,6 +38,7 @@ dependencies = [
     "django-model-utils",
     "django-braces",
     "pytz",
+    "setuptools",
 ]
 
 [project.optional-dependencies]
