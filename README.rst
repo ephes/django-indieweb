@@ -1,14 +1,18 @@
-=============================
+===============
 django-indieweb
-=============================
+===============
 
-.. image:: https://badge.fury.io/py/django-indieweb.png
-    :target: https://badge.fury.io/py/django-indieweb
+.. image:: https://img.shields.io/readthedocs/django-indieweb?style=for-the-badge
+   :target: https://django-indieweb.readthedocs.io/en/latest/
 
-.. image:: https://travis-ci.org/ephes/django-indieweb.png?branch=master
-    :target: https://travis-ci.org/ephes/django-indieweb
+.. image:: https://img.shields.io/pypi/v/django-indieweb.svg?style=for-the-badge
+   :target: https://pypi.org/project/django-indieweb/
 
-includes indieauth and a micropub endpoint
+.. image:: https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white&style=for-the-badge
+   :target: https://github.com/pre-commit/pre-commit
+   :alt: pre-commit
+
+A Django application that includes IndieAuth and a Micropub endpoint
 
 Documentation
 -------------

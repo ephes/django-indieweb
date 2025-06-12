@@ -46,15 +46,15 @@ dependencies = [
 [dependency-groups]
 dev = [
     "django-environ",
+    "furo",
+    "mypy",
+    "pre-commit",
     "pytest >= 6",
     "pytest-cov >= 3",
     "pytest-django",
-    "sphinx-rtd-theme",
     "ruff",
     "requests",
     "tox",
-    "pre-commit",
-    "mypy",
 ]
 
 [project.urls]

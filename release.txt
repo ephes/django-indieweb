@@ -1,6 +1,0 @@
-vim HISTORY.rst
-vim indieweb/__init__.py
-git add .
-git commit -m "bump version number"
-flit publish
-# create release on github
