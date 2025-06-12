@@ -72,6 +72,15 @@ make clean
 uv sync
 ```
 
+### Building & Publishing
+```bash
+# Build the package
+uv build
+
+# Upload to PyPI
+uv publish --token your_token
+```
+
 ## Key Dependencies
 
 - Django
