@@ -6,6 +6,7 @@ test_django-indieweb
 
 Tests for `django-indieweb` micropub endpoint.
 """
+
 from urllib.parse import unquote
 
 from django.contrib.auth.models import User

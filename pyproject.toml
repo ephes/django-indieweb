@@ -1,14 +1,15 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = ["uv_build>=0.7.8,<0.8.0"]
+build-backend = "uv_build"
 
 [project]
 name = "django-indieweb"
 authors = [
     {name = "Jochen Wersdörfer", email = "jochen-indieweb@wersdoerfer.de"},
 ]
-dynamic = ["version", "description"]
-requires-python = ">=3.9"
+version = "0.0.8"
+description = "includes indieauth and a micropub endpoint"
+requires-python = ">=3.10"
 keywords = [
     "indieweb",
     "indieauth",
@@ -28,9 +29,10 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 dependencies = [
@@ -41,43 +43,57 @@ dependencies = [
     "setuptools",
 ]
 
-[project.optional-dependencies]
-test = [
+[dependency-groups]
+dev = [
     "django-environ",
     "pytest >= 6",
     "pytest-cov >= 3",
     "pytest-django",
-]
-doc = [
     "sphinx-rtd-theme",
-]
-dev = [
-    "black",
-    "flake8",
-    "isort",
+    "ruff",
     "requests",
     "tox",
+    "pre-commit",
+    "mypy",
 ]
 
 [project.urls]
 Documentation = "https://django-indieweb.readthedocs.io/en/latest/"
 Source = "https://github.com/ephes/django-indieweb"
 
-[tool.flit.module]
-name = "indieweb"
+[tool.uv.build-backend]
+module-name = "indieweb"
 
-[tool.isort]
-profile = "black"
-
-[tool.black]
+[tool.ruff]
 line-length = 119
+target-version = "py39"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C90",  # mccabe
+    "UP",   # pyupgrade
+    "DJ",   # flake8-django
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"
 minversion = "6.0"
 testpaths = ["tests"]
 filterwarnings = [
-    "ignore::django.utils.deprecation.RemovedInDjango50Warning",
+    "ignore::django.utils.deprecation.RemovedInDjango60Warning",
     "ignore::DeprecationWarning",
 ]
 addopts = [

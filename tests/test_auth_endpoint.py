@@ -6,6 +6,7 @@ test_django-indieweb
 
 Tests for `django-indieweb` auth endpoint.
 """
+
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
@@ -61,7 +62,7 @@ class TestIndiewebAuthEndpoint(TestCase):
     def test_get_or_create(self):
         """Test get or create logic for Auth object."""
         self.client.login(username=self.username, password=self.password)
-        for i in range(2):
+        for _i in range(2):
             response = self.client.get(self.endpoint_url)
             self.assertEqual(response.status_code, 302)
             self.assertTrue("code" in response.url)
