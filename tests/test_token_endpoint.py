@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 test_django-indieweb
@@ -7,14 +6,13 @@ test_django-indieweb
 
 Tests for `django-indieweb` auth endpoint.
 """
+
 from datetime import timedelta
+from urllib.parse import parse_qs, unquote
 
-from urllib.parse import unquote
-from urllib.parse import parse_qs
-
-from django.test import TestCase
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.test import TestCase
 from django.urls import reverse
 
 from indieweb import models

@@ -1,10 +1,14 @@
-# -*- coding: utf-8
-from __future__ import unicode_literals, absolute_import
+import sys
+from pathlib import Path
 
 import environ
 
-ROOT_DIR = environ.Path(__file__) - 1
-APPS_DIR = ROOT_DIR.path("indieweb")
+# Add src to Python path
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR / "src"))
+
+TEST_DIR = environ.Path(__file__) - 1
+APPS_DIR = ROOT_DIR / "src" / "indieweb"
 
 DEBUG = True
 USE_TZ = True
@@ -44,13 +48,13 @@ TEST_RUNNER = "indieweb.runner.PytestTestRunner"
 # STATIC FILE CONFIGURATION
 # ------------------------------------------------------------------------------
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#static-root
-STATIC_ROOT = str(ROOT_DIR("staticfiles"))
+STATIC_ROOT = str(ROOT_DIR / "staticfiles")
 
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#static-url
 STATIC_URL = "/static/"
 
 # See: https://docs.djangoproject.com/en/dev/ref/contrib/staticfiles/#std:setting-STATICFILES_DIRS
-STATICFILES_DIRS = [str(APPS_DIR.path("static"))]
+STATICFILES_DIRS = [str(APPS_DIR / "static")]
 
 # See: https://docs.djangoproject.com/en/dev/ref/contrib/staticfiles/#staticfiles-finders
 STATICFILES_FINDERS = [
@@ -61,7 +65,7 @@ STATICFILES_FINDERS = [
 # MEDIA CONFIGURATION
 # ------------------------------------------------------------------------------
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#media-root
-MEDIA_ROOT = str(ROOT_DIR("media"))
+MEDIA_ROOT = str(ROOT_DIR / "media")
 
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#media-url
 MEDIA_URL = "/media/"
@@ -75,7 +79,7 @@ TEMPLATES = [
         # See: https://docs.djangoproject.com/en/dev/ref/settings/#std:setting-TEMPLATES-BACKEND
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         # See: https://docs.djangoproject.com/en/dev/ref/settings/#template-dirs
-        "DIRS": [str(APPS_DIR.path("templates"))],
+        "DIRS": [str(APPS_DIR / "templates")],
         "OPTIONS": {
             # See: https://docs.djangoproject.com/en/dev/ref/settings/#template-debug
             "debug": DEBUG,
@@ -113,3 +117,6 @@ TEMPLATES[0]["OPTIONS"]["loaders"] = [
         ],
     ]
 ]
+
+# Default auto primary key field (Django 3.2)
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

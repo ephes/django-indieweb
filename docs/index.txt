@@ -9,7 +9,6 @@ Welcome to django-indieweb's documentation!
    :maxdepth: 2
    :caption: Contents:
 
-   development
    changelog
 
 Features

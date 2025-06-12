@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 test_django-indieweb
@@ -7,9 +6,11 @@ test_django-indieweb
 
 Tests for `django-indieweb` micropub endpoint.
 """
+
 from urllib.parse import unquote
-from django.test import TestCase
+
 from django.contrib.auth.models import User
+from django.test import TestCase
 from django.urls import reverse
 
 from indieweb import models
@@ -58,9 +59,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         """Assert we can't post to the endpoint without the right token."""
         payload = {"content": self.content, "h": "entry"}
         auth_header = "Bearer {}".format("wrongtoken")
-        response = self.client.post(
-            self.endpoint_url, data=payload, Authorization=auth_header
-        )
+        response = self.client.post(self.endpoint_url, data=payload, Authorization=auth_header)
         self.assertEqual(response.status_code, 401)
         self.assertTrue("error" in response.content.decode("utf-8"))
 
@@ -70,10 +69,8 @@ class TestIndiewebMicropubEndpoint(TestCase):
         submitted in the requests header.
         """
         payload = {"content": self.content, "h": "entry"}
-        auth_header = "Bearer {}".format(self.token.key)
-        response = self.client.post(
-            self.endpoint_url, data=payload, Authorization=auth_header
-        )
+        auth_header = f"Bearer {self.token.key}"
+        response = self.client.post(self.endpoint_url, data=payload, Authorization=auth_header)
         self.assertEqual(response.status_code, 201)
         self.assertTrue("created" in response.content.decode("utf-8"))
 
@@ -82,15 +79,15 @@ class TestIndiewebMicropubEndpoint(TestCase):
         Assert we can post to the endpoint with the right token
         submitted in the requests body.
         """
-        auth_body = "Bearer {}".format(self.token.key)
+        auth_body = f"Bearer {self.token.key}"
         payload = {"content": self.content, "h": "entry", "Authorization": auth_body}
         response = self.client.post(self.endpoint_url, data=payload)
         self.assertEqual(response.status_code, 201)
         self.assertTrue("created" in response.content.decode("utf-8"))
 
     def test_not_authorized(self):
-        """Assure we cant post if we don't have the right scope. """
-        auth_body = "Bearer {}".format(self.token.key)
+        """Assure we cant post if we don't have the right scope."""
+        auth_body = f"Bearer {self.token.key}"
         old_scope = self.token.scope
         self.token.scope = "foo"
         self.token.save()
@@ -102,7 +99,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         self.token.save()
 
     def test_content(self):
-        """ Test post with content. """
+        """Test post with content."""
         mv = MicropubView()
         mv.request = DummyRequest()
         self.assertEqual(mv.content, None)
@@ -113,7 +110,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         self.assertEqual(mv.content, content)
 
     def test_categories(self):
-        """ Test post with categories. """
+        """Test post with categories."""
         mv = MicropubView()
         mv.request = DummyRequest()
         self.assertEqual(mv.categories, [])
@@ -128,7 +125,7 @@ class TestIndiewebMicropubEndpoint(TestCase):
         self.assertEqual(mv.categories, [])
 
     def test_location(self):
-        """ Test post with location. """
+        """Test post with location."""
         mv = MicropubView()
         mv.request = DummyRequest()
         self.assertEqual(mv.location, {})
@@ -137,21 +134,19 @@ class TestIndiewebMicropubEndpoint(TestCase):
         self.assertEqual(mv.location, {})
 
         lat, lng = 37.786971, -122.399677
-        mv.request.POST["location"] = "geo:{},{}".format(lat, lng)
+        mv.request.POST["location"] = f"geo:{lat},{lng}"
         self.assertEqual(mv.location, {"latitude": lat, "longitude": lng})
 
         uncertainty = 35
         result = {"latitude": lat, "longitude": lng, "uncertainty": uncertainty}
-        mv.request.POST["location"] = "geo:{},{};crs=Moon-2011;u={}".format(
-            lat, lng, uncertainty
-        )
+        mv.request.POST["location"] = f"geo:{lat},{lng};crs=Moon-2011;u={uncertainty}"
         self.assertEqual(mv.location, result)
 
     def test_token_verification_on_get(self):
         """
         Test authentication tokens via get request to micropub endpoint.
         """
-        auth_header = "Bearer {}".format(self.token.key)
+        auth_header = f"Bearer {self.token.key}"
         response = self.client.get(self.endpoint_url, Authorization=auth_header)
         response_text = unquote(response.content.decode("utf-8"))
         self.assertEqual(response.status_code, 200)

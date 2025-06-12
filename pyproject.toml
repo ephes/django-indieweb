@@ -1,0 +1,106 @@
+[build-system]
+requires = ["uv_build>=0.7.8,<0.8.0"]
+build-backend = "uv_build"
+
+[project]
+name = "django-indieweb"
+authors = [
+    {name = "Jochen Wersdörfer", email = "jochen-indieweb@wersdoerfer.de"},
+]
+version = "0.0.8"
+description = "includes indieauth and a micropub endpoint"
+requires-python = ">=3.10"
+keywords = [
+    "indieweb",
+    "indieauth",
+    "micropub",
+    "django",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python",
+    "Framework :: Django",
+    "License :: OSI Approved :: BSD License",
+    "Topic :: Internet",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "Django",
+    "django-model-utils",
+    "django-braces",
+    "pytz",
+    "setuptools",
+]
+
+[dependency-groups]
+dev = [
+    "django-environ",
+    "furo",
+    "mypy",
+    "pre-commit",
+    "pytest >= 6",
+    "pytest-cov >= 3",
+    "pytest-django",
+    "ruff",
+    "requests",
+    "tox",
+]
+
+[project.urls]
+Documentation = "https://django-indieweb.readthedocs.io/en/latest/"
+Source = "https://github.com/ephes/django-indieweb"
+
+[tool.uv.build-backend]
+module-name = "indieweb"
+
+[tool.ruff]
+line-length = 119
+target-version = "py39"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C90",  # mccabe
+    "UP",   # pyupgrade
+    "DJ",   # flake8-django
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+minversion = "6.0"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::django.utils.deprecation.RemovedInDjango60Warning",
+    "ignore::DeprecationWarning",
+]
+addopts = [
+    "--reuse-db",
+    "--no-migrations",
+]
+norecursedirs = [
+    ".git",
+    "docs",
+]
