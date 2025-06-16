@@ -20,6 +20,12 @@ Changelog
 * Converted all tests from unittest to pytest style
 * Added __str__ method to Token model
 * Added docstrings to all model and view classes
+* **BREAKING**: Removed unnecessary dependencies:
+  - Replaced django-model-utils TimeStampedModel with explicit timestamp fields
+  - Replaced django-braces AccessMixin with direct login redirect
+  - Removed setuptools (not needed at runtime with modern packaging)
+  - Replaced pytz with Python's built-in datetime.timezone.utc
+* Package now only depends on Django itself
 
 0.1.0 (2025-06-13)
 ------------------
