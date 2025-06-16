@@ -6,3 +6,4 @@ setuptools
 django-environ
 furo
 sphinx
+sphinxcontrib-mermaid

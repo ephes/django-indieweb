@@ -11,6 +11,15 @@ Unreleased
 * Added type annotations to models.py and views.py
 * Added mypy configuration with django-stubs for static type checking
 * Added documentation for running mypy in development.rst
+* Added comprehensive API reference documentation with examples
+* Added usage tutorial with client-side implementation examples
+* Added configuration guide documenting all settings and options
+* Added concepts documentation explaining IndieWeb protocols with Mermaid diagrams
+* Updated CONTRIBUTING.rst to reflect current development workflow (uv, ruff, pytest)
+* Added warnings about Micropub endpoint stub implementation
+* Converted all tests from unittest to pytest style
+* Added __str__ method to Token model
+* Added docstrings to all model and view classes
 
 0.1.0 (2025-01-13)
 ------------------

@@ -9,6 +9,10 @@ Welcome to django-indieweb's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   concepts
+   tutorial
+   api
+   configuration
    development
    changelog
 
@@ -17,8 +21,12 @@ Features
 
 * IndieAuth authentication endpoint
 * IndieAuth token endpoint
-* Micropub endpoint for creating posts
+* Micropub endpoint for creating posts (stub implementation)
 * Django integration
+
+.. warning::
+   The Micropub endpoint is currently a stub implementation. It accepts requests
+   but does not actually create content. See the :doc:`tutorial` for how to extend it.
 
 Installation
 ------------
