@@ -1,4 +1,8 @@
 django
+django-model-utils
+django-braces
+pytz
+setuptools
 django-environ
 furo
 sphinx

@@ -270,7 +270,7 @@ wheels = [
 
 [[package]]
 name = "django-indieweb"
-version = "0.0.8"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "django" },
