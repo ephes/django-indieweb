@@ -5,7 +5,6 @@ from typing import Any
 from django.conf import settings
 from django.db import models
 from django.utils.crypto import get_random_string
-from model_utils.models import TimeStampedModel
 
 
 class GenKeyMixin(models.Model):
@@ -22,7 +21,11 @@ class GenKeyMixin(models.Model):
         super().save(*args, **kwargs)
 
 
-class Auth(GenKeyMixin, TimeStampedModel):
+class Auth(GenKeyMixin):
+    """Stores authorization grants during the IndieAuth flow."""
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
     """
     Model for storing IndieAuth authorization codes.
 
@@ -45,7 +48,11 @@ class Auth(GenKeyMixin, TimeStampedModel):
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
 
 
-class Token(GenKeyMixin, TimeStampedModel):
+class Token(GenKeyMixin):
+    """Stores access tokens for authenticated API access."""
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
     """
     Model for storing IndieAuth/Micropub access tokens.
 

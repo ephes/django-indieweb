@@ -7,11 +7,10 @@ test_django-indieweb
 Tests for `django-indieweb` auth endpoint.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone  # noqa: E501
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-import pytz
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.urls import reverse
@@ -90,4 +89,4 @@ def test_auth_timeout_reset(client, user, auth_endpoint_url):
     auth.save()
     response = client.get(auth_endpoint_url)
     auth = Auth.objects.get(owner=user, me=data["me"][0])
-    assert (datetime.now(pytz.utc) - auth.created).seconds <= timeout
+    assert (datetime.now(timezone.utc) - auth.created).seconds <= timeout

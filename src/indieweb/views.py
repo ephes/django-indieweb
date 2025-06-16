@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import TYPE_CHECKING, cast
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-import pytz
-from braces.views._access import AccessMixin
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import redirect
@@ -71,7 +69,7 @@ class TokenAuthMixin(View):
         return super().dispatch(request, *args, **kwargs)
 
 
-class AuthView(CSRFExemptMixin, AccessMixin, View):
+class AuthView(CSRFExemptMixin, View):
     """
     IndieAuth authorization endpoint.
 
@@ -84,7 +82,8 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
-            return cast(HttpResponseBase, self.handle_no_permission(request))
+            login_url = getattr(settings, "LOGIN_URL", "/accounts/login/")
+            return redirect(f"{login_url}?next={request.get_full_path()}")
         client_id = request.GET.get("client_id")
         redirect_uri = request.GET.get("redirect_uri")
         state = request.GET.get("state")
@@ -171,7 +170,7 @@ class TokenView(CSRFExemptMixin, View):
         if auth.key == key:
             # auth code is correct
             timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
-            if (datetime.now(pytz.utc) - auth.created).seconds <= timeout:
+            if (datetime.now(timezone.utc) - auth.created).seconds <= timeout:
                 # auth code is still valid
                 return self.send_token(me, client_id, scope, auth.owner)
         return HttpResponse("authentication error", status=401)
