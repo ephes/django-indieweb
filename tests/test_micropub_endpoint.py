@@ -9,8 +9,8 @@ Tests for `django-indieweb` micropub endpoint.
 
 from urllib.parse import unquote
 
+import pytest
 from django.contrib.auth.models import User
-from django.test import TestCase
 from django.urls import reverse
 
 from indieweb import models
@@ -23,139 +23,161 @@ class DummyRequest:
     META = {}
 
 
-class TestIndiewebMicropubEndpoint(TestCase):
-    def setUp(self):
-        self.username = "foo"
-        self.email = "foo@example.org"
-        self.password = "password"
-        self.auth_code = "authkey"
-        self.redirect_uri = "https://webapp.example.org/auth/callback"
-        self.state = 1234567890
-        self.me = "http://example.org"
-        self.client_id = "https://webapp.example.org"
-        self.scope = "post"
-        self.user = User.objects.create_user(self.username, self.email, self.password)
-        self.auth = models.Auth.objects.create(
-            owner=self.user,
-            key=self.auth_code,
-            state=self.state,
-            me=self.me,
-            scope=self.scope,
-        )
-        self.token = models.Token.objects.create(
-            me=self.me, client_id=self.client_id, scope=self.scope, owner=self.user
-        )
-        self.endpoint_url = reverse("indieweb:micropub")
-        self.content = "foobar"
+@pytest.fixture
+def user(db):
+    return User.objects.create_user(username="foo", email="foo@example.org", password="password")
 
-    def test_no_token(self):
-        """Assert we can't post to the endpoint without token."""
-        payload = {"content": self.content, "h": "entry"}
-        response = self.client.post(self.endpoint_url, data=payload)
-        self.assertEqual(response.status_code, 401)
-        self.assertTrue("error" in response.content.decode("utf-8"))
 
-    def test_wrong_token(self):
-        """Assert we can't post to the endpoint without the right token."""
-        payload = {"content": self.content, "h": "entry"}
-        auth_header = "Bearer {}".format("wrongtoken")
-        response = self.client.post(self.endpoint_url, data=payload, Authorization=auth_header)
-        self.assertEqual(response.status_code, 401)
-        self.assertTrue("error" in response.content.decode("utf-8"))
+@pytest.fixture
+def auth(user):
+    return models.Auth.objects.create(
+        owner=user,
+        key="authkey",
+        state=1234567890,
+        me="http://example.org",
+        scope="post",
+    )
 
-    def test_correct_token_header(self):
-        """
-        Assert we can post to the endpoint with the right token
-        submitted in the requests header.
-        """
-        payload = {"content": self.content, "h": "entry"}
-        auth_header = f"Bearer {self.token.key}"
-        response = self.client.post(self.endpoint_url, data=payload, Authorization=auth_header)
-        self.assertEqual(response.status_code, 201)
-        self.assertTrue("created" in response.content.decode("utf-8"))
 
-    def test_correct_token_body(self):
-        """
-        Assert we can post to the endpoint with the right token
-        submitted in the requests body.
-        """
-        auth_body = f"Bearer {self.token.key}"
-        payload = {"content": self.content, "h": "entry", "Authorization": auth_body}
-        response = self.client.post(self.endpoint_url, data=payload)
-        self.assertEqual(response.status_code, 201)
-        self.assertTrue("created" in response.content.decode("utf-8"))
+@pytest.fixture
+def token(user):
+    return models.Token.objects.create(
+        me="http://example.org", client_id="https://webapp.example.org", scope="post", owner=user
+    )
 
-    def test_not_authorized(self):
-        """Assure we cant post if we don't have the right scope."""
-        auth_body = f"Bearer {self.token.key}"
-        old_scope = self.token.scope
-        self.token.scope = "foo"
-        self.token.save()
-        payload = {"content": self.content, "h": "entry", "Authorization": auth_body}
-        response = self.client.post(self.endpoint_url, data=payload)
-        self.assertEqual(response.status_code, 403)
-        self.assertTrue("error" in response.content.decode("utf-8"))
-        self.token.scope = old_scope
-        self.token.save()
 
-    def test_content(self):
-        """Test post with content."""
-        mv = MicropubView()
-        mv.request = DummyRequest()
-        self.assertEqual(mv.content, None)
-        mv.request.POST["content"] = None
-        self.assertEqual(mv.content, None)
-        content = "foobar"
-        mv.request.POST["content"] = "foobar"
-        self.assertEqual(mv.content, content)
+@pytest.fixture
+def micropub_endpoint_url():
+    return reverse("indieweb:micropub")
 
-    def test_categories(self):
-        """Test post with categories."""
-        mv = MicropubView()
-        mv.request = DummyRequest()
-        self.assertEqual(mv.categories, [])
 
-        mv.request.POST["category"] = "foo,bar,baz"
-        self.assertEqual(len(mv.categories), 3)
+@pytest.fixture
+def micropub_payload():
+    return {"content": "foobar", "h": "entry"}
 
-        mv.request.POST["category"] = "foo"
-        self.assertEqual(mv.categories, ["foo"])
 
-        mv.request.POST["category"] = ""
-        self.assertEqual(mv.categories, [])
+@pytest.mark.django_db
+def test_no_token(client, micropub_endpoint_url, micropub_payload):
+    """Assert we can't post to the endpoint without token."""
+    response = client.post(micropub_endpoint_url, data=micropub_payload)
+    assert response.status_code == 401
+    assert "error" in response.content.decode("utf-8")
 
-    def test_location(self):
-        """Test post with location."""
-        mv = MicropubView()
-        mv.request = DummyRequest()
-        self.assertEqual(mv.location, {})
 
-        mv.request.POST["location"] = "foo,bar,baz"
-        self.assertEqual(mv.location, {})
+@pytest.mark.django_db
+def test_wrong_token(client, micropub_endpoint_url, micropub_payload):
+    """Assert we can't post to the endpoint without the right token."""
+    auth_header = "Bearer wrongtoken"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 401
+    assert "error" in response.content.decode("utf-8")
 
-        lat, lng = 37.786971, -122.399677
-        mv.request.POST["location"] = f"geo:{lat},{lng}"
-        self.assertEqual(mv.location, {"latitude": lat, "longitude": lng})
 
-        uncertainty = 35
-        result = {"latitude": lat, "longitude": lng, "uncertainty": uncertainty}
-        mv.request.POST["location"] = f"geo:{lat},{lng};crs=Moon-2011;u={uncertainty}"
-        self.assertEqual(mv.location, result)
+@pytest.mark.django_db
+def test_correct_token_header(client, token, micropub_endpoint_url, micropub_payload):
+    """
+    Assert we can post to the endpoint with the right token
+    submitted in the requests header.
+    """
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 201
+    assert "created" in response.content.decode("utf-8")
 
-    def test_token_verification_on_get(self):
-        """
-        Test authentication tokens via get request to micropub endpoint.
-        """
-        auth_header = f"Bearer {self.token.key}"
-        response = self.client.get(self.endpoint_url, Authorization=auth_header)
-        response_text = unquote(response.content.decode("utf-8"))
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(self.me in response_text)
 
-    def test_token_verification_on_get_wrong(self):
-        """
-        Test wrong authentication tokens via get request to micropub endpoint.
-        """
-        auth_header = "Bearer {}".format("wrong_token")
-        response = self.client.get(self.endpoint_url, Authorization=auth_header)
-        self.assertEqual(response.status_code, 401)
+@pytest.mark.django_db
+def test_correct_token_body(client, token, micropub_endpoint_url, micropub_payload):
+    """
+    Assert we can post to the endpoint with the right token
+    submitted in the requests body.
+    """
+    auth_body = f"Bearer {token.key}"
+    micropub_payload["Authorization"] = auth_body
+    response = client.post(micropub_endpoint_url, data=micropub_payload)
+    assert response.status_code == 201
+    assert "created" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_not_authorized(client, token, micropub_endpoint_url, micropub_payload):
+    """Assure we cant post if we don't have the right scope."""
+    auth_body = f"Bearer {token.key}"
+    old_scope = token.scope
+    token.scope = "foo"
+    token.save()
+    micropub_payload["Authorization"] = auth_body
+    response = client.post(micropub_endpoint_url, data=micropub_payload)
+    assert response.status_code == 403
+    assert "error" in response.content.decode("utf-8")
+    # Restore scope for cleanup
+    token.scope = old_scope
+    token.save()
+
+
+def test_content():
+    """Test post with content."""
+    mv = MicropubView()
+    mv.request = DummyRequest()
+    assert mv.content is None
+    mv.request.POST["content"] = None
+    assert mv.content is None
+    content = "foobar"
+    mv.request.POST["content"] = "foobar"
+    assert mv.content == content
+
+
+def test_categories():
+    """Test post with categories."""
+    mv = MicropubView()
+    mv.request = DummyRequest()
+    assert mv.categories == []
+
+    mv.request.POST["category"] = "foo,bar,baz"
+    assert len(mv.categories) == 3
+
+    mv.request.POST["category"] = "foo"
+    assert mv.categories == ["foo"]
+
+    mv.request.POST["category"] = ""
+    assert mv.categories == []
+
+
+def test_location():
+    """Test post with location."""
+    mv = MicropubView()
+    mv.request = DummyRequest()
+    assert mv.location == {}
+
+    mv.request.POST["location"] = "foo,bar,baz"
+    assert mv.location == {}
+
+    lat, lng = 37.786971, -122.399677
+    mv.request.POST["location"] = f"geo:{lat},{lng}"
+    assert mv.location == {"latitude": lat, "longitude": lng}
+
+    uncertainty = 35
+    result = {"latitude": lat, "longitude": lng, "uncertainty": uncertainty}
+    mv.request.POST["location"] = f"geo:{lat},{lng};crs=Moon-2011;u={uncertainty}"
+    assert mv.location == result
+
+
+@pytest.mark.django_db
+def test_token_verification_on_get(client, token, micropub_endpoint_url):
+    """
+    Test authentication tokens via get request to micropub endpoint.
+    """
+    auth_header = f"Bearer {token.key}"
+    response = client.get(micropub_endpoint_url, Authorization=auth_header)
+    response_text = unquote(response.content.decode("utf-8"))
+    assert response.status_code == 200
+    assert token.me in response_text
+
+
+@pytest.mark.django_db
+def test_token_verification_on_get_wrong(client, micropub_endpoint_url):
+    """
+    Test wrong authentication tokens via get request to micropub endpoint.
+    """
+    auth_header = "Bearer wrong_token"
+    response = client.get(micropub_endpoint_url, Authorization=auth_header)
+    assert response.status_code == 401

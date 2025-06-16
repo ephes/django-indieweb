@@ -10,72 +10,84 @@ Tests for `django-indieweb` auth endpoint.
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 import pytz
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.test import TestCase
 from django.urls import reverse
 from django.utils.http import urlencode
 
 from indieweb.models import Auth
 
 
-class TestIndiewebAuthEndpoint(TestCase):
-    def setUp(self):
-        self.username = "foo"
-        self.email = "foo@example.org"
-        self.password = "password"
-        self.user = User.objects.create_user(self.username, self.email, self.password)
-        self.base_url = reverse("indieweb:auth")
-        url_params = {
-            "me": "http://example.org",
-            "client_id": "https://webapp.example.org",
-            "redirect_uri": "https://webapp.example.org/auth/callback",
-            "state": 1234567890,
-            "scope": "post",
-        }
-        self.endpoint_url = f"{self.base_url}?{urlencode(url_params)}"
+@pytest.fixture
+def user(db):
+    return User.objects.create_user(username="foo", email="foo@example.org", password="password")
 
-    def test_not_authenticated(self):
-        """
-        Assure we are redirected to login if we try to get an auth-code
-        from the indieweb auth endpoint and are not yet logged in.
-        """
-        response = self.client.get(self.endpoint_url)
-        self.assertEqual(response.status_code, 302)
-        self.assertTrue("login" in response.url)
 
-    def test_authenticated_without_params(self):
-        """Assure get without proper parameters raises an error."""
-        self.client.login(username=self.username, password=self.password)
-        response = self.client.get(self.base_url)
-        self.assertEqual(response.status_code, 404)
-        self.assertTrue("missing" in response.content.decode("utf-8"))
+@pytest.fixture
+def auth_endpoint_url():
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": 1234567890,
+        "scope": "post",
+    }
+    return f"{base_url}?{urlencode(url_params)}"
 
-    def test_authenticated(self):
-        """Assure we get back an auth code if we are authenticated."""
-        self.client.login(username=self.username, password=self.password)
-        response = self.client.get(self.endpoint_url)
-        self.assertEqual(response.status_code, 302)
-        self.assertTrue("code" in response.url)
 
-    def test_get_or_create(self):
-        """Test get or create logic for Auth object."""
-        self.client.login(username=self.username, password=self.password)
-        for _i in range(2):
-            response = self.client.get(self.endpoint_url)
-            self.assertEqual(response.status_code, 302)
-            self.assertTrue("code" in response.url)
+@pytest.mark.django_db
+def test_not_authenticated(client, auth_endpoint_url):
+    """
+    Assure we are redirected to login if we try to get an auth-code
+    from the indieweb auth endpoint and are not yet logged in.
+    """
+    response = client.get(auth_endpoint_url)
+    assert response.status_code == 302
+    assert "login" in response.url
 
-    def test_auth_timeout_reset(self):
-        """Test timeout is resetted on new authentication."""
-        self.client.login(username=self.username, password=self.password)
-        response = self.client.get(self.endpoint_url)
-        data = parse_qs(urlparse(response.url).query)
-        auth = Auth.objects.get(owner=self.user, me=data["me"][0])
-        timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
-        auth.created = auth.created - timedelta(seconds=timeout + 10)
-        auth.save()
-        response = self.client.get(self.endpoint_url)
-        auth = Auth.objects.get(owner=self.user, me=data["me"][0])
-        self.assertTrue((datetime.now(pytz.utc) - auth.created).seconds <= timeout)
+
+@pytest.mark.django_db
+def test_authenticated_without_params(client, user):
+    """Assure get without proper parameters raises an error."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    response = client.get(base_url)
+    assert response.status_code == 404
+    assert "missing" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_authenticated(client, user, auth_endpoint_url):
+    """Assure we get back an auth code if we are authenticated."""
+    client.login(username=user.username, password="password")
+    response = client.get(auth_endpoint_url)
+    assert response.status_code == 302
+    assert "code" in response.url
+
+
+@pytest.mark.django_db
+def test_get_or_create(client, user, auth_endpoint_url):
+    """Test get or create logic for Auth object."""
+    client.login(username=user.username, password="password")
+    for _i in range(2):
+        response = client.get(auth_endpoint_url)
+        assert response.status_code == 302
+        assert "code" in response.url
+
+
+@pytest.mark.django_db
+def test_auth_timeout_reset(client, user, auth_endpoint_url):
+    """Test timeout is resetted on new authentication."""
+    client.login(username=user.username, password="password")
+    response = client.get(auth_endpoint_url)
+    data = parse_qs(urlparse(response.url).query)
+    auth = Auth.objects.get(owner=user, me=data["me"][0])
+    timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
+    auth.created = auth.created - timedelta(seconds=timeout + 10)
+    auth.save()
+    response = client.get(auth_endpoint_url)
+    auth = Auth.objects.get(owner=user, me=data["me"][0])
+    assert (datetime.now(pytz.utc) - auth.created).seconds <= timeout
