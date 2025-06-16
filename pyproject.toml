@@ -99,8 +99,30 @@ filterwarnings = [
 addopts = [
     "--reuse-db",
     "--no-migrations",
+    "--cov-config=pyproject.toml",
 ]
 norecursedirs = [
     ".git",
     "docs",
+]
+
+[tool.coverage.run]
+source = ["src/indieweb"]
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    "*/__init__.py",
+    "*/settings.py",
+    "*/wsgi.py",
+    "*/asgi.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
 ]
