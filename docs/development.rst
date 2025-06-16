@@ -69,9 +69,8 @@ Building Documentation
 
 To build the documentation locally::
 
-    cd docs
-    make html
-    open _build/html/index.html
+    make -C docs html
+    open docs/_build/html/index.html
 
 Building and Publishing Releases
 --------------------------------
@@ -95,11 +94,6 @@ Building and Publishing Releases
     uv publish --token your_token
 
    Replace ``your_token`` with your PyPI API token.
-
-   You can also set the token as an environment variable::
-
-    export UV_PUBLISH_TOKEN=your_token
-    uv publish
 
 5. Create a git tag for the release::
 
