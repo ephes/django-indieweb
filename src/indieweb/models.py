@@ -9,6 +9,8 @@ from model_utils.models import TimeStampedModel
 
 
 class GenKeyMixin(models.Model):
+    """Mixin that automatically generates a random key on save if not provided."""
+
     key: models.CharField[str, str]
 
     class Meta:
@@ -21,6 +23,13 @@ class GenKeyMixin(models.Model):
 
 
 class Auth(GenKeyMixin, TimeStampedModel):
+    """
+    Model for storing IndieAuth authorization codes.
+
+    Used during the IndieAuth flow to temporarily store authorization details
+    before exchanging the auth code for an access token.
+    """
+
     key = models.CharField(max_length=32)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="indieweb_auth", on_delete=models.CASCADE)
     state = models.CharField(max_length=32)
@@ -37,6 +46,13 @@ class Auth(GenKeyMixin, TimeStampedModel):
 
 
 class Token(GenKeyMixin, TimeStampedModel):
+    """
+    Model for storing IndieAuth/Micropub access tokens.
+
+    Represents long-lived access tokens that clients can use to authenticate
+    requests to the Micropub endpoint and other IndieWeb services.
+    """
+
     key = models.CharField(max_length=32, db_index=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,

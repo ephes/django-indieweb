@@ -23,12 +23,21 @@ logger = logging.getLogger(__name__)
 
 
 class CSRFExemptMixin(View):
+    """Mixin to exempt views from CSRF protection."""
+
     @method_decorator(csrf_exempt)
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         return super().dispatch(request, *args, **kwargs)
 
 
 class TokenAuthMixin(View):
+    """
+    Mixin for views that require token-based authentication.
+
+    Validates Bearer tokens from either the Authorization header or POST data
+    and enforces scope-based authorization.
+    """
+
     token: Token
 
     def authenticated(self, request: HttpRequest) -> bool:
@@ -63,6 +72,14 @@ class TokenAuthMixin(View):
 
 
 class AuthView(CSRFExemptMixin, AccessMixin, View):
+    """
+    IndieAuth authorization endpoint.
+
+    Handles the authorization flow where users grant permission to client applications.
+    GET: Shows authorization prompt (or redirects with auth code if pre-authorized)
+    POST: Verifies auth codes
+    """
+
     required_params: list[str] = ["client_id", "redirect_uri", "state", "me"]
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
@@ -121,6 +138,13 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
 
 
 class TokenView(CSRFExemptMixin, View):
+    """
+    IndieAuth token endpoint.
+
+    Exchanges valid authorization codes for access tokens that can be used
+    to authenticate API requests.
+    """
+
     def send_token(self, me: str, client_id: str, scope: str | None, owner: AbstractBaseUser) -> HttpResponse:
         token, created = Token.objects.get_or_create(me=me, client_id=client_id, scope=scope, owner=owner)
         response_values: dict[str, str | int] = {
@@ -154,6 +178,15 @@ class TokenView(CSRFExemptMixin, View):
 
 
 class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
+    """
+    Micropub endpoint for creating posts.
+
+    Implements the Micropub protocol for creating content on the site.
+    Requires valid access token with appropriate scope.
+    GET: Returns configuration/verification info
+    POST: Creates new content
+    """
+
     request: HttpRequest
 
     @property
