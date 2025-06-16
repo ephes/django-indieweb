@@ -64,6 +64,30 @@ Run all pre-commit hooks::
 
     pre-commit run --all-files
 
+Type Checking
+-------------
+
+The project uses mypy for static type checking. Type annotations have been added to improve code quality and catch potential bugs early.
+
+Run type checking::
+
+    uv run mypy
+
+To run mypy with more verbose output::
+
+    uv run mypy --show-error-codes
+
+To check a specific file::
+
+    uv run mypy src/indieweb/views.py
+
+The mypy configuration is defined in ``pyproject.toml`` and includes:
+
+- Strict optional checking
+- Disallowing untyped function definitions
+- Django plugin for better Django support
+- Type stubs for external libraries (django-stubs, types-pytz, types-requests)
+
 Building Documentation
 ----------------------
 
@@ -113,6 +137,9 @@ Development Commands Summary
 
     # Run tests with coverage
     uv run pytest --cov=indieweb
+
+    # Run type checking
+    uv run mypy
 
     # Run tox for all Python versions
     tox

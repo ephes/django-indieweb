@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING, cast
 
 import pytz
 from braces.views._access import AccessMixin
 from django.conf import settings
-from django.http import HttpResponse
+from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
@@ -13,17 +16,22 @@ from django.views.generic import View
 
 from .models import Auth, Token
 
+if TYPE_CHECKING:
+    from django.contrib.auth.models import AbstractBaseUser
+
 logger = logging.getLogger(__name__)
 
 
-class CSRFExemptMixin:
+class CSRFExemptMixin(View):
     @method_decorator(csrf_exempt)
-    def dispatch(self, *args, **kwargs):
-        return super().dispatch(*args, **kwargs)
+    def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
+        return super().dispatch(request, *args, **kwargs)
 
 
-class TokenAuthMixin:
-    def authenticated(self, request):
+class TokenAuthMixin(View):
+    token: Token
+
+    def authenticated(self, request: HttpRequest) -> bool:
         key = None
         auth_token = request.META.get("Authorization", request.POST.get("Authorization"))
         if auth_token is not None:
@@ -40,11 +48,11 @@ class TokenAuthMixin:
         else:
             return False
 
-    def authorized(self, client_id, scope):
+    def authorized(self, client_id: str, scope: str | None) -> bool:
         # TODO implement access control based on client_id
-        return "post" in scope
+        return scope is not None and "post" in scope
 
-    def dispatch(self, request, *args, **kwargs):
+    def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not self.authenticated(request):
             return HttpResponse("authentication error", status=401)
 
@@ -55,11 +63,11 @@ class TokenAuthMixin:
 
 
 class AuthView(CSRFExemptMixin, AccessMixin, View):
-    required_params = ["client_id", "redirect_uri", "state", "me"]
+    required_params: list[str] = ["client_id", "redirect_uri", "state", "me"]
 
-    def get(self, request, *args, **kwargs):
+    def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
-            return self.handle_no_permission(request)
+            return cast(HttpResponseBase, self.handle_no_permission(request))
         client_id = request.GET.get("client_id")
         redirect_uri = request.GET.get("redirect_uri")
         state = request.GET.get("state")
@@ -75,6 +83,12 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
 
         # FIXME scope is optional
         scope = request.GET.get("scope")
+        # All required parameters are verified to be not None above
+        assert client_id is not None
+        assert redirect_uri is not None
+        assert state is not None
+        assert me is not None
+
         try:
             auth = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
             auth.delete()
@@ -93,7 +107,7 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
         logger.info(f"auth view get complete: {target}")
         return redirect(target)
 
-    def post(self, request, *args, **kwargs):
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         logger.info(f"auth view post: {request}, {args}, {kwargs}")
         auth_code = request.POST["code"]
         client_id = request.POST["client_id"]
@@ -107,19 +121,19 @@ class AuthView(CSRFExemptMixin, AccessMixin, View):
 
 
 class TokenView(CSRFExemptMixin, View):
-    def send_token(self, me, client_id, scope, owner):
+    def send_token(self, me: str, client_id: str, scope: str | None, owner: AbstractBaseUser) -> HttpResponse:
         token, created = Token.objects.get_or_create(me=me, client_id=client_id, scope=scope, owner=owner)
-        response_values = {
+        response_values: dict[str, str | int] = {
             "access_token": token.key,
             "expires_in": 10,
-            "scope": token.scope,
+            "scope": token.scope or "",
             "me": token.me,
         }
         response = urlencode(response_values)
         status_code = 201 if created else 200
         return HttpResponse(response, status=status_code)
 
-    def post(self, request, *args, **kwargs):
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         me = request.POST["me"]
         key = request.POST["code"]
         scope = request.POST["scope"]
@@ -140,18 +154,20 @@ class TokenView(CSRFExemptMixin, View):
 
 
 class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
+    request: HttpRequest
+
     @property
-    def content(self):
+    def content(self) -> str | None:
         return self.request.POST.get("content")
 
     @property
-    def categories(self):
+    def categories(self) -> list[str]:
         category_str = self.request.POST.get("category", "")
         return [c for c in category_str.split(",") if len(c) > 0]
 
     @property
-    def location(self):
-        location = {}
+    def location(self) -> dict[str, float | int]:
+        location: dict[str, float | int] = {}
         location_str = self.request.POST.get("location", "")
         if len(location_str) > 0:
             if ";" in location_str:
@@ -163,11 +179,11 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         return location
 
     @property
-    def in_reply_to(self):
+    def in_reply_to(self) -> str:
         url = self.request.POST.get("in-reply-to", "")
         return url
 
-    def post(self, request, *args, **kwargs):
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         # print('request: {}'.format(request))
         # print('post: {}'.format(request.POST))
         # print('files: {}'.format(request.FILES))
@@ -177,6 +193,6 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         # print(self.categories)
         return HttpResponse("created", status=201)
 
-    def get(self, request, *args, **kwargs):
+    def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         params = {"me": self.token.me}
         return HttpResponse(urlencode(params), status=200)

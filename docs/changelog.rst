@@ -3,6 +3,15 @@
 Changelog
 =========
 
+Unreleased
+----------
+* Fixed Read the Docs build by adding missing dependencies to docs/requirements.txt
+* Added coverage configuration to exclude migrations from coverage reports
+* Cleaned up duplicate documentation files (removed outdated .txt versions)
+* Added type annotations to models.py and views.py
+* Added mypy configuration with django-stubs for static type checking
+* Added documentation for running mypy in development.rst
+
 0.1.0 (2025-01-13)
 ------------------
 * Migrated from flit to uv build backend

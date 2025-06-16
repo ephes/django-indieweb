@@ -46,6 +46,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "django-environ",
+    "django-stubs[compatible-mypy]",
     "furo",
     "mypy",
     "pre-commit",
@@ -55,6 +56,8 @@ dev = [
     "ruff",
     "requests",
     "tox",
+    "types-pytz",
+    "types-requests",
 ]
 
 [project.urls]
@@ -126,3 +129,31 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+strict_optional = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+files = ["src/indieweb"]
+plugins = ["mypy_django_plugin.main"]
+
+[[tool.mypy.overrides]]
+module = "braces.views._access"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "environ"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[tool.django-stubs]
+django_settings_module = "tests.settings"
