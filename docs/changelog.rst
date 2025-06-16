@@ -3,8 +3,8 @@
 Changelog
 =========
 
-Unreleased
-----------
+0.2.0 (2025-06-16)
+------------------
 * Fixed Read the Docs build by adding missing dependencies to docs/requirements.txt
 * Added coverage configuration to exclude migrations from coverage reports
 * Cleaned up duplicate documentation files (removed outdated .txt versions)
@@ -21,7 +21,7 @@ Unreleased
 * Added __str__ method to Token model
 * Added docstrings to all model and view classes
 
-0.1.0 (2025-01-13)
+0.1.0 (2025-06-13)
 ------------------
 * Migrated from flit to uv build backend
 * Moved package from top-level to src layout
