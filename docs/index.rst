@@ -15,6 +15,7 @@ Welcome to django-indieweb's documentation!
    configuration
    development
    changelog
+   modules
 
 Features
 --------

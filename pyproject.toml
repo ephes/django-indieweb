@@ -37,6 +37,7 @@ classifiers = [
 
 dependencies = [
     "Django",
+    "django-model-utils",
 ]
 
 [dependency-groups]
