@@ -79,7 +79,7 @@ def test_get_or_create(client, user, auth_endpoint_url):
 
 @pytest.mark.django_db
 def test_auth_timeout_reset(client, user, auth_endpoint_url):
-    """Test timeout is resetted on new authentication."""
+    """Test timeout is reset on new authentication."""
     client.login(username=user.username, password="password")
     response = client.get(auth_endpoint_url)
     data = parse_qs(urlparse(response.url).query)
