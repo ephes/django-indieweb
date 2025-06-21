@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
-else:
-    AbstractBaseUser = object
 
 
 @dataclass
@@ -42,7 +40,7 @@ class MicropubContentHandler(ABC):
     """
 
     @abstractmethod
-    def create_entry(self, properties: dict[str, list[Any]], user: AbstractBaseUser) -> MicropubEntry:
+    def create_entry(self, properties: dict[str, list[Any]], user: "AbstractBaseUser") -> MicropubEntry:
         """
         Create a new entry from Micropub properties.
 
@@ -56,7 +54,7 @@ class MicropubContentHandler(ABC):
         pass
 
     @abstractmethod
-    def update_entry(self, url: str, updates: dict[str, Any], user: AbstractBaseUser) -> MicropubEntry:
+    def update_entry(self, url: str, updates: dict[str, Any], user: "AbstractBaseUser") -> MicropubEntry:
         """
         Update an existing entry.
 
@@ -74,7 +72,7 @@ class MicropubContentHandler(ABC):
         pass
 
     @abstractmethod
-    def delete_entry(self, url: str, user: AbstractBaseUser) -> None:
+    def delete_entry(self, url: str, user: "AbstractBaseUser") -> None:
         """
         Delete an entry.
 
@@ -88,7 +86,7 @@ class MicropubContentHandler(ABC):
         pass
 
     @abstractmethod
-    def undelete_entry(self, url: str, user: AbstractBaseUser) -> MicropubEntry:
+    def undelete_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry:
         """
         Restore a deleted entry.
 
@@ -105,7 +103,7 @@ class MicropubContentHandler(ABC):
         pass
 
     @abstractmethod
-    def get_entry(self, url: str, user: AbstractBaseUser) -> MicropubEntry | None:
+    def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
         """
         Retrieve an entry by URL.
 
@@ -118,7 +116,7 @@ class MicropubContentHandler(ABC):
         """
         pass
 
-    def get_config(self, user: AbstractBaseUser) -> dict[str, Any]:
+    def get_config(self, user: "AbstractBaseUser") -> dict[str, Any]:
         """
         Get Micropub configuration.
 
@@ -146,7 +144,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         self.deleted_entries: dict[str, MicropubEntry] = {}
         self.counter = 0
 
-    def create_entry(self, properties: dict[str, list[Any]], user: AbstractBaseUser) -> MicropubEntry:
+    def create_entry(self, properties: dict[str, list[Any]], user: "AbstractBaseUser") -> MicropubEntry:
         self.counter += 1
         url = f"/entries/{self.counter}/"
 
@@ -195,7 +193,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
                 if not entry.properties[key]:
                     del entry.properties[key]
 
-    def update_entry(self, url: str, updates: dict[str, Any], user: AbstractBaseUser) -> MicropubEntry:
+    def update_entry(self, url: str, updates: dict[str, Any], user: "AbstractBaseUser") -> MicropubEntry:
         if url not in self.entries:
             raise ValueError(f"Entry not found: {url}")
 
@@ -218,13 +216,13 @@ class InMemoryMicropubHandler(MicropubContentHandler):
 
         return entry
 
-    def delete_entry(self, url: str, user: AbstractBaseUser) -> None:
+    def delete_entry(self, url: str, user: "AbstractBaseUser") -> None:
         if url not in self.entries:
             raise ValueError(f"Entry not found: {url}")
 
         self.deleted_entries[url] = self.entries.pop(url)
 
-    def undelete_entry(self, url: str, user: AbstractBaseUser) -> MicropubEntry:
+    def undelete_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry:
         if url not in self.deleted_entries:
             raise ValueError(f"Deleted entry not found: {url}")
 
@@ -232,7 +230,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         self.entries[url] = entry
         return entry
 
-    def get_entry(self, url: str, user: AbstractBaseUser) -> MicropubEntry | None:
+    def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
         return self.entries.get(url)
 
 
