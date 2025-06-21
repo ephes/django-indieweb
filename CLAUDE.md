@@ -99,6 +99,10 @@ uv publish --token your_token
 ## Code Style
 
 - Ruff for linting and formatting with 119 character line length
+- Use modern Python type hints:
+  - Use `list`, `dict`, `set`, `tuple` instead of `List`, `Dict`, `Set`, `Tuple`
+  - Use pipe notation `|` instead of `Optional[]` (e.g., `str | None` instead of `Optional[str]`)
+  - Use `from typing import Any` when needed, but prefer built-in types
 - Pre-commit hooks for:
   - Trailing whitespace
   - End of file fixing

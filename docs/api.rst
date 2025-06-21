@@ -3,9 +3,9 @@ API Reference
 
 This document describes the IndieWeb endpoints provided by django-indieweb.
 
-.. warning::
-   The Micropub endpoint is currently not fully implemented. It accepts requests
-   but does not actually create content. This is a limitation of the current version.
+.. note::
+   The Micropub endpoint is now fully implemented with a pluggable content handler
+   system. See the :doc:`micropub` documentation for implementation details.
 
 Endpoints Overview
 ------------------
@@ -14,7 +14,7 @@ django-indieweb provides three main endpoints:
 
 - ``/indieweb/auth/`` - IndieAuth authorization endpoint
 - ``/indieweb/token/`` - Token endpoint for exchanging auth codes
-- ``/indieweb/micropub/`` - Micropub endpoint for creating content (stub implementation)
+- ``/indieweb/micropub/`` - Micropub endpoint for creating content
 
 IndieAuth Flow
 --------------
@@ -165,9 +165,8 @@ Micropub Endpoint
 
 **URL:** ``/indieweb/micropub/``
 
-.. warning::
-   This endpoint is currently a stub implementation. It accepts requests but
-   does not actually create content in the database.
+The Micropub endpoint supports creating, updating, and deleting content through
+a pluggable handler system. See :doc:`micropub` for detailed implementation guide.
 
 Authentication
 ~~~~~~~~~~~~~~
@@ -202,17 +201,25 @@ Returns the authenticated user's profile URL.
 POST Request
 ~~~~~~~~~~~~
 
-Creates a new post (currently only returns success without creating content).
+Creates a new post using the configured content handler.
+
+**Supported Content Types:**
+
+- ``application/x-www-form-urlencoded`` - Form-encoded data
+- ``application/json`` - JSON formatted data
 
 **Common Parameters:**
 
 - ``h`` - The entry type (e.g., "entry")
 - ``content`` - The post content
-- ``category`` - Comma-separated categories
+- ``name`` - The post title/name
+- ``category`` - Categories (comma-separated in form data, array in JSON)
 - ``in-reply-to`` - URL this post is replying to
 - ``location`` - Geographic location in geo URI format
+- ``photo`` - Photo URL(s)
+- ``published`` - Publication date
 
-**Example Request:**
+**Form-Encoded Example:**
 
 .. code-block:: http
 
@@ -223,19 +230,52 @@ Creates a new post (currently only returns success without creating content).
 
     h=entry&content=Hello+World&category=test,indieweb
 
-**Location Format:**
+**JSON Example:**
 
-- Simple: ``geo:37.786971,-122.399677``
-- With uncertainty: ``geo:37.786971,-122.399677;u=35``
+.. code-block:: http
+
+    POST /indieweb/micropub/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: application/json
+
+    {
+        "type": ["h-entry"],
+        "properties": {
+            "content": ["Hello World"],
+            "category": ["test", "indieweb"]
+        }
+    }
 
 **Response:**
 
 .. code-block:: http
 
     HTTP/1.1 201 Created
-    Content-Type: text/plain
+    Location: https://yoursite.com/posts/123/
 
-    created
+Query Endpoints
+~~~~~~~~~~~~~~~
+
+The Micropub endpoint supports several query parameters:
+
+**Configuration Query:**
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=config HTTP/1.1
+    Authorization: Bearer xyz789
+
+Returns supported post types and features.
+
+**Syndication Targets Query:**
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=syndicate-to HTTP/1.1
+    Authorization: Bearer xyz789
+
+Returns available syndication targets.
 
 Error Responses
 ---------------

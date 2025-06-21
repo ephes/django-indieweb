@@ -24,7 +24,10 @@ Features
 
 * IndieAuth authentication endpoint
 * IndieAuth token endpoint
-* Micropub endpoint for creating posts
+* Micropub endpoint with full content creation support
+* Pluggable content handler system for Micropub
+* Support for both form-encoded and JSON Micropub requests
+* Micropub query endpoints (config, syndicate-to)
 * Django integration
 
 Installation
@@ -61,6 +64,27 @@ Quick Start
    * ``/indieweb/auth/`` - Authentication endpoint
    * ``/indieweb/token/`` - Token endpoint
    * ``/indieweb/micropub/`` - Micropub endpoint
+
+5. To use Micropub for content creation, create a custom content handler::
+
+    from indieweb.handlers import MicropubContentHandler, MicropubEntry
+
+    class MyContentHandler(MicropubContentHandler):
+        def create_entry(self, properties, user):
+            # Create your content here
+            post = MyBlogPost.objects.create(
+                author=user,
+                content=properties.get('content', [''])[0]
+            )
+            return MicropubEntry(
+                url=post.get_absolute_url(),
+                properties=properties
+            )
+        # ... implement other methods
+
+   Then configure it in settings::
+
+    INDIEWEB_MICROPUB_HANDLER = 'myapp.handlers.MyContentHandler'
 
 Development
 -----------

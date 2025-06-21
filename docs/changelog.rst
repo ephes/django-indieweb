@@ -3,6 +3,20 @@
 Changelog
 =========
 
+0.3.0 (unreleased)
+------------------
+* **MAJOR**: Implemented fully functional Micropub endpoint with content creation
+* Added pluggable content handler system for Micropub integration
+* Added ``MicropubContentHandler`` abstract base class for custom implementations
+* Added ``InMemoryMicropubHandler`` for testing and development
+* Added support for both form-encoded and JSON Micropub requests
+* Implemented Micropub query endpoints (``?q=config``, ``?q=syndicate-to``)
+* Added comprehensive test suite for Micropub functionality (19 new tests)
+* Added detailed Micropub documentation with integration examples
+* Added example content handlers demonstrating various integration patterns
+* Updated type hints to use modern Python syntax (``list``, ``dict`` instead of ``List``, ``Dict``)
+* **BREAKING**: Removed old Micropub property methods that were implementation details
+
 0.2.0 (2025-06-16)
 ------------------
 * Fixed Read the Docs build by adding missing dependencies to docs/requirements.txt

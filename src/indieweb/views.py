@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
@@ -12,6 +13,7 @@ from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
+from .handlers import get_micropub_handler
 from .models import Auth, Token
 
 if TYPE_CHECKING:
@@ -182,49 +184,128 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
 
     Implements the Micropub protocol for creating content on the site.
     Requires valid access token with appropriate scope.
-    GET: Returns configuration/verification info
+    GET: Returns configuration/verification info or handles queries
     POST: Creates new content
     """
 
     request: HttpRequest
 
-    @property
-    def content(self) -> str | None:
-        return self.request.POST.get("content")
+    def _parse_json_request(self, request: HttpRequest) -> dict[str, Any]:
+        """Parse JSON formatted Micropub request."""
+        try:
+            data = json.loads(request.body)
+            # Convert JSON format to normalized properties format
+            if "type" in data and isinstance(data["type"], list):
+                # Already in microformats2 JSON format
+                properties: dict[str, Any] = data.get("properties", {})
+                return properties
+            else:
+                # Convert simple JSON to properties format
+                properties = {}
+                for key, value in data.items():
+                    if key not in ["access_token", "h", "action", "url"]:
+                        properties[key] = [value] if not isinstance(value, list) else value
+                return properties
+        except json.JSONDecodeError:
+            return {}
 
-    @property
-    def categories(self) -> list[str]:
-        category_str = self.request.POST.get("category", "")
-        return [c for c in category_str.split(",") if len(c) > 0]
+    def _parse_form_property(self, request: HttpRequest, property_name: str, is_list: bool = False) -> dict[str, Any]:
+        """Parse a single property from form data."""
+        properties = {}
+        if is_list:
+            if f"{property_name}[]" in request.POST:
+                properties[property_name] = request.POST.getlist(f"{property_name}[]")
+        else:
+            if property_name in request.POST:
+                value = request.POST.get(property_name, "")
+                if property_name == "category" and "," in value:
+                    # Handle comma-separated categories
+                    properties[property_name] = [c.strip() for c in value.split(",") if c.strip()]
+                elif value:  # Only add non-empty values
+                    properties[property_name] = [value]
+        return properties
 
-    @property
-    def location(self) -> dict[str, float | int]:
-        location: dict[str, float | int] = {}
-        location_str = self.request.POST.get("location", "")
-        if len(location_str) > 0:
-            if ";" in location_str:
-                location["uncertainty"] = int(location_str.split(";")[-1].split("=")[-1])
-            if location_str.startswith("geo:"):
-                lat, lng = location_str.split(";")[0].split(":")[-1].split(",")
-                location["latitude"] = float(lat)
-                location["longitude"] = float(lng)
-        return location
+    def _parse_form_request(self, request: HttpRequest) -> dict[str, Any]:
+        """Parse form-encoded Micropub request."""
+        properties = {}
 
-    @property
-    def in_reply_to(self) -> str:
-        url = self.request.POST.get("in-reply-to", "")
-        return url
+        # Simple properties (including category which can be comma-separated)
+        for prop in ["content", "name", "category", "location", "in-reply-to", "published", "photo"]:
+            properties.update(self._parse_form_property(request, prop))
+
+        # List properties (override if array format is used)
+        for prop in ["content", "photo", "category"]:
+            list_props = self._parse_form_property(request, prop, is_list=True)
+            if list_props:
+                properties.update(list_props)
+
+        # Handle file uploads
+        if "photo" in request.FILES:
+            # TODO: Handle file uploads
+            pass
+
+        return properties
+
+    def parse_request_data(self, request: HttpRequest) -> dict[str, Any]:
+        """Parse Micropub data from either form-encoded or JSON request."""
+        if request.content_type == "application/json":
+            return self._parse_json_request(request)
+        else:
+            return self._parse_form_request(request)
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
-        # print('request: {}'.format(request))
-        # print('post: {}'.format(request.POST))
-        # print('files: {}'.format(request.FILES))
-        # print('meta: {}'.format(request.META))
+        """Handle POST requests to create or modify content."""
         self.request = request
-        # location = self.get_location()
-        # print(self.categories)
-        return HttpResponse("created", status=201)
+
+        # Check for action parameter (for updates/deletes)
+        action = request.POST.get("action") or (
+            json.loads(request.body).get("action") if request.content_type == "application/json" else None
+        )
+
+        if action in ["update", "delete", "undelete"]:
+            # TODO: Implement update/delete/undelete actions
+            return HttpResponse("Not implemented", status=501)
+
+        # Parse properties from request
+        properties = self.parse_request_data(request)
+
+        # Get the content handler and create entry
+        handler = get_micropub_handler()
+
+        try:
+            entry = handler.create_entry(properties, self.token.owner)
+
+            # Return 201 Created with Location header
+            response = HttpResponse(status=201)
+            # Build full URL - check if entry.url is already absolute
+            if entry.url.startswith("http"):
+                response["Location"] = entry.url
+            else:
+                # Build absolute URL from request
+                response["Location"] = request.build_absolute_uri(entry.url)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error creating micropub entry: {e}")
+            return HttpResponse(f"Error creating entry: {str(e)}", status=400)
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
-        params = {"me": self.token.me}
-        return HttpResponse(urlencode(params), status=200)
+        """Handle GET requests for queries and configuration."""
+        q = request.GET.get("q")
+
+        if q == "config":
+            # Return configuration
+            handler = get_micropub_handler()
+            config = handler.get_config(self.token.owner)
+            return HttpResponse(json.dumps(config), content_type="application/json")
+        elif q == "source":
+            # TODO: Implement source query
+            return HttpResponse("Not implemented", status=501)
+        elif q == "syndicate-to":
+            # Return empty syndication targets for now
+            return HttpResponse(json.dumps({"syndicate-to": []}), content_type="application/json")
+        else:
+            # Default response with user's me URL
+            params = {"me": self.token.me}
+            return HttpResponse(urlencode(params), status=200)

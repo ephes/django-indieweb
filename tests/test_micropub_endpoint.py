@@ -14,13 +14,6 @@ from django.contrib.auth.models import User
 from django.urls import reverse
 
 from indieweb import models
-from indieweb.views import MicropubView
-
-
-class DummyRequest:
-    GET = {}
-    POST = {}
-    META = {}
 
 
 @pytest.fixture
@@ -82,7 +75,7 @@ def test_correct_token_header(client, token, micropub_endpoint_url, micropub_pay
     auth_header = f"Bearer {token.key}"
     response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
     assert response.status_code == 201
-    assert "created" in response.content.decode("utf-8")
+    assert "Location" in response  # Should return Location header
 
 
 @pytest.mark.django_db
@@ -95,7 +88,7 @@ def test_correct_token_body(client, token, micropub_endpoint_url, micropub_paylo
     micropub_payload["Authorization"] = auth_body
     response = client.post(micropub_endpoint_url, data=micropub_payload)
     assert response.status_code == 201
-    assert "created" in response.content.decode("utf-8")
+    assert "Location" in response  # Should return Location header
 
 
 @pytest.mark.django_db
@@ -114,51 +107,7 @@ def test_not_authorized(client, token, micropub_endpoint_url, micropub_payload):
     token.save()
 
 
-def test_content():
-    """Test post with content."""
-    mv = MicropubView()
-    mv.request = DummyRequest()
-    assert mv.content is None
-    mv.request.POST["content"] = None
-    assert mv.content is None
-    content = "foobar"
-    mv.request.POST["content"] = "foobar"
-    assert mv.content == content
-
-
-def test_categories():
-    """Test post with categories."""
-    mv = MicropubView()
-    mv.request = DummyRequest()
-    assert mv.categories == []
-
-    mv.request.POST["category"] = "foo,bar,baz"
-    assert len(mv.categories) == 3
-
-    mv.request.POST["category"] = "foo"
-    assert mv.categories == ["foo"]
-
-    mv.request.POST["category"] = ""
-    assert mv.categories == []
-
-
-def test_location():
-    """Test post with location."""
-    mv = MicropubView()
-    mv.request = DummyRequest()
-    assert mv.location == {}
-
-    mv.request.POST["location"] = "foo,bar,baz"
-    assert mv.location == {}
-
-    lat, lng = 37.786971, -122.399677
-    mv.request.POST["location"] = f"geo:{lat},{lng}"
-    assert mv.location == {"latitude": lat, "longitude": lng}
-
-    uncertainty = 35
-    result = {"latitude": lat, "longitude": lng, "uncertainty": uncertainty}
-    mv.request.POST["location"] = f"geo:{lat},{lng};crs=Moon-2011;u={uncertainty}"
-    assert mv.location == result
+# Property tests removed - parsing logic is now tested via integration tests in test_micropub_create.py
 
 
 @pytest.mark.django_db
