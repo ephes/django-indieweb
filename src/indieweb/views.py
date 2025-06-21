@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
-from django.shortcuts import redirect
+from django.shortcuts import redirect, render
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
@@ -76,8 +76,8 @@ class AuthView(CSRFExemptMixin, View):
     IndieAuth authorization endpoint.
 
     Handles the authorization flow where users grant permission to client applications.
-    GET: Shows authorization prompt (or redirects with auth code if pre-authorized)
-    POST: Verifies auth codes
+    GET: Shows authorization consent screen
+    POST: Handles consent form submission or verifies auth codes
     """
 
     required_params: list[str] = ["client_id", "redirect_uri", "state", "me"]
@@ -99,7 +99,7 @@ class AuthView(CSRFExemptMixin, View):
                 logger.info(f"missing parameter: {name}")
                 return HttpResponse(err_msg, status=404)
 
-        # FIXME scope is optional
+        # scope is optional
         scope = request.GET.get("scope")
         # All required parameters are verified to be not None above
         assert client_id is not None
@@ -107,35 +107,90 @@ class AuthView(CSRFExemptMixin, View):
         assert state is not None
         assert me is not None
 
-        try:
-            auth = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
-            auth.delete()
-        except Auth.DoesNotExist:
-            pass
-        auth = Auth.objects.create(
-            owner=request.user,
-            client_id=client_id,
-            redirect_uri=redirect_uri,
-            state=state,
-            scope=scope,
-            me=me,
-        )
-        url_params = {"code": auth.key, "state": state, "me": me}
-        target = f"{redirect_uri}?{urlencode(url_params)}"
-        logger.info(f"auth view get complete: {target}")
-        return redirect(target)
+        # Parse scope into list for display
+        scope_list = []
+        if scope:
+            scope_list = scope.split()
 
-    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        # Render consent screen
+        context = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "me": me,
+            "scope": scope,
+            "scope_list": scope_list,
+        }
+        return render(request, "indieweb/consent.html", context)
+
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         logger.info(f"auth view post: {request}, {args}, {kwargs}")
-        auth_code = request.POST["code"]
-        client_id = request.POST["client_id"]
-        logger.info(f"auth view post: {client_id}, {auth_code}")
-        auth = Auth.objects.get(key=auth_code, client_id=client_id)
-        # if auth.key == key:
-        response_values = {"me": auth.me}
-        response = urlencode(response_values)
-        status_code = 200
-        return HttpResponse(response, status=status_code)
+
+        # Check if this is a consent form submission
+        action = request.POST.get("action")
+        if action in ["approve", "deny"]:
+            # Handle consent form submission
+            client_id = request.POST.get("client_id")
+            redirect_uri = request.POST.get("redirect_uri")
+            state = request.POST.get("state")
+            me = request.POST.get("me")
+            scope = request.POST.get("scope")
+
+            # Validate required parameters
+            if not all([client_id, redirect_uri, state, me]):
+                return HttpResponse("Missing required parameters", status=400)
+
+            # These are verified to be not None above
+            assert client_id is not None
+            assert redirect_uri is not None
+            assert state is not None
+            assert me is not None
+
+            if action == "approve":
+                # User approved - create auth code and redirect
+                if not request.user.is_authenticated:
+                    return HttpResponse("User not authenticated", status=401)
+
+                try:
+                    auth = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
+                    auth.delete()
+                except Auth.DoesNotExist:
+                    pass
+
+                auth = Auth.objects.create(
+                    owner=request.user,
+                    client_id=client_id,
+                    redirect_uri=redirect_uri,
+                    state=state,
+                    scope=scope,
+                    me=me,
+                )
+                url_params: dict[str, str] = {"code": auth.key, "state": state, "me": me}
+                target = f"{redirect_uri}?{urlencode(url_params)}"
+                logger.info(f"auth view consent approved: {target}")
+                return redirect(target)
+            else:
+                # User denied - redirect with error
+                deny_params: dict[str, str] = {"error": "access_denied", "state": state}
+                target = f"{redirect_uri}?{urlencode(deny_params)}"
+                logger.info(f"auth view consent denied: {target}")
+                return redirect(target)
+        else:
+            # Original auth code verification flow
+            auth_code = request.POST.get("code")
+            client_id = request.POST.get("client_id")
+
+            if not auth_code or not client_id:
+                return HttpResponse("Missing code or client_id", status=400)
+
+            logger.info(f"auth view post verification: {client_id}, {auth_code}")
+            try:
+                auth = Auth.objects.get(key=auth_code, client_id=client_id)
+                response_values = {"me": auth.me}
+                response = urlencode(response_values)
+                return HttpResponse(response, status=200)
+            except Auth.DoesNotExist:
+                return HttpResponse("Invalid authorization code", status=400)
 
 
 class TokenView(CSRFExemptMixin, View):

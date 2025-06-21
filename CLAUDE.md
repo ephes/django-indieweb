@@ -112,6 +112,20 @@ uv publish --token your_token
   - Ruff linting and formatting
   - djhtml for template formatting
 
+## Development Guidelines
+
+### Definition of Done
+
+A feature is NOT considered complete until:
+
+1. **All tests pass** - Run `pytest` to ensure no regressions
+2. **MyPy type checking passes** - No type errors when running mypy
+3. **Pre-commit hooks pass** - Run `pre-commit run --all-files`
+4. **New functionality has tests** - Add comprehensive tests for any new features
+5. **Documentation is updated** - Update relevant docs if behavior changes
+
+Always verify these before considering any implementation complete.
+
 ## Notes
 
 - Main branch is `develop`

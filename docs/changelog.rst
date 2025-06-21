@@ -16,6 +16,10 @@ Changelog
 * Added example content handlers demonstrating various integration patterns
 * Updated type hints to use modern Python syntax (``list``, ``dict`` instead of ``List``, ``Dict``)
 * **BREAKING**: Removed old Micropub property methods that were implementation details
+* Added comprehensive documentation for IndieAuth implementation including consent screen
+* Added test suite for IndieAuth consent screen functionality (14 new tests)
+* Fixed MyPy type errors in AuthView for better type safety
+* Updated development guidelines with "Definition of Done" criteria
 
 0.2.0 (2025-06-16)
 ------------------

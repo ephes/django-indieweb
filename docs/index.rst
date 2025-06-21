@@ -11,6 +11,7 @@ Welcome to django-indieweb's documentation!
 
    concepts
    tutorial
+   indieauth
    micropub
    api
    configuration
@@ -21,8 +22,9 @@ Welcome to django-indieweb's documentation!
 Features
 --------
 
-* IndieAuth authentication endpoint
-* IndieAuth token endpoint
+* **IndieAuth authentication endpoint** - For logging into IndieWeb sites
+* **IndieAuth authorization endpoint with consent screen** - For granting permissions to apps
+* **IndieAuth token endpoint** - For exchanging auth codes for access tokens
 * **Micropub endpoint with full content creation support**
 * Pluggable content handler system for Micropub integration
 * Support for both form-encoded and JSON Micropub requests
