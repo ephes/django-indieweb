@@ -3,6 +3,10 @@
 Changelog
 =========
 
+0.3.1 (2025-06-28)
+------------------
+* Added merge migration to resolve parallel migration branches
+
 0.3.0 (2025-06-28)
 ------------------
 * **MAJOR**: Implemented fully functional Micropub endpoint with content creation
