@@ -3,7 +3,7 @@
 Changelog
 =========
 
-0.3.0 (unreleased)
+0.3.0 (2025-06-28)
 ------------------
 * **MAJOR**: Implemented fully functional Micropub endpoint with content creation
 * Added pluggable content handler system for Micropub integration
