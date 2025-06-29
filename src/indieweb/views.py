@@ -211,26 +211,54 @@ class TokenView(CSRFExemptMixin, View):
         }
         response = urlencode(response_values)
         status_code = 201 if created else 200
-        return HttpResponse(response, status=status_code)
+        return HttpResponse(response, status=status_code, content_type="application/x-www-form-urlencoded")
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
-        me = request.POST["me"]
-        key = request.POST["code"]
-        scope = request.POST["scope"]
-        client_id = request.POST["client_id"]
+        # Get parameters from request
+        code = request.POST.get("code")
+        client_id = request.POST.get("client_id")
+        redirect_uri = request.POST.get("redirect_uri")
+
+        # These are sometimes sent but not required by spec
+        me = request.POST.get("me")
+        scope = request.POST.get("scope")
+
+        # Validate required parameters
+        if not code or not client_id:
+            logger.error(f"Missing required parameters: code={code}, client_id={client_id}")
+            return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
+
         try:
-            auth = Auth.objects.get(me=me, client_id=client_id, scope=scope)
-            logger.info(f"token view post: {client_id}, {me}, {key} {scope}")
-        except Auth.DoesNotExist:
-            logger.info(f"auth does not exist: {client_id}, {me}, {scope}")
-            return HttpResponse("authentication error", status=401)
-        if auth.key == key:
-            # auth code is correct
+            # Find auth by code and client_id
+            auth = Auth.objects.get(key=code, client_id=client_id)
+
+            # Verify redirect_uri if provided
+            if redirect_uri and auth.redirect_uri and auth.redirect_uri != redirect_uri:
+                logger.error(f"Redirect URI mismatch: expected {auth.redirect_uri}, got {redirect_uri}")
+                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
+            # Use values from auth object if not provided in request
+            me = me or auth.me
+            scope = scope or auth.scope
+
+            logger.info(f"token view post: {client_id}, {me}, {code} {scope}")
+
+            # Check if auth code is still valid
             timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
-            if (datetime.now(timezone.utc) - auth.created).seconds <= timeout:
-                # auth code is still valid
-                return self.send_token(me, client_id, scope, auth.owner)
-        return HttpResponse("authentication error", status=401)
+            if (datetime.now(timezone.utc) - auth.created).seconds > timeout:
+                logger.error(f"Auth code expired for client_id={client_id}")
+                auth.delete()  # Clean up expired auth
+                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
+            # Delete auth code after use (one-time use)
+            auth.delete()
+
+            # Create and return token
+            return self.send_token(me, client_id, scope, auth.owner)
+
+        except Auth.DoesNotExist:
+            logger.error(f"Auth not found for code={code}, client_id={client_id}")
+            return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
 
 class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):

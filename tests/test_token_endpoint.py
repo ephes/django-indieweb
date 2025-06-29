@@ -57,8 +57,8 @@ def test_wrong_auth_code(client, token_endpoint_url, token_payload):
     """Assert we can't get a token with the wrong auth code."""
     token_payload["code"] = "wrong_key"
     response = client.post(token_endpoint_url, data=token_payload)
-    assert response.status_code == 401
-    assert "error" in response.content.decode("utf-8")
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
 
 
 @pytest.mark.django_db
@@ -78,5 +78,21 @@ def test_auth_code_timeout(client, auth, token_endpoint_url, token_payload):
     auth.created = auth.created - to_old_delta
     auth.save()
     response = client.post(token_endpoint_url, data=token_payload)
-    assert response.status_code == 401
-    assert "error" in response.content.decode("utf-8")
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_token_exchange_without_me_parameter(client, auth, token_endpoint_url):
+    """Test that token exchange works without the optional 'me' parameter."""
+    # IndieAuth spec says 'me' is optional in token exchange
+    token_payload = {
+        "code": auth.key,
+        "client_id": auth.client_id,
+        # 'me' parameter intentionally omitted
+    }
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+    assert data["me"][0] == auth.me  # Should get 'me' from auth object

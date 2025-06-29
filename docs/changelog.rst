@@ -3,6 +3,14 @@
 Changelog
 =========
 
+0.3.2 (2025-06-29)
+------------------
+* Fixed KeyError in TokenView when 'me' parameter is missing - the token endpoint now correctly handles optional parameters according to IndieAuth spec
+* Improved token endpoint error responses to use proper IndieAuth error codes (invalid_request, invalid_grant)
+* Added redirect_uri verification for enhanced security
+* Implemented one-time use of authorization codes to prevent replay attacks
+* Added proper content-type headers to token endpoint responses
+
 0.3.1 (2025-06-28)
 ------------------
 * Added merge migration to resolve parallel migration branches
