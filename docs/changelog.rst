@@ -3,6 +3,11 @@
 Changelog
 =========
 
+0.3.4 (2025-06-29)
+------------------
+* Fixed Token model unique constraint that prevented multiple clients from obtaining tokens for the same user
+* Removed incorrect unique=True from Token.me field (kept unique_together constraint)
+
 0.3.3 (2025-06-29)
 ------------------
 * Fixed micropub authorization to accept "create" scope (standard Micropub) in addition to legacy "post" scope

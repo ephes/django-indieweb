@@ -67,7 +67,7 @@ class Token(GenKeyMixin):
         on_delete=models.CASCADE,
     )
     client_id = models.CharField(max_length=512)
-    me = models.CharField(max_length=512, unique=True)
+    me = models.CharField(max_length=512)
     scope = models.CharField(max_length=256, null=True, blank=True)  # noqa
 
     class Meta:
