@@ -158,3 +158,29 @@ def test_multiple_scopes_authorization(client, user, micropub_endpoint_url, micr
     response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
     assert response.status_code == 201
     assert "Location" in response
+
+
+@pytest.mark.django_db
+def test_http_authorization_header(client, token, micropub_endpoint_url, micropub_payload):
+    """Test that HTTP_AUTHORIZATION header format (used by real HTTP requests) works."""
+    # Django's RequestFactory and real HTTP requests use HTTP_AUTHORIZATION
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, HTTP_AUTHORIZATION=auth_header)
+    assert response.status_code == 201
+    assert "Location" in response
+
+
+@pytest.mark.django_db
+def test_both_authorization_formats(client, token, micropub_endpoint_url):
+    """Test that both Authorization and HTTP_AUTHORIZATION formats work for GET requests."""
+    # Test with Authorization (test client format)
+    auth_header = f"Bearer {token.key}"
+    response1 = client.get(micropub_endpoint_url, Authorization=auth_header)
+    assert response1.status_code == 200
+
+    # Test with HTTP_AUTHORIZATION (real HTTP format)
+    response2 = client.get(micropub_endpoint_url, HTTP_AUTHORIZATION=auth_header)
+    assert response2.status_code == 200
+
+    # Both should return the same content
+    assert response1.content == response2.content

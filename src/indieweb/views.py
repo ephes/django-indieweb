@@ -42,7 +42,15 @@ class TokenAuthMixin(View):
 
     def authenticated(self, request: HttpRequest) -> bool:
         key = None
-        auth_token = request.META.get("Authorization", request.POST.get("Authorization"))
+        # Check for Authorization header - Django prefixes HTTP headers with HTTP_
+        auth_header = request.headers.get("authorization")
+        # Also check without prefix for compatibility with some clients
+        if not auth_header:
+            auth_header = request.META.get("Authorization")
+        # Finally check POST data as fallback
+        auth_post = request.POST.get("Authorization")
+        auth_token = auth_header or auth_post
+
         if auth_token is not None:
             key = auth_token.split()[-1]
         if key is not None:

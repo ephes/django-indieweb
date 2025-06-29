@@ -3,6 +3,12 @@
 Changelog
 =========
 
+0.3.5 (2025-06-29)
+------------------
+* Fixed Authorization header handling to check for HTTP_AUTHORIZATION (Django's standard header format)
+* Maintained backward compatibility with test client Authorization format
+* Added tests to verify both Authorization header formats work correctly
+
 0.3.4 (2025-06-29)
 ------------------
 * Fixed Token model unique constraint that prevented multiple clients from obtaining tokens for the same user
