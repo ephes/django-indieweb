@@ -130,3 +130,31 @@ def test_token_verification_on_get_wrong(client, micropub_endpoint_url):
     auth_header = "Bearer wrong_token"
     response = client.get(micropub_endpoint_url, Authorization=auth_header)
     assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_create_scope_authorization(client, user, micropub_endpoint_url, micropub_payload):
+    """Test that tokens with 'create' scope (standard Micropub) are authorized."""
+    # Create token with 'create' scope instead of 'post'
+    token = models.Token.objects.create(
+        me="http://example.org", client_id="https://webapp.example.org", scope="create", owner=user
+    )
+
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 201
+    assert "Location" in response
+
+
+@pytest.mark.django_db
+def test_multiple_scopes_authorization(client, user, micropub_endpoint_url, micropub_payload):
+    """Test that tokens with multiple scopes including 'create' are authorized."""
+    # Create token with multiple scopes as sent by Quill
+    token = models.Token.objects.create(
+        me="http://example.org", client_id="https://quill.p3k.io/", scope="profile create update media", owner=user
+    )
+
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 201
+    assert "Location" in response

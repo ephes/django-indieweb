@@ -3,6 +3,11 @@
 Changelog
 =========
 
+0.3.3 (2025-06-29)
+------------------
+* Fixed micropub authorization to accept "create" scope (standard Micropub) in addition to legacy "post" scope
+* Added debug logging for token authentication failures
+
 0.3.2 (2025-06-29)
 ------------------
 * Fixed KeyError in TokenView when 'me' parameter is missing - the token endpoint now correctly handles optional parameters according to IndieAuth spec

@@ -51,15 +51,19 @@ class TokenAuthMixin(View):
                 if self.token.owner.is_active:
                     return True
                 else:
+                    logger.warning(f"Token owner is not active: {self.token.owner}")
                     return False
             except Token.DoesNotExist:
+                logger.warning(f"Token not found: {key[:8]}...")
                 return False
         else:
+            logger.warning("No authorization token provided in request")
             return False
 
     def authorized(self, client_id: str, scope: str | None) -> bool:
         # TODO implement access control based on client_id
-        return scope is not None and "post" in scope
+        # Check for either "create" (standard Micropub) or "post" (legacy)
+        return scope is not None and ("create" in scope or "post" in scope)
 
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not self.authenticated(request):
