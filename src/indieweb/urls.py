@@ -20,4 +20,5 @@ urlpatterns = [
     path("auth/", views.AuthView.as_view(), name="auth"),
     path("token/", views.TokenView.as_view(), name="token"),
     path("micropub/", views.MicropubView.as_view(), name="micropub"),
+    path("webmention/", views.WebmentionEndpoint.as_view(), name="webmention"),
 ]

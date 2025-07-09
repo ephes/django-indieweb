@@ -4,8 +4,12 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from django.conf import settings
+from django.contrib.sites.models import Site
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import redirect, render
 from django.utils.decorators import method_decorator
@@ -14,7 +18,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
 from .handlers import get_micropub_handler
-from .models import Auth, Token
+from .models import Auth, Token, Webmention
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
@@ -404,3 +408,75 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             # Default response with user's me URL
             params = {"me": self.token.me}
             return HttpResponse(urlencode(params), status=200)
+
+
+class WebmentionProcessor:
+    """Stub for webmention processing - will be implemented separately."""
+
+    def process_webmention(self, source_url: str, target_url: str) -> Webmention:
+        """Process a webmention - stub implementation."""
+        # This will be implemented with full processing logic
+        webmention, _ = Webmention.objects.get_or_create(
+            source_url=source_url,
+            target_url=target_url,
+        )
+        return webmention
+
+
+class WebmentionEndpoint(CSRFExemptMixin, View):
+    """
+    Webmention receiving endpoint.
+
+    Implements the W3C Webmention protocol for receiving notifications
+    when other sites mention content on this site.
+    """
+
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        """Handle incoming webmentions."""
+        source = request.POST.get("source")
+        target = request.POST.get("target")
+
+        # Basic validation
+        if not source or not target:
+            return HttpResponse(status=400)
+
+        # Validate URLs
+        validator = URLValidator()
+        try:
+            validator(source)
+            validator(target)
+        except ValidationError:
+            return HttpResponse(status=400)
+
+        # Check target is on our domain
+        if not self.is_valid_target(target):
+            return HttpResponse(status=400)
+
+        # Process synchronously
+        processor = WebmentionProcessor()
+        try:
+            processor.process_webmention(source, target)
+            return HttpResponse(status=201)  # Created
+        except Exception as e:
+            logger.error(f"Failed to process webmention: {e}")
+            return HttpResponse(status=400)
+
+    def is_valid_target(self, target_url: str) -> bool:
+        """Check if target URL is on our domain."""
+        try:
+            current_site = Site.objects.get_current()
+            parsed = urlparse(target_url)
+            return parsed.netloc == current_site.domain
+        except Exception:
+            return False
+
+    def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        """Return endpoint discovery info."""
+        # Add Link header for discovery
+        response = HttpResponse(
+            "Webmention endpoint",
+            content_type="text/plain",
+        )
+        endpoint_url = request.build_absolute_uri(request.path)
+        response["Link"] = f'<{endpoint_url}>; rel="webmention"'
+        return response
