@@ -7,13 +7,14 @@ name = "django-indieweb"
 authors = [
     {name = "Jochen Wersdörfer", email = "jochen-indieweb@wersdoerfer.de"},
 ]
-version = "0.3.5"
-description = "includes indieauth and a micropub endpoint"
+version = "0.4.0"
+description = "includes indieauth, micropub, and webmention endpoints"
 requires-python = ">=3.10"
 keywords = [
     "indieweb",
     "indieauth",
     "micropub",
+    "webmention",
     "django",
 ]
 classifiers = [

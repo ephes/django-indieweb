@@ -3,6 +3,23 @@
 Changelog
 =========
 
+0.4.0 (unreleased)
+------------------
+* **MAJOR**: Added complete Webmention support (W3C Recommendation compliance)
+* Added Webmention model for storing incoming and outgoing webmentions
+* Added WebmentionEndpoint view for receiving webmentions
+* Added WebmentionProcessor for validating and parsing webmentions with microformats2
+* Added WebmentionSender for discovering endpoints and sending webmentions
+* Added pluggable interfaces for URL resolution, spam checking, and comment integration
+* Added Django template tags for displaying webmentions (``webmentions_for``, ``webmention_count``, ``webmention_endpoint_link``)
+* Added management command ``send_webmentions`` for sending webmentions from the command line
+* Added comprehensive test suite for Webmention functionality (35 new tests)
+* Added detailed Webmention documentation with integration examples
+* Added CSS styling and templates for different webmention types (likes, reposts, replies, mentions)
+* Added Django signals for webmention processing (``webmention_received``)
+* Replaced requests library with httpx for better async support and HTTP/2 features
+* Updated dependencies to use httpx instead of requests
+
 0.3.5 (2025-06-29)
 ------------------
 * Fixed Authorization header handling to check for HTTP_AUTHORIZATION (Django's standard header format)
