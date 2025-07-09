@@ -11,8 +11,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
+import httpx
 import mf2py
-import requests
 from django.conf import settings
 from django.dispatch import Signal
 from django.utils import timezone
@@ -137,10 +137,11 @@ class WebmentionProcessor:
             webmention.save()
             return webmention
 
-    def _fetch_source(self, source_url: str) -> requests.Response:
+    def _fetch_source(self, source_url: str) -> httpx.Response:
         """Fetch the source URL."""
         headers = {"User-Agent": "django-indieweb/1.0"}
-        return requests.get(source_url, headers=headers, timeout=30)
+        with httpx.Client() as client:
+            return client.get(source_url, headers=headers, timeout=30)
 
     def _verify_target_link(self, html_content: str, target_url: str) -> bool:
         """Verify that the target URL is linked in the source content."""

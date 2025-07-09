@@ -150,13 +150,13 @@
     .webmention {
         padding: 0.75rem;
     }
-    
+
     .webmention-reply .e-content,
     .webmention-mention .mention-content {
         margin-left: 0;
         margin-top: 0.75rem;
     }
-    
+
     .webmention .u-photo {
         width: 40px;
         height: 40px;
@@ -168,31 +168,31 @@
     .webmentions {
         border-top-color: #444;
     }
-    
+
     .webmention {
         background-color: #1a1a1a;
         color: #e0e0e0;
     }
-    
+
     .webmention:hover {
         background-color: #252525;
     }
-    
+
     .webmention .p-name,
     .webmention .p-author > a {
         color: #e0e0e0;
     }
-    
+
     .webmention a {
         color: #6db3f2;
     }
-    
+
     .webmention time,
     .webmention-action,
     .webmention-mention .mention-content {
         color: #999;
     }
-    
+
     .webmention-reply .e-content {
         color: #d0d0d0;
     }

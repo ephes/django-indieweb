@@ -3,7 +3,7 @@
 import re
 from urllib.parse import urljoin, urlparse
 
-import requests
+import httpx
 from bs4 import BeautifulSoup, Tag
 
 
@@ -48,20 +48,21 @@ class WebmentionSender:
         """
         try:
             # First try HEAD request to check Link headers
-            response = requests.head(target_url, timeout=self.timeout)
-            response.raise_for_status()
+            with httpx.Client() as client:
+                response = client.head(target_url, timeout=self.timeout)
+                response.raise_for_status()
 
-            # Check Link header
-            link_header = response.headers.get("Link", "")
-            endpoint = self._parse_link_header(link_header)
-            if endpoint:
-                return urljoin(target_url, endpoint)
+                # Check Link header
+                link_header = response.headers.get("Link", "")
+                endpoint = self._parse_link_header(link_header)
+                if endpoint:
+                    return urljoin(target_url, endpoint)
 
-            # Fall back to GET request to parse HTML
-            response = requests.get(target_url, timeout=self.timeout)
-            response.raise_for_status()
+                # Fall back to GET request to parse HTML
+                response = client.get(target_url, timeout=self.timeout)
+                response.raise_for_status()
 
-            return self._parse_html_for_endpoint(response.text, target_url)
+                return self._parse_html_for_endpoint(response.text, target_url)
 
         except Exception:
             # Return None for any errors during discovery
@@ -128,17 +129,22 @@ class WebmentionSender:
             Dict with 'success', 'status_code', and optionally 'error'
         """
         try:
-            response = requests.post(endpoint, data={"source": source, "target": target}, timeout=self.post_timeout)
+            with httpx.Client() as client:
+                response = client.post(endpoint, data={"source": source, "target": target}, timeout=self.post_timeout)
 
-            # Accept 200, 201, or 202 as success
-            if response.status_code in [200, 201, 202]:
-                return {"success": True, "status_code": response.status_code}
-            else:
-                # Non-success status code
-                return {"success": False, "status_code": response.status_code, "error": f"HTTP {response.status_code}"}
+                # Accept 200, 201, or 202 as success
+                if response.status_code in [200, 201, 202]:
+                    return {"success": True, "status_code": response.status_code}
+                else:
+                    # Non-success status code
+                    return {
+                        "success": False,
+                        "status_code": response.status_code,
+                        "error": f"HTTP {response.status_code}",
+                    }
 
-        except requests.RequestException as e:
-            # Handle requests exceptions (network errors, timeouts, etc.)
+        except httpx.RequestError as e:
+            # Handle httpx exceptions (network errors, timeouts, etc.)
             status_code = None
             if hasattr(e, "response") and e.response is not None:
                 status_code = e.response.status_code
@@ -157,9 +163,10 @@ class WebmentionSender:
             HTML content or None if error
         """
         try:
-            response = requests.get(url, timeout=self.timeout)
-            response.raise_for_status()
-            return response.text
+            with httpx.Client() as client:
+                response = client.get(url, timeout=self.timeout)
+                response.raise_for_status()
+                return response.text
         except Exception:
             return None
 

@@ -40,7 +40,7 @@ dependencies = [
     "django-model-utils",
     "mf2py",
     "beautifulsoup4",
-    "requests",
+    "httpx",
 ]
 
 [dependency-groups]

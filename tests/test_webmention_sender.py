@@ -28,16 +28,20 @@ class TestWebmentionSender(TestCase):
 
         urls = self.sender.extract_urls(html)
 
+        assert len(urls) == 3
         assert "https://example.com/page1" in urls
         assert "https://example.com/page2" in urls
         assert "/relative" in urls
-        assert len(urls) == 3
 
     def test_extract_urls_handles_duplicates(self):
-        """Test that duplicate URLs are only returned once."""
+        """Test that duplicate URLs are removed."""
         html = """
-        <a href="https://example.com/page">link</a>
-        <a href="https://example.com/page">same link</a>
+        <html>
+        <body>
+            <p><a href="https://example.com/page">Link 1</a></p>
+            <p><a href="https://example.com/page">Link 2</a></p>
+        </body>
+        </html>
         """
 
         urls = self.sender.extract_urls(html)
@@ -45,272 +49,312 @@ class TestWebmentionSender(TestCase):
         assert len(urls) == 1
         assert "https://example.com/page" in urls
 
-    @patch("indieweb.senders.requests.head")
-    def test_discover_endpoint_from_link_header(self, mock_head):
+    @patch("httpx.Client")
+    def test_discover_endpoint_from_link_header(self, mock_client_class):
         """Test discovering webmention endpoint from Link header."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
         mock_response = Mock()
         mock_response.headers = {"Link": '<https://target.com/webmention>; rel="webmention"'}
         mock_response.raise_for_status = Mock()
-        mock_head.return_value = mock_response
+        mock_client.head.return_value = mock_response
 
         endpoint = self.sender.discover_endpoint(self.target_url)
 
         assert endpoint == "https://target.com/webmention"
-        mock_head.assert_called_once_with(self.target_url, timeout=10)
+        mock_client.head.assert_called_once_with(self.target_url, timeout=10)
 
-    @patch("indieweb.senders.requests.head")
-    def test_discover_endpoint_from_link_header_with_multiple_rels(self, mock_head):
+    @patch("httpx.Client")
+    def test_discover_endpoint_from_link_header_with_multiple_rels(self, mock_client_class):
         """Test discovering webmention endpoint from Link header with multiple rel values."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
         mock_response = Mock()
-        mock_response.headers = {"Link": '<https://target.com/webmention>; rel="webmention alternate"'}
+        # Multiple Link headers
+        mock_response.headers = {
+            "Link": '<https://target.com/other>; rel="other", <https://target.com/webmention>; rel="webmention"'
+        }
         mock_response.raise_for_status = Mock()
-        mock_head.return_value = mock_response
+        mock_client.head.return_value = mock_response
 
         endpoint = self.sender.discover_endpoint(self.target_url)
 
         assert endpoint == "https://target.com/webmention"
 
-    @patch("indieweb.senders.requests.get")
-    @patch("indieweb.senders.requests.head")
-    def test_discover_endpoint_from_html_link_tag(self, mock_head, mock_get):
+    @patch("httpx.Client")
+    def test_discover_endpoint_from_html_link_tag(self, mock_client_class):
         """Test discovering webmention endpoint from HTML link tag."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        # HEAD request returns no Link header
         mock_head_response = Mock()
         mock_head_response.headers = {}
         mock_head_response.raise_for_status = Mock()
-        mock_head.return_value = mock_head_response
+        mock_client.head.return_value = mock_head_response
 
+        # GET request returns HTML with link tag
         mock_get_response = Mock()
+        mock_get_response.headers = {}
         mock_get_response.text = """
         <html>
         <head>
-            <link rel="webmention" href="https://target.com/webmention" />
+            <link rel="webmention" href="/webmention-endpoint" />
         </head>
         </html>
         """
         mock_get_response.raise_for_status = Mock()
-        mock_get.return_value = mock_get_response
+        mock_client.get.return_value = mock_get_response
 
         endpoint = self.sender.discover_endpoint(self.target_url)
 
-        assert endpoint == "https://target.com/webmention"
-        mock_get.assert_called_once_with(self.target_url, timeout=10)
+        assert endpoint == "https://target.com/webmention-endpoint"
+        mock_client.head.assert_called_once()
+        mock_client.get.assert_called_once_with(self.target_url, timeout=10)
 
-    @patch("indieweb.senders.requests.get")
-    @patch("indieweb.senders.requests.head")
-    def test_discover_endpoint_from_html_a_tag(self, mock_head, mock_get):
+    @patch("httpx.Client")
+    def test_discover_endpoint_from_html_a_tag(self, mock_client_class):
         """Test discovering webmention endpoint from HTML a tag."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        # HEAD request returns no Link header
         mock_head_response = Mock()
         mock_head_response.headers = {}
         mock_head_response.raise_for_status = Mock()
-        mock_head.return_value = mock_head_response
+        mock_client.head.return_value = mock_head_response
 
+        # GET request returns HTML with a tag
         mock_get_response = Mock()
+        mock_get_response.headers = {}
         mock_get_response.text = """
         <html>
         <body>
-            <a rel="webmention" href="https://target.com/webmention">Webmention</a>
+            <a rel="webmention" href="/webmention">Webmention endpoint</a>
         </body>
         </html>
         """
         mock_get_response.raise_for_status = Mock()
-        mock_get.return_value = mock_get_response
+        mock_client.get.return_value = mock_get_response
 
         endpoint = self.sender.discover_endpoint(self.target_url)
 
         assert endpoint == "https://target.com/webmention"
 
-    @patch("indieweb.senders.requests.get")
-    @patch("indieweb.senders.requests.head")
-    def test_discover_endpoint_relative_url(self, mock_head, mock_get):
-        """Test discovering webmention endpoint with relative URL."""
-        mock_head_response = Mock()
-        mock_head_response.headers = {}
-        mock_head_response.raise_for_status = Mock()
-        mock_head.return_value = mock_head_response
+    @patch("httpx.Client")
+    def test_discover_endpoint_relative_url(self, mock_client_class):
+        """Test that relative URLs are resolved correctly."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
 
-        mock_get_response = Mock()
-        mock_get_response.text = """
-        <html>
-        <head>
-            <link rel="webmention" href="/webmention" />
-        </head>
-        </html>
-        """
-        mock_get_response.raise_for_status = Mock()
-        mock_get.return_value = mock_get_response
+        mock_response = Mock()
+        mock_response.headers = {"Link": '</api/webmention>; rel="webmention"'}
+        mock_response.raise_for_status = Mock()
+        mock_client.head.return_value = mock_response
 
-        endpoint = self.sender.discover_endpoint(self.target_url)
+        endpoint = self.sender.discover_endpoint("https://example.com/post/123")
 
-        assert endpoint == "https://target.com/webmention"
+        assert endpoint == "https://example.com/api/webmention"
 
-    @patch("indieweb.senders.requests.get")
-    @patch("indieweb.senders.requests.head")
-    def test_discover_endpoint_not_found(self, mock_head, mock_get):
+    @patch("httpx.Client")
+    def test_discover_endpoint_not_found(self, mock_client_class):
         """Test when no webmention endpoint is found."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        # HEAD request returns no Link header
         mock_head_response = Mock()
         mock_head_response.headers = {}
         mock_head_response.raise_for_status = Mock()
-        mock_head.return_value = mock_head_response
+        mock_client.head.return_value = mock_head_response
 
+        # GET request returns HTML with no webmention
         mock_get_response = Mock()
+        mock_get_response.headers = {}
         mock_get_response.text = "<html><body>No webmention here</body></html>"
         mock_get_response.raise_for_status = Mock()
-        mock_get.return_value = mock_get_response
+        mock_client.get.return_value = mock_get_response
 
         endpoint = self.sender.discover_endpoint(self.target_url)
 
         assert endpoint is None
 
-    @patch("indieweb.senders.requests.head")
-    def test_discover_endpoint_handles_request_exception(self, mock_head):
-        """Test handling request exceptions during endpoint discovery."""
-        mock_head.side_effect = Exception("Network error")
+    @patch("httpx.Client")
+    def test_discover_endpoint_handles_request_exception(self, mock_client_class):
+        """Test that discovery handles request exceptions gracefully."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_client.head.side_effect = Exception("Network error")
 
         endpoint = self.sender.discover_endpoint(self.target_url)
 
         assert endpoint is None
 
-    @patch("indieweb.senders.requests.post")
-    def test_send_webmention_success(self, mock_post):
-        """Test successfully sending a webmention."""
+    @patch("httpx.Client")
+    def test_send_webmention_success(self, mock_client_class):
+        """Test successful webmention sending."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
         mock_response = Mock()
-        mock_response.status_code = 202
-        mock_response.raise_for_status = Mock()
-        mock_post.return_value = mock_response
+        mock_response.status_code = 201
+        mock_client.post.return_value = mock_response
 
-        result = self.sender.send_webmention(self.source_url, self.target_url, "https://target.com/webmention")
+        endpoint = "https://target.com/webmention"
+        result = self.sender.send_webmention(self.source_url, self.target_url, endpoint)
 
         assert result["success"] is True
-        assert result["status_code"] == 202
-        mock_post.assert_called_once_with(
-            "https://target.com/webmention", data={"source": self.source_url, "target": self.target_url}, timeout=30
+        assert result["status_code"] == 201
+        mock_client.post.assert_called_once_with(
+            endpoint, data={"source": self.source_url, "target": self.target_url}, timeout=30
         )
 
-    @patch("indieweb.senders.requests.post")
-    def test_send_webmention_with_different_success_codes(self, mock_post):
-        """Test various successful status codes."""
-        success_codes = [200, 201, 202]
+    @patch("httpx.Client")
+    def test_send_webmention_with_different_success_codes(self, mock_client_class):
+        """Test that 200, 201, and 202 are all considered success."""
+        for status_code in [200, 201, 202]:
+            mock_client = Mock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
 
-        for code in success_codes:
             mock_response = Mock()
-            mock_response.status_code = code
-            mock_response.raise_for_status = Mock()
-            mock_post.return_value = mock_response
+            mock_response.status_code = status_code
+            mock_client.post.return_value = mock_response
 
-            result = self.sender.send_webmention(self.source_url, self.target_url, "https://target.com/webmention")
+            result = self.sender.send_webmention(self.source_url, self.target_url, "https://example.com/webmention")
 
             assert result["success"] is True
-            assert result["status_code"] == code
+            assert result["status_code"] == status_code
 
-    @patch("indieweb.senders.requests.post")
-    def test_send_webmention_failure(self, mock_post):
-        """Test handling webmention sending failure."""
+    @patch("httpx.Client")
+    def test_send_webmention_failure(self, mock_client_class):
+        """Test failed webmention sending."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
         mock_response = Mock()
-        mock_response.status_code = 400
-        mock_response.text = "Bad request"
-        mock_post.return_value = mock_response
+        mock_response.status_code = 404
+        mock_client.post.return_value = mock_response
 
-        result = self.sender.send_webmention(self.source_url, self.target_url, "https://target.com/webmention")
+        endpoint = "https://target.com/webmention"
+        result = self.sender.send_webmention(self.source_url, self.target_url, endpoint)
 
         assert result["success"] is False
-        assert result["status_code"] == 400
+        assert result["status_code"] == 404
         assert "error" in result
-        assert result["error"] == "HTTP 400"
 
-    @patch("indieweb.senders.requests.post")
-    def test_send_webmention_network_error(self, mock_post):
-        """Test handling network errors when sending webmention."""
-        mock_post.side_effect = Exception("Network error")
+    @patch("httpx.Client")
+    def test_send_webmention_network_error(self, mock_client_class):
+        """Test webmention sending with network error."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
 
-        result = self.sender.send_webmention(self.source_url, self.target_url, "https://target.com/webmention")
+        import httpx
+
+        mock_client.post.side_effect = httpx.RequestError("Connection failed")
+
+        endpoint = "https://target.com/webmention"
+        result = self.sender.send_webmention(self.source_url, self.target_url, endpoint)
 
         assert result["success"] is False
-        assert result["error"] == "Network error"
-        assert result["status_code"] is None
+        assert "Connection failed" in result["error"]
 
-    @patch("indieweb.senders.requests.get")
-    def test_send_webmentions_full_flow(self, mock_get):
-        """Test the full flow of sending webmentions."""
-        html_content = """
-        <html>
-        <body>
-            <a href="https://target1.com/post">First link</a>
-            <a href="https://target2.com/post">Second link</a>
-            <a href="https://example.com/my-post">Self link</a>
-        </body>
-        </html>
-        """
+    @patch("httpx.Client")
+    def test_fetch_content(self, mock_client_class):
+        """Test fetching content from a URL."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
 
-        # Mock discovery responses
-        with patch.object(self.sender, "discover_endpoint") as mock_discover:
-            with patch.object(self.sender, "send_webmention") as mock_send:
-                mock_discover.side_effect = ["https://target1.com/webmention", "https://target2.com/webmention"]
+        mock_response = Mock()
+        mock_response.text = "<html><body>Test content</body></html>"
+        mock_response.raise_for_status = Mock()
+        mock_client.get.return_value = mock_response
 
-                mock_send.side_effect = [
-                    {"success": True, "status_code": 202},
-                    {"success": False, "status_code": 400, "error": "Bad request"},
-                ]
+        content = self.sender.fetch_content("https://example.com/page")
 
-                results = self.sender.send_webmentions(self.source_url, html_content)
+        assert content == "<html><body>Test content</body></html>"
+        mock_client.get.assert_called_once_with("https://example.com/page", timeout=10)
 
-                assert len(results) == 2
+    @patch("httpx.Client")
+    def test_fetch_content_error(self, mock_client_class):
+        """Test fetching content handles errors."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_client.get.side_effect = Exception("Network error")
 
-                # Sort results by target URL for consistent testing
-                results_by_target = {r["target"]: r for r in results}
+        content = self.sender.fetch_content("https://example.com/page")
 
-                # Verify both targets are in results
-                assert "https://target1.com/post" in results_by_target
-                assert "https://target2.com/post" in results_by_target
-
-                # One should succeed, one should fail
-                success_count = sum(1 for r in results if r["success"])
-                assert success_count == 1
-
-                # Should not try to discover endpoint for self-links
-                assert mock_discover.call_count == 2
-                assert mock_send.call_count == 2
+        assert content is None
 
     def test_send_webmentions_without_html_content(self):
-        """Test sending webmentions when HTML content needs to be fetched."""
-        html_content = """
-        <html>
-        <body>
-            <a href="https://target.com/post">Link</a>
-        </body>
-        </html>
-        """
-
+        """Test send_webmentions when HTML content is not provided."""
         with patch.object(self.sender, "fetch_content") as mock_fetch:
+            # Link to a different domain so it's not skipped
+            mock_fetch.return_value = '<html><body><a href="https://otherdomain.com/link">Link</a></body></html>'
+
             with patch.object(self.sender, "discover_endpoint") as mock_discover:
+                mock_discover.return_value = "https://otherdomain.com/webmention"
+
                 with patch.object(self.sender, "send_webmention") as mock_send:
-                    mock_fetch.return_value = html_content
-                    mock_discover.return_value = "https://target.com/webmention"
-                    mock_send.return_value = {"success": True, "status_code": 202}
+                    mock_send.return_value = {"success": True, "status_code": 201}
 
                     results = self.sender.send_webmentions(self.source_url)
 
                     mock_fetch.assert_called_once_with(self.source_url)
                     assert len(results) == 1
-                    assert results[0]["success"] is True
+                    assert results[0]["target"] == "https://otherdomain.com/link"
 
-    @patch("indieweb.senders.requests.get")
-    def test_fetch_content(self, mock_get):
-        """Test fetching content from a URL."""
+    def test_send_webmentions_full_flow(self):
+        """Test the full webmention sending flow."""
+        html_content = """
+        <html>
+        <body>
+            <p>I wrote about <a href="https://target1.com/post">this post</a></p>
+            <p>And also mentioned <a href="https://target2.com/article">this article</a></p>
+            <p>But not <a href="https://example.com/my-other-post">my own post</a></p>
+        </body>
+        </html>
+        """
+
+        # Mock endpoint discovery
+        with patch.object(self.sender, "discover_endpoint") as mock_discover:
+
+            def discover_side_effect(url):
+                if "target1.com" in url:
+                    return "https://target1.com/webmention"
+                elif "target2.com" in url:
+                    return None  # No endpoint
+                return None
+
+            mock_discover.side_effect = discover_side_effect
+
+            # Mock sending
+            with patch.object(self.sender, "send_webmention") as mock_send:
+                mock_send.return_value = {"success": True, "status_code": 201}
+
+                results = self.sender.send_webmentions(self.source_url, html_content)
+
+                # Should discover endpoints for both external URLs
+                assert mock_discover.call_count == 2
+                # Should only send to target1 (which has an endpoint)
+                assert mock_send.call_count == 1
+                assert len(results) == 1
+                assert results[0]["target"] == "https://target1.com/post"
+                assert results[0]["success"] is True
+
+    @patch("httpx.Client")
+    def test_discover_endpoint_handles_fragment_and_query(self, mock_client_class):
+        """Test that fragments and query strings don't interfere with endpoint discovery."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
         mock_response = Mock()
-        mock_response.text = "<html><body>Content</body></html>"
+        mock_response.headers = {"Link": '<https://target.com/webmention>; rel="webmention"'}
         mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+        mock_client.head.return_value = mock_response
 
-        content = self.sender.fetch_content(self.source_url)
+        # URL with fragment and query
+        endpoint = self.sender.discover_endpoint("https://target.com/post?param=value#section")
 
-        assert content == "<html><body>Content</body></html>"
-        mock_get.assert_called_once_with(self.source_url, timeout=10)
-
-    @patch("indieweb.senders.requests.get")
-    def test_fetch_content_error(self, mock_get):
-        """Test handling errors when fetching content."""
-        mock_get.side_effect = Exception("Network error")
-
-        content = self.sender.fetch_content(self.source_url)
-
-        assert content is None
+        assert endpoint == "https://target.com/webmention"

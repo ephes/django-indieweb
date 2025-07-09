@@ -29,16 +29,26 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = '<html><body><a href="https://mysite.com/article">Link</a></body></html>'
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
 
-            mock_get.assert_called_once_with(source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30)
+            mock_client.get.assert_called_once_with(
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+            )
             assert webmention.status == "verified"
 
     def test_processor_handles_fetch_errors(self, processor):
@@ -46,8 +56,10 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("indieweb.processors.requests.get") as mock_get:
-            mock_get.side_effect = Exception("Network error")
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = Exception("Network error")
 
             webmention = processor.process_webmention(source_url, target_url)
 
@@ -61,23 +73,39 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
 
         # Test with link present
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = f'<html><body><a href="{target_url}">Link to article</a></body></html>'
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "verified"
 
         # Test with link missing
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = "<html><body>No link here</body></html>"
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "failed"
@@ -87,11 +115,18 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 404
+
             mock_response.text = "Not found"
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "failed"
@@ -118,12 +153,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
 
@@ -151,12 +194,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = reply_html
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.mention_type == "reply"
@@ -172,12 +223,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = like_html
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.mention_type == "like"
@@ -193,12 +252,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = repost_html
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.mention_type == "repost"
@@ -216,12 +283,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
 
@@ -238,12 +313,20 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             # Patch the spam checker to verify it's called
             with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
@@ -267,12 +350,20 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body>Buy cheap stuff! <a href="{target_url}">Link</a></body></html>'
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             # Mock spam checker to return spam
             with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
@@ -313,12 +404,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
 
@@ -341,10 +440,16 @@ class TestWebmentionProcessor:
             content="Original content",
         )
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 410  # Gone
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
 
@@ -361,12 +466,20 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             with patch("indieweb.processors.webmention_received.send") as mock_signal:
                 webmention = processor.process_webmention(source_url, target_url)
@@ -385,12 +498,20 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             before = django_timezone.now()
             webmention = processor.process_webmention(source_url, target_url)
@@ -404,12 +525,20 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/data.json"
         target_url = "https://mysite.com/article"
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = '{"data": "json"}'
+
             mock_response.headers = {"content-type": "application/json"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "failed"
@@ -435,12 +564,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
 
@@ -464,12 +601,20 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             webmention = processor.process_webmention(source_url, target_url)
 
@@ -483,12 +628,20 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("indieweb.processors.requests.get") as mock_get:
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
             mock_response = Mock()
+
             mock_response.status_code = 200
+
             mock_response.text = html_content
+
             mock_response.headers = {"content-type": "text/html"}
-            mock_get.return_value = mock_response
+
+            mock_client.get.return_value = mock_response
 
             import logging
 

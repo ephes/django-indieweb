@@ -31,7 +31,7 @@ Quick Start
 .. code-block:: django
 
     {% load webmention_tags %}
-    
+
     {% show_webmentions request.build_absolute_uri %}
 
 3. Send webmentions when you publish content:
@@ -49,10 +49,10 @@ Add these settings to your Django settings:
 
     # Required: URL resolver to map URLs to content objects
     INDIEWEB_URL_RESOLVER = 'myproject.webmention_config.MyURLResolver'
-    
+
     # Required: Spam checker (use default or implement your own)
     INDIEWEB_SPAM_CHECKER = 'indieweb.interfaces.NoOpSpamChecker'
-    
+
     # Optional: Comment adapter to convert webmentions to comments
     INDIEWEB_COMMENT_ADAPTER = 'myproject.webmention_config.MyCommentAdapter'
 
@@ -67,13 +67,13 @@ Create a URL resolver to map target URLs to your content objects:
     from indieweb.interfaces import URLResolver
     from myapp.models import BlogPost
     from urllib.parse import urlparse
-    
+
     class MyURLResolver(URLResolver):
         def resolve(self, target_url: str) -> Any | None:
             """Resolve a URL to a content object."""
             parsed = urlparse(target_url)
             path = parsed.path
-            
+
             # Example: match /blog/post-slug/
             if path.startswith('/blog/'):
                 slug = path.strip('/').split('/')[-1]
@@ -81,9 +81,9 @@ Create a URL resolver to map target URLs to your content objects:
                     return BlogPost.objects.get(slug=slug)
                 except BlogPost.DoesNotExist:
                     pass
-            
+
             return None
-        
+
         def get_absolute_url(self, content_object: Any) -> str:
             """Get the absolute URL for a content object."""
             if hasattr(content_object, 'get_absolute_url'):
@@ -99,16 +99,16 @@ Create a custom spam checker:
 
     from indieweb.interfaces import SpamChecker
     from indieweb.models import Webmention
-    
+
     class MySpamChecker(SpamChecker):
         def check(self, webmention: Webmention) -> dict[str, Any]:
             """Check if a webmention is spam."""
             # Implement your spam detection logic
             spam_keywords = ['casino', 'viagra', 'lottery']
             content_lower = webmention.content.lower()
-            
+
             is_spam = any(kw in content_lower for kw in spam_keywords)
-            
+
             return {
                 'is_spam': is_spam,
                 'confidence': 0.9 if is_spam else 0.1,
@@ -124,16 +124,16 @@ Basic Usage
 .. code-block:: django
 
     {% load webmention_tags %}
-    
+
     {# Add endpoint discovery to your base template #}
     {% webmention_endpoint_link %}
-    
+
     {# Show all webmentions for current page #}
     {% show_webmentions request.build_absolute_uri %}
-    
+
     {# Show only replies #}
     {% show_webmentions request.build_absolute_uri mention_type="reply" %}
-    
+
     {# Get webmention count #}
     {% webmention_count request.build_absolute_uri as count %}
     <p>This post has {{ count }} responses.</p>
@@ -145,7 +145,7 @@ You can override the default templates by creating your own:
 
 * ``indieweb/webmentions.html`` - Main container
 * ``indieweb/webmention_types/like.html`` - Like template
-* ``indieweb/webmention_types/reply.html`` - Reply template  
+* ``indieweb/webmention_types/reply.html`` - Reply template
 * ``indieweb/webmention_types/repost.html`` - Repost template
 * ``indieweb/webmention_types/mention.html`` - Generic mention template
 
@@ -161,11 +161,11 @@ Send webmentions for all links in a post:
 
     # Send webmentions for a URL
     python manage.py send_webmentions https://mysite.com/new-post/
-    
+
     # Provide content directly
     python manage.py send_webmentions https://mysite.com/new-post/ \
         --content '<p>Check out <a href="https://example.com">this site</a>!</p>'
-    
+
     # Dry run to see what would be sent
     python manage.py send_webmentions https://mysite.com/new-post/ --dry-run
 
@@ -178,7 +178,7 @@ The ``webmention_received`` signal is sent when a webmention is processed:
 
     from django.dispatch import receiver
     from indieweb.signals import webmention_received
-    
+
     @receiver(webmention_received)
     def handle_webmention(sender, webmention, created, **kwargs):
         if created and webmention.status == 'verified':
@@ -193,13 +193,13 @@ The ``Webmention`` model stores all webmention data:
 .. code-block:: python
 
     from indieweb.models import Webmention
-    
+
     # Get all verified webmentions for a URL
     webmentions = Webmention.objects.filter(
         target_url='https://mysite.com/post/',
         status='verified'
     )
-    
+
     # Get webmentions by type
     likes = webmentions.filter(mention_type='like')
     replies = webmentions.filter(mention_type='reply')
