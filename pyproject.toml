@@ -38,6 +38,9 @@ classifiers = [
 dependencies = [
     "Django",
     "django-model-utils",
+    "mf2py",
+    "beautifulsoup4",
+    "requests",
 ]
 
 [dependency-groups]
@@ -141,6 +144,10 @@ plugins = ["mypy_django_plugin.main"]
 
 [[tool.mypy.overrides]]
 module = "environ"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mf2py"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

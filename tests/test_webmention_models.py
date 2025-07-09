@@ -19,7 +19,7 @@ class TestWebmentionModel:
             source_url="https://example.com/post1",
             target_url="https://mysite.com/article1",
         )
-        
+
         assert webmention.source_url == "https://example.com/post1"
         assert webmention.target_url == "https://mysite.com/article1"
         assert webmention.status == "pending"
@@ -48,7 +48,7 @@ class TestWebmentionModel:
     def test_status_choices(self):
         """Test that status field only accepts valid choices."""
         valid_statuses = ["pending", "verified", "failed", "spam"]
-        
+
         for status in valid_statuses:
             webmention = Webmention.objects.create(
                 source_url=f"https://example.com/{status}",
@@ -63,7 +63,7 @@ class TestWebmentionModel:
             source_url="https://example.com/post1",
             target_url="https://mysite.com/article1",
         )
-        
+
         # Creating duplicate should fail
         with pytest.raises(IntegrityError):
             Webmention.objects.create(
@@ -83,7 +83,7 @@ class TestWebmentionModel:
             content_html="<p>This is a reply to your article.</p>",
             published=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )
-        
+
         assert webmention.author_name == "John Doe"
         assert webmention.author_url == "https://example.com/johndoe"
         assert webmention.author_photo == "https://example.com/johndoe.jpg"
@@ -94,7 +94,7 @@ class TestWebmentionModel:
     def test_mention_types(self):
         """Test different webmention types."""
         mention_types = ["mention", "like", "reply", "repost"]
-        
+
         for mention_type in mention_types:
             webmention = Webmention.objects.create(
                 source_url=f"https://example.com/{mention_type}",
@@ -110,14 +110,14 @@ class TestWebmentionModel:
             "confidence": 0.95,
             "details": "Detected spam patterns",
         }
-        
+
         webmention = Webmention.objects.create(
             source_url="https://spam.com/post",
             target_url="https://mysite.com/article",
             status="spam",
             spam_check_result=spam_data,
         )
-        
+
         assert webmention.spam_check_result == spam_data
         assert webmention.spam_check_result["is_spam"] is True
         assert webmention.spam_check_result["confidence"] == 0.95
@@ -128,14 +128,14 @@ class TestWebmentionModel:
             source_url="https://example.com/post",
             target_url="https://mysite.com/article",
         )
-        
+
         assert webmention.verified_at is None
-        
+
         # Update to verified status
         webmention.status = "verified"
         webmention.verified_at = datetime.now(timezone.utc)
         webmention.save()
-        
+
         assert webmention.verified_at is not None
 
     def test_string_representation(self):
@@ -145,7 +145,7 @@ class TestWebmentionModel:
             target_url="https://mysite.com/article",
             mention_type="reply",
         )
-        
+
         # Should include source, target, and type in string representation
         str_repr = str(webmention)
         assert "https://example.com/post" in str_repr
@@ -156,11 +156,11 @@ class TestWebmentionModel:
         """Test that the model supports long URLs up to 500 characters."""
         long_path = "a" * 450  # Create a long path
         long_url = f"https://example.com/{long_path}"
-        
+
         webmention = Webmention.objects.create(
             source_url=long_url,
             target_url="https://mysite.com/article",
         )
-        
+
         assert len(webmention.source_url) > 400
         assert webmention.source_url == long_url

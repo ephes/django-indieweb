@@ -12,7 +12,7 @@ django-indieweb
    :target: https://github.com/pre-commit/pre-commit
    :alt: pre-commit
 
-A Django application that provides IndieAuth and Micropub endpoints for IndieWeb integration
+A Django application that provides IndieAuth, Micropub, and Webmention endpoints for IndieWeb integration
 
 Documentation
 -------------
@@ -25,8 +25,11 @@ Features
 * IndieAuth authentication endpoint
 * IndieAuth token endpoint
 * Micropub endpoint with full content creation support
+* Webmention sending and receiving
 * Pluggable content handler system for Micropub
+* Pluggable interfaces for Webmention URL resolution and spam checking
 * Support for both form-encoded and JSON Micropub requests
+* Microformats2 parsing for rich webmention content
 * Micropub query endpoints (config, syndicate-to)
 * Django integration
 
@@ -59,11 +62,12 @@ Quick Start
 
     python manage.py migrate
 
-4. Visit the IndieAuth endpoints at:
+4. Visit the IndieWeb endpoints at:
 
    * ``/indieweb/auth/`` - Authentication endpoint
    * ``/indieweb/token/`` - Token endpoint
    * ``/indieweb/micropub/`` - Micropub endpoint
+   * ``/indieweb/webmention/`` - Webmention endpoint
 
 5. To use Micropub for content creation, create a custom content handler::
 

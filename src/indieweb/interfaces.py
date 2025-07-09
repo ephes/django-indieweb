@@ -115,7 +115,8 @@ class SimpleURLResolver(URLResolver):
     def get_absolute_url(self, content_object: Any) -> str:
         """Get absolute URL for a content object."""
         if hasattr(content_object, "get_absolute_url"):
-            return content_object.get_absolute_url()
+            url = content_object.get_absolute_url()
+            return str(url) if url else ""
         return ""
 
 

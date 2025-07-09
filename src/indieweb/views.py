@@ -18,7 +18,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
 from .handlers import get_micropub_handler
-from .models import Auth, Token, Webmention
+from .models import Auth, Token
+from .processors import WebmentionProcessor
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
@@ -408,19 +409,6 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             # Default response with user's me URL
             params = {"me": self.token.me}
             return HttpResponse(urlencode(params), status=200)
-
-
-class WebmentionProcessor:
-    """Stub for webmention processing - will be implemented separately."""
-
-    def process_webmention(self, source_url: str, target_url: str) -> Webmention:
-        """Process a webmention - stub implementation."""
-        # This will be implemented with full processing logic
-        webmention, _ = Webmention.objects.get_or_create(
-            source_url=source_url,
-            target_url=target_url,
-        )
-        return webmention
 
 
 class WebmentionEndpoint(CSRFExemptMixin, View):
