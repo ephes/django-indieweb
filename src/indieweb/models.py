@@ -75,3 +75,63 @@ class Token(GenKeyMixin):
 
     def __str__(self) -> str:
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
+
+
+class Webmention(models.Model):
+    """
+    Model for storing webmentions.
+    
+    Webmentions are a W3C recommendation for notifying when one site
+    mentions another, enabling cross-site conversations.
+    """
+    
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("verified", "Verified"), 
+        ("failed", "Failed"),
+        ("spam", "Spam"),
+    ]
+    
+    MENTION_TYPE_CHOICES = [
+        ("mention", "Mention"),
+        ("like", "Like"),
+        ("reply", "Reply"),
+        ("repost", "Repost"),
+    ]
+    
+    # Core webmention fields
+    source_url = models.URLField(max_length=500, db_index=True)
+    target_url = models.URLField(max_length=500, db_index=True)
+    
+    # Status tracking
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    
+    # Parsed content from microformats2
+    author_name = models.CharField(max_length=200, blank=True)
+    author_url = models.URLField(blank=True)
+    author_photo = models.URLField(blank=True)
+    
+    content = models.TextField(blank=True)
+    content_html = models.TextField(blank=True)
+    published = models.DateTimeField(null=True, blank=True)
+    
+    # Webmention type
+    mention_type = models.CharField(max_length=20, choices=MENTION_TYPE_CHOICES, default="mention")
+    
+    # Tracking
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    
+    # Optional spam check result
+    spam_check_result = models.JSONField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ["source_url", "target_url"]
+        indexes = [
+            models.Index(fields=["target_url", "status"]),
+            models.Index(fields=["created"]),
+        ]
+    
+    def __str__(self) -> str:
+        return f"{self.mention_type}: {self.source_url} -> {self.target_url}"
