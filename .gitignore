@@ -51,3 +51,9 @@ docs/_build
 
 # virtualenv
 .venv
+
+# claude code markdown files
+issue.md
+plan.md
+task.md
+current_task.md
