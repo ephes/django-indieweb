@@ -3,6 +3,13 @@
 Changelog
 =========
 
+0.4.2 (2025-07-10)
+------------------
+* Added Django admin integration for Webmention, Token, and Auth models
+* Added comprehensive admin test suite
+* Webmention admin includes filters, search, and organized fieldsets for easy management
+* Token and Auth admin are read-only for security purposes
+
 0.4.1 (2025-07-10)
 ------------------
 * Fixed Webmention endpoint to return Location header with HTTP 201 status per W3C specification
