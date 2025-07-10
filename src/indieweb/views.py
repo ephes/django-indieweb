@@ -11,14 +11,15 @@ from django.contrib.sites.models import Site
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
 from .handlers import get_micropub_handler
-from .models import Auth, Token
+from .models import Auth, Token, Webmention
 from .processors import WebmentionProcessor
 
 if TYPE_CHECKING:
@@ -443,8 +444,12 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
         # Process synchronously
         processor = WebmentionProcessor()
         try:
-            processor.process_webmention(source, target)
-            return HttpResponse(status=201)  # Created
+            webmention = processor.process_webmention(source, target)
+            response = HttpResponse(status=201)  # Created
+            response["Location"] = request.build_absolute_uri(
+                reverse("indieweb:webmention-status", args=[webmention.pk])
+            )
+            return response
         except Exception as e:
             logger.error(f"Failed to process webmention: {e}")
             return HttpResponse(status=400)
@@ -468,3 +473,30 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
         endpoint_url = request.build_absolute_uri(request.path)
         response["Link"] = f'<{endpoint_url}>; rel="webmention"'
         return response
+
+
+class WebmentionStatusView(View):
+    """
+    Webmention status endpoint.
+
+    Returns the status of a specific webmention by ID.
+    """
+
+    def get(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponse:
+        """Return status of a webmention."""
+        webmention = get_object_or_404(Webmention, pk=pk)
+
+        # Return JSON response with webmention status
+        status_data = {
+            "source": webmention.source_url,
+            "target": webmention.target_url,
+            "status": webmention.status,
+        }
+
+        if webmention.verified_at:
+            status_data["verified_at"] = webmention.verified_at.isoformat()
+
+        return HttpResponse(
+            json.dumps(status_data),
+            content_type="application/json",
+        )

@@ -114,6 +114,7 @@ class TestWebmentionEndpoint:
         mock_processor = MagicMock()
         mock_processor_class.return_value = mock_processor
         mock_webmention = Webmention(
+            id=1,
             source_url="https://other.com/reply",
             target_url=f"https://{site.domain}/post",
         )
@@ -160,7 +161,7 @@ class TestWebmentionEndpoint:
         with patch("indieweb.views.WebmentionProcessor") as mock_processor_class:
             mock_processor = MagicMock()
             mock_processor_class.return_value = mock_processor
-            mock_processor.process_webmention.return_value = Webmention()
+            mock_processor.process_webmention.return_value = Webmention(id=2)
 
             # Send as form-encoded
             response = client.post(
@@ -240,3 +241,58 @@ class TestWebmentionEndpoint:
             response = client.post(url)
             # Should get 400 for missing params, not 403 for CSRF
             assert response.status_code == 400
+
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_location_header_on_201(self, mock_processor_class, client, site):
+        """Test that 201 response includes Location header per W3C spec."""
+        url = reverse("indieweb:webmention")
+
+        # Mock the processor
+        mock_processor = MagicMock()
+        mock_processor_class.return_value = mock_processor
+        mock_webmention = Webmention(
+            id=123,
+            source_url="https://other.com/reply",
+            target_url=f"https://{site.domain}/post",
+        )
+        mock_processor.process_webmention.return_value = mock_webmention
+
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": f"https://{site.domain}/post",
+            },
+        )
+
+        assert response.status_code == 201
+        assert "Location" in response
+        # Should contain webmention ID in the URL
+        assert str(mock_webmention.id) in response["Location"]
+
+    @pytest.mark.django_db
+    def test_webmention_status_view(self, client):
+        """Test the webmention status endpoint."""
+        # Create a test webmention
+        webmention = Webmention.objects.create(
+            source_url="https://other.com/reply",
+            target_url="https://example.com/post",
+            status="verified",
+        )
+
+        url = reverse("indieweb:webmention-status", args=[webmention.pk])
+        response = client.get(url)
+
+        assert response.status_code == 200
+        assert response["Content-Type"] == "application/json"
+
+        data = json.loads(response.content)
+        assert data["source"] == webmention.source_url
+        assert data["target"] == webmention.target_url
+        assert data["status"] == webmention.status
+
+    def test_webmention_status_view_not_found(self, client):
+        """Test that non-existent webmention returns 404."""
+        url = reverse("indieweb:webmention-status", args=[99999])
+        response = client.get(url)
+        assert response.status_code == 404
