@@ -3,6 +3,12 @@
 Changelog
 =========
 
+0.4.1 (2025-07-10)
+------------------
+* Fixed Webmention endpoint to return Location header with HTTP 201 status per W3C specification
+* Added WebmentionStatusView to provide webmention status information at the Location URL
+* Fixed compatibility with webmention.rocks test suite
+
 0.4.0 (2025-07-10)
 ------------------
 * **MAJOR**: Added complete Webmention support (W3C Recommendation compliance)
