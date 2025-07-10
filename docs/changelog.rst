@@ -3,7 +3,7 @@
 Changelog
 =========
 
-0.4.0 (unreleased)
+0.4.0 (2025-07-10)
 ------------------
 * **MAJOR**: Added complete Webmention support (W3C Recommendation compliance)
 * Added Webmention model for storing incoming and outgoing webmentions
