@@ -1,0 +1,63 @@
+{% comment %}
+Example usage of webmention template tags.
+
+This file shows how to integrate webmentions into your templates.
+{% endcomment %}
+
+{% load static %}
+{% load webmention_tags %}
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Post with Webmentions</title>
+
+    <!-- Include the webmention endpoint link tag in your head -->
+    {% webmention_endpoint_link %}
+
+    <!-- Include the webmentions CSS -->
+    <link rel="stylesheet" href="{% static 'css/webmentions.css' %}">
+  </head>
+  <body>
+    <article class="h-entry">
+      <h1 class="p-name">My Blog Post</h1>
+      <div class="e-content">
+        <p>This is the content of my blog post...</p>
+      </div>
+
+        <!-- Display webmentions for this post -->
+      <section class="webmentions-section">
+        <h2>
+          Responses
+          {% webmention_count post_url as total_count %}
+          {% if total_count %}({{ total_count }}){% endif %}
+        </h2>
+
+            <!-- Show all webmentions -->
+        {% show_webmentions post_url %}
+
+            <!-- Or show specific types separately -->
+            {% comment %}
+            {% webmention_count post_url "like" as like_count %}
+            {% if like_count %}
+                <h3>{{ like_count }} Like{{ like_count|pluralize }}</h3>
+                {% show_webmentions post_url "like" %}
+            {% endif %}
+
+            {% webmention_count post_url "reply" as reply_count %}
+            {% if reply_count %}
+                <h3>{{ reply_count }} Repl{{ reply_count|pluralize:"y,ies" }}</h3>
+                {% show_webmentions post_url "reply" %}
+            {% endif %}
+
+            {% webmention_count post_url "repost" as repost_count %}
+            {% if repost_count %}
+                <h3>{{ repost_count }} Repost{{ repost_count|pluralize }}</h3>
+                {% show_webmentions post_url "repost" %}
+            {% endif %}
+            {% endcomment %}
+      </section>
+    </article>
+  </body>
+</html>

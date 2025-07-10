@@ -1,0 +1,21 @@
+<div class="webmentions" data-target-url="{{ target_url }}">
+  {% if webmentions %}
+    <div class="webmentions-list">
+      {% for webmention in webmentions %}
+        <article class="h-cite webmention webmention-{{ webmention.mention_type }}">
+          {% if webmention.mention_type == "like" %}
+            {% include "indieweb/webmention_types/like.html" with webmention=webmention %}
+          {% elif webmention.mention_type == "reply" %}
+            {% include "indieweb/webmention_types/reply.html" with webmention=webmention %}
+          {% elif webmention.mention_type == "repost" %}
+            {% include "indieweb/webmention_types/repost.html" with webmention=webmention %}
+          {% else %}
+            {% include "indieweb/webmention_types/mention.html" with webmention=webmention %}
+          {% endif %}
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="webmentions-empty">No webmentions yet.</p>
+  {% endif %}
+</div>

@@ -1,0 +1,70 @@
+/* Custom CSS for Mermaid diagrams in Furo theme */
+
+/* Use CSS filter to improve contrast in dark mode */
+/* This approach inverts the colors and adjusts the hue for better readability */
+[data-theme="dark"] .mermaid svg {
+    filter: invert(0.9) hue-rotate(180deg);
+    background: transparent !important;
+}
+
+/* Handle auto theme (system preference) */
+@media (prefers-color-scheme: dark) {
+    [data-theme="auto"] .mermaid svg {
+        filter: invert(0.9) hue-rotate(180deg);
+        background: transparent !important;
+    }
+}
+
+/* Ensure proper background for Mermaid containers */
+.mermaid {
+    text-align: center;
+    background-color: transparent !important;
+    margin: 1em 0;
+}
+
+/* Light theme - no changes needed */
+[data-theme="light"] .mermaid svg {
+    filter: none;
+    background: transparent !important;
+}
+
+@media (prefers-color-scheme: light) {
+    [data-theme="auto"] .mermaid svg {
+        filter: none;
+        background: transparent !important;
+    }
+}
+
+/* Fallback styling for when Mermaid hasn't rendered yet */
+pre.mermaid {
+    background: var(--color-code-background);
+    padding: 1em;
+    border-radius: 0.25em;
+    overflow-x: auto;
+    color: var(--color-code-foreground);
+    font-family: var(--font-stack--monospace);
+}
+
+/* Ensure mermaid text is visible before rendering */
+.mermaid:not([data-processed]) {
+    opacity: 0.7;
+}
+
+/* Additional fixes for specific Mermaid elements */
+[data-theme="dark"] .mermaid .node rect,
+[data-theme="dark"] .mermaid .node circle,
+[data-theme="dark"] .mermaid .node ellipse,
+[data-theme="dark"] .mermaid .node polygon,
+[data-theme="dark"] .mermaid .node path {
+    fill-opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+    [data-theme="auto"] .mermaid .node rect,
+    [data-theme="auto"] .mermaid .node circle,
+    [data-theme="auto"] .mermaid .node ellipse,
+    [data-theme="auto"] .mermaid .node polygon,
+    [data-theme="auto"] .mermaid .node path {
+        fill-opacity: 1;
+    }
+}

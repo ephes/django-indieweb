@@ -1,0 +1,97 @@
+{% extends "indieweb/base.html" %}
+
+{% block content %}
+  <div class="indieweb-consent">
+    <h1>Authorization Request</h1>
+
+    <div class="consent-details">
+      <p><strong>{{ client_id }}</strong> is requesting access to your site.</p>
+
+      <div class="consent-info">
+        <p><strong>Your identity URL:</strong> {{ me }}</p>
+
+        {% if scope %}
+          <p><strong>Requested permissions:</strong></p>
+          <ul class="scope-list">
+            {% for permission in scope_list %}
+              <li>{{ permission }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+
+      <form method="post" action="{% url 'indieweb:auth' %}">
+        {% csrf_token %}
+        <input type="hidden" name="client_id" value="{{ client_id }}">
+        <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+        <input type="hidden" name="state" value="{{ state }}">
+        <input type="hidden" name="me" value="{{ me }}">
+        {% if scope %}
+          <input type="hidden" name="scope" value="{{ scope }}">
+        {% endif %}
+
+        <div class="consent-actions">
+          <button type="submit" name="action" value="approve" class="btn btn-primary">Approve</button>
+          <button type="submit" name="action" value="deny" class="btn btn-secondary">Deny</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <style>
+    .indieweb-consent {
+      max-width: 600px;
+      margin: 2rem auto;
+      padding: 2rem;
+    }
+
+    .consent-details {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 0.25rem;
+      padding: 1.5rem;
+      margin-top: 1rem;
+    }
+
+    .consent-info {
+      margin: 1.5rem 0;
+    }
+
+    .scope-list {
+      margin-left: 1.5rem;
+    }
+
+    .consent-actions {
+      margin-top: 2rem;
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+    }
+
+    .btn {
+      padding: 0.5rem 1.5rem;
+      border: none;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+
+    .btn-primary {
+      background-color: #0d6efd;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background-color: #0b5ed7;
+    }
+
+    .btn-secondary {
+      background-color: #6c757d;
+      color: white;
+    }
+
+    .btn-secondary:hover {
+      background-color: #5c636a;
+    }
+  </style>
+{% endblock %}

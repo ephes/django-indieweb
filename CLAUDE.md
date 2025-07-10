@@ -99,6 +99,10 @@ uv publish --token your_token
 ## Code Style
 
 - Ruff for linting and formatting with 119 character line length
+- Use modern Python type hints:
+  - Use `list`, `dict`, `set`, `tuple` instead of `List`, `Dict`, `Set`, `Tuple`
+  - Use pipe notation `|` instead of `Optional[]` (e.g., `str | None` instead of `Optional[str]`)
+  - Use `from typing import Any` when needed, but prefer built-in types
 - Pre-commit hooks for:
   - Trailing whitespace
   - End of file fixing
@@ -107,6 +111,20 @@ uv publish --token your_token
   - Django upgrades (4.1+)
   - Ruff linting and formatting
   - djhtml for template formatting
+
+## Development Guidelines
+
+### Definition of Done
+
+A feature is NOT considered complete until:
+
+1. **All tests pass** - Run `pytest` to ensure no regressions
+2. **MyPy type checking passes** - No type errors when running mypy
+3. **Pre-commit hooks pass** - Run `pre-commit run --all-files`
+4. **New functionality has tests** - Add comprehensive tests for any new features
+5. **Documentation is updated** - Update relevant docs if behavior changes
+
+Always verify these before considering any implementation complete.
 
 ## Notes
 

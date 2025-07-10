@@ -7,13 +7,14 @@ name = "django-indieweb"
 authors = [
     {name = "Jochen Wersdörfer", email = "jochen-indieweb@wersdoerfer.de"},
 ]
-version = "0.0.8"
-description = "includes indieauth and a micropub endpoint"
+version = "0.4.0"
+description = "includes indieauth, micropub, and webmention endpoints"
 requires-python = ">=3.10"
 keywords = [
     "indieweb",
     "indieauth",
     "micropub",
+    "webmention",
     "django",
 ]
 classifiers = [
@@ -38,14 +39,15 @@ classifiers = [
 dependencies = [
     "Django",
     "django-model-utils",
-    "django-braces",
-    "pytz",
-    "setuptools",
+    "mf2py",
+    "beautifulsoup4",
+    "httpx",
 ]
 
 [dependency-groups]
 dev = [
     "django-environ",
+    "django-stubs[compatible-mypy]",
     "furo",
     "mypy",
     "pre-commit",
@@ -55,6 +57,7 @@ dev = [
     "ruff",
     "requests",
     "tox",
+    "types-requests",
 ]
 
 [project.urls]
@@ -99,8 +102,66 @@ filterwarnings = [
 addopts = [
     "--reuse-db",
     "--no-migrations",
+    "--cov-config=pyproject.toml",
 ]
 norecursedirs = [
     ".git",
     "docs",
 ]
+
+[tool.coverage.run]
+source = ["src/indieweb"]
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    "*/__init__.py",
+    "*/settings.py",
+    "*/wsgi.py",
+    "*/asgi.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+strict_optional = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+files = ["src/indieweb"]
+plugins = ["mypy_django_plugin.main"]
+
+[[tool.mypy.overrides]]
+module = "environ"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mf2py"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "indieweb.handlers_example"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "*.migrations.*"
+ignore_errors = true
+
+[tool.django-stubs]
+django_settings_module = "tests.settings"

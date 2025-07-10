@@ -1,0 +1,33 @@
+<div class="p-mention h-entry">
+  <div class="mention-header">
+    {% if webmention.author_photo %}
+      <img class="u-photo" src="{{ webmention.author_photo }}" alt="{{ webmention.author_name }}" width="48" height="48" loading="lazy">
+    {% endif %}
+    <div class="p-author h-card">
+      {% if webmention.author_url %}
+        <a class="p-name u-url" href="{{ webmention.author_url }}" rel="nofollow">{{ webmention.author_name|default:"A website" }}</a>
+      {% else %}
+        <span class="p-name">{{ webmention.author_name|default:"A website" }}</span>
+      {% endif %}
+      mentioned this
+      <a class="u-url" href="{{ webmention.source_url }}" rel="nofollow">
+        {% if webmention.published %}
+          <time class="dt-published" datetime="{{ webmention.published|date:'c' }}">
+            {{ webmention.published|date:"M j, Y" }}
+          </time>
+        {% else %}
+          post
+        {% endif %}
+      </a>
+    </div>
+  </div>
+  {% if webmention.content or webmention.content_html %}
+    <div class="e-content mention-content">
+      {% if webmention.content_html %}
+        {{ webmention.content_html|safe|truncatewords_html:50 }}
+      {% elif webmention.content %}
+        <p>{{ webmention.content|truncatewords:50 }}</p>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>

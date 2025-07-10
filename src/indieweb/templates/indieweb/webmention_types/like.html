@@ -1,0 +1,22 @@
+<div class="p-like h-card">
+  {% if webmention.author_photo %}
+    <img class="u-photo" src="{{ webmention.author_photo }}" alt="{{ webmention.author_name }}" width="48" height="48" loading="lazy">
+  {% endif %}
+  <span class="p-author">
+    {% if webmention.author_url %}
+      <a class="u-url" href="{{ webmention.author_url }}" rel="nofollow">{{ webmention.author_name|default:"Someone" }}</a>
+    {% else %}
+      {{ webmention.author_name|default:"Someone" }}
+    {% endif %}
+  </span>
+  <span class="webmention-action">liked this</span>
+  <a class="u-url" href="{{ webmention.source_url }}" rel="nofollow">
+    {% if webmention.published %}
+      <time class="dt-published" datetime="{{ webmention.published|date:'c' }}">
+        {{ webmention.published|date:"M j, Y" }}
+      </time>
+    {% else %}
+      <span class="webmention-link">link</span>
+    {% endif %}
+  </a>
+</div>

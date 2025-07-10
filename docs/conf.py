@@ -20,7 +20,7 @@ django.setup()
 project = "django-indieweb"
 copyright = "2025, Jochen Wersdörfer"
 author = "Jochen Wersdörfer"
-release = "0.0.8"
+release = "0.4.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -29,6 +29,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
+    "sphinxcontrib.mermaid",
 ]
 
 templates_path = ["_templates"]
@@ -40,7 +41,20 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "furo"
 html_static_path = ["_static"]
 
+# Custom CSS for better Mermaid diagram contrast in dark mode
+html_css_files = [
+    "custom.css",
+]
+
+# Custom JavaScript for Mermaid initialization
+html_js_files = [
+    "mermaid-init.js",
+]
+
 # -- Extension configuration -------------------------------------------------
 
 # Autodoc settings
-autodoc_mock_imports = []
+autodoc_mock_imports = ["model_utils"]
+
+# Mermaid configuration
+mermaid_version = "11.2.0"

@@ -1,5 +1,5 @@
 """
-includes indieauth and a micropub endpoint
+includes indieauth, micropub, and webmention endpoints
 """
 
-__version__ = "0.0.8"
+__version__ = "0.4.0"

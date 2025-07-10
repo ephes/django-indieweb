@@ -9,16 +9,35 @@ Welcome to django-indieweb's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   concepts
+   tutorial
+   indieauth
+   micropub
+   webmention
+   api
+   configuration
    development
    changelog
+   modules
 
 Features
 --------
 
-* IndieAuth authentication endpoint
-* IndieAuth token endpoint
-* Micropub endpoint for creating posts
+* **IndieAuth authentication endpoint** - For logging into IndieWeb sites
+* **IndieAuth authorization endpoint with consent screen** - For granting permissions to apps
+* **IndieAuth token endpoint** - For exchanging auth codes for access tokens
+* **Micropub endpoint with full content creation support**
+* **Webmention support** - Send and receive cross-site conversations
+* Pluggable content handler system for Micropub integration
+* Pluggable interfaces for Webmention URL resolution and spam checking
+* Support for both form-encoded and JSON Micropub requests
+* Microformats2 parsing for rich webmention content
+* Micropub query endpoints (config, syndicate-to)
 * Django integration
+
+.. note::
+   The Micropub endpoint now includes a complete content creation system with a
+   pluggable handler architecture. See :doc:`micropub` for implementation details.
 
 Installation
 ------------
@@ -49,11 +68,23 @@ Quick Start
 
     python manage.py migrate
 
-4. Visit the IndieAuth endpoints at:
+4. Visit the IndieWeb endpoints at:
 
    * ``/indieweb/auth/`` - Authentication endpoint
    * ``/indieweb/token/`` - Token endpoint
    * ``/indieweb/micropub/`` - Micropub endpoint
+   * ``/indieweb/webmention/`` - Webmention endpoint
+
+5. To enable content creation via Micropub, create a content handler::
+
+    from indieweb.handlers import MicropubContentHandler, MicropubEntry
+
+    class MyContentHandler(MicropubContentHandler):
+        def create_entry(self, properties, user):
+            # Your content creation logic here
+            pass
+
+   See :doc:`micropub` for detailed implementation examples.
 
 Indices and tables
 ==================

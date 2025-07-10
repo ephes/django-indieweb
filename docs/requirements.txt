@@ -2,3 +2,4 @@ django
 django-environ
 furo
 sphinx
+sphinxcontrib-mermaid

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Authorization Request - {{ site_name }}{% endblock %}
+
+{% block content %}
+  <div class="container mt-5">
+    <div class="row justify-content-center">
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="mb-0">Authorization Request</h3>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <strong>{{ client_id }}</strong> is requesting access to your site.
+            </div>
+
+            <dl class="row">
+              <dt class="col-sm-4">Your identity:</dt>
+              <dd class="col-sm-8">{{ me }}</dd>
+
+              <dt class="col-sm-4">Application:</dt>
+              <dd class="col-sm-8">{{ client_id }}</dd>
+            </dl>
+
+            {% if scope_list %}
+              <div class="permissions-section mt-4">
+                <h5>Requested permissions:</h5>
+                <ul class="list-group">
+                  {% for permission in scope_list %}
+                    <li class="list-group-item">
+                      <i class="fas fa-check-circle text-success"></i>
+                      {% if permission == "create" %}
+                        Create new posts on your site
+                      {% elif permission == "update" %}
+                        Edit existing posts
+                      {% elif permission == "delete" %}
+                        Delete posts
+                      {% elif permission == "media" %}
+                        Upload media files
+                      {% else %}
+                        {{ permission }}
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% else %}
+              <div class="alert alert-warning mt-4">
+                This application is requesting authentication only (no special permissions).
+              </div>
+            {% endif %}
+
+            <form method="post" action="{% url 'indieweb:auth' %}" class="mt-4">
+              {% csrf_token %}
+              <input type="hidden" name="client_id" value="{{ client_id }}">
+              <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+              <input type="hidden" name="state" value="{{ state }}">
+              <input type="hidden" name="me" value="{{ me }}">
+              {% if scope %}
+                <input type="hidden" name="scope" value="{{ scope }}">
+              {% endif %}
+
+              <div class="d-grid gap-2 d-md-flex justify-content-md-center">
+                <button type="submit" name="action" value="approve" class="btn btn-success">
+                  <i class="fas fa-check"></i> Approve
+                </button>
+                <button type="submit" name="action" value="deny" class="btn btn-danger">
+                  <i class="fas fa-times"></i> Deny
+                </button>
+              </div>
+            </form>
+
+            <div class="text-muted text-center mt-4">
+              <small>
+                By approving, you allow {{ client_id }} to perform the requested actions on your behalf.
+                You can revoke this access at any time from your settings.
+              </small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block extra_css %}
+  <style>
+    .permissions-section {
+      background-color: #f8f9fa;
+      padding: 1rem;
+      border-radius: 0.25rem;
+    }
+
+    .list-group-item {
+      border: none;
+      background-color: transparent;
+      padding: 0.5rem 0;
+    }
+  </style>
+{% endblock %}

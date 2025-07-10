@@ -1,14 +1,14 @@
 """
-Indiweb endpoint urls.
+IndieWeb endpoint URLs.
 
-Add these to your root URLconf if you're using the indieweb endpoints:
+Add these to your root URLconf if you're using the indieweb endpoints::
 
     urlpatterns = [
         ...
-        url(r'^indieweb/', include('indieweb.urls', namespace='indieweb'))
+        path('indieweb/', include('indieweb.urls')),
     ]
 
-In Django versions older than 1.9, the urls must be namespaced as 'indieweb'.
+The namespace 'indieweb' is automatically set via app_name.
 """
 
 from django.urls import path
@@ -20,4 +20,5 @@ urlpatterns = [
     path("auth/", views.AuthView.as_view(), name="auth"),
     path("token/", views.TokenView.as_view(), name="token"),
     path("micropub/", views.MicropubView.as_view(), name="micropub"),
+    path("webmention/", views.WebmentionEndpoint.as_view(), name="webmention"),
 ]
