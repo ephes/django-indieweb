@@ -1,4 +1,7 @@
+from typing import Any
+
 from django.contrib import admin
+from django.http import HttpRequest
 
 from .models import Auth, Token, Webmention
 
@@ -54,7 +57,7 @@ class TokenAdmin(admin.ModelAdmin):
     readonly_fields = ("key", "owner", "client_id", "me", "scope", "created", "modified")
     ordering = ("-created",)
 
-    def has_add_permission(self, request):
+    def has_add_permission(self, request: HttpRequest) -> bool:
         return False
 
     fieldsets = (
@@ -86,10 +89,10 @@ class AuthAdmin(admin.ModelAdmin):
     search_fields = ("client_id", "me", "state")
     ordering = ("-created",)
 
-    def get_readonly_fields(self, request, obj=None):
+    def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> list[str]:
         return [f.name for f in self.model._meta.fields]
 
-    def has_add_permission(self, request):
+    def has_add_permission(self, request: HttpRequest) -> bool:
         return False
 
     fieldsets = (
