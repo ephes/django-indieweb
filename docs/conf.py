@@ -20,7 +20,7 @@ django.setup()
 project = "django-indieweb"
 copyright = "2025, Jochen Wersdörfer"
 author = "Jochen Wersdörfer"
-release = "0.4.0"
+release = "0.4.2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
