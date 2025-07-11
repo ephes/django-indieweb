@@ -51,10 +51,12 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
     return {"webmentions": webmentions, "target_url": target_url, "mention_type": mention_type}
 
 
-@register.simple_tag
-def webmention_count(target_url: str, mention_type: str | None = None, as_var: str | None = None) -> str | int:
+@register.simple_tag(takes_context=True)
+def webmention_count(context, target_url: str, mention_type: str | None = None) -> int:
     """
     Get count of webmentions for a URL.
+    
+    Always returns an integer for consistent template comparisons.
 
     Usage:
         {% webmention_count target_url %}
@@ -62,17 +64,12 @@ def webmention_count(target_url: str, mention_type: str | None = None, as_var: s
         {% webmention_count target_url as count %}
     """
     if not target_url:
-        count = 0
-    else:
-        # Count only verified webmentions
-        webmentions = Webmention.objects.filter(target_url=target_url, status="verified")
+        return 0
 
-        if mention_type:
-            webmentions = webmentions.filter(mention_type=mention_type)
+    # Count only verified webmentions
+    webmentions = Webmention.objects.filter(target_url=target_url, status="verified")
 
-        count = webmentions.count()
+    if mention_type:
+        webmentions = webmentions.filter(mention_type=mention_type)
 
-    if as_var:
-        return count
-
-    return str(count)
+    return webmentions.count()

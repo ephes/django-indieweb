@@ -3,7 +3,20 @@
 Changelog
 =========
 
-0.4.0 (unreleased)
+0.4.3 (2025-07-11)
+------------------
+* Fixed ``webmention_count`` template tag to always return integers for consistent template comparisons
+* Previously returned string when used directly but integer when used with ``as`` variable assignment
+
+0.4.2 (2025-07-11)
+------------------
+* *Version skipped*
+
+0.4.1 (2025-07-11)
+------------------
+* *Version skipped*
+
+0.4.0 (2025-07-11)
 ------------------
 * **MAJOR**: Added complete Webmention support (W3C Recommendation compliance)
 * Added Webmention model for storing incoming and outgoing webmentions
