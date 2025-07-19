@@ -228,8 +228,7 @@ class WebmentionTemplateTagsTestCase(TestCase):
         """Test that webmention_count returns consistent types for template comparisons."""
         # Test that webmention_count without as_var returns a string that can't be compared numerically
         # This test demonstrates the bug
-        from django.template import TemplateSyntaxError
-        
+
         # First, show that the tag outputs correctly
         template = Template("""
             {% load webmention_tags %}
@@ -239,17 +238,17 @@ class WebmentionTemplateTagsTestCase(TestCase):
         """)
         context = Context({"target_url": self.target_url})
         rendered = template.render(context).strip()
-        
+
         # Both should show the same value
         self.assertIn("Direct output: 4", rendered)
         self.assertIn("Variable: 4", rendered)
-        
+
         # Now test that direct output returns string "4" while as_var returns int 4
         template = Template("{% load webmention_tags %}{% webmention_count target_url %}")
         direct_output = template.render(context).strip()
         self.assertIsInstance(direct_output, str)
         self.assertEqual(direct_output, "4")
-        
+
         # Test with as_var - need to check the actual context variable
         template = Template("{% load webmention_tags %}{% webmention_count target_url as count %}")
         template.render(context)
@@ -259,17 +258,19 @@ class WebmentionTemplateTagsTestCase(TestCase):
     def test_webmention_count_returns_int(self):
         """Test that webmention_count should always return an integer for consistency."""
         context = Context({"target_url": self.target_url})
-        
+
         # Test via template rendering to ensure integer is returned
         template = Template("{% load webmention_tags %}{% webmention_count target_url %}")
         rendered = template.render(context).strip()
-        
+
         # The rendered output should be "4" (string representation of int)
         self.assertEqual(rendered, "4")
-        
+
         # Test with as_var to ensure the variable is an integer
-        template_as_var = Template("{% load webmention_tags %}{% webmention_count target_url as count %}{{ count|add:0 }}")
+        template_as_var = Template(
+            "{% load webmention_tags %}{% webmention_count target_url as count %}{{ count|add:0 }}"
+        )
         rendered_as_var = template_as_var.render(context).strip()
-        
+
         # The |add:0 filter will work correctly only if count is an integer
         self.assertEqual(rendered_as_var, "4")

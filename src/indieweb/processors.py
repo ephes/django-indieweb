@@ -263,7 +263,7 @@ class WebmentionProcessor:
         if isinstance(content, dict):
             return {
                 "text": content.get("value", ""),
-                "html": content.get("html", content.get("value", "")),
+                "html": content.get("html") or content.get("value", ""),
             }
         elif isinstance(content, str):
             return {"text": content, "html": content}

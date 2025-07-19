@@ -52,10 +52,10 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
 
 
 @register.simple_tag(takes_context=True)
-def webmention_count(context, target_url: str, mention_type: str | None = None) -> int:
+def webmention_count(context: dict[str, Any], target_url: str, mention_type: str | None = None) -> int:
     """
     Get count of webmentions for a URL.
-    
+
     Always returns an integer for consistent template comparisons.
 
     Usage:
