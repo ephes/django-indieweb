@@ -60,15 +60,15 @@ settings.configure(
     STATIC_URL="/static/",
     USE_TZ=True,
     # IndieWeb settings
-    INDIEWEB_SCHEME = "http",
-    INDIEWEB_DOMAIN = "localhost:8000",
+    INDIEWEB_SCHEME="http",
+    INDIEWEB_DOMAIN="localhost:8000",
 )
 
 # URL configuration
 from django.contrib import admin
 from django.http import HttpResponse
+from django.template import Context, Template
 from django.urls import include, path
-from django.template import Template, Context
 
 
 def test_page(request):
@@ -84,18 +84,18 @@ def test_page(request):
     <body>
         <h1>Test Webmention Page</h1>
         <p>This page can receive webmentions! The endpoint is at /webmention/</p>
-        
+
         <h2>Send a test webmention:</h2>
         <pre>
 curl -X POST http://{{ request.get_host }}/webmention/ \\
   -d "source=https://example.com/your-post" \\
   -d "target=http://{{ request.get_host }}/"
         </pre>
-        
+
         <h2>Webmentions for this page:</h2>
         <p>Count: {% webmention_count request.build_absolute_uri %}</p>
         {% webmentions_for request.build_absolute_uri %}
-        
+
         <hr>
         <p><a href="/admin/">Django Admin</a> | <a href="/webmention/">Webmention Endpoint</a></p>
     </body>
@@ -122,9 +122,10 @@ if __name__ == "__main__":
     if not os.path.exists("test_webmentions.db"):
         print("First run - creating database...")
         execute_from_command_line(["manage.py", "migrate"])
-        
+
         # Create a superuser
         from django.contrib.auth import get_user_model
+
         User = get_user_model()
         if not User.objects.filter(username="admin").exists():
             User.objects.create_superuser("admin", "admin@example.com", "admin")
@@ -133,5 +134,5 @@ if __name__ == "__main__":
     print("\nStarting test server...")
     print("Visit http://localhost:8000/ to test webmentions")
     print("Admin interface: http://localhost:8000/admin/ (admin/admin)")
-    
+
     execute_from_command_line(["manage.py", "runserver"])
