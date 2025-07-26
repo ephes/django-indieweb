@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator, URLValidator
 from django.db import models
 from django.utils.crypto import get_random_string
 
@@ -135,3 +137,104 @@ class Webmention(models.Model):
 
     def __str__(self) -> str:
         return f"{self.mention_type}: {self.source_url} -> {self.target_url}"
+
+
+class Profile(models.Model):
+    """User profile with h-card data stored as JSON."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="indieweb_profile")
+    h_card = models.JSONField(default=dict, blank=True)
+
+    # Common fields for quick access/querying
+    name = models.CharField(max_length=200, blank=True)
+    photo_url = models.URLField(blank=True)
+    url = models.URLField(blank=True)
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "indieweb_profile"
+        verbose_name = "User Profile"
+        verbose_name_plural = "User Profiles"
+
+    def __str__(self) -> str:
+        return f"Profile for {self.user.username}"
+
+    def clean(self) -> None:
+        """Validate h_card data before saving."""
+        super().clean()
+        if self.h_card:
+            self._validate_h_card_urls()
+            self._validate_h_card_emails()
+
+    def _validate_h_card_urls(self) -> None:
+        """Validate all URLs in h_card data."""
+        url_validator = URLValidator()
+        url_fields = ["url", "photo"]
+
+        for field in url_fields:
+            if field in self.h_card:
+                for url in self.h_card[field]:
+                    # Handle both string URLs and photo objects
+                    if isinstance(url, dict) and "value" in url:
+                        url_to_validate = url["value"]
+                    elif isinstance(url, str):
+                        url_to_validate = url
+                    else:
+                        continue
+
+                    try:
+                        url_validator(url_to_validate)
+                    except ValidationError as e:
+                        raise ValidationError(f"Invalid URL in h_card.{field}: {url_to_validate}") from e
+
+        # Also validate org URLs
+        if "org" in self.h_card:
+            for org in self.h_card["org"]:
+                if isinstance(org, dict) and "url" in org:
+                    try:
+                        url_validator(org["url"])
+                    except ValidationError as e:
+                        raise ValidationError(f"Invalid URL in h_card.org.url: {org['url']}") from e
+
+    def _validate_h_card_emails(self) -> None:
+        """Validate all emails in h_card data."""
+        email_validator = EmailValidator()
+        if "email" in self.h_card:
+            for email in self.h_card["email"]:
+                try:
+                    email_validator(email)
+                except ValidationError as e:
+                    raise ValidationError(f"Invalid email in h_card: {email}") from e
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """Save profile and sync quick-access fields with h_card data."""
+        # Sync fields before saving
+        self._sync_fields_from_h_card()
+
+        # Validate
+        self.full_clean()
+
+        super().save(*args, **kwargs)
+
+    def _sync_fields_from_h_card(self) -> None:
+        """Sync quick-access fields with h_card data."""
+        if not self.h_card:
+            return
+
+        # Sync name
+        if "name" in self.h_card and self.h_card["name"]:
+            self.name = self.h_card["name"][0]
+
+        # Sync URL
+        if "url" in self.h_card and self.h_card["url"]:
+            self.url = self.h_card["url"][0]
+
+        # Sync photo URL
+        if "photo" in self.h_card and self.h_card["photo"]:
+            photo = self.h_card["photo"][0]
+            if isinstance(photo, dict) and "value" in photo:
+                self.photo_url = photo["value"]
+            elif isinstance(photo, str):
+                self.photo_url = photo
