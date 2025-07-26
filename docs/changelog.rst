@@ -3,6 +3,28 @@
 Changelog
 =========
 
+0.5.1 (unreleased)
+------------------
+* Fixed h-card template to properly handle photo data from mf2py parser
+* Added automatic property name normalization (converts hyphens to underscores for Django template compatibility)
+* Added webmention integration to use local Profile data when author is a local user
+* Added automatic synchronization of Profile fields (name, photo_url, url) with h_card JSON data
+* Added URL and email validation for h_card data to prevent invalid data storage
+* Enhanced h_card normalization to properly handle nested objects
+* Added h_card structure validation in admin interface
+* Fixed all mypy type checking issues
+* Updated tests for consistency with implementation
+
+0.5.0 (2025-07-25)
+------------------
+* Added h-card support with Profile model for user profile data
+* Added flexible JSON storage for all h-card properties
+* Added h_card template tag for rendering h-card microformats
+* Added Profile admin interface with JSON editing support
+* Added h-card parsing and validation utilities
+* Added comprehensive test suite for h-card functionality
+* Updated documentation with h-card usage examples
+
 0.4.3 (2025-07-11)
 ------------------
 * Fixed ``webmention_count`` template tag to always return integers for consistent template comparisons
