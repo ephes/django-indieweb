@@ -1,9 +1,10 @@
+import json
 from typing import Any
 
 from django.contrib import admin
 from django.contrib.admin.widgets import AdminTextareaWidget
 from django.core.exceptions import ValidationError
-from django.forms import JSONField, ModelForm
+from django.forms import CharField, ModelForm
 from django.http import HttpRequest
 
 from .models import Auth, Profile, Token, Webmention
@@ -121,35 +122,41 @@ class AuthAdmin(admin.ModelAdmin):
 
 
 class PrettyJSONWidget(AdminTextareaWidget):
-    """Widget to display JSON in a pretty format."""
+    """Widget to display JSON in a pretty format with larger textarea."""
 
-    def format_value(self, value: Any) -> str:
-        import json
-
-        if value:
-            try:
-                return json.dumps(value, indent=2, sort_keys=True)
-            except (TypeError, ValueError):
-                pass
-        result = super().format_value(value)
-        return result if result is not None else ""
+    def __init__(self, attrs: dict[str, Any] | None = None) -> None:
+        default_attrs = {"rows": 20, "cols": 80, "style": "font-family: monospace;"}
+        if attrs:
+            default_attrs.update(attrs)
+        super().__init__(attrs=default_attrs)
 
 
 class ProfileAdminForm(ModelForm):
     """Custom form for Profile admin with pretty JSON editing."""
 
-    h_card = JSONField(widget=PrettyJSONWidget, required=False)
+    h_card = CharField(widget=PrettyJSONWidget, required=False)
 
     class Meta:
         model = Profile
         fields = ["user", "h_card", "name", "photo_url", "url"]
 
-    def clean_h_card(self) -> dict[str, Any]:
-        """Validate h_card JSON structure."""
-        h_card = self.cleaned_data.get("h_card", {})
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Convert the h_card dict to JSON string for display
+        if self.instance and self.instance.h_card:
+            self.initial["h_card"] = json.dumps(self.instance.h_card, indent=2, sort_keys=True, ensure_ascii=False)
 
-        if not h_card:
+    def clean_h_card(self) -> dict[str, Any]:
+        """Validate and parse h_card JSON structure."""
+        h_card_str = self.cleaned_data.get("h_card", "")
+
+        if not h_card_str or h_card_str.strip() == "":
             return {}
+
+        try:
+            h_card = json.loads(h_card_str)
+        except json.JSONDecodeError as e:
+            raise ValidationError(f"Invalid JSON: {e}") from e
 
         # Import validation from h_card module
         from .h_card import validate_h_card
