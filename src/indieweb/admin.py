@@ -1,9 +1,12 @@
 from typing import Any
 
 from django.contrib import admin
+from django.contrib.admin.widgets import AdminTextareaWidget
+from django.core.exceptions import ValidationError
+from django.forms import JSONField, ModelForm
 from django.http import HttpRequest
 
-from .models import Auth, Token, Webmention
+from .models import Auth, Profile, Token, Webmention
 
 
 @admin.register(Webmention)
@@ -106,6 +109,86 @@ class AuthAdmin(admin.ModelAdmin):
             "Ownership",
             {
                 "fields": ("owner",),
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created", "modified"),
+            },
+        ),
+    )
+
+
+class PrettyJSONWidget(AdminTextareaWidget):
+    """Widget to display JSON in a pretty format."""
+
+    def format_value(self, value: Any) -> str:
+        import json
+
+        if value:
+            try:
+                return json.dumps(value, indent=2, sort_keys=True)
+            except (TypeError, ValueError):
+                pass
+        result = super().format_value(value)
+        return result if result is not None else ""
+
+
+class ProfileAdminForm(ModelForm):
+    """Custom form for Profile admin with pretty JSON editing."""
+
+    h_card = JSONField(widget=PrettyJSONWidget, required=False)
+
+    class Meta:
+        model = Profile
+        fields = ["user", "h_card", "name", "photo_url", "url"]
+
+    def clean_h_card(self) -> dict[str, Any]:
+        """Validate h_card JSON structure."""
+        h_card = self.cleaned_data.get("h_card", {})
+
+        if not h_card:
+            return {}
+
+        # Import validation from h_card module
+        from .h_card import validate_h_card
+
+        if not validate_h_card(h_card):
+            raise ValidationError("Invalid h-card structure. All properties must be lists.")
+
+        # Ensure we return a dict
+        return dict(h_card) if h_card else {}
+
+
+@admin.register(Profile)
+class ProfileAdmin(admin.ModelAdmin):
+    form = ProfileAdminForm
+    list_display = ("user", "name", "url", "created", "modified")
+    list_filter = ("created", "modified")
+    search_fields = ("user__username", "user__email", "name", "url")
+    readonly_fields = ("created", "modified")
+    ordering = ("-modified",)
+
+    fieldsets = (
+        (
+            "User",
+            {
+                "fields": ("user",),
+            },
+        ),
+        (
+            "Quick Access Fields",
+            {
+                "fields": ("name", "photo_url", "url"),
+                "description": "Common fields for easy access and querying",
+            },
+        ),
+        (
+            "H-Card Data",
+            {
+                "fields": ("h_card",),
+                "description": "Full h-card data in JSON format (see https://microformats.org/wiki/h-card)",
             },
         ),
         (
