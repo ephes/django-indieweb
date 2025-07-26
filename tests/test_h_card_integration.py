@@ -4,8 +4,8 @@ from django.template import Context, Template
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from indieweb.models import Profile, Token
 from indieweb.h_card import parse_h_card, validate_h_card
+from indieweb.models import Profile, Token
 
 User = get_user_model()
 
@@ -123,7 +123,7 @@ class TestHCardIntegration(TestCase):
     def test_profile_admin_integration(self):
         """Test Profile admin interface integration."""
         # Login as superuser
-        admin_user = User.objects.create_superuser(username="admin", email="admin@example.com", password="adminpass")
+        User.objects.create_superuser(username="admin", email="admin@example.com", password="adminpass")
         self.client.login(username="admin", password="adminpass")
 
         # Access profile admin
@@ -158,7 +158,7 @@ class TestHCardIntegration(TestCase):
         """Test system handles multiple user profiles correctly."""
         # Create another user with profile
         user2 = User.objects.create_user(username="user2")
-        profile2 = Profile.objects.create(user=user2, name="Second User", h_card={"name": ["Second User"]})
+        Profile.objects.create(user=user2, name="Second User", h_card={"name": ["Second User"]})
 
         # Ensure profiles are separate
         assert Profile.objects.count() == 2
