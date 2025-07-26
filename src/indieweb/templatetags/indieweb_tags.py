@@ -14,7 +14,7 @@ User = get_user_model()
 
 
 @register.simple_tag
-def h_card(user_or_profile: Any, extra_classes: str = None) -> str:
+def h_card(user_or_profile: Any, extra_classes: str | None = None) -> str:
     """
     Render an h-card for a user or profile.
 
@@ -33,7 +33,7 @@ def h_card(user_or_profile: Any, extra_classes: str = None) -> str:
         except Profile.DoesNotExist:
             profile = None
     else:
-        return {"profile": None, "user": None}
+        return ""
 
     # Normalize h_card data for template usage
     h_card_data = profile.h_card if profile else {}
