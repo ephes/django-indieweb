@@ -7,7 +7,7 @@ name = "django-indieweb"
 authors = [
     {name = "Jochen Wersdörfer", email = "jochen-indieweb@wersdoerfer.de"},
 ]
-version = "0.5.1"
+version = "0.5.2"
 description = "includes indieauth, micropub, and webmention endpoints"
 requires-python = ">=3.10"
 keywords = [

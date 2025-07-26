@@ -3,7 +3,14 @@
 Changelog
 =========
 
-0.5.1 (unreleased)
+0.5.2 (unreleased)
+------------------
+* Fixed JSON copy/paste issue in Django admin for h_card field
+* Changed admin form to use CharField with custom widget instead of JSONField to prevent double-encoding
+* Added proper JSON formatting and validation in Profile admin interface
+* Added tests for admin JSON widget functionality
+
+0.5.1 (2025-07-26)
 ------------------
 * Fixed h-card template to properly handle photo data from mf2py parser
 * Added automatic property name normalization (converts hyphens to underscores for Django template compatibility)
