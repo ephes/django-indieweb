@@ -4,6 +4,7 @@ from typing import Any
 
 from django import template
 from django.contrib.auth import get_user_model
+from django.template.loader import render_to_string
 
 from indieweb.h_card import normalize_property_names
 from indieweb.models import Profile
@@ -12,8 +13,8 @@ register = template.Library()
 User = get_user_model()
 
 
-@register.inclusion_tag("indieweb/h-card.html")
-def h_card(user_or_profile: Any, extra_classes: str = "") -> dict[str, Any]:
+@register.simple_tag
+def h_card(user_or_profile: Any, extra_classes: str = None) -> str:
     """
     Render an h-card for a user or profile.
 
@@ -39,4 +40,7 @@ def h_card(user_or_profile: Any, extra_classes: str = "") -> dict[str, Any]:
     if h_card_data:
         h_card_data = normalize_property_names(h_card_data)
 
-    return {"profile": profile, "user": user, "h_card": h_card_data, "extra_classes": extra_classes}
+    # Render the template manually
+    context = {"profile": profile, "user": user, "h_card": h_card_data, "extra_classes": extra_classes or ""}
+
+    return render_to_string("indieweb/h-card.html", context)
