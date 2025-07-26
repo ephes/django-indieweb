@@ -286,3 +286,62 @@ Common Issues
 
 **Redirect loops**
    Check that login redirect URLs are properly configured in Django settings
+
+
+Adding User Profiles with H-Cards
+---------------------------------
+
+H-cards allow you to add rich profile information for your users:
+
+1. Create a profile for a user:
+
+   .. code-block:: python
+
+      from django.contrib.auth import get_user_model
+      from indieweb.models import Profile
+
+      User = get_user_model()
+      user = User.objects.get(username="alice")
+
+      Profile.objects.create(
+          user=user,
+          name="Alice Johnson",
+          photo_url="https://example.com/alice.jpg",
+          url="https://example.com/alice",
+          h_card={
+              "name": ["Alice Johnson"],
+              "photo": ["https://example.com/alice.jpg"],
+              "url": ["https://example.com/alice"],
+              "email": ["alice@example.com"],
+              "note": ["Web developer and blogger"]
+          }
+      )
+
+2. Display the h-card on your homepage:
+
+   .. code-block:: django
+
+      {# templates/home.html #}
+      {% load indieweb_tags %}
+
+      <\!DOCTYPE html>
+      <html>
+      <head>
+          <title>{{ user.username }} - Homepage</title>
+          {% webmention_endpoint_link %}
+      </head>
+      <body>
+          <header>
+              {% h_card user %}
+          </header>
+
+          <main>
+              <\!-- Your content here -->
+          </main>
+      </body>
+      </html>
+
+3. The h-card will render with proper microformats2 markup, making your profile
+   machine-readable for other IndieWeb tools and services.
+
+See :doc:`h-card` for more details on h-card properties and customization.

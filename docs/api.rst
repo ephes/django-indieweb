@@ -318,3 +318,59 @@ CORS Support
 ------------
 
 CORS headers are not automatically added. Configure your Django middleware if needed.
+
+
+H-Card Support
+--------------
+
+While h-cards are not accessed via HTTP endpoints, django-indieweb provides models and template tags for managing user profile data.
+
+Models
+~~~~~~
+
+**Profile Model**
+
+Store h-card data for users:
+
+.. code-block:: python
+
+    from indieweb.models import Profile
+
+    profile = Profile.objects.create(
+        user=user,
+        name="Display Name",
+        h_card={
+            "name": ["Display Name"],
+            "url": ["https://example.com"],
+            "photo": ["https://example.com/photo.jpg"]
+        }
+    )
+
+Template Tags
+~~~~~~~~~~~~~
+
+**h_card Tag**
+
+Render h-card microformats in templates:
+
+.. code-block:: django
+
+    {% load indieweb_tags %}
+    {% h_card user %}
+
+Utilities
+~~~~~~~~~
+
+**Parsing Functions**
+
+.. code-block:: python
+
+    from indieweb.h_card import parse_h_card, validate_h_card
+
+    # Parse h-card from HTML
+    h_card_data = parse_h_card(html_string)
+
+    # Validate h-card structure
+    is_valid = validate_h_card(h_card_data)
+
+See :doc:`h-card` for detailed documentation.
