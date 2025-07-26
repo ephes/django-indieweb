@@ -1,0 +1,62 @@
+<div class="h-card">
+  {% if h_card.photo %}
+    {% for photo in h_card.photo %}
+      {% if photo.value %}
+        <img class="u-photo" src="{{ photo.value }}" alt="{{ photo.alt|default:profile.name|default:user.username }}">
+      {% else %}
+        <img class="u-photo" src="{{ photo }}" alt="{{ profile.name|default:user.username }}">
+      {% endif %}
+    {% endfor %}
+  {% elif profile and profile.photo_url %}
+    <img class="u-photo" src="{{ profile.photo_url }}" alt="{{ profile.name|default:user.username }}">
+  {% endif %}
+
+  <div class="p-name">
+    {{ profile.name|default:user.username }}
+  </div>
+
+  {% if h_card.url %}
+    {% for url in h_card.url %}
+      <a class="u-url" href="{{ url }}" {% if forloop.first %}rel="me"{% endif %}>
+        {% if forloop.first %}
+          Profile
+        {% else %}
+          {{ url }}
+        {% endif %}
+      </a>
+    {% endfor %}
+  {% elif profile.url %}
+    <a class="u-url" href="{{ profile.url }}" rel="me">Profile</a>
+  {% endif %}
+
+  {% if h_card.email %}
+    {% for email in h_card.email %}
+      <a class="u-email" href="mailto:{{ email }}">{{ email }}</a>
+    {% endfor %}
+  {% endif %}
+
+  {% if h_card.note %}
+    {% for note in h_card.note %}
+      <p class="p-note">{{ note }}</p>
+    {% endfor %}
+  {% endif %}
+
+  {% if h_card.adr %}
+    {% for adr in h_card.adr %}
+      <div class="p-adr h-adr">
+        {% if adr.locality %}<span class="p-locality">{{ adr.locality }}</span>{% endif %}
+        {% if adr.region %}<span class="p-region">{{ adr.region }}</span>{% endif %}
+        {% if adr.country_name %}<span class="p-country-name">{{ adr.country_name }}</span>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if h_card.org %}
+    {% for org in h_card.org %}
+      <div class="p-org h-card">
+        {% if org.name %}<span class="p-name">{{ org.name }}</span>{% endif %}
+        {% if org.url %}<a class="u-url" href="{{ org.url }}">{{ org.url }}</a>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>
