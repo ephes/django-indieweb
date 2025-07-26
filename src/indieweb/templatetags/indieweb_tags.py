@@ -13,13 +13,14 @@ User = get_user_model()
 
 
 @register.inclusion_tag("indieweb/h-card.html")
-def h_card(user_or_profile: Any) -> dict[str, Any]:
+def h_card(user_or_profile: Any, extra_classes: str = "") -> dict[str, Any]:
     """
     Render an h-card for a user or profile.
 
     Usage:
         {% h_card user %}
         {% h_card profile %}
+        {% h_card user "p-author" %}
     """
     if isinstance(user_or_profile, Profile):
         profile = user_or_profile
@@ -38,4 +39,4 @@ def h_card(user_or_profile: Any) -> dict[str, Any]:
     if h_card_data:
         h_card_data = normalize_property_names(h_card_data)
 
-    return {"profile": profile, "user": user, "h_card": h_card_data}
+    return {"profile": profile, "user": user, "h_card": h_card_data, "extra_classes": extra_classes}
