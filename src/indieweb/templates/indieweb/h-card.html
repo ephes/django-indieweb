@@ -1,4 +1,4 @@
-<div class="h-card p-author">
+<div class="h-card{% if extra_classes %} {{ extra_classes }}{% endif %}">
   {% if h_card.photo %}
     {% for photo in h_card.photo %}
       {% if photo.value %}
