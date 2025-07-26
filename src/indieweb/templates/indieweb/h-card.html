@@ -35,6 +35,12 @@
     {% endfor %}
   {% endif %}
 
+  {% if h_card.tel %}
+    {% for tel in h_card.tel %}
+      <span class="p-tel">{{ tel }}</span>
+    {% endfor %}
+  {% endif %}
+
   {% if h_card.note %}
     {% for note in h_card.note %}
       <p class="p-note">{{ note }}</p>
