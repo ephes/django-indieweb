@@ -9,16 +9,17 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import mf2py
 from django.conf import settings
+from django.contrib.sites.models import Site
 from django.dispatch import Signal
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from .models import Webmention
+from .models import Profile, Webmention
 
 if TYPE_CHECKING:
     from .interfaces import SpamChecker
@@ -162,9 +163,21 @@ class WebmentionProcessor:
 
         # Extract author information
         author = self._extract_author(h_entry, source_url)
-        webmention.author_name = author.get("name", "")
-        webmention.author_url = author.get("url", "")
-        webmention.author_photo = author.get("photo", "")
+
+        # Check if this is a local author
+        author_url = author.get("url", "")
+        local_profile = self._get_local_profile(author_url)
+
+        if local_profile:
+            # Use local profile data
+            webmention.author_name = local_profile.name
+            webmention.author_url = local_profile.url
+            webmention.author_photo = local_profile.photo_url
+        else:
+            # Use parsed data
+            webmention.author_name = author.get("name", "")
+            webmention.author_url = author.get("url", "")
+            webmention.author_photo = author.get("photo", "")
 
         # Extract content
         content_data = self._extract_content(h_entry)
@@ -316,3 +329,20 @@ class WebmentionProcessor:
                 # Handle complex microformats objects
                 return value.get("value", "")  # type: ignore[no-any-return]
         return ""
+
+    def _get_local_profile(self, author_url: str) -> Profile | None:
+        """Check if author URL belongs to a local user."""
+        if not author_url:
+            return None
+
+        try:
+            # Check if URL matches a local profile
+            current_site = Site.objects.get_current()
+            parsed = urlparse(author_url)
+
+            if parsed.netloc == current_site.domain:
+                return Profile.objects.get(url=author_url)
+        except (Profile.DoesNotExist, Site.DoesNotExist):
+            pass
+
+        return None
