@@ -1,9 +1,10 @@
+≤4z3sUI4i
 .. :changelog:
 
 Changelog
 =========
 
-0.5.2 (unreleased)
+0.5.2 (2025-07-27)
 ------------------
 * Fixed JSON copy/paste issue in Django admin for h_card field
 * Changed admin form to use CharField with custom widget instead of JSONField to prevent double-encoding
