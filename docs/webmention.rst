@@ -245,6 +245,16 @@ Common issues and solutions:
   - Verify the source page has proper microformats2 markup
   - Use a validator like https://indiewebify.me/
 
+**Author name shows as URL or profile picture is missing**
+  - The source page may use URL references for author data (e.g., ``<data class="p-author" value="https://example.com/author"></data>``)
+  - This is valid microformats2 markup following the authorship algorithm
+  - Django-indieweb automatically looks for a matching h-card **on the same page** with the referenced URL
+  - Ensure the source page includes a separate h-card with matching URL, name, and photo properties
+  - The h-card may be nested in structures like h-feeds - the parser searches recursively
+  - Example services using this pattern: feed.city, some Mastodon webmention bridges
+  - If no matching h-card is found, the URL will be displayed as the name (fallback behavior)
+  - **Limitation**: Django-indieweb does not currently fetch remote author URLs or follow rel=author links (full authorship algorithm)
+
 **Spam checker rejecting valid webmentions**
   - Review your spam checker implementation
   - Check the ``spam_check_result`` field for details

@@ -4,6 +4,17 @@
 Changelog
 =========
 
+0.5.3 (TBD)
+------------------
+* Fixed webmention author extraction when author is referenced as a URL string
+* Implemented partial microformats2 authorship algorithm to resolve author URLs to h-cards on the same page
+* Added recursive search for h-cards and h-entries in nested structures (e.g., h-feeds)
+* Fixed regression where missing h-cards would result in empty author names
+* Author URL now used as fallback name when matching h-card cannot be found
+* Previously displayed the author URL as the name when parsing feed.city-style webmentions
+* Now correctly extracts author name and photo from matching h-card on the page
+* Note: Does not yet fetch remote author URLs or follow rel=author links (full authorship algorithm)
+
 0.5.2 (2025-07-27)
 ------------------
 * Fixed JSON copy/paste issue in Django admin for h_card field

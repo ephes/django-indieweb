@@ -650,3 +650,137 @@ class TestWebmentionProcessor:
 
             assert "Processing webmention" in caplog.text
             assert "Successfully processed webmention" in caplog.text
+
+    def test_processor_handles_author_url_with_separate_hcard(self, processor):
+        """Test that processor handles author as URL reference with separate h-card (like feed.city)."""
+        source_url = "https://example.com/post/123"
+        target_url = "https://mysite.com/article"
+
+        # Simulate feed.city style markup: separate h-card and h-entry with author as URL string
+        html_content = f'''
+        <html>
+        <body>
+            <div class="h-card">
+                <img class="u-photo" src="https://example.com/avatar.jpg" alt="John">
+                <a class="p-name u-url" href="https://example.com/author">John Doe</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-like-of" href="{target_url}">Liked this</a>
+                <data class="p-author" value="https://example.com/author"></data>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
+            mock_response = Mock()
+
+            mock_response.status_code = 200
+
+            mock_response.text = html_content
+
+            mock_response.headers = {"content-type": "text/html"}
+
+            mock_client.get.return_value = mock_response
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            # Should extract author info from the separate h-card
+            assert webmention.status == "verified"
+            assert webmention.author_name == "John Doe"
+            assert webmention.author_url == "https://example.com/author"
+            assert webmention.author_photo == "https://example.com/avatar.jpg"
+            assert webmention.mention_type == "like"
+
+    def test_processor_handles_nested_hcard_in_hfeed(self, processor):
+        """Test that processor handles h-card nested inside an h-feed structure."""
+        source_url = "https://example.com/feed"
+        target_url = "https://mysite.com/article"
+
+        # Simulate h-feed containing h-card and h-entry
+        html_content = f'''
+        <html>
+        <body>
+            <div class="h-feed">
+                <div class="h-card">
+                    <img class="u-photo" src="https://example.com/photo.jpg" alt="Jane">
+                    <a class="p-name u-url" href="https://example.com/jane">Jane Smith</a>
+                </div>
+                <article class="h-entry">
+                    <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                    <data class="p-author" value="https://example.com/jane"></data>
+                    <div class="e-content">Great post!</div>
+                </article>
+            </div>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
+            mock_response = Mock()
+
+            mock_response.status_code = 200
+
+            mock_response.text = html_content
+
+            mock_response.headers = {"content-type": "text/html"}
+
+            mock_client.get.return_value = mock_response
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            # Should find the nested h-card and extract author info
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Jane Smith"
+            assert webmention.author_url == "https://example.com/jane"
+            assert webmention.author_photo == "https://example.com/photo.jpg"
+            assert webmention.mention_type == "reply"
+
+    def test_processor_handles_author_url_without_matching_hcard(self, processor):
+        """Test that processor falls back to URL as name when no matching h-card exists."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+
+        # Author is a URL but there's no matching h-card on the page
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <a class="u-like-of" href="{target_url}">Liked</a>
+                <data class="p-author" value="https://example.com/nonexistent"></data>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+
+            mock_get_class.return_value.__enter__.return_value = mock_client
+
+            mock_response = Mock()
+
+            mock_response.status_code = 200
+
+            mock_response.text = html_content
+
+            mock_response.headers = {"content-type": "text/html"}
+
+            mock_client.get.return_value = mock_response
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            # Should fall back to using URL as name (backwards compatibility)
+            assert webmention.status == "verified"
+            assert webmention.author_name == "https://example.com/nonexistent"
+            assert webmention.author_url == "https://example.com/nonexistent"
+            assert webmention.author_photo == ""
+            assert webmention.mention_type == "like"

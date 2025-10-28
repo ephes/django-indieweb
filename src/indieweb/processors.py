@@ -162,7 +162,7 @@ class WebmentionProcessor:
             return
 
         # Extract author information
-        author = self._extract_author(h_entry, source_url)
+        author = self._extract_author(h_entry, parsed, source_url)
 
         # Check if this is a local author
         author_url = author.get("url", "")
@@ -193,8 +193,22 @@ class WebmentionProcessor:
         webmention.mention_type = self._determine_mention_type(h_entry, target_url)
 
     def _find_mentioning_entry(self, parsed: dict[str, Any], target_url: str) -> dict[str, Any] | None:
-        """Find the h-entry that mentions the target URL."""
+        """
+        Find the h-entry that mentions the target URL.
+
+        Recursively searches through items and their children to handle nested structures.
+        """
         items = parsed.get("items", [])
+        # First pass: look for h-entry that explicitly mentions the target
+        result = self._search_for_mentioning_entry(items, target_url)
+        if result:
+            return result
+
+        # Second pass: return the first h-entry found (fallback)
+        return self._search_for_any_h_entry(items)
+
+    def _search_for_mentioning_entry(self, items: list[dict[str, Any]], target_url: str) -> dict[str, Any] | None:
+        """Recursively search for an h-entry that mentions the target URL."""
         for item in items:
             if "h-entry" in item.get("type", []):
                 # Check if this entry mentions the target
@@ -203,25 +217,85 @@ class WebmentionProcessor:
                 # Check various properties for the target URL
                 for prop in ["in-reply-to", "like-of", "repost-of", "bookmark-of", "mention-of"]:
                     if target_url in properties.get(prop, []):
-                        return item  # type: ignore[no-any-return]
+                        return item
 
                 # Check content for the URL
                 content = properties.get("content", [])
                 for c in content:
                     if isinstance(c, dict) and target_url in c.get("html", ""):
-                        return item  # type: ignore[no-any-return]
+                        return item
                     elif isinstance(c, str) and target_url in c:
-                        return item  # type: ignore[no-any-return]
+                        return item
 
-        # If no h-entry found, return the first one if available
-        for item in items:
-            if "h-entry" in item.get("type", []):
-                return item  # type: ignore[no-any-return]
+            # Recursively search children
+            children = item.get("children", [])
+            if children:
+                result = self._search_for_mentioning_entry(children, target_url)
+                if result:
+                    return result
 
         return None
 
-    def _extract_author(self, h_entry: dict[str, Any], source_url: str) -> dict[str, str]:
-        """Extract author information from h-entry."""
+    def _search_for_any_h_entry(self, items: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Recursively search for any h-entry (fallback)."""
+        for item in items:
+            if "h-entry" in item.get("type", []):
+                return item
+
+            # Recursively search children
+            children = item.get("children", [])
+            if children:
+                result = self._search_for_any_h_entry(children)
+                if result:
+                    return result
+
+        return None
+
+    def _find_h_card_by_url(self, parsed: dict[str, Any], url: str) -> dict[str, Any] | None:
+        """
+        Find an h-card in the parsed data that has a matching URL.
+
+        Recursively searches through items and their children to handle nested structures
+        like h-feeds containing h-entries with nested h-cards.
+        """
+        items = parsed.get("items", [])
+        return self._search_items_for_h_card(items, url)
+
+    def _search_items_for_h_card(self, items: list[dict[str, Any]], url: str) -> dict[str, Any] | None:
+        """Recursively search through items and their children for a matching h-card."""
+        for item in items:
+            # Check if this item is an h-card with matching URL
+            if "h-card" in item.get("type", []):
+                properties = item.get("properties", {})
+                urls = properties.get("url", [])
+                if url in urls:
+                    return item
+
+            # Recursively search children
+            children = item.get("children", [])
+            if children:
+                result = self._search_items_for_h_card(children, url)
+                if result:
+                    return result
+
+        return None
+
+    def _extract_author(self, h_entry: dict[str, Any], parsed: dict[str, Any], source_url: str) -> dict[str, str]:
+        """
+        Extract author information from h-entry.
+
+        Implements a subset of the microformats2 authorship algorithm:
+        - Extracts author from nested h-card in author property
+        - Resolves author URL references to h-cards on the same page
+        - Falls back to using URL as name if no h-card found
+
+        Does NOT currently implement:
+        - Fetching remote author URLs
+        - Following rel=author links
+        - Using page-level h-card as fallback
+
+        See: https://indieweb.org/authorship
+        """
         properties = h_entry.get("properties", {})
         author_data = properties.get("author", [])
 
@@ -230,8 +304,24 @@ class WebmentionProcessor:
 
         author = author_data[0] if isinstance(author_data, list) else author_data
 
-        # If author is a string, it's just the name
+        # If author is a string, check if it's a URL
         if isinstance(author, str):
+            # If it looks like a URL, try to find a matching h-card
+            if author.startswith("http://") or author.startswith("https://"):
+                # Look for h-card with matching URL in the parsed items
+                h_card = self._find_h_card_by_url(parsed, author)
+                if h_card:
+                    # Extract info from the h-card
+                    card_props = h_card.get("properties", {})
+                    return {
+                        "name": self._get_first_property(card_props, "name"),
+                        "url": self._get_first_property(card_props, "url"),
+                        "photo": self._get_first_property(card_props, "photo"),
+                    }
+                # If no h-card found, use URL as both url and name (fallback to previous behavior)
+                # This ensures something is visible to users even when the h-card is missing
+                return {"url": author, "name": author, "photo": ""}
+            # Otherwise, it's a plain text name
             return {"name": author}
 
         # If author is an h-card
