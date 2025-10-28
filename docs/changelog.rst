@@ -4,7 +4,7 @@
 Changelog
 =========
 
-0.5.3 (TBD)
+0.5.3 (2025-10-28)
 ------------------
 * Fixed webmention author extraction when author is referenced as a URL string
 * Implemented partial microformats2 authorship algorithm to resolve author URLs to h-cards on the same page
