@@ -99,6 +99,13 @@ Setting up development environment::
     cd django-indieweb
     uv sync
 
+Handy Just commands (install `just` first) ::
+
+    just install      # sync dependencies via uv
+    just test         # run the pytest suite
+    just typecheck    # run mypy
+    just test-one path/to/test.py::TestCase::test_method
+
 Running Tests
 ~~~~~~~~~~~~~
 

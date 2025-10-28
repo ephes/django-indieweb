@@ -14,6 +14,7 @@ Changelog
 * Previously displayed the author URL as the name when parsing feed.city-style webmentions
 * Now correctly extracts author name and photo from matching h-card on the page
 * Note: Does not yet fetch remote author URLs or follow rel=author links (full authorship algorithm)
+* Added a `justfile` with recipes for dependency install, testing, and type checking
 
 0.5.2 (2025-07-27)
 ------------------
