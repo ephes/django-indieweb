@@ -4,7 +4,6 @@ Simple Django project to test webmentions.
 Run with: python example_project.py
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -26,6 +25,7 @@ settings.configure(
         "django.contrib.sessions",
         "django.contrib.messages",
         "django.contrib.staticfiles",
+        "django.contrib.sites",
         "indieweb",
     ],
     MIDDLEWARE=[
@@ -59,16 +59,23 @@ settings.configure(
     ],
     STATIC_URL="/static/",
     USE_TZ=True,
+    SITE_ID=1,
+    DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
     # IndieWeb settings
     INDIEWEB_SCHEME="http",
     INDIEWEB_DOMAIN="localhost:8000",
 )
 
+# Initialize Django before importing app registries/URLs
+import django  # noqa: E402
+
+django.setup()
+
 # URL configuration
-from django.contrib import admin
-from django.http import HttpResponse
-from django.template import Context, Template
-from django.urls import include, path
+from django.contrib import admin  # noqa: E402
+from django.http import HttpResponse  # noqa: E402
+from django.template import Context, Template  # noqa: E402
+from django.urls import include, path  # noqa: E402
 
 
 def test_page(request):
@@ -78,7 +85,7 @@ def test_page(request):
     <html>
     <head>
         <title>Test Webmention Page</title>
-        {% load webmentions %}
+        {% load webmention_tags %}
         {% webmention_endpoint_link %}
     </head>
     <body>
@@ -94,7 +101,7 @@ curl -X POST http://{{ request.get_host }}/webmention/ \\
 
         <h2>Webmentions for this page:</h2>
         <p>Count: {% webmention_count request.build_absolute_uri %}</p>
-        {% webmentions_for request.build_absolute_uri %}
+        {% show_webmentions request.build_absolute_uri %}
 
         <hr>
         <p><a href="/admin/">Django Admin</a> | <a href="/webmention/">Webmention Endpoint</a></p>
@@ -110,26 +117,41 @@ urlpatterns = [
     path("", include("indieweb.urls")),
 ]
 
-# Django setup and run
-if __name__ == "__main__":
-    import django
+
+def migrate_if_needed() -> None:
+    """Apply pending migrations if any."""
     from django.core.management import execute_from_command_line
+    from django.db import connections
+    from django.db.migrations.executor import MigrationExecutor
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "__main__")
-    django.setup()
+    connection = connections["default"]
+    try:
+        executor = MigrationExecutor(connection)
+    except Exception:
+        execute_from_command_line(["manage.py", "migrate"])
+        return
 
-    # Run migrations first if this is the first run
-    if not os.path.exists("test_webmentions.db"):
-        print("First run - creating database...")
+    targets = executor.loader.graph.leaf_nodes()
+    plan = executor.migration_plan(targets)
+    if plan:
+        print("Applying pending migrations...")
         execute_from_command_line(["manage.py", "migrate"])
 
-        # Create a superuser
-        from django.contrib.auth import get_user_model
 
-        User = get_user_model()
-        if not User.objects.filter(username="admin").exists():
-            User.objects.create_superuser("admin", "admin@example.com", "admin")
-            print("Created admin user (username: admin, password: admin)")
+# Django setup and run
+if __name__ == "__main__":
+    from django.core.management import execute_from_command_line
+
+    # Run migrations if needed
+    migrate_if_needed()
+
+    # Ensure admin user exists
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    if not User.objects.filter(username="admin").exists():
+        User.objects.create_superuser("admin", "admin@example.com", "admin")
+        print("Created admin user (username: admin, password: admin)")
 
     print("\nStarting test server...")
     print("Visit http://localhost:8000/ to test webmentions")

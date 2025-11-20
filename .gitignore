@@ -52,6 +52,9 @@ docs/_build
 # virtualenv
 .venv
 
+# Local example project DB
+test_webmentions.db
+
 # claude code markdown files
 issue.md
 plan.md
