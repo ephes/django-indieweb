@@ -353,6 +353,7 @@ source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "django" },
+    { name = "django-model-utils" },
     { name = "httpx" },
     { name = "mf2py" },
 ]
@@ -378,6 +379,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4" },
     { name = "django" },
+    { name = "django-model-utils" },
     { name = "httpx" },
     { name = "mf2py" },
 ]
@@ -397,6 +399,18 @@ dev = [
     { name = "sphinxcontrib-mermaid", specifier = ">=1.0.0" },
     { name = "tox" },
     { name = "types-requests" },
+]
+
+[[package]]
+name = "django-model-utils"
+version = "5.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/81/60/5e232c32a2c977cc1af8c70a38ef436598bc649ad89c2c4568454edde2c9/django_model_utils-5.0.0.tar.gz", hash = "sha256:041cdd6230d2fbf6cd943e1969318bce762272077f4ecd333ab2263924b4e5eb", size = 80559, upload-time = "2024-09-04T11:35:22.858Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/13/87a42048700c54bfce35900a34e2031245132775fb24363fc0e33664aa9c/django_model_utils-5.0.0-py3-none-any.whl", hash = "sha256:fec78e6c323d565a221f7c4edc703f4567d7bb1caeafe1acd16a80c5ff82056b", size = 42630, upload-time = "2024-09-04T11:36:23.166Z" },
 ]
 
 [[package]]
@@ -447,7 +461,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [

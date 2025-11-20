@@ -38,6 +38,7 @@ classifiers = [
 
 dependencies = [
     "Django",
+    "django-model-utils",
     "mf2py",
     "beautifulsoup4",
     "httpx",
