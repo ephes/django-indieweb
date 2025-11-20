@@ -32,10 +32,8 @@ Implement Features
 
 Look through the GitHub issues for features. Anything tagged with "feature"
 is open to whoever wants to implement it.
-
-.. note::
-   The Micropub endpoint is currently a stub implementation. A full implementation
-   would be a valuable contribution!
+Micropub ships with an in-memory handler; contributions adding richer handlers or
+update/delete support are welcome.
 
 Write Documentation
 ~~~~~~~~~~~~~~~~~~~
@@ -200,9 +198,8 @@ Make sure to commit any migration files created.
 Debugging
 ~~~~~~~~~
 
-To run the Django development server with the example project::
+To run the Django development server with the example project script::
 
-    $ cd example_project
-    $ python manage.py runserver
+    $ python example_project.py
 
 You can then test the endpoints at http://localhost:8000/indieweb/

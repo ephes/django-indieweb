@@ -2,11 +2,11 @@ Tutorial
 ========
 
 This tutorial will guide you through integrating django-indieweb into your Django project
-to add IndieAuth authentication and Micropub support.
+to add IndieAuth authentication, Micropub content creation, and Webmention support.
 
 .. note::
-   The Micropub endpoint is currently a stub implementation that accepts requests
-   but doesn't create actual content. You'll need to extend it for your use case.
+   Micropub ships with an in-memory handler for quick testing; configure ``INDIEWEB_MICROPUB_HANDLER``
+   to store content in your own models.
 
 Prerequisites
 -------------
@@ -53,11 +53,13 @@ Installation
 Basic Setup
 -----------
 
-After installation, you'll have three endpoints available:
+After installation, you'll have these endpoints available:
 
-- ``/indieweb/auth/`` - For IndieAuth authorization
-- ``/indieweb/token/`` - For token exchange
-- ``/indieweb/micropub/`` - For content creation (needs implementation)
+- ``/indieweb/auth/`` - IndieAuth authorization (consent)
+- ``/indieweb/token/`` - Token exchange
+- ``/indieweb/micropub/`` - Micropub content creation (uses configured handler)
+- ``/indieweb/webmention/`` - Webmention receive endpoint (Link rel="webmention" is advertised)
+- ``/indieweb/webmention/<pk>/`` - Webmention status lookup
 
 Implementing IndieAuth Login
 ----------------------------
@@ -167,10 +169,6 @@ Verifying Token
 Creating a Post
 ~~~~~~~~~~~~~~~
 
-.. warning::
-   This endpoint currently returns success but doesn't create actual content.
-   You'll need to extend the ``MicropubView`` to implement content creation.
-
 .. code-block:: javascript
 
    fetch('/indieweb/micropub/', {
@@ -187,16 +185,22 @@ Creating a Post
    })
    .then(response => {
        if (response.status === 201) {
-           console.log('Post created!');
+           console.log('Post created! Location:', response.headers.get('Location'));
        }
    });
 
 Extending the Micropub Endpoint
 -------------------------------
 
-To make the Micropub endpoint functional, you'll need to extend it:
+To persist content, configure your own handler:
 
 .. code-block:: python
+
+   # settings.py
+   INDIEWEB_MICROPUB_HANDLER = "myapp.micropub_handler.BlogPostMicropubHandler"
+
+See :doc:`micropub` for a full handler example (create, retrieve, update, delete stubs). The default handler
+stores entries in memory only; update/delete/undelete currently return HTTP 501 until implemented in your handler.
 
    # myapp/views.py
    from indieweb.views import MicropubView as BaseMicropubView

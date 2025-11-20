@@ -86,7 +86,7 @@ The mypy configuration is defined in ``pyproject.toml`` and includes:
 - Strict optional checking
 - Disallowing untyped function definitions
 - Django plugin for better Django support
-- Type stubs for external libraries (django-stubs, types-pytz, types-requests)
+- Type stubs for external libraries (django-stubs, types-requests)
 
 Building Documentation
 ----------------------
