@@ -21,7 +21,7 @@ This is a Django application that implements IndieWeb protocols including IndieA
   - `test_token_endpoint.py` - Token endpoint tests
   - `test_models.py` - Model tests
 
-- `docs/` - Sphinx documentation (`make docs` builds HTML)
+- `docs/` - Sphinx documentation (`just docs` builds HTML)
 - `examples/`, `example_project.py`, `client.py` - Reference integrations and smoke-test helpers
 
 ## Development Setup
@@ -97,13 +97,24 @@ pre-commit run --all-files
 ### Documentation
 ```bash
 # Build Sphinx documentation and preview locally
-make docs
+just docs
 ```
+
+## Beads Workflow
+
+- Beads database lives in `.beads/` at the repo root; keep the daemon off with `BEADS_NO_DAEMON=1` and `BEADS_DIR="$PWD/.beads"`.
+- When starting a bead, mark it in progress to avoid duplicate work: `bd update <bead-id> --status in_progress`.
+- When starting a bead, read its context and deps: `bd --no-daemon --no-db show <bead-id>` and `bd --no-daemon --no-db dep tree <bead-id>`.
+- If a bead references a spec/PRD (for example `specs/2025-12-18_todos.md`), read it before changing code.
+- When posting Beads comments, the first non-empty line must be one of: `Ready for review:`, `LGTM`, `Changes requested:`; include a brief summary and validation.
+- Avoid `bd sync` unless asked; in worktrees prefer `bd --no-daemon sync --flush-only`.
+- Beadsflow defaults: implementer is `codex`, reviewer is Claude Code (`claude`); set in `beadsflow.toml` or via `BEADSFLOW_IMPLEMENTER`/`BEADSFLOW_REVIEWER`.
+- When running beadsflow, use the local checkout in `../beadsflow`, not the packaged release (for example `uv run --project ../beadsflow beadsflow run <epic-id> ...`).
 
 ### Build & Clean
 ```bash
 # Clean build artifacts
-make clean
+just clean
 ```
 
 ### Building & Publishing
