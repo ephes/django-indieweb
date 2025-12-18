@@ -43,3 +43,13 @@ docs:
     make -C docs clean
     make -C docs html
     uv run python -c "import webbrowser; from pathlib import Path; webbrowser.open(Path('docs/_build/html/index.html').absolute().as_uri())"
+
+# Beadsflow autopilot helpers (local checkout)
+beadsflow-dry EPIC:
+    uv run --project ../beadsflow beadsflow run {{EPIC}} --dry-run --verbose
+
+beadsflow-once EPIC:
+    uv run --project ../beadsflow beadsflow run {{EPIC}} --once --verbose
+
+beadsflow-run EPIC:
+    uv run --project ../beadsflow beadsflow run {{EPIC}} --interval 30 --verbose
