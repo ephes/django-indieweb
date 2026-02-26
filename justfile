@@ -16,6 +16,17 @@ test:
 test-one TARGET:
     uv run pytest {{TARGET}} -v
 
+# Run lint, typecheck, and tests
+check:
+    just lint
+    just typecheck
+    just test
+
+# Run linting and formatting with ruff
+lint:
+    uv run ruff check --fix .
+    uv run ruff format .
+
 # Run type checks with mypy
 typecheck:
     uv run mypy

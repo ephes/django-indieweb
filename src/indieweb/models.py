@@ -161,6 +161,16 @@ class Profile(models.Model):
     def __str__(self) -> str:
         return f"Profile for {self.user.username}"
 
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """Save profile and sync quick-access fields with h_card data."""
+        # Sync fields before saving
+        self._sync_fields_from_h_card()
+
+        # Validate
+        self.full_clean()
+
+        super().save(*args, **kwargs)
+
     def clean(self) -> None:
         """Validate h_card data before saving."""
         super().clean()
@@ -171,32 +181,31 @@ class Profile(models.Model):
     def _validate_h_card_urls(self) -> None:
         """Validate all URLs in h_card data."""
         url_validator = URLValidator()
-        url_fields = ["url", "photo"]
 
-        for field in url_fields:
+        for field in ("url", "photo"):
             if field in self.h_card:
                 for url in self.h_card[field]:
-                    # Handle both string URLs and photo objects
-                    if isinstance(url, dict) and "value" in url:
-                        url_to_validate = url["value"]
-                    elif isinstance(url, str):
-                        url_to_validate = url
-                    else:
-                        continue
+                    self._validate_single_url(url_validator, url, f"h_card.{field}")
 
-                    try:
-                        url_validator(url_to_validate)
-                    except ValidationError as e:
-                        raise ValidationError(f"Invalid URL in h_card.{field}: {url_to_validate}") from e
-
-        # Also validate org URLs
         if "org" in self.h_card:
             for org in self.h_card["org"]:
                 if isinstance(org, dict) and "url" in org:
-                    try:
-                        url_validator(org["url"])
-                    except ValidationError as e:
-                        raise ValidationError(f"Invalid URL in h_card.org.url: {org['url']}") from e
+                    self._validate_single_url(url_validator, org["url"], "h_card.org.url")
+
+    @staticmethod
+    def _validate_single_url(validator: URLValidator, url: str | dict[str, Any], context: str) -> None:
+        """Validate a single URL value (string or dict with 'value' key)."""
+        if isinstance(url, dict) and "value" in url:
+            url_to_validate = url["value"]
+        elif isinstance(url, str):
+            url_to_validate = url
+        else:
+            return
+
+        try:
+            validator(url_to_validate)
+        except ValidationError as e:
+            raise ValidationError(f"Invalid URL in {context}: {url_to_validate}") from e
 
     def _validate_h_card_emails(self) -> None:
         """Validate all emails in h_card data."""
@@ -207,16 +216,6 @@ class Profile(models.Model):
                     email_validator(email)
                 except ValidationError as e:
                     raise ValidationError(f"Invalid email in h_card: {email}") from e
-
-    def save(self, *args: Any, **kwargs: Any) -> None:
-        """Save profile and sync quick-access fields with h_card data."""
-        # Sync fields before saving
-        self._sync_fields_from_h_card()
-
-        # Validate
-        self.full_clean()
-
-        super().save(*args, **kwargs)
 
     def _sync_fields_from_h_card(self) -> None:
         """Sync quick-access fields with h_card data."""
