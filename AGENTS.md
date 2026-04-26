@@ -47,25 +47,19 @@
 
 ## Landing the Plane (Session Completion)
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+**When ending a work session**, complete the steps below and stop at the staging boundary. The agent does not commit or push on its own.
 
-**MANDATORY WORKFLOW:**
+**Workflow:**
 
-1. **Record remaining work** - Add follow-up items to `BACKLOG.md`
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update backlog status** - Move completed items from `BACKLOG.md` to `DONE.md`; update docs and changelog when needed
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+1. **Record remaining work** - Add follow-up items to `BACKLOG.md`.
+2. **Run quality gates** (if code changed) - Tests, linters, builds. Report results.
+3. **Update backlog status** - Move completed items from `BACKLOG.md` to `DONE.md`; update docs and changelog when needed.
+4. **Summarize for the user** - Report what changed, the validation results, and any open questions. Wait.
+5. **Wait for explicit commit approval** - The user reviews the working-tree changes and asks for a commit. Approval is per-commit, not standing.
+6. **Hand off** - Provide context for the next session.
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+**Critical rules:**
+- **Pushing is a manual user action.** The agent never runs `git push`, `git push --force`, `gh pr create`, or any other command that publishes work to a remote. Not at session end, not when CI is green, not when a plan or backlog item says "push at the end". If a push seems needed, say so and stop.
+- **Committing requires explicit, in-conversation approval.** Do not run `git commit` on your own, even when all gates pass. "Approved once" is not "approved forever".
+- It is correct to end a session with local commits the user has not yet pushed; that is the user's job. Never try to "finish" a session by pushing.
+- If a commit happens prematurely, surface it immediately and ask whether to amend, revert, or leave it. Do not push to "fix" it.

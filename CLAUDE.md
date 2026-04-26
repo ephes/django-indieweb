@@ -23,6 +23,9 @@ This is a Django application that implements IndieWeb protocols including IndieA
 
 - `docs/` - Sphinx documentation (`just docs` builds HTML)
 - `examples/`, `example_project.py`, `client.py` - Reference integrations and smoke-test helpers
+- `BACKLOG.md` - Planned work items, grouped by priority. The single source of truth for upcoming work; this project no longer uses Beads or any external issue tracker.
+- `DONE.md` - Completed backlog items, append-only, grouped by date. Each entry records the completion date, summary, validation commands, documentation note, and changelog note.
+- `AGENTS.md` - Repository guidelines for any agent or contributor; keep in sync with this file.
 
 ## Development Setup
 
@@ -100,15 +103,6 @@ uv run prek run --all-files
 just docs
 ```
 
-## Backlog Workflow
-
-- This project no longer uses Beads. Track planned work in `BACKLOG.md` and move completed items to `DONE.md`.
-- Before starting a backlog item, read the full item and any referenced files, docs, specs, or upstream issues.
-- When completing a backlog item, remove it from `BACKLOG.md` and add an entry to `DONE.md` with the completion date, summary, validation, documentation note, and changelog note.
-- Update `docs/changelog.rst` when a completed item changes behavior, fixes a bug, adds a feature, changes configuration, or affects users.
-- Update project documentation when implementation behavior, configuration, public APIs, workflows, examples, or user-facing usage changes.
-- Work is not complete until code, tests, documentation, and changelog entries are consistent. If docs or changelog updates are not needed, say so in the `DONE.md` entry.
-
 ### Build & Clean
 ```bash
 # Clean build artifacts
@@ -123,6 +117,35 @@ uv build
 # Upload to PyPI
 uv publish --token your_token
 ```
+
+## Backlog Workflow
+
+This project tracks all planned work in `BACKLOG.md` and all completed work in `DONE.md`. There is no external issue tracker. Keep both files current as part of every change — they are the project plan.
+
+### `BACKLOG.md`
+
+- Markdown checklist grouped by priority (`## Priority 1`, `## Priority 2`, ...).
+- Each item includes enough detail for an agent or contributor to implement without consulting an external system: affected files (`Reference:`/`References:`), the desired outcome, and any upstream links when useful.
+- Before starting a backlog item, read the full item plus all referenced files, docs, specs, and upstream issues. Do not start work on summaries alone.
+- When the scope of an item changes, edit the item in place rather than starting a parallel one.
+
+### `DONE.md`
+
+- Append-only log of completed work, grouped under date headers (`## YYYY-MM-DD`) with one `### <Item title>` per completed item.
+- Each entry records: the completion date, a concise summary of what changed, the validation commands that were run (e.g. `uv run pytest`, `uv run mypy`, ...), a documentation note, and a changelog note.
+- If documentation or the changelog did not need an update for that item, say so explicitly in the entry. Silence is not acceptable.
+
+### Completing a Backlog Item
+
+When finishing a backlog item:
+
+1. Remove the item from `BACKLOG.md`.
+2. Add a corresponding entry to `DONE.md`.
+3. Update `docs/changelog.rst` when the change affects behavior, fixes a bug, adds a feature, changes configuration, or affects users.
+4. Update the rest of the project documentation when implementation behavior, configuration, public APIs, workflows, examples, or user-facing usage changes.
+5. Treat the work as incomplete until code, tests, documentation, changelog, `BACKLOG.md`, and `DONE.md` are all consistent.
+
+Keep this section aligned with `AGENTS.md`. If you change the workflow in one file, update the other.
 
 ## Key Dependencies
 
@@ -172,8 +195,23 @@ uv publish --token your_token
 
 ## Commit & Pull Request Guidelines
 
-- **Commit messages**: Short, imperative subjects (e.g., "Add Micropub handler validation", "Document justfile workflows")
-- **Commit scope**: Keep each commit focused on a single logical change
+### Pushing Is Manual. Committing Needs Approval.
+
+**Pushing is a manual user action.** The user pushes — not the agent, not a hook, not a script the agent runs. Never run `git push`, `git push --force`, `git push --force-with-lease`, `gh pr create`, `gh pr merge`, or any other command that publishes work to a remote. There are no exceptions — not "the user said push last time", not "the plan says push at the end", not "everything is green and the branch is ready", not "the previous session pushed". If a push seems needed, say so and stop. The user runs it themselves, out of band.
+
+**Committing requires explicit, in-conversation approval.** Do not run `git commit` on your own. Even when all quality gates are green and the implementation looks complete, the user reviews the working-tree changes before they become commits.
+
+- After finishing implementation work, stop at the staging boundary: report what changed, summarize validation results, and wait.
+- The user will ask you to commit explicitly. If they do not, do not commit. Approval to commit is *not* approval to push.
+- "Approved once" is not "approved forever": each commit needs its own go-ahead.
+- This rule applies even if a previously written plan, prompt, handoff document, or backlog item says "commit and push at the end". Treat those as descriptions of the eventual outcome, not as standing authorization.
+- It is correct and expected to end a session with local commits the user has not yet pushed; that is the user's job.
+- If you commit prematurely, surface it immediately and ask whether to amend, revert, or leave it. Never try to "fix" a premature commit by pushing it.
+
+### Commit Mechanics (once the user has approved)
+
+- **Commit messages**: Short, imperative subjects (e.g., "Add Micropub handler validation", "Document justfile workflows").
+- **Commit scope**: Keep each commit focused on a single logical change.
 - **Before opening a PR**:
   - Run `uv run pytest` - Ensure all tests pass
   - Run `uv run mypy` - No type errors
@@ -184,8 +222,8 @@ uv publish --token your_token
   - Testing done
   - Link to related issues
   - Screenshots or API samples when altering user-facing behavior or responses
-- **Documentation**: Update docs or examples when adding endpoints, handlers, or settings toggles
-- **Migrations**: Mention migration implications explicitly
+- **Documentation**: Update docs or examples when adding endpoints, handlers, or settings toggles.
+- **Migrations**: Mention migration implications explicitly.
 
 ### Definition of Done
 
