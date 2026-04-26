@@ -28,12 +28,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Evaluate Salmentions support.
   - Outcome: decide whether to detect and send salmentions; if yes, add tests and documentation.
 
-### Micropub Core CRUD and Queries
-
-- [ ] Implement Micropub source query.
-  - References: `src/indieweb/views.py`, `docs/concepts.rst`.
-  - Outcome: source queries return supported entry data with read-scope enforcement.
-
 ### Auth Scopes and Token Management
 
 - [ ] Decide and implement IndieAuth-side scope handling and token-issuance semantics.

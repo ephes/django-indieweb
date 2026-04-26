@@ -421,6 +421,54 @@ The Micropub endpoint supports several query parameters:
 
 Returns supported post types and features.
 
+**Source Query:**
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=source&url=https://yoursite.com/posts/123/ HTTP/1.1
+    Authorization: Bearer xyz789
+    Accept: application/json
+
+Returns the source content for an existing entry. The configured
+``MicropubContentHandler.get_entry(url, user)`` method receives the submitted
+``url`` unchanged and returns a ``MicropubEntry``. A full source response
+includes both the Microformats type and all entry properties:
+
+.. code-block:: json
+
+    {
+        "type": ["h-entry"],
+        "properties": {
+            "content": ["Hello World"],
+            "category": ["test", "indieweb"]
+        }
+    }
+
+Clients can request a subset of properties using the array form
+``properties[]=NAME``. When a filter is present, the response contains only
+the requested properties that exist on the entry, and omits ``type`` to match
+the Micropub source-query examples:
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=source&url=https://yoursite.com/posts/123/&properties[]=content&properties[]=name HTTP/1.1
+    Authorization: Bearer xyz789
+    Accept: application/json
+
+.. code-block:: json
+
+    {
+        "properties": {
+            "content": ["Hello World"],
+            "name": ["Post title"]
+        }
+    }
+
+``GET ?q=source`` returns ``400 invalid_request`` when ``url`` is missing or
+unknown to the handler, and ``500 Internal Server Error`` when the handler
+raises an unexpected exception. Scope failures still return ``403`` with
+body ``authorization error`` before source-query dispatch.
+
 **Syndication Targets Query:**
 
 .. code-block:: http
@@ -468,6 +516,9 @@ All endpoints may return these error responses:
   ``400 invalid_request`` for all three so client errors look consistent
   with the IndieAuth/token-endpoint behavior, rather than guessing
   handler-specific permission semantics with a ``404`` or ``403``.
+- Micropub ``GET ?q=source`` with a missing ``url`` parameter or a ``url``
+  unknown to the configured handler. Missing requested ``properties[]`` names
+  are omitted from successful filtered responses instead of causing an error.
 
 **401 Unauthorized**
 
@@ -519,9 +570,10 @@ All endpoints may return these error responses:
 **500 Internal Server Error**
 
 - A configured Micropub handler raised an exception other than
-  ``ValueError`` while servicing ``POST action=update``/``delete``/``undelete``.
-  The exception is logged via ``logger.exception`` so the stack trace stays
-  in the server log rather than the response body.
+  ``ValueError`` while servicing ``POST action=update``/``delete``/``undelete``,
+  or raised any exception while servicing ``GET ?q=source``. The exception is
+  logged via ``logger.exception`` so the stack trace stays in the server log
+  rather than the response body.
 
 Scopes
 ------
@@ -533,9 +585,7 @@ not satisfy ``create``.
 - ``create`` - Required for ``POST`` requests that create new posts. The
   legacy alias ``post`` is also accepted.
 - ``update`` - Required for ``POST action=update`` and for ``GET ?q=source``
-  (which is typically used to fetch a post for editing). ``GET ?q=source``
-  is not yet implemented and returns ``501 Not Implemented`` after the scope
-  check passes.
+  (which is typically used to fetch a post for editing).
 - ``delete`` - Required for ``POST action=delete``.
 - ``undelete`` - Required for ``POST action=undelete``.
 - ``post`` - Legacy alias for ``create``.

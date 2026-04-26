@@ -200,9 +200,8 @@ Security Considerations
    and compared as an exact token, so ``createXYZ`` does not satisfy
    ``create``. Scope failures return HTTP 403 with the plain-text body
    ``authorization error``. The ``update``, ``delete``, and ``undelete``
-   actions dispatch into the configured ``MicropubContentHandler``; only
-   ``GET ?q=source`` remains unimplemented and returns ``501 Not Implemented``
-   after the scope check succeeds.
+   actions and the ``GET ?q=source`` query dispatch into the configured
+   ``MicropubContentHandler`` after the scope check succeeds.
 
 Configuration
 -------------

@@ -200,9 +200,8 @@ To persist content, configure your own handler:
    INDIEWEB_MICROPUB_HANDLER = "myapp.micropub_handler.BlogPostMicropubHandler"
 
 See :doc:`micropub` for a full handler example (create, retrieve, update, delete stubs). The default
-in-memory handler implements update, delete, and undelete in process memory only — entries do not persist
-across restarts. Configure your own handler for durable storage. ``GET ?q=source`` remains unimplemented
-and returns HTTP 501.
+in-memory handler implements source queries, update, delete, and undelete in process memory only — entries
+do not persist across restarts. Configure your own handler for durable storage.
 
 .. code-block:: python
 
@@ -296,7 +295,9 @@ Common Issues
    - Parameters don't match original auth request
 
 **403 Forbidden on micropub endpoint**
-   Token doesn't have required scope (needs "post" or "create")
+   Token doesn't have the scope required for the requested operation. Create
+   requires ``create`` or the legacy alias ``post``; source and update require
+   ``update``; delete requires ``delete``; undelete requires ``undelete``.
 
 **Redirect loops**
    Check that login redirect URLs are properly configured in Django settings

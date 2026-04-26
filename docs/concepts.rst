@@ -191,8 +191,6 @@ full mapping.
 - ``create`` - Required for ``POST`` requests that create new posts (legacy
   alias ``post`` is also accepted)
 - ``update`` - Required for ``POST action=update`` and ``GET ?q=source``.
-  The update action is implemented; ``GET ?q=source`` is not and returns
-  ``501`` after the scope check
 - ``delete`` - Required for ``POST action=delete``
 - ``undelete`` - Required for ``POST action=undelete``
 
@@ -223,8 +221,6 @@ Current implementation limitations:
 
 1. **No token revocation UI** - Must delete via Django admin
 2. **No media endpoint** - Can't upload images
-3. **No source query** - ``GET ?q=source`` enforces the ``update`` scope but
-   the handler returns ``501 Not Implemented``
 
 Future Enhancements
 -------------------
@@ -232,10 +228,8 @@ Future Enhancements
 Potential improvements for full IndieWeb support:
 
 1. **Media Endpoint** - Handle file uploads
-2. **Micropub Source Query** - ``GET ?q=source`` enforces the ``update``
-   scope; the handler still returns ``501 Not Implemented``
-3. **Token Management** - UI for viewing/revoking tokens
-4. **WebSub** - Real-time updates
+2. **Token Management** - UI for viewing/revoking tokens
+3. **WebSub** - Real-time updates
 
 Resources
 ---------

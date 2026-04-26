@@ -245,6 +245,28 @@ Returns supported post types and features.
    curl https://example.com/indieweb/micropub/?q=syndicate-to \
      -H "Authorization: Bearer YOUR_TOKEN"
 
+**Source Content:**
+
+.. code:: bash
+
+   curl "https://example.com/indieweb/micropub/?q=source&url=https://example.com/posts/123/" \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Accept: application/json"
+
+Returns ``{"type": ["h-entry"], "properties": {...}}`` for the entry returned
+by your configured handler's ``get_entry(url, user)`` method.
+
+**Filtered Source Content:**
+
+.. code:: bash
+
+   curl "https://example.com/indieweb/micropub/?q=source&url=https://example.com/posts/123/&properties[]=content&properties[]=name" \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Accept: application/json"
+
+Returns only the requested existing properties as ``{"properties": {...}}``.
+Missing requested property names are omitted.
+
 Testing Your Implementation
 ---------------------------
 
@@ -329,8 +351,9 @@ The Micropub endpoint returns the following HTTP status codes:
   raised ``ValueError``), missing ``url``, malformed JSON, a non-object
   JSON body, or — for ``action=update`` — a non-JSON body, an empty update
   payload (no ``replace``/``add``/``delete``), a non-array operation value,
-  or an otherwise spec-non-conformant operation shape. Action failures use
-  the plain-text body ``invalid_request``.
+  or an otherwise spec-non-conformant operation shape; or a ``GET ?q=source``
+  request had a missing ``url`` or a ``url`` unknown to the handler. Action
+  and source-query client failures use the plain-text body ``invalid_request``.
 - ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
   token's owner is inactive
 - ``403 Forbidden`` - body ``authorization error`` when the token lacks the
@@ -338,11 +361,9 @@ The Micropub endpoint returns the following HTTP status codes:
   the token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR``
 - ``500 Internal Server Error`` - The configured handler raised an unexpected
-  exception (e.g. database failure) during ``update``/``delete``/``undelete``;
-  the exception is logged via ``logger.exception`` so the stack trace stays
-  in the server log rather than the response body
-- ``501 Not Implemented`` - ``GET ?q=source``: the scope check passed but
-  the source query is not implemented yet
+  exception (e.g. database failure) during ``update``/``delete``/``undelete``
+  or ``GET ?q=source``; the exception is logged via ``logger.exception`` so
+  the stack trace stays in the server log rather than the response body
 
 See :doc:`api` for the full per-operation scope mapping and the complete
 error-response listing across all IndieWeb endpoints.
@@ -404,7 +425,6 @@ Then in settings:
 Next Steps
 ----------
 
-- Implement the ``GET ?q=source`` source query
 - Add media endpoint support for file uploads
 - Implement WebSub for real-time updates
 - Add support for more post types (events, RSVPs, etc.)

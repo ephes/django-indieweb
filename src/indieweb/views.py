@@ -871,6 +871,37 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             return HttpResponse(status=500)
         return self._action_response(request, entry, url)
 
+    def _handle_source_query(self, request: HttpRequest) -> HttpResponse:
+        """Dispatch ``GET ?q=source`` using the handler's existing ``get_entry`` hook."""
+        url = request.GET.get("url")
+        if not url:
+            return self._invalid_request()
+        handler = get_micropub_handler()
+        try:
+            entry = handler.get_entry(url, self.token.owner)
+        except ValueError as exc:
+            logger.warning(f"get_entry rejected url={url!r}: {exc}")
+            return self._invalid_request()
+        except Exception:
+            logger.exception(f"Unexpected error in get_entry for url={url!r}")
+            return HttpResponse(status=500)
+        if entry is None:
+            logger.warning(f"get_entry did not find url={url!r}")
+            return self._invalid_request()
+
+        requested_properties = request.GET.getlist("properties[]")
+        if requested_properties:
+            properties = {
+                property_name: entry.properties[property_name]
+                for property_name in requested_properties
+                if property_name in entry.properties
+            }
+            # Micropub §3.7.2's selective-properties examples omit ``type``.
+            body: dict[str, Any] = {"properties": properties}
+        else:
+            body = {"type": entry.type, "properties": entry.properties}
+        return HttpResponse(json.dumps(body), content_type="application/json")
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Handle POST requests to create or modify content."""
         self.request = request
@@ -927,8 +958,7 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             config = handler.get_config(self.token.owner)
             return HttpResponse(json.dumps(config), content_type="application/json")
         elif q == "source":
-            # TODO: Implement source query
-            return HttpResponse("Not implemented", status=501)
+            return self._handle_source_query(request)
         elif q == "syndicate-to":
             # Return empty syndication targets for now
             return HttpResponse(json.dumps({"syndicate-to": []}), content_type="application/json")
