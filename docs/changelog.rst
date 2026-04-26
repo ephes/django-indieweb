@@ -1,8 +1,14 @@
-≤4z3sUI4i
 .. :changelog:
 
 Changelog
 =========
+
+Unreleased
+----------
+* Removed Beads and Beadsflow project-tracking files and instructions
+* Added ``BACKLOG.md`` and ``DONE.md`` as the repository-local work tracking workflow
+* Linked the backlog workflow from the project documentation
+* Clarified that completed backlog items must keep docs and changelog entries aligned with implementation changes
 
 0.5.3 (2025-10-28)
 ------------------
@@ -50,6 +56,7 @@ Changelog
 * Fixed ``webmention_count`` template tag to always return integers for consistent template comparisons
 * Previously returned string when used directly but integer when used with ``as`` variable assignment
 * Added comprehensive tests for the webmention_count fix
+
 0.4.2 (2025-07-10)
 ------------------
 * Added Django admin integration for Webmention, Token, and Auth models

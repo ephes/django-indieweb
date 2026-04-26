@@ -7,7 +7,9 @@ Subpackages
 .. toctree::
    :maxdepth: 4
 
+   indieweb.management
    indieweb.migrations
+   indieweb.templatetags
 
 Submodules
 ----------

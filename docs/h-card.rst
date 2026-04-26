@@ -287,6 +287,7 @@ Template Tags
 -------------
 
 .. autofunction:: indieweb.templatetags.indieweb_tags.h_card
+   :no-index:
 
 Utilities
 ---------
@@ -342,7 +343,7 @@ Custom H-Card Template
 
 You can create custom h-card templates by overriding ``indieweb/h-card.html``:
 
-.. code-block:: html
+.. code-block:: django
 
     {# templates/indieweb/h-card.html #}
     <div class="h-card custom-card">

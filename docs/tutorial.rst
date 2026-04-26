@@ -202,36 +202,41 @@ To persist content, configure your own handler:
 See :doc:`micropub` for a full handler example (create, retrieve, update, delete stubs). The default handler
 stores entries in memory only; update/delete/undelete currently return HTTP 501 until implemented in your handler.
 
-   # myapp/views.py
-   from indieweb.views import MicropubView as BaseMicropubView
+.. code-block:: python
+
+   # myapp/micropub_handler.py
+   from indieweb.handlers import MicropubContentHandler, MicropubEntry
    from myapp.models import BlogPost
 
-   class MicropubView(BaseMicropubView):
-       def post(self, request, *args, **kwargs):
-           # Call parent to handle authentication
-           self.request = request
-
-           # Create actual content
+   class BlogPostMicropubHandler(MicropubContentHandler):
+       def create_entry(self, properties, user):
            post = BlogPost.objects.create(
-               author=self.token.owner,
-               content=self.content or '',
-               categories=','.join(self.categories)
+               author=user,
+               content=properties.get("content", [""])[0],
            )
+           return MicropubEntry(url=post.get_absolute_url(), properties=properties)
 
-           # Return created status with location header
-           response = HttpResponse('created', status=201)
-           response['Location'] = post.get_absolute_url()
-           return response
+       def update_entry(self, url, updates, user):
+           raise NotImplementedError("Update not yet implemented")
 
-Then update your URLs to use your extended view:
+       def delete_entry(self, url, user):
+           raise NotImplementedError("Delete not yet implemented")
+
+       def undelete_entry(self, url, user):
+           raise NotImplementedError("Undelete not supported")
+
+       def get_entry(self, url, user):
+           return None
+
+Then include the bundled URLconf:
 
 .. code-block:: python
 
    # urls.py
-   from myapp.views import MicropubView
+   from django.urls import include, path
 
    urlpatterns = [
-       path('micropub/', MicropubView.as_view(), name='micropub'),
+       path("indieweb/", include("indieweb.urls")),
        # ... other patterns
    ]
 

@@ -26,15 +26,13 @@
 - For regression proofs, add focused tests near the bug; prefer fixtures over inline setup to avoid duplication.
 - Use `pytest -k "keyword"` or `just test-one path::node` for fast iteration.
 
-## Beads Workflow
-- Beads database lives in `.beads/` at the repo root; keep the daemon off with `BEADS_NO_DAEMON=1` and `BEADS_DIR="$PWD/.beads"`.
-- When starting a bead, mark it in progress to avoid duplicate work: `bd update <bead-id> --status in_progress`.
-- When starting a bead, read its context and deps: `bd --no-daemon --no-db show <bead-id>` and `bd --no-daemon --no-db dep tree <bead-id>`.
-- If a bead references a spec/PRD (for example `specs/2025-12-18_todos.md`), read it before changing code.
-- When posting Beads comments, the first non-empty line must be one of: `Ready for review:`, `LGTM`, `Changes requested:`; include a brief summary and validation.
-- Avoid `bd sync` unless asked; in worktrees prefer `bd --no-daemon sync --flush-only`.
-- Beadsflow defaults: implementer is `codex`, reviewer is Claude Code (`claude`); set in `beadsflow.toml` or via `BEADSFLOW_IMPLEMENTER`/`BEADSFLOW_REVIEWER`.
-- When running beadsflow, use the local checkout in `../beadsflow`, not the packaged release (for example `uv run --project ../beadsflow beadsflow run <epic-id> ...`).
+## Backlog Workflow
+- This project no longer uses Beads. Track planned work in `BACKLOG.md` and move completed items to `DONE.md`.
+- Before starting a backlog item, read the full item and any referenced files, docs, specs, or upstream issues.
+- When completing a backlog item, remove it from `BACKLOG.md` and add an entry to `DONE.md` with the completion date, summary, validation, documentation note, and changelog note.
+- Update `docs/changelog.rst` when a completed item changes behavior, fixes a bug, adds a feature, changes configuration, or affects users.
+- Update project documentation when implementation behavior, configuration, public APIs, workflows, examples, or user-facing usage changes.
+- Work is not complete until code, tests, documentation, and changelog entries are consistent. If docs or changelog updates are not needed, say so in the `DONE.md` entry.
 
 ## Commit & Pull Request Guidelines
 - Commit messages: short, imperative subjects (e.g., “Add Micropub handler validation”, “Document justfile workflows”); keep each commit scoped.
@@ -53,13 +51,12 @@
 
 **MANDATORY WORKFLOW:**
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
+1. **Record remaining work** - Add follow-up items to `BACKLOG.md`
 2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
+3. **Update backlog status** - Move completed items from `BACKLOG.md` to `DONE.md`; update docs and changelog when needed
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```

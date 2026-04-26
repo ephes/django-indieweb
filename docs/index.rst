@@ -41,6 +41,12 @@ Features
    The Micropub endpoint now includes a complete content creation system with a
    pluggable handler architecture. See :doc:`micropub` for implementation details.
 
+Project Planning
+----------------
+
+Planned work is tracked in `BACKLOG.md <https://github.com/ephes/django-indieweb/blob/develop/BACKLOG.md>`__.
+Completed work is recorded in `DONE.md <https://github.com/ephes/django-indieweb/blob/develop/DONE.md>`__.
+
 Installation
 ------------
 
