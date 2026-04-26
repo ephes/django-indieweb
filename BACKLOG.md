@@ -6,6 +6,13 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 1
 
+### Security Maintenance
+
+- [ ] Triage and resolve open Dependabot alerts.
+  - Source: GitHub Dependabot reported 27 open pip alerts on 2026-04-26.
+  - Known package targets: Django `>=5.2.13`, pytest `>=9.0.3`, urllib3 `>=2.6.3`, requests `>=2.33.0`, sqlparse `>=0.5.4`, Pygments `>=2.20.0`, filelock `>=3.20.3`, and virtualenv `>=20.36.1`.
+  - Outcome: update direct and transitive dependencies safely, refresh `uv.lock`, run the full quality gates, and verify the Dependabot alert list is cleared or each remaining alert is documented with a reason.
+
 ### Webmentions Reliability and Compliance
 
 - [ ] Make Webmention receiving asynchronous.
