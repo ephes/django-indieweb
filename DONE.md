@@ -13,7 +13,7 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Documentation: no usage docs changed; dependency/security status is recorded in the changelog.
 - Changelog: updated `docs/changelog.rst`.
 - Validation: `uv sync`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
-- Dependabot verification: the GitHub API still listed the 27 pre-existing `uv.lock` alerts immediately after push, but the pushed `uv.lock` contains versions at or above every patched floor. Re-check after GitHub's dependency graph rescans the default branch.
+- Dependabot verification: the GitHub API reports 0 open Dependabot alerts after GitHub rescanned the pushed `uv.lock`.
 
 ### Verify Micropub Create Flow End to End
 
