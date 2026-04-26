@@ -536,6 +536,155 @@ def test_consent_approval_rejects_unsupported_method(client, user):
     assert Auth.objects.filter(client_id="https://webapp.example.org").count() == 0
 
 
+BAD_CLIENT_IDS = [
+    "",
+    "not a url",
+    "ftp://webapp.example.org",
+    "https://webapp.example.org#frag",
+    "https://webapp.example.org#",
+    "https://User:Pass@webapp.example.org",
+    "javascript:alert(1)",
+]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad_client_id", BAD_CLIENT_IDS)
+def test_get_rejects_invalid_client_id(client, user, bad_client_id):
+    """Authorization endpoint rejects malformed client_id with HTTP 400."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": bad_client_id,
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    # An empty client_id is reported as a missing parameter (404) by the
+    # required-params check that runs first; everything else is structural 400.
+    assert response.status_code in (400, 404)
+    if response.status_code == 400:
+        assert "client_id" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad_client_id", [c for c in BAD_CLIENT_IDS if c])
+def test_consent_approval_rejects_invalid_client_id(client, user, bad_client_id):
+    """Consent approval rejects malformed client_id before creating an Auth row."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": bad_client_id,
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 400
+    assert Auth.objects.filter(client_id=bad_client_id).count() == 0
+
+
+@pytest.mark.django_db
+def test_get_rejects_disallowed_client_id_via_validator(client, settings, user, auth_endpoint_url):
+    """Configured validator returning False blocks the authorization GET with HTTP 400."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.deny_all"
+    client.login(username=user.username, password="password")
+    response = client.get(auth_endpoint_url)
+    assert response.status_code == 400
+    assert "invalid_client" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_get_accepts_allowed_client_id_via_validator(client, settings, user, auth_endpoint_url):
+    """Configured validator returning True does not block a structurally-valid GET."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_all"
+    client.login(username=user.username, password="password")
+    response = client.get(auth_endpoint_url)
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_consent_approval_rejects_disallowed_client_id_via_validator(client, settings, user):
+    """Configured validator returning False blocks consent approval with HTTP 400."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.deny_all"
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 400
+    assert Auth.objects.filter(client_id="https://webapp.example.org").count() == 0
+
+
+@pytest.mark.django_db
+def test_get_rejects_when_validator_misconfigured(client, settings, user, auth_endpoint_url):
+    """A dotted path that fails to import is fail-closed at the auth endpoint."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.does_not_exist.nope"
+    client.login(username=user.username, password="password")
+    response = client.get(auth_endpoint_url)
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad_client_id", [c for c in BAD_CLIENT_IDS if c])
+def test_verify_auth_code_rejects_invalid_client_id(client, user, bad_client_id):
+    """Code-verification POST rejects malformed client_id before any Auth lookup."""
+    Auth.objects.create(
+        owner=user,
+        client_id=bad_client_id,
+        redirect_uri="https://webapp.example.org/auth/callback",
+        state="1234567890",
+        me="http://example.org",
+        key="legacykey",
+    )
+    base_url = reverse("indieweb:auth")
+    response = client.post(base_url, data={"code": "legacykey", "client_id": bad_client_id})
+    assert response.status_code == 400
+    assert "client_id" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_verify_auth_code_rejects_disallowed_client_id_via_validator(client, settings, user):
+    """Configured validator returning False blocks code verification with HTTP 400."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.deny_all"
+    auth = Auth.objects.create(
+        owner=user,
+        client_id="https://webapp.example.org",
+        redirect_uri="https://webapp.example.org/auth/callback",
+        state="1234567890",
+        me="http://example.org",
+    )
+    base_url = reverse("indieweb:auth")
+    response = client.post(base_url, data={"code": auth.key, "client_id": auth.client_id})
+    assert response.status_code == 400
+    assert "invalid_client" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_verify_auth_code_rejects_when_validator_misconfigured(client, settings, user):
+    """A non-importable validator path is fail-closed at the code-verification POST."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.does_not_exist.nope"
+    auth = Auth.objects.create(
+        owner=user,
+        client_id="https://webapp.example.org",
+        redirect_uri="https://webapp.example.org/auth/callback",
+        state="1234567890",
+        me="http://example.org",
+    )
+    base_url = reverse("indieweb:auth")
+    response = client.post(base_url, data={"code": auth.key, "client_id": auth.client_id})
+    assert response.status_code == 400
+
+
 @pytest.mark.django_db
 def test_post_verify_auth_code(client, user):
     """Test POST request to verify auth code."""

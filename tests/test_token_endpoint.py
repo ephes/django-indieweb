@@ -277,6 +277,52 @@ def test_token_rejects_malformed_verifier(client, auth, token_endpoint_url, toke
     assert "invalid_grant" in response.content.decode("utf-8")
 
 
+BAD_CLIENT_IDS = [
+    "not a url",
+    "ftp://webapp.example.org",
+    "https://webapp.example.org#frag",
+    "https://webapp.example.org#",
+    "https://User:Pass@webapp.example.org",
+    "javascript:alert(1)",
+]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad_client_id", BAD_CLIENT_IDS)
+def test_token_rejects_invalid_client_id(client, token_endpoint_url, token_payload, bad_client_id):
+    """Token endpoint rejects malformed client_id with invalid_request before any Auth lookup."""
+    token_payload["client_id"] = bad_client_id
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_request" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_token_rejects_disallowed_client_id_via_validator(client, settings, token_endpoint_url, token_payload):
+    """Configured validator returning False blocks token issuance with invalid_request."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.deny_all"
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_request" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_token_accepts_allowed_client_id_via_validator(client, settings, token_endpoint_url, token_payload):
+    """Configured validator returning True does not block token issuance."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_all"
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+
+
+@pytest.mark.django_db
+def test_token_rejects_when_validator_misconfigured(client, settings, token_endpoint_url, token_payload):
+    """A dotted path that fails to import is fail-closed at the token endpoint."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.does_not_exist.nope"
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_request" in response.content.decode("utf-8")
+
+
 @pytest.mark.django_db
 def test_token_reissue_resets_expires_at(client, settings, token_endpoint_url, token_payload, user):
     """Reissuing a token (same client/scope/me) refreshes expires_at."""

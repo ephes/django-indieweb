@@ -39,9 +39,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Auth Scopes and Token Management
 
-- [ ] Implement `client_id` access control for token authorization.
-  - Reference: `src/indieweb/views.py`.
-  - Outcome: token authorization validates the client according to documented rules.
 - [ ] Enforce token scopes for Micropub and IndieAuth operations.
   - Outcome: read, create, update, delete, undelete, and media operations enforce appropriate scopes and return spec-appropriate errors.
 

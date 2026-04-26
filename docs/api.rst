@@ -319,6 +319,11 @@ All endpoints may return these error responses:
 **400 Bad Request — ``invalid_request``**
 
 - Missing required ``code`` or ``client_id`` on token exchange
+- ``client_id`` on token exchange is malformed (invalid URL, contains a ``#``
+  delimiter, includes userinfo, or uses a disallowed scheme)
+- ``client_id`` on token exchange is rejected by the configured
+  ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
+  imported (fail-closed)
 
 **401 Unauthorized**
 
@@ -328,12 +333,26 @@ All endpoints may return these error responses:
 
 **403 Forbidden**
 
-- Token lacks required scope
+- Token lacks required scope (``authorization error``)
+- The stored token's ``client_id`` is rejected by the configured
+  ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
+  imported (``invalid_client``)
 
 **400 Bad Request — invalid redirect_uri**
 
 - ``redirect_uri`` on the authorization endpoint is malformed (invalid URL,
   contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
+
+**400 Bad Request — invalid client_id**
+
+- ``client_id`` on the authorization endpoint is malformed (invalid URL,
+  contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
+
+**400 Bad Request — ``invalid_client`` (authorization endpoint)**
+
+- ``client_id`` on the authorization endpoint is rejected by the configured
+  ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
+  imported (fail-closed)
 
 **400 Bad Request — ``invalid_request`` (authorization endpoint)**
 

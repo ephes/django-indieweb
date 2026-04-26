@@ -22,6 +22,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
+from django.utils.module_loading import import_string
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
@@ -67,6 +68,71 @@ def _validate_redirect_uri(value: str) -> str | None:
     if parsed.username is not None or parsed.password is not None:
         return None
     return value
+
+
+def _validate_client_id(value: str | None) -> str | None:
+    """Validate a ``client_id`` per IndieAuth.
+
+    Returns the input unchanged when it is a syntactically valid URL with an
+    allowed scheme, no fragment delimiter, and no userinfo component. Returns
+    ``None`` otherwise. Stored ``client_id`` values are not re-validated
+    structurally on use; this helper guards the issuance points only.
+    """
+    if not value:
+        return None
+    if "#" in value:
+        return None
+    try:
+        URLValidator(schemes=list(ALLOWED_REDIRECT_URI_SCHEMES))(value)
+    except ValidationError:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme.lower() not in ALLOWED_REDIRECT_URI_SCHEMES:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    return value
+
+
+def _token_client_id_error(client_id: str) -> HttpResponse | None:
+    """Return an ``invalid_request`` response if ``client_id`` cannot be used at the token endpoint.
+
+    Combines structural validation and the optional configured policy hook. The
+    response shape (``application/x-www-form-urlencoded`` body ``invalid_request``)
+    matches the existing missing-``code`` case.
+    """
+    if _validate_client_id(client_id) is None:
+        logger.info("rejected invalid client_id on token exchange")
+        return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
+    if not _client_id_allowed(client_id):
+        logger.warning(f"rejected disallowed client_id on token exchange: {client_id!r}")
+        return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
+    return None
+
+
+def _client_id_allowed(client_id: str) -> bool:
+    """Return whether ``client_id`` passes the optional operator policy hook.
+
+    When ``INDIEWEB_CLIENT_ID_VALIDATOR`` is unset, every ``client_id`` is
+    permitted (preserving backwards compatibility for deployments that have
+    not opted in to client allowlisting). When the setting is configured but
+    the dotted path cannot be imported, or the callable raises, this fails
+    closed and returns ``False`` so a misconfiguration cannot silently weaken
+    access control.
+    """
+    validator_path = getattr(settings, "INDIEWEB_CLIENT_ID_VALIDATOR", None)
+    if not validator_path:
+        return True
+    try:
+        validator = import_string(validator_path)
+    except Exception as exc:
+        logger.error(f"Failed to load INDIEWEB_CLIENT_ID_VALIDATOR {validator_path}: {exc}")
+        return False
+    try:
+        return bool(validator(client_id))
+    except Exception as exc:
+        logger.error(f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={client_id!r}: {exc}")
+        return False
 
 
 def _normalize_redirect_uri(value: str) -> str:
@@ -183,13 +249,16 @@ class TokenAuthMixin(View):
             return False
 
     def authorized(self, client_id: str, scope: str | None) -> bool:
-        # TODO implement access control based on client_id
         # Check for either "create" (standard Micropub) or "post" (legacy)
         return scope is not None and ("create" in scope or "post" in scope)
 
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not self.authenticated(request):
             return HttpResponse("authentication error", status=401)
+
+        if not _client_id_allowed(self.token.client_id):
+            logger.warning(f"rejected disallowed client_id on resource server: {self.token.client_id!r}")
+            return HttpResponse("invalid_client", status=403)
 
         if not self.authorized(self.token.client_id, self.token.scope):
             return HttpResponse("authorization error", status=403)
@@ -236,6 +305,14 @@ class AuthView(CSRFExemptMixin, View):
         if _validate_redirect_uri(redirect_uri) is None:
             logger.info("rejected invalid redirect_uri on auth get")
             return HttpResponse("invalid redirect_uri", status=400)
+
+        if _validate_client_id(client_id) is None:
+            logger.info("rejected invalid client_id on auth get")
+            return HttpResponse("invalid client_id", status=400)
+
+        if not _client_id_allowed(client_id):
+            logger.warning(f"rejected disallowed client_id on auth get: {client_id!r}")
+            return HttpResponse("invalid_client", status=400)
 
         code_challenge = request.GET.get("code_challenge")
         code_challenge_method = request.GET.get("code_challenge_method")
@@ -292,6 +369,14 @@ class AuthView(CSRFExemptMixin, View):
             logger.info("rejected invalid redirect_uri on auth consent")
             return HttpResponse("invalid redirect_uri", status=400)
 
+        if _validate_client_id(client_id) is None:
+            logger.info("rejected invalid client_id on auth consent")
+            return HttpResponse("invalid client_id", status=400)
+
+        if not _client_id_allowed(client_id):
+            logger.warning(f"rejected disallowed client_id on auth consent: {client_id!r}")
+            return HttpResponse("invalid_client", status=400)
+
         code_challenge = request.POST.get("code_challenge")
         code_challenge_method = request.POST.get("code_challenge_method")
         stored_challenge: str | None = None
@@ -340,6 +425,14 @@ class AuthView(CSRFExemptMixin, View):
         if not auth_code or not client_id:
             return HttpResponse("Missing code or client_id", status=400)
 
+        if _validate_client_id(client_id) is None:
+            logger.info("rejected invalid client_id on code verification")
+            return HttpResponse("invalid client_id", status=400)
+
+        if not _client_id_allowed(client_id):
+            logger.warning(f"rejected disallowed client_id on code verification: {client_id!r}")
+            return HttpResponse("invalid_client", status=400)
+
         logger.info(f"auth view post verification: {client_id}")
         try:
             auth = Auth.objects.get(key=auth_code, client_id=client_id)
@@ -381,6 +474,21 @@ class TokenView(CSRFExemptMixin, View):
         status_code = 201 if created else 200
         return HttpResponse(response, status=status_code, content_type="application/x-www-form-urlencoded")
 
+    def _check_pkce(self, auth: Auth, code_verifier: str | None) -> HttpResponse | None:
+        """Verify PKCE for a token exchange. Deletes ``auth`` on failure to preserve one-time use."""
+        if auth.code_challenge:
+            if not code_verifier or not _verify_pkce(
+                auth.code_challenge, auth.code_challenge_method or "plain", code_verifier
+            ):
+                logger.error("PKCE verification failed on token exchange")
+                auth.delete()
+                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+        elif code_verifier:
+            logger.error("PKCE verifier submitted without stored challenge")
+            auth.delete()
+            return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+        return None
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         # Get parameters from request
         code = request.POST.get("code")
@@ -396,6 +504,10 @@ class TokenView(CSRFExemptMixin, View):
         if not code or not client_id:
             logger.error(f"Missing required parameters: code={code}, client_id={client_id}")
             return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
+
+        client_id_error = _token_client_id_error(client_id)
+        if client_id_error is not None:
+            return client_id_error
 
         if redirect_uri and _validate_redirect_uri(redirect_uri) is None:
             logger.error("Rejected invalid redirect_uri on token exchange")
@@ -414,17 +526,9 @@ class TokenView(CSRFExemptMixin, View):
                     logger.error("Redirect URI mismatch on token exchange")
                     return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
-            if auth.code_challenge:
-                if not code_verifier or not _verify_pkce(
-                    auth.code_challenge, auth.code_challenge_method or "plain", code_verifier
-                ):
-                    logger.error("PKCE verification failed on token exchange")
-                    auth.delete()
-                    return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
-            elif code_verifier:
-                logger.error("PKCE verifier submitted without stored challenge")
-                auth.delete()
-                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+            pkce_error = self._check_pkce(auth, code_verifier)
+            if pkce_error is not None:
+                return pkce_error
 
             # Use values from auth object if not provided in request
             me = me or auth.me

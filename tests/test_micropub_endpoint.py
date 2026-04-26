@@ -212,6 +212,41 @@ def test_legacy_null_expiry_token_is_accepted(client, token, micropub_endpoint_u
 
 
 @pytest.mark.django_db
+def test_micropub_rejects_disallowed_client_id_via_validator(
+    client, settings, token, micropub_endpoint_url, micropub_payload
+):
+    """Resource server rejects an existing token whose client_id is no longer allowed."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.deny_all"
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 403
+    assert "invalid_client" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_micropub_accepts_allowed_client_id_via_validator(
+    client, settings, token, micropub_endpoint_url, micropub_payload
+):
+    """Resource server still accepts a token whose client_id passes the validator."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_all"
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 201
+
+
+@pytest.mark.django_db
+def test_micropub_rejects_when_validator_misconfigured(
+    client, settings, token, micropub_endpoint_url, micropub_payload
+):
+    """A misconfigured validator fails closed at the resource server."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.does_not_exist.nope"
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 403
+    assert "invalid_client" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
 def test_both_authorization_formats(client, token, micropub_endpoint_url):
     """Test that both Authorization and HTTP_AUTHORIZATION formats work for GET requests."""
     # Test with Authorization (test client format)

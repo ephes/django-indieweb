@@ -149,7 +149,29 @@ Security Considerations
    stored challenge in constant time. Auth codes issued before this change
    (no ``code_challenge`` stored) continue to be redeemable without a
    ``code_verifier``, preserving backwards compatibility for legacy clients.
-7. **redirect_uri Validation**: Submitted ``redirect_uri`` values must be
+7. **client_id Validation**: Submitted ``client_id`` values must be
+   syntactically valid URLs using the ``http`` or ``https`` scheme. They must
+   not contain a fragment delimiter (``#``) at all, even with no fragment
+   content, and must not include userinfo (``user:pass@``). The authorization
+   endpoint (GET, consent POST, and code-verification POST) rejects
+   malformed values with HTTP 400 *before* creating an authorization code:
+   plain-text body ``invalid client_id`` for structural failures and
+   ``invalid_client`` for validator failures. The token endpoint rejects
+   malformed submissions with HTTP 400 ``invalid_request`` and content type
+   ``application/x-www-form-urlencoded`` (matching the existing missing-
+   ``code`` case). Operators can additionally restrict which clients are
+   allowed by setting ``INDIEWEB_CLIENT_ID_VALIDATOR`` (see
+   :doc:`configuration`); the configured callable runs at every
+   authorization/token path and on every Micropub request, so revoking a
+   client takes effect immediately for previously-issued tokens. A
+   misconfigured validator (the dotted path fails to import or the callable
+   raises) fails closed at every call site. Stored ``client_id`` values are
+   not re-validated *structurally* on use, matching the ``redirect_uri``
+   rule; the configured validator, however, IS re-applied on use, so
+   pre-existing tokens whose ``client_id`` no longer satisfies operator
+   policy are rejected with HTTP 403 ``invalid_client`` on the Micropub
+   endpoint.
+8. **redirect_uri Validation**: Submitted ``redirect_uri`` values must be
    syntactically valid URLs using the ``http`` or ``https`` scheme. They must
    not contain a fragment delimiter (``#``) at all, even with no fragment
    content, and must not include userinfo (``user:pass@``). The authorization

@@ -46,6 +46,57 @@ its response, and the Micropub endpoint rejects expired tokens with HTTP 401.
    that want to retire those tokens should delete them or trigger a reissue
    through the IndieAuth flow.
 
+INDIEWEB_CLIENT_ID_VALIDATOR
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable ``(client_id: str) -> bool`` that gates which
+``client_id`` values are allowed by the IndieAuth and Micropub endpoints.
+
+**Default:** ``None`` (every structurally-valid ``client_id`` is permitted)
+
+When set, the configured callable is invoked **on top of** structural validation
+(an ``http``/``https`` URL with no userinfo and no fragment) at four
+authorization/token paths — the authorization GET, the consent approval POST,
+the code-verification POST, and the token endpoint POST — and again on the
+resource-server path inside ``TokenAuthMixin``. The latter is intentional:
+operator policy may evolve and revoke a previously-allowed ``client_id``, in
+which case existing tokens for that client must stop working immediately.
+
+**Example:**
+
+.. code-block:: python
+
+   # myapp/indieauth.py
+   _ALLOWLIST = {"https://quill.p3k.io/", "https://micropublish.net/"}
+
+   def is_allowed_client(client_id: str) -> bool:
+       return client_id in _ALLOWLIST
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_CLIENT_ID_VALIDATOR = "myapp.indieauth.is_allowed_client"
+
+.. note::
+   If the configured dotted path fails to import, or the callable raises, the
+   request is rejected (fail-closed). Misconfiguration cannot silently weaken
+   access control. The exact response shape depends on the call site: the
+   authorization endpoint and the code-verification POST return HTTP 400 with
+   a plain-text ``invalid_client`` body; the token endpoint returns HTTP 400
+   with body ``invalid_request`` and content type
+   ``application/x-www-form-urlencoded`` (matching the existing missing-
+   ``code`` case); and the Micropub resource-server path returns HTTP 403
+   with body ``invalid_client``.
+
+.. note::
+   Stored ``client_id`` values are not re-validated *structurally* on use,
+   matching the ``redirect_uri`` rule. The configured validator callable
+   IS re-applied on use, so revoking a previously-allowed client takes
+   effect immediately for existing tokens. A token issued before
+   ``client_id`` access control existed (or by an out-of-band script) keeps
+   working as long as it satisfies the configured validator (or the
+   validator is unset).
+
 URL Configuration
 -----------------
 
