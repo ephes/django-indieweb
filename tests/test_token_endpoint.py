@@ -137,6 +137,49 @@ def test_token_row_gets_expires_at(client, settings, token_endpoint_url, token_p
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "bad_redirect_uri",
+    [
+        "https://webapp.example.org/auth/callback#section",
+        "https://webapp.example.org/auth/callback#",
+        "https://User:Pass@webapp.example.org/auth/callback",
+        "ftp://webapp.example.org/auth/callback",
+        "javascript:alert(1)",
+        "not a url",
+    ],
+)
+def test_token_rejects_invalid_redirect_uri(client, token_endpoint_url, token_payload, bad_redirect_uri):
+    """Token endpoint rejects malformed submitted redirect_uri with invalid_grant."""
+    token_payload["redirect_uri"] = bad_redirect_uri
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_token_accepts_case_only_difference_in_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """Submitted redirect_uri matching stored value only by scheme/host case is accepted."""
+    auth.redirect_uri = "https://webapp.example.org/auth/callback"
+    auth.save()
+    token_payload["redirect_uri"] = "HTTPS://WebApp.Example.ORG/auth/callback"
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_rejects_path_only_difference_in_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """Submitted redirect_uri whose path differs is rejected as invalid_grant."""
+    auth.redirect_uri = "https://webapp.example.org/auth/callback"
+    auth.save()
+    token_payload["redirect_uri"] = "https://webapp.example.org/auth/other"
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
 def test_token_reissue_resets_expires_at(client, settings, token_endpoint_url, token_payload, user):
     """Reissuing a token (same client/scope/me) refreshes expires_at."""
     settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600

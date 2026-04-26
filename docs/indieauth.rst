@@ -125,6 +125,18 @@ Security Considerations
    Micropub endpoint rejects expired tokens with HTTP 401
 4. **CSRF Protection**: The consent form includes Django's CSRF token
 5. **User Authentication**: Users must be logged in to approve/deny requests
+6. **redirect_uri Validation**: Submitted ``redirect_uri`` values must be
+   syntactically valid URLs using the ``http`` or ``https`` scheme. They must
+   not contain a fragment delimiter (``#``) at all, even with no fragment
+   content, and must not include userinfo (``user:pass@``). The authorization
+   endpoint rejects malformed values with HTTP 400 *before* creating an
+   authorization code; the token endpoint rejects malformed submissions with
+   ``invalid_grant``. When comparing the value submitted at the token
+   endpoint with the value stored alongside the authorization code, the
+   scheme and host are compared case-insensitively while the path and query
+   are compared verbatim. ``redirect_uri`` values that already contain a
+   query (e.g. ``?next=/x``) are preserved when ``code`` and ``state`` are
+   appended.
 
 Configuration
 -------------

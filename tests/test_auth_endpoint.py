@@ -188,6 +188,110 @@ def test_auth_timeout_reset(client, user):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "bad_redirect_uri",
+    [
+        "https://webapp.example.org/auth/callback#section",
+        "https://webapp.example.org/auth/callback#",
+        "https://User:Pass@webapp.example.org/auth/callback",
+        "ftp://webapp.example.org/auth/callback",
+        "javascript:alert(1)",
+        "not a url",
+    ],
+)
+def test_get_rejects_invalid_redirect_uri(client, user, bad_redirect_uri):
+    """Authorization endpoint rejects redirect_uri with fragment/bad scheme/invalid syntax."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": bad_redirect_uri,
+        "state": "1234567890",
+        "scope": "post",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 400
+    assert "redirect_uri" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "bad_redirect_uri",
+    [
+        "https://webapp.example.org/auth/callback#section",
+        "https://webapp.example.org/auth/callback#",
+        "https://User:Pass@webapp.example.org/auth/callback",
+        "ftp://webapp.example.org/auth/callback",
+        "javascript:alert(1)",
+        "not a url",
+    ],
+)
+def test_consent_approval_rejects_invalid_redirect_uri(client, user, bad_redirect_uri):
+    """Consent approval rejects invalid redirect_uri before creating an Auth row."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": bad_redirect_uri,
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 400
+    assert Auth.objects.filter(client_id="https://webapp.example.org").count() == 0
+
+
+@pytest.mark.django_db
+def test_consent_approval_merges_existing_query(client, user):
+    """Approve must merge code/state into an existing redirect_uri query, not duplicate `?`."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback?next=/x",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 302
+    parsed = urlparse(response.url)
+    assert response.url.count("?") == 1, f"Expected one '?' separator, got: {response.url}"
+    qs = parse_qs(parsed.query)
+    assert qs["next"] == ["/x"]
+    assert "code" in qs
+    assert qs["state"] == ["1234567890"]
+    assert qs["me"] == ["http://example.org"]
+
+
+@pytest.mark.django_db
+def test_consent_denial_merges_existing_query(client, user):
+    """Deny must merge error/state into an existing redirect_uri query, not duplicate `?`."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "deny",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback?next=/x",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 302
+    parsed = urlparse(response.url)
+    assert response.url.count("?") == 1, f"Expected one '?' separator, got: {response.url}"
+    qs = parse_qs(parsed.query)
+    assert qs["next"] == ["/x"]
+    assert qs["error"] == ["access_denied"]
+    assert qs["state"] == ["1234567890"]
+
+
+@pytest.mark.django_db
 def test_post_verify_auth_code(client, user):
     """Test POST request to verify auth code."""
     client.login(username=user.username, password="password")

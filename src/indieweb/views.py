@@ -5,7 +5,8 @@ import logging
 import math
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse, urlunparse
+from urllib.parse import urlencode as urllib_urlencode
 
 from django.conf import settings
 from django.contrib.sites.models import Site
@@ -30,6 +31,56 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_EXPIRES_IN = 86400
+ALLOWED_REDIRECT_URI_SCHEMES = ("http", "https")
+
+
+def _validate_redirect_uri(value: str) -> str | None:
+    """Validate a ``redirect_uri`` per IndieAuth.
+
+    Returns the input unchanged when it is a syntactically valid URL with an
+    allowed scheme, no fragment delimiter, and no userinfo component. Returns
+    ``None`` otherwise. Userinfo is rejected because it is not a normal
+    IndieAuth redirect target and would otherwise break case-insensitive
+    host comparison at the token endpoint.
+    """
+    if not value:
+        return None
+    if "#" in value:
+        return None
+    try:
+        URLValidator(schemes=list(ALLOWED_REDIRECT_URI_SCHEMES))(value)
+    except ValidationError:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme.lower() not in ALLOWED_REDIRECT_URI_SCHEMES:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    return value
+
+
+def _normalize_redirect_uri(value: str) -> str:
+    """Return ``value`` with scheme and host lowercased.
+
+    Path, query and fragment are preserved verbatim. Used for comparison only;
+    the original value is what is sent to the client.
+    """
+    parsed = urlparse(value)
+    netloc = parsed.netloc.lower()
+    scheme = parsed.scheme.lower()
+    return parsed._replace(scheme=scheme, netloc=netloc).geturl()
+
+
+def _append_redirect_params(redirect_uri: str, params: dict[str, str]) -> str:
+    """Append ``params`` to ``redirect_uri`` while preserving any existing query.
+
+    Naive string concatenation with ``?`` corrupts URLs that already have a
+    query (the new pairs collapse into the last existing value). This parses,
+    merges, and re-encodes properly.
+    """
+    parsed = urlparse(redirect_uri)
+    merged = parse_qsl(parsed.query, keep_blank_values=True) + list(params.items())
+    return urlunparse(parsed._replace(query=urllib_urlencode(merged)))
 
 
 class CSRFExemptMixin(View):
@@ -131,6 +182,10 @@ class AuthView(CSRFExemptMixin, View):
         assert state is not None
         assert me is not None
 
+        if _validate_redirect_uri(redirect_uri) is None:
+            logger.info("rejected invalid redirect_uri on auth get")
+            return HttpResponse("invalid redirect_uri", status=400)
+
         # Parse scope into list for display
         scope_list = []
         if scope:
@@ -170,6 +225,10 @@ class AuthView(CSRFExemptMixin, View):
             assert state is not None
             assert me is not None
 
+            if _validate_redirect_uri(redirect_uri) is None:
+                logger.info("rejected invalid redirect_uri on auth consent")
+                return HttpResponse("invalid redirect_uri", status=400)
+
             if action == "approve":
                 # User approved - create auth code and redirect
                 if not request.user.is_authenticated:
@@ -190,14 +249,14 @@ class AuthView(CSRFExemptMixin, View):
                     me=me,
                 )
                 url_params: dict[str, str] = {"code": auth.key, "state": state, "me": me}
-                target = f"{redirect_uri}?{urlencode(url_params)}"
-                logger.info(f"auth view consent approved: {target}")
+                target = _append_redirect_params(redirect_uri, url_params)
+                logger.info("auth view consent approved")
                 return redirect(target)
             else:
                 # User denied - redirect with error
                 deny_params: dict[str, str] = {"error": "access_denied", "state": state}
-                target = f"{redirect_uri}?{urlencode(deny_params)}"
-                logger.info(f"auth view consent denied: {target}")
+                target = _append_redirect_params(redirect_uri, deny_params)
+                logger.info("auth view consent denied")
                 return redirect(target)
         else:
             # Original auth code verification flow
@@ -264,14 +323,22 @@ class TokenView(CSRFExemptMixin, View):
             logger.error(f"Missing required parameters: code={code}, client_id={client_id}")
             return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
 
+        if redirect_uri and _validate_redirect_uri(redirect_uri) is None:
+            logger.error("Rejected invalid redirect_uri on token exchange")
+            return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
         try:
             # Find auth by code and client_id
             auth = Auth.objects.get(key=code, client_id=client_id)
 
-            # Verify redirect_uri if provided
-            if redirect_uri and auth.redirect_uri and auth.redirect_uri != redirect_uri:
-                logger.error(f"Redirect URI mismatch: expected {auth.redirect_uri}, got {redirect_uri}")
-                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+            # Verify redirect_uri if provided. Already-stored values are not re-validated;
+            # they were validated when the auth code was issued (or pre-date validation).
+            if redirect_uri and auth.redirect_uri:
+                stored = _normalize_redirect_uri(auth.redirect_uri)
+                submitted = _normalize_redirect_uri(redirect_uri)
+                if stored != submitted:
+                    logger.error("Redirect URI mismatch on token exchange")
+                    return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
             # Use values from auth object if not provided in request
             me = me or auth.me

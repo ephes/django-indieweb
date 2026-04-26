@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-26
 
+### Validate IndieAuth `redirect_uri` Values
+
+- Added module-level helpers `_validate_redirect_uri`, `_normalize_redirect_uri`, and `_append_redirect_params` in `src/indieweb/views.py`. Validation requires a syntactically valid URL (via Django's `URLValidator`) using a scheme from `ALLOWED_REDIRECT_URI_SCHEMES` (`http`, `https`), no fragment delimiter at all (so `https://x/cb#` is rejected, not just `https://x/cb#section`), and no userinfo component.
+- Wired validation into `AuthView.get`, `AuthView.post` (consent approve/deny path), and `TokenView.post`. The authorization endpoint now returns HTTP 400 (`invalid redirect_uri`) before creating any `Auth` row when the value is malformed; the token endpoint returns HTTP 400 (`invalid_grant`) for a malformed submitted value.
+- Replaced the previous string-equality redirect-URI check in `TokenView.post` with a normalized comparison: scheme and host are lowercased, path and query are preserved verbatim. Already-stored `Auth.redirect_uri` values are compared defensively without re-validation, so auth codes issued before this change continue to work.
+- Replaced naive `f"{redirect_uri}?{urlencode(...)}"` concatenation in the consent approve/deny paths with `_append_redirect_params`, which parses the existing query and merges new pairs so a `redirect_uri` containing its own query (e.g. `?next=/x`) no longer collapses `code` into the trailing value.
+- Reduced log verbosity to avoid leaking sensitive `code` query parameters at INFO level.
+- Added regression tests covering: rejection of fragment, bare `#`, userinfo, disallowed scheme, and syntactically invalid `redirect_uri` at the authorization GET and the consent approval POST; query-merging on approve and deny; rejection at the token endpoint with `invalid_grant`; acceptance of a case-only difference in scheme/host at the token endpoint; and rejection of a path-only difference.
+- Documentation: updated `docs/indieauth.rst` (Security Considerations) and `docs/api.rst` (token endpoint parameter notes and the error-response listing).
+- Changelog: updated `docs/changelog.rst`.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` all passed.
+
 ### Add Token Expiration Handling and Fix Auth-Code Timeout Calculation
 
 - Added `Token.expires_at` (`DateTimeField(null=True, blank=True, db_index=True)`) plus migration `0010_token_expires_at` and a `Token.is_expired()` helper.

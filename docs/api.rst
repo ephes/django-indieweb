@@ -127,7 +127,7 @@ POST Request
 
 **Optional Parameters:**
 
-- ``redirect_uri`` - If sent, it must match the value used in the original auth request; mismatches are rejected with ``invalid_grant``
+- ``redirect_uri`` - If sent, it must be a syntactically valid ``http``/``https`` URL with no fragment delimiter (``#``) and no userinfo (``user:pass@``), and must match the value used in the original auth request after normalizing scheme and host case (path and query are compared verbatim); malformed values and mismatches are rejected with ``invalid_grant``
 - ``me`` - The user's profile URL; falls back to the value stored with the auth code
 - ``scope`` - The requested scope; falls back to the value stored with the auth code
 
@@ -295,7 +295,8 @@ All endpoints may return these error responses:
 
 - Expired authorization code
 - Invalid authorization code
-- ``redirect_uri`` sent on token exchange does not match the value stored with the auth code
+- ``redirect_uri`` sent on token exchange is malformed (invalid URL, contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
+- ``redirect_uri`` sent on token exchange does not match the value stored with the auth code (after lowercasing scheme and host)
 
 **400 Bad Request — ``invalid_request``**
 
@@ -310,6 +311,11 @@ All endpoints may return these error responses:
 **403 Forbidden**
 
 - Token lacks required scope
+
+**400 Bad Request — invalid redirect_uri**
+
+- ``redirect_uri`` on the authorization endpoint is malformed (invalid URL,
+  contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
 
 **404 Not Found**
 
