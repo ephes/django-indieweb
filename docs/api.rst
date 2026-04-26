@@ -31,7 +31,7 @@ IndieAuth Flow
        AuthEndpoint->>User: Redirect to login if not authenticated
        User->>AuthEndpoint: Login
        AuthEndpoint->>Client: Redirect with auth code
-       Client->>TokenEndpoint: POST with code, client_id, redirect_uri, code_verifier
+       Client->>TokenEndpoint: POST with code, client_id, redirect_uri, scope, code_verifier
        TokenEndpoint->>Client: Return access token
        Client->>Client: Store access token for future requests
 
@@ -56,7 +56,10 @@ Initiates the authorization flow.
 
 **Optional Parameters:**
 
-- ``scope`` - Space-separated list of scopes (e.g., "create update")
+- ``scope`` - Space-separated list of scopes (e.g., "create update"). The
+  value is normalized before display/storage by splitting on whitespace,
+  removing duplicate tokens while preserving first-seen order, and joining
+  with single spaces. Unknown scope names are accepted and preserved.
 - ``code_challenge`` - PKCE code challenge (RFC 7636). 43-128 characters from
   the unreserved set ``[A-Za-z0-9._~-]``. When sent, the value is stored
   alongside the auth code and the matching ``code_verifier`` is required at
@@ -136,7 +139,14 @@ POST Request
 
 - ``redirect_uri`` - If sent, it must be a syntactically valid ``http``/``https`` URL with no fragment delimiter (``#``) and no userinfo (``user:pass@``), and must match the value used in the original auth request after normalizing scheme and host case (path and query are compared verbatim); malformed values and mismatches are rejected with ``invalid_grant``
 - ``me`` - The user's profile URL; falls back to the value stored with the auth code
-- ``scope`` - The requested scope; falls back to the value stored with the auth code
+- ``scope`` - Optional scope confirmation. If omitted, the token is issued
+  with the normalized scope stored with the auth code. If sent, the submitted
+  value is normalized and must exactly match the stored auth-code scope;
+  mismatches are rejected with ``invalid_grant`` and no token is created or
+  reissued. The token endpoint cannot broaden, narrow, or replace the scope
+  approved during authorization. An explicitly empty ``scope=`` parameter
+  normalizes to no scope, so it only succeeds for an auth code that was issued
+  with no scope.
 - ``code_verifier`` - PKCE code verifier (RFC 7636), required when the auth
   code was issued with a ``code_challenge``. 43-128 characters from the
   unreserved set ``[A-Za-z0-9._~-]``. The server recomputes the challenge from
@@ -487,6 +497,9 @@ All endpoints may return these error responses:
 
 - Expired authorization code
 - Invalid authorization code
+- ``scope`` sent on token exchange does not normalize to the scope stored with
+  the auth code, including attempts to add a scope to a no-scope auth code
+  or attempts to submit an explicitly empty ``scope=`` for a scoped auth code
 - ``redirect_uri`` sent on token exchange is malformed (invalid URL, contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
 - ``redirect_uri`` sent on token exchange does not match the value stored with the auth code (after lowercasing scheme and host)
 - ``code_verifier`` is missing on token exchange when the auth code was issued with a ``code_challenge``
@@ -581,6 +594,20 @@ Scopes
 The Micropub endpoint enforces scopes per operation. Stored ``scope`` values
 are split on whitespace and compared as exact tokens, so ``createXYZ`` does
 not satisfy ``create``.
+
+The authorization endpoint normalizes requested scope strings before showing
+them on the consent screen and before storing them on ``Auth``. Normalization
+splits on whitespace, de-duplicates while preserving first-seen order, and
+joins tokens with single spaces; empty or whitespace-only values become no
+scope. Unknown scopes are preserved rather than rejected because
+IndieAuth/Micropub scopes are extension-defined.
+
+The token endpoint issues the stored auth-code scope. If a token exchange
+includes ``scope``, the submitted value is normalized and must match the stored
+auth-code scope exactly. A mismatch returns ``400 invalid_grant`` with content
+type ``application/x-www-form-urlencoded`` and does not create or reissue a
+token. An explicitly empty ``scope=`` parameter normalizes to no scope and is
+accepted only when the auth code was issued with no scope.
 
 - ``create`` - Required for ``POST`` requests that create new posts. The
   legacy alias ``post`` is also accepted.

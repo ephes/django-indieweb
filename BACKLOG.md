@@ -28,12 +28,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Evaluate Salmentions support.
   - Outcome: decide whether to detect and send salmentions; if yes, add tests and documentation.
 
-### Auth Scopes and Token Management
-
-- [ ] Decide and implement IndieAuth-side scope handling and token-issuance semantics.
-  - References: `src/indieweb/views.py` (`AuthView`, `TokenView`), `tests/test_auth_endpoint.py`, `tests/test_token_endpoint.py`, `docs/indieauth.rst`, `docs/api.rst`.
-  - Outcome: decide whether to validate or constrain the scope set requested by clients (e.g. unknown scope handling, scope downgrade on token issuance vs. echo, requested-vs-granted scope tracking) and either implement the chosen policy with tests/docs, or document explicitly that the project intentionally accepts whatever scope the client requested. Per-operation enforcement on the Micropub resource server is already done; this item covers the issuance side only.
-
 ### Micropub Media Endpoint and Uploads
 
 - [ ] Add a Micropub media endpoint.

@@ -184,9 +184,21 @@ Access Tokens
 Scopes
 ~~~~~~
 
-Scopes limit what actions a token can perform. The Micropub resource server
-enforces scopes per operation; see :doc:`api` and :doc:`indieauth` for the
-full mapping.
+Scopes limit what actions a token can perform. During authorization,
+django-indieweb normalizes the requested scope string by splitting on
+whitespace, removing duplicate tokens while preserving first-seen order, and
+joining the result with single spaces. Unknown scope names are accepted and
+preserved because IndieAuth/Micropub scopes are extension-defined.
+
+The token endpoint issues the normalized scope stored with the auth code. If a
+token exchange includes a ``scope`` parameter, the submitted value is
+normalized and must exactly match the stored auth-code scope; clients cannot
+broaden, narrow, or replace the approved scope at token issuance time. An
+explicitly empty ``scope=`` parameter normalizes to no scope and is accepted
+only for an auth code issued with no scope.
+
+The Micropub resource server enforces scopes per operation; see :doc:`api` and
+:doc:`indieauth` for the full mapping.
 
 - ``create`` - Required for ``POST`` requests that create new posts (legacy
   alias ``post`` is also accepted)

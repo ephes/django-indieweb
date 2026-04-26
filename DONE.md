@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-26
 
+### Decide and Implement IndieAuth-Side Scope Handling and Token-Issuance Semantics
+
+- Added deterministic scope normalization on the IndieAuth issuance side (`src/indieweb/views.py`): scope strings are split on whitespace, duplicate tokens are removed while preserving first-seen order, and the result is joined with single spaces. `None`, empty, and whitespace-only input becomes no scope.
+- Authorization requests now render normalized `scope` and `scope_list`, consent approval stores the normalized scope on the `Auth` row, and duplicate-auth cleanup keys on that normalized scope. Unknown scopes such as `profile`, `media`, and site-specific values are intentionally preserved rather than rejected because IndieAuth/Micropub scopes are extension-defined.
+- The token endpoint now issues exactly the normalized scope stored with the auth code. If a token exchange includes `scope`, the submitted value is normalized and must match the stored auth-code scope exactly; mismatches return HTTP 400 `invalid_grant` with content type `application/x-www-form-urlencoded`, create no new token, and do not refresh an existing token. An explicitly empty `scope=` parameter normalizes to no scope, so it only succeeds for a no-scope auth code. Scope mismatches do not delete the `Auth` row, matching the redirect URI mismatch behavior because this is a request mismatch rather than proof of auth-code compromise.
+- Upgrade note: duplicate-auth cleanup keys on the newly normalized scope. A pre-existing `Auth` row with an un-normalized scope string can briefly coexist with a newly approved normalized row, but auth codes are short-lived under `INDIWEB_AUTH_CODE_TIMEOUT` (default 60 seconds) and token exchange re-normalizes stored scopes before comparison.
+- Added regression tests in `tests/test_auth_endpoint.py` for authorization GET normalization, unknown-scope preservation, and normalized consent storage, and in `tests/test_token_endpoint.py` for omitted scope, no-scope auth-code exchange without a submitted scope, exact matches, normalized-equivalent matches, empty `scope=` behavior, mismatch rejection, no-scope override rejection, no token creation/reissue on mismatch, and normalized token response scope.
+- Documentation: updated `docs/indieauth.rst`, `docs/api.rst`, and `docs/concepts.rst` to document scope normalization, unknown-scope pass-through, and token-exchange scope matching semantics.
+- Changelog: updated `docs/changelog.rst` with the scope issuance behavior change.
+- Validation: `uv run pytest` baseline passed before implementation; after implementation `uv run pytest tests/test_auth_endpoint.py tests/test_token_endpoint.py tests/test_micropub_endpoint.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
+
 ### Implement Micropub Source Query
 
 - Replaced the `501 Not Implemented` stub for `GET ?q=source` in `MicropubView.get` (`src/indieweb/views.py`) with dispatch into the configured `MicropubContentHandler.get_entry(url, user)`. The existing per-operation scope gate is unchanged: `GET ?q=source` still requires `update`, and scope failures still return HTTP 403 with the plain-text body `authorization error` before source-query dispatch.

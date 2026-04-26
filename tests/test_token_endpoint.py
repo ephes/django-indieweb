@@ -72,6 +72,189 @@ def test_correct_auth_code(client, token_endpoint_url, token_payload):
 
 
 @pytest.mark.django_db
+def test_token_exchange_without_scope_uses_stored_auth_scope(client, auth, token_endpoint_url):
+    """Omitting scope at token exchange issues the scope stored with the auth code."""
+    auth.scope = "create update"
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+        },
+    )
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert data["scope"] == ["create update"]
+    token = models.Token.objects.get(key=data["access_token"][0])
+    assert token.scope == "create update"
+
+
+@pytest.mark.django_db
+def test_token_exchange_without_scope_allows_no_scope_auth_code(client, auth, token_endpoint_url):
+    """Omitting scope at token exchange works for a no-scope auth code."""
+    auth.scope = None
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+        },
+    )
+    assert response.status_code == 201
+    data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
+    assert data["scope"] == [""]
+    token = models.Token.objects.get(key=data["access_token"][0])
+    assert token.scope is None
+
+
+@pytest.mark.django_db
+def test_token_exchange_with_matching_scope_succeeds(client, auth, token_endpoint_url):
+    """A submitted scope matching the auth-code scope is accepted."""
+    auth.scope = "create update"
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": "create update",
+        },
+    )
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert data["scope"] == ["create update"]
+
+
+@pytest.mark.django_db
+def test_token_exchange_with_equivalent_normalized_scope_succeeds(client, auth, token_endpoint_url):
+    """Whitespace and duplicate differences are normalized before scope comparison."""
+    auth.scope = "create update"
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": " create  update create ",
+        },
+    )
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert data["scope"] == ["create update"]
+
+
+@pytest.mark.django_db
+def test_token_exchange_rejects_different_scope_without_token(client, auth, token_endpoint_url):
+    """A token request cannot broaden or replace the approved scope."""
+    auth.scope = "create"
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": "create delete",
+        },
+    )
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert "invalid_grant" in response.content.decode("utf-8")
+    assert models.Token.objects.count() == 0
+    assert models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_token_exchange_rejects_different_scope_without_reissue(client, settings, auth, token_endpoint_url, user):
+    """A mismatched scope does not refresh an existing token row."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    auth.scope = "create"
+    auth.save()
+    stale_expires_at = timezone.now() + timedelta(seconds=5)
+    token = models.Token.objects.create(
+        owner=user,
+        client_id=auth.client_id,
+        me=auth.me,
+        scope="create",
+        expires_at=stale_expires_at,
+    )
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": "delete",
+        },
+    )
+    assert response.status_code == 400
+    token.refresh_from_db()
+    assert token.expires_at == stale_expires_at
+    assert models.Token.objects.count() == 1
+    assert models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_token_exchange_rejects_empty_scope_parameter_for_scoped_auth_code(client, auth, token_endpoint_url):
+    """An explicitly empty scope parameter normalizes to no scope and must still match."""
+    auth.scope = "create"
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": "",
+        },
+    )
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert "invalid_grant" in response.content.decode("utf-8")
+    assert models.Token.objects.count() == 0
+    assert models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_token_exchange_accepts_empty_scope_parameter_for_no_scope_auth_code(client, auth, token_endpoint_url):
+    """An explicitly empty scope parameter is equivalent to no scope for a no-scope auth code."""
+    auth.scope = None
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": "",
+        },
+    )
+    assert response.status_code == 201
+    data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
+    assert data["scope"] == [""]
+    token = models.Token.objects.get(key=data["access_token"][0])
+    assert token.scope is None
+
+
+@pytest.mark.django_db
+def test_token_exchange_cannot_override_no_scope_auth_code(client, auth, token_endpoint_url):
+    """An auth code issued without scope cannot be exchanged for a scoped token."""
+    auth.scope = None
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": "create",
+        },
+    )
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert "invalid_grant" in response.content.decode("utf-8")
+    assert models.Token.objects.count() == 0
+    assert models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
 def test_auth_code_timeout(client, auth, token_endpoint_url, token_payload):
     """Assert we can't get a token when the auth code is outdated."""
     timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)

@@ -82,6 +82,42 @@ def test_authenticated_shows_consent_screen(client, user, auth_endpoint_url):
 
 
 @pytest.mark.django_db
+def test_authenticated_normalizes_repeated_scope_tokens(client, user):
+    """Authorization GET normalizes whitespace and repeated scopes for display."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": " create  update create ",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 200
+    assert response.context["scope"] == "create update"
+    assert response.context["scope_list"] == ["create", "update"]
+
+
+@pytest.mark.django_db
+def test_authenticated_preserves_unknown_scope_tokens(client, user):
+    """Authorization GET preserves extension-defined scopes after normalization."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "profile media site-specific profile",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 200
+    assert response.context["scope"] == "profile media site-specific"
+    assert response.context["scope_list"] == ["profile", "media", "site-specific"]
+
+
+@pytest.mark.django_db
 def test_consent_approval(client, user):
     """Test approving consent creates auth code and redirects."""
     client.login(username=user.username, password="password")
@@ -108,6 +144,44 @@ def test_consent_approval(client, user):
     auth = Auth.objects.get(client_id="https://webapp.example.org", me="http://example.org")
     assert auth.owner == user
     assert auth.scope == "post"
+
+
+@pytest.mark.django_db
+def test_consent_approval_stores_normalized_scope(client, user):
+    """Consent approval stores normalized scope on the Auth row."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": " create  update create ",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 302
+    auth = Auth.objects.get(client_id="https://webapp.example.org", me="http://example.org")
+    assert auth.scope == "create update"
+
+
+@pytest.mark.django_db
+def test_consent_approval_preserves_unknown_scope_tokens(client, user):
+    """Consent approval preserves unknown extension scopes after normalization."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "profile media site-specific profile",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 302
+    auth = Auth.objects.get(client_id="https://webapp.example.org", me="http://example.org")
+    assert auth.scope == "profile media site-specific"
 
 
 @pytest.mark.django_db

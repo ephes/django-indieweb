@@ -96,6 +96,23 @@ def _validate_client_id(value: str | None) -> str | None:
     return value
 
 
+def _normalize_scope(value: str | None) -> str | None:
+    """Normalize a scope string for display, storage, and token issuance.
+
+    ``None``, empty, and whitespace-only values collapse to ``None``. Other
+    values are split on whitespace, de-duplicated while preserving first-seen
+    token order, and joined with single spaces. Unknown scope tokens are
+    intentionally preserved because IndieAuth/Micropub scopes are
+    extension-defined.
+    """
+    if value is None:
+        return None
+    scopes = list(dict.fromkeys(value.split()))
+    if not scopes:
+        return None
+    return " ".join(scopes)
+
+
 def _token_client_id_error(client_id: str) -> HttpResponse | None:
     """Return an ``invalid_request`` response if ``client_id`` cannot be used at the token endpoint.
 
@@ -303,8 +320,8 @@ class AuthView(CSRFExemptMixin, View):
                 logger.info(f"missing parameter: {name}")
                 return HttpResponse(err_msg, status=404)
 
-        # scope is optional
-        scope = request.GET.get("scope")
+        # scope is optional; unknown scopes are intentionally preserved after normalization.
+        scope = _normalize_scope(request.GET.get("scope"))
         # All required parameters are verified to be not None above
         assert client_id is not None
         assert redirect_uri is not None
@@ -334,9 +351,7 @@ class AuthView(CSRFExemptMixin, View):
             code_challenge, effective_method = pkce
 
         # Parse scope into list for display
-        scope_list = []
-        if scope:
-            scope_list = scope.split()
+        scope_list = scope.split() if scope else []
 
         # Render consent screen
         context = {
@@ -364,7 +379,7 @@ class AuthView(CSRFExemptMixin, View):
         redirect_uri = request.POST.get("redirect_uri")
         state = request.POST.get("state")
         me = request.POST.get("me")
-        scope = request.POST.get("scope")
+        scope = _normalize_scope(request.POST.get("scope"))
 
         if not all([client_id, redirect_uri, state, me]):
             return HttpResponse("Missing required parameters", status=400)
@@ -507,7 +522,7 @@ class TokenView(CSRFExemptMixin, View):
 
         # These are sometimes sent but not required by spec
         me = request.POST.get("me")
-        scope = request.POST.get("scope")
+        requested_scope = request.POST.get("scope")
 
         # Validate required parameters
         if not code or not client_id:
@@ -539,9 +554,15 @@ class TokenView(CSRFExemptMixin, View):
             if pkce_error is not None:
                 return pkce_error
 
+            stored_scope = _normalize_scope(auth.scope)
+            normalized_request_scope = _normalize_scope(requested_scope)
+            if requested_scope is not None and normalized_request_scope != stored_scope:
+                logger.error(f"Scope mismatch on token exchange for client_id={client_id}")
+                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
             # Use values from auth object if not provided in request
             me = me or auth.me
-            scope = scope or auth.scope
+            scope = stored_scope
 
             logger.info(f"token view post: {client_id}, {me}, {code} {scope}")
 

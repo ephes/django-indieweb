@@ -61,6 +61,14 @@ Common scopes include:
 * ``delete`` - Delete posts
 * ``media`` - Upload media files
 
+Scope strings are normalized before display and before storage: whitespace is
+collapsed, duplicate tokens are removed while preserving first-seen order, and
+an empty or whitespace-only value is treated as no scope. Unknown scope names
+are intentionally preserved. IndieAuth and Micropub scopes are
+extension-defined, and clients may request values such as ``profile``,
+``media``, or site-specific scopes before django-indieweb implements matching
+resource-server behavior.
+
 Customizing the Consent Screen
 ------------------------------
 
@@ -117,7 +125,8 @@ Available template context variables:
 * ``redirect_uri`` - Where to redirect after authorization
 * ``state`` - State parameter for CSRF protection
 * ``me`` - The user's identity URL
-* ``scope`` - Space-separated list of requested scopes
+* ``scope`` - Normalized space-separated list of requested scopes, or ``None``
+  when no scope was requested
 * ``scope_list`` - Python list of individual scopes
 * ``code_challenge`` - PKCE challenge from the authorization request, or
   ``None`` when no PKCE was sent. Custom templates that omit this hidden
@@ -183,25 +192,40 @@ Security Considerations
    are compared verbatim. ``redirect_uri`` values that already contain a
    query (e.g. ``?next=/x``) are preserved when ``code`` and ``state`` are
    appended.
-9. **Per-Operation Scope Enforcement**: The Micropub resource server enforces
-   scopes per operation rather than treating ``create`` as a master scope.
-   The W3C Micropub Recommendation (`§5 Scope
-   <https://www.w3.org/TR/micropub/#scope>`_) allows servers to define their
-   own granular scopes; the names below are the project's chosen policy and
-   follow the conventional names that reference clients (Quill, Indigenous,
-   Micropublish) request. ``POST`` entry create requires ``create`` (the
-   legacy alias ``post`` is still accepted); ``POST action=update`` requires
-   ``update``; ``POST action=delete`` requires ``delete``;
-   ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
-   ``update`` (the spec does not define a separate read scope and the typical
-   use case for ``q=source`` is "fetch a post to edit it").
-   ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only
-   require an authenticated token. Stored ``scope`` is split on whitespace
-   and compared as an exact token, so ``createXYZ`` does not satisfy
-   ``create``. Scope failures return HTTP 403 with the plain-text body
-   ``authorization error``. The ``update``, ``delete``, and ``undelete``
-   actions and the ``GET ?q=source`` query dispatch into the configured
-   ``MicropubContentHandler`` after the scope check succeeds.
+9. **Scope Issuance Semantics**: The authorization endpoint normalizes scope
+   strings before showing them on the consent screen and before storing them on
+   the ``Auth`` row. Normalization splits on whitespace, de-duplicates while
+   preserving first-seen order, and joins with single spaces; whitespace-only
+   values become no scope. Unknown scopes are accepted and preserved after
+   normalization because IndieAuth/Micropub scopes are extension-defined. The
+   token endpoint issues the exact normalized scope stored with the auth code.
+   If a token exchange includes a ``scope`` parameter, that submitted value is
+   normalized and must match the stored auth-code scope exactly. A mismatch
+   returns HTTP 400 ``invalid_grant`` with content type
+   ``application/x-www-form-urlencoded`` and does not create or reissue a
+   token. Omitting ``scope`` on token exchange continues to issue the stored
+   auth-code scope. An explicitly empty ``scope=`` parameter normalizes to no
+   scope, so it only succeeds when the auth code was issued with no scope.
+
+10. **Per-Operation Scope Enforcement**: The Micropub resource server enforces
+    scopes per operation rather than treating ``create`` as a master scope.
+    The W3C Micropub Recommendation (`§5 Scope
+    <https://www.w3.org/TR/micropub/#scope>`_) allows servers to define their
+    own granular scopes; the names below are the project's chosen policy and
+    follow the conventional names that reference clients (Quill, Indigenous,
+    Micropublish) request. ``POST`` entry create requires ``create`` (the
+    legacy alias ``post`` is still accepted); ``POST action=update`` requires
+    ``update``; ``POST action=delete`` requires ``delete``;
+    ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
+    ``update`` (the spec does not define a separate read scope and the typical
+    use case for ``q=source`` is "fetch a post to edit it").
+    ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only
+    require an authenticated token. Stored ``scope`` is split on whitespace
+    and compared as an exact token, so ``createXYZ`` does not satisfy
+    ``create``. Scope failures return HTTP 403 with the plain-text body
+    ``authorization error``. The ``update``, ``delete``, and ``undelete``
+    actions and the ``GET ?q=source`` query dispatch into the configured
+    ``MicropubContentHandler`` after the scope check succeeds.
 
 Configuration
 -------------
