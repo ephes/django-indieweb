@@ -39,8 +39,9 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Auth Scopes and Token Management
 
-- [ ] Enforce token scopes for Micropub and IndieAuth operations.
-  - Outcome: read, create, update, delete, undelete, and media operations enforce appropriate scopes and return spec-appropriate errors.
+- [ ] Decide and implement IndieAuth-side scope handling and token-issuance semantics.
+  - References: `src/indieweb/views.py` (`AuthView`, `TokenView`), `tests/test_auth_endpoint.py`, `tests/test_token_endpoint.py`, `docs/indieauth.rst`, `docs/api.rst`.
+  - Outcome: decide whether to validate or constrain the scope set requested by clients (e.g. unknown scope handling, scope downgrade on token issuance vs. echo, requested-vs-granted scope tracking) and either implement the chosen policy with tests/docs, or document explicitly that the project intentionally accepts whatever scope the client requested. Per-operation enforcement on the Micropub resource server is already done; this item covers the issuance side only.
 
 ### Micropub Media Endpoint and Uploads
 
@@ -58,7 +59,7 @@ When adding or completing items, keep each entry specific enough for an agent or
 ### Documentation Audit
 
 - [ ] Audit IndieWeb docs for stale settings, commands, and behavior notes.
-  - Known issues: `docs/development.rst` references `make -C docs html`, but the current workflow uses `just docs` or `sphinx-build`. `docs/concepts.rst` still claims "Micropub is not functional", which contradicts the documented Micropub create flow.
+  - Known issues: `docs/development.rst` references `make -C docs html`, but the current workflow uses `just docs` or `sphinx-build`.
   - Outcome: documentation matches current IndieAuth, Micropub, Webmention, and development workflows.
 - [ ] Close h-card utility coverage gaps and confirm support status.
   - Reference: `src/indieweb/h_card.py`.

@@ -260,3 +260,154 @@ def test_both_authorization_formats(client, token, micropub_endpoint_url):
 
     # Both should return the same content
     assert response1.content == response2.content
+
+
+def _make_token(user, scope: str | None) -> "models.Token":
+    return models.Token.objects.create(
+        me="http://example.org",
+        client_id="https://webapp.example.org",
+        scope=scope,
+        owner=user,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "create update delete", "profile create"])
+def test_post_create_accepts_create_or_post_scope(client, user, micropub_endpoint_url, micropub_payload, scope):
+    """A POST entry create succeeds for ``create`` (standard) or ``post`` (legacy alias)."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 201
+    assert "Location" in response
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["update", "delete", "undelete", "read", "", "createXYZ", "postscript"])
+def test_post_create_rejects_other_scopes(client, user, micropub_endpoint_url, micropub_payload, scope):
+    """A POST entry create requires exact ``create``/``post`` scope tokens; substrings must not satisfy it."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 403
+    assert "authorization error" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["update", "create update", "update delete"])
+def test_post_action_update_accepts_update_scope(client, user, micropub_endpoint_url, scope):
+    """A POST with ``action=update`` requires the ``update`` scope and reaches the 501 stub."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    payload = {"action": "update", "url": "https://example.org/post/1"}
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    assert response.status_code == 501
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "delete", "undelete", "read", ""])
+def test_post_action_update_rejects_non_update_scope(client, user, micropub_endpoint_url, scope):
+    """``action=update`` must not be authorized by ``create``/``post``/``delete`` (regression)."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    payload = {"action": "update", "url": "https://example.org/post/1"}
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    assert response.status_code == 403
+    assert "authorization error" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["delete", "create delete", "delete update"])
+def test_post_action_delete_accepts_delete_scope(client, user, micropub_endpoint_url, scope):
+    """A POST with ``action=delete`` requires the ``delete`` scope and reaches the 501 stub."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    payload = {"action": "delete", "url": "https://example.org/post/1"}
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    assert response.status_code == 501
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "update", "undelete", ""])
+def test_post_action_delete_rejects_non_delete_scope(client, user, micropub_endpoint_url, scope):
+    """``action=delete`` must not be authorized by ``create``/``post``/``update``/``undelete`` (regression)."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    payload = {"action": "delete", "url": "https://example.org/post/1"}
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    assert response.status_code == 403
+    assert "authorization error" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["undelete", "delete undelete", "create undelete"])
+def test_post_action_undelete_accepts_undelete_scope(client, user, micropub_endpoint_url, scope):
+    """A POST with ``action=undelete`` requires the project-defined ``undelete`` scope."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    payload = {"action": "undelete", "url": "https://example.org/post/1"}
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    assert response.status_code == 501
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "update", "delete", ""])
+def test_post_action_undelete_rejects_non_undelete_scope(client, user, micropub_endpoint_url, scope):
+    """``action=undelete`` must not be authorized by ``create``/``post``/``update``/``delete``."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    payload = {"action": "undelete", "url": "https://example.org/post/1"}
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    assert response.status_code == 403
+    assert "authorization error" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "update", "delete", "read", "", None])
+def test_get_config_query_has_no_scope_gate(client, user, micropub_endpoint_url, scope):
+    """``GET ?q=config`` is token-required only (no scope gate); historically returned 200 for any scope."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.get(f"{micropub_endpoint_url}?q=config", Authorization=auth_header)
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "update", "delete", "read", "", None])
+def test_get_syndicate_to_query_has_no_scope_gate(client, user, micropub_endpoint_url, scope):
+    """``GET ?q=syndicate-to`` is token-required only (no scope gate)."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.get(f"{micropub_endpoint_url}?q=syndicate-to", Authorization=auth_header)
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "update", "delete", "read", "", None])
+def test_get_no_query_has_no_scope_gate(client, user, micropub_endpoint_url, scope):
+    """``GET`` with no ``q`` returns the user's ``me`` URL for any authenticated token."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.get(micropub_endpoint_url, Authorization=auth_header)
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["update", "create update", "update delete"])
+def test_get_source_query_accepts_update_scope(client, user, micropub_endpoint_url, scope):
+    """``GET ?q=source`` requires ``update`` scope (typical use: read post for editing) and reaches the 501 stub."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.get(f"{micropub_endpoint_url}?q=source", Authorization=auth_header)
+    assert response.status_code == 501
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "delete", "undelete", "read", ""])
+def test_get_source_query_rejects_non_update_scope(client, user, micropub_endpoint_url, scope):
+    """``GET ?q=source`` must not be authorized by tokens that lack ``update``."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.get(f"{micropub_endpoint_url}?q=source", Authorization=auth_header)
+    assert response.status_code == 403
+    assert "authorization error" in response.content.decode("utf-8")

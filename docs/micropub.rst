@@ -16,8 +16,12 @@ Quick Start
 ~~~~~~~~~~~~~~
 
 The Micropub endpoint is available at ``/indieweb/micropub/`` by
-default. It requires authentication via IndieAuth tokens with the “post”
-scope.
+default. It requires authentication via IndieAuth tokens. Scopes are
+enforced per operation: ``POST`` entry create requires ``create`` (the
+legacy alias ``post`` is still accepted), ``POST action=update`` requires
+``update``, ``POST action=delete`` requires ``delete``,
+``POST action=undelete`` requires ``undelete``, and ``GET ?q=source``
+requires ``update``. See :doc:`api` for the full mapping.
 
 2. Using the Default In-Memory Handler
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -181,7 +185,9 @@ Returns supported post types and features.
 Testing Your Implementation
 ---------------------------
 
-1. **Get an access token** via IndieAuth with “post” scope
+1. **Get an access token** via IndieAuth with the ``create`` scope (or the
+   legacy alias ``post``); use ``update``/``delete``/``undelete`` for those
+   actions, and ``update`` for ``GET ?q=source``
 2. **Create a test post:**
 
 .. code:: bash
@@ -248,11 +254,24 @@ Adding Syndication Support
 Error Handling
 --------------
 
-The Micropub endpoint returns appropriate HTTP status codes: -
-``201 Created`` - Success, with Location header - ``400 Bad Request`` -
-Invalid request data - ``401 Unauthorized`` - Missing or invalid token -
-``403 Forbidden`` - Token lacks required scope - ``501 Not Implemented``
-- For unimplemented features
+The Micropub endpoint returns the following HTTP status codes:
+
+- ``201 Created`` - Success, with a ``Location`` header pointing at the new
+  entry
+- ``400 Bad Request`` - Invalid request data (e.g. the configured handler
+  raised on entry creation)
+- ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
+  token's owner is inactive
+- ``403 Forbidden`` - body ``authorization error`` when the token lacks the
+  scope required for the requested operation; body ``invalid_client`` when
+  the token's ``client_id`` is rejected by the configured
+  ``INDIEWEB_CLIENT_ID_VALIDATOR``
+- ``501 Not Implemented`` - ``POST action=update``/``delete``/``undelete``
+  and ``GET ?q=source``: the scope check passed but the handler is not
+  implemented yet
+
+See :doc:`api` for the full per-operation scope mapping and the complete
+error-response listing across all IndieWeb endpoints.
 
 Security Considerations
 -----------------------

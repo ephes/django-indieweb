@@ -333,7 +333,15 @@ All endpoints may return these error responses:
 
 **403 Forbidden**
 
-- Token lacks required scope (``authorization error``)
+- Token lacks the scope required for the requested Micropub operation
+  (``authorization error``). Per-operation requirements: ``POST`` entry create
+  requires ``create`` (or the legacy alias ``post``); ``POST action=update``
+  requires ``update``; ``POST action=delete`` requires ``delete``;
+  ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
+  ``update``. ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with
+  no ``q`` only require an authenticated token. Stored ``scope`` is split on
+  whitespace and matched as an exact token, so ``createXYZ`` does not satisfy
+  ``create``.
 - The stored token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (``invalid_client``)
@@ -367,12 +375,22 @@ All endpoints may return these error responses:
 Scopes
 ------
 
-The following scopes are supported:
+The Micropub endpoint enforces scopes per operation. Stored ``scope`` values
+are split on whitespace and compared as exact tokens, so ``createXYZ`` does
+not satisfy ``create``.
 
-- ``create`` - Create new posts
-- ``update`` - Update existing posts (not implemented)
-- ``delete`` - Delete posts (not implemented)
-- ``post`` - Alias for create
+- ``create`` - Required for ``POST`` requests that create new posts. The
+  legacy alias ``post`` is also accepted.
+- ``update`` - Required for ``POST action=update`` and for ``GET ?q=source``
+  (which is typically used to fetch a post for editing). The
+  ``update``/``delete``/``undelete`` handlers are not yet implemented and
+  return ``501 Not Implemented`` after the scope check passes.
+- ``delete`` - Required for ``POST action=delete``.
+- ``undelete`` - Required for ``POST action=undelete``.
+- ``post`` - Legacy alias for ``create``.
+
+``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only
+require an authenticated token; no specific scope is enforced.
 
 Multiple scopes can be requested by separating with spaces: ``scope=create update``
 

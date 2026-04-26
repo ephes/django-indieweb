@@ -248,9 +248,19 @@ class TokenAuthMixin(View):
             logger.warning("No authorization token provided in request")
             return False
 
-    def authorized(self, client_id: str, scope: str | None) -> bool:
-        # Check for either "create" (standard Micropub) or "post" (legacy)
-        return scope is not None and ("create" in scope or "post" in scope)
+    def authorized(self, client_id: str, scope: str | None, required_scope: str | None = None) -> bool:
+        """Return whether the token's ``scope`` satisfies ``required_scope``.
+
+        ``required_scope`` of ``None`` means "any authenticated token is allowed"
+        (the caller has no operation-specific scope requirement). Otherwise
+        ``scope`` is split on whitespace and compared exactly to ``required_scope``;
+        substring matches do not count.
+        """
+        if required_scope is None:
+            return True
+        if scope is None:
+            return False
+        return required_scope in scope.split()
 
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not self.authenticated(request):
@@ -259,9 +269,6 @@ class TokenAuthMixin(View):
         if not _client_id_allowed(self.token.client_id):
             logger.warning(f"rejected disallowed client_id on resource server: {self.token.client_id!r}")
             return HttpResponse("invalid_client", status=403)
-
-        if not self.authorized(self.token.client_id, self.token.scope):
-            return HttpResponse("authorization error", status=403)
 
         return super().dispatch(request, *args, **kwargs)
 
@@ -629,15 +636,72 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         else:
             return self._parse_form_request(request)
 
+    def _post_action(self, request: HttpRequest) -> str | None:
+        """Return the ``action`` value from a POST body, regardless of encoding."""
+        action = request.POST.get("action")
+        if action:
+            return action
+        if request.content_type == "application/json":
+            try:
+                payload = json.loads(request.body)
+            except (json.JSONDecodeError, AttributeError):
+                return None
+            if isinstance(payload, dict):
+                value = payload.get("action")
+                if isinstance(value, str):
+                    return value
+        return None
+
+    def _required_scope(self, request: HttpRequest) -> str | None:
+        """Return the Micropub scope required for this request.
+
+        The W3C Micropub Recommendation (§5 Scope) allows servers to define
+        their own granular scopes. This is the project's chosen mapping;
+        it follows the operation taxonomy that Micropub defines and uses
+        the conventional scope names that reference clients (Quill, Indigenous,
+        Micropublish) request:
+
+        * ``POST`` (no action) → ``create`` (legacy alias ``post`` accepted)
+        * ``POST action=update`` → ``update``
+        * ``POST action=delete`` → ``delete``
+        * ``POST action=undelete`` → ``undelete``
+        * ``GET ?q=source`` → ``update`` (typical "read before update" use case;
+          the spec does not define a separate read scope)
+        * ``GET ?q=config``, ``?q=syndicate-to``, ``GET`` (no ``q``) → ``None``
+          (token-required, no scope gate)
+        """
+        if request.method == "POST":
+            action = self._post_action(request)
+            if action == "update":
+                return "update"
+            if action == "delete":
+                return "delete"
+            if action == "undelete":
+                return "undelete"
+            return "create"
+        if request.method == "GET" and request.GET.get("q") == "source":
+            return "update"
+        return None
+
+    def _scope_authorized(self, request: HttpRequest) -> bool:
+        """Apply the per-operation scope gate, accepting ``post`` as a ``create`` alias."""
+        required = self._required_scope(request)
+        if required is None:
+            return True
+        if self.authorized(self.token.client_id, self.token.scope, required):
+            return True
+        if required == "create" and self.authorized(self.token.client_id, self.token.scope, "post"):
+            return True
+        return False
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Handle POST requests to create or modify content."""
         self.request = request
 
-        # Check for action parameter (for updates/deletes)
-        action = request.POST.get("action") or (
-            json.loads(request.body).get("action") if request.content_type == "application/json" else None
-        )
+        if not self._scope_authorized(request):
+            return HttpResponse("authorization error", status=403)
 
+        action = self._post_action(request)
         if action in ["update", "delete", "undelete"]:
             # TODO: Implement update/delete/undelete actions
             return HttpResponse("Not implemented", status=501)
@@ -668,6 +732,9 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Handle GET requests for queries and configuration."""
+        if not self._scope_authorized(request):
+            return HttpResponse("authorization error", status=403)
+
         q = request.GET.get("q")
 
         if q == "config":

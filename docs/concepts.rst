@@ -153,9 +153,13 @@ Data Flow
 3. **Content Creation**
 
    - Client sends POST to MicropubView with token
-   - Token validated (exists, active user, correct scope)
-   - Content would be created (not implemented)
-   - Success response returned
+   - Token validated (exists, active user, scope matches the requested
+     operation)
+   - The configured ``MicropubContentHandler`` creates the entry (the
+     in-memory handler ships by default; see :doc:`micropub` for custom
+     handlers)
+   - ``201 Created`` returned with a ``Location`` header pointing at the
+     new entry
 
 Security Model
 --------------
@@ -180,12 +184,19 @@ Access Tokens
 Scopes
 ~~~~~~
 
-Scopes limit what actions a token can perform:
+Scopes limit what actions a token can perform. The Micropub resource server
+enforces scopes per operation; see :doc:`api` and :doc:`indieauth` for the
+full mapping.
 
-- ``create`` - Create new posts
-- ``update`` - Modify existing posts (not implemented)
-- ``delete`` - Remove posts (not implemented)
-- ``read`` - Access private posts (not implemented)
+- ``create`` - Required for ``POST`` requests that create new posts (legacy
+  alias ``post`` is also accepted)
+- ``update`` - Required for ``POST action=update`` and ``GET ?q=source``;
+  the update handler is not yet implemented and returns ``501`` after the
+  scope check
+- ``delete`` - Required for ``POST action=delete``; the delete handler is
+  not yet implemented and returns ``501`` after the scope check
+- ``undelete`` - Required for ``POST action=undelete``; the undelete handler
+  is not yet implemented and returns ``501`` after the scope check
 
 Best Practices
 --------------
@@ -212,23 +223,25 @@ Limitations
 
 Current implementation limitations:
 
-1. **Micropub is not functional** - Only returns success without creating content
-2. **No token revocation UI** - Must delete via Django admin
-3. **No scope enforcement** - Only checks for "post" in scope
-4. **No media endpoint** - Can't upload images
-5. **No update/delete** - Only create operations
+1. **No token revocation UI** - Must delete via Django admin
+2. **No media endpoint** - Can't upload images
+3. **No update/delete/undelete handlers** - Per-operation scopes are enforced
+   for these actions, but the handlers themselves return ``501 Not Implemented``
+4. **No source query** - ``GET ?q=source`` enforces the ``update`` scope but
+   the handler returns ``501 Not Implemented``
 
 Future Enhancements
 -------------------
 
 Potential improvements for full IndieWeb support:
 
-1. **Functional Micropub** - Actually create content
-2. **Media Endpoint** - Handle file uploads
-3. **Micropub Extensions** - Update, delete, undelete
+1. **Media Endpoint** - Handle file uploads
+2. **Micropub Update/Delete/Undelete Handlers** - Per-operation scopes are
+   enforced; the handler bodies still return ``501 Not Implemented``
+3. **Micropub Source Query** - ``GET ?q=source`` enforces the ``update``
+   scope; the handler still returns ``501 Not Implemented``
 4. **Token Management** - UI for viewing/revoking tokens
 5. **WebSub** - Real-time updates
-6. **Webmention** - Receive mentions from other sites
 
 Resources
 ---------

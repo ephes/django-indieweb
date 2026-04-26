@@ -183,6 +183,26 @@ Security Considerations
    are compared verbatim. ``redirect_uri`` values that already contain a
    query (e.g. ``?next=/x``) are preserved when ``code`` and ``state`` are
    appended.
+9. **Per-Operation Scope Enforcement**: The Micropub resource server enforces
+   scopes per operation rather than treating ``create`` as a master scope.
+   The W3C Micropub Recommendation (`§5 Scope
+   <https://www.w3.org/TR/micropub/#scope>`_) allows servers to define their
+   own granular scopes; the names below are the project's chosen policy and
+   follow the conventional names that reference clients (Quill, Indigenous,
+   Micropublish) request. ``POST`` entry create requires ``create`` (the
+   legacy alias ``post`` is still accepted); ``POST action=update`` requires
+   ``update``; ``POST action=delete`` requires ``delete``;
+   ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
+   ``update`` (the spec does not define a separate read scope and the typical
+   use case for ``q=source`` is "fetch a post to edit it").
+   ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only
+   require an authenticated token. Stored ``scope`` is split on whitespace
+   and compared as an exact token, so ``createXYZ`` does not satisfy
+   ``create``. Scope failures return HTTP 403 with the plain-text body
+   ``authorization error``. The ``update``/``delete``/``undelete`` handlers
+   are not yet implemented and return ``501 Not Implemented`` after the scope
+   check succeeds; this lets clients discover scope-related authorization
+   failures without first depending on those handlers.
 
 Configuration
 -------------
