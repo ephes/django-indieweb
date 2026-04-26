@@ -27,11 +27,11 @@ IndieAuth Flow
        participant AuthEndpoint as /indieweb/auth/
        participant TokenEndpoint as /indieweb/token/
 
-       Client->>AuthEndpoint: GET with client_id, redirect_uri, state, me
+       Client->>AuthEndpoint: GET with client_id, redirect_uri, state, me, code_challenge
        AuthEndpoint->>User: Redirect to login if not authenticated
        User->>AuthEndpoint: Login
        AuthEndpoint->>Client: Redirect with auth code
-       Client->>TokenEndpoint: POST with code, client_id, redirect_uri
+       Client->>TokenEndpoint: POST with code, client_id, redirect_uri, code_verifier
        TokenEndpoint->>Client: Return access token
        Client->>Client: Store access token for future requests
 
@@ -57,6 +57,13 @@ Initiates the authorization flow.
 **Optional Parameters:**
 
 - ``scope`` - Space-separated list of scopes (e.g., "create update")
+- ``code_challenge`` - PKCE code challenge (RFC 7636). 43-128 characters from
+  the unreserved set ``[A-Za-z0-9._~-]``. When sent, the value is stored
+  alongside the auth code and the matching ``code_verifier`` is required at
+  the token endpoint.
+- ``code_challenge_method`` - PKCE challenge method. Must be ``S256`` or
+  ``plain``; defaults to ``plain`` if ``code_challenge`` is sent without a
+  method (RFC 7636 §4.3). Other values are rejected with HTTP 400.
 
 **Example Request:**
 
@@ -130,6 +137,13 @@ POST Request
 - ``redirect_uri`` - If sent, it must be a syntactically valid ``http``/``https`` URL with no fragment delimiter (``#``) and no userinfo (``user:pass@``), and must match the value used in the original auth request after normalizing scheme and host case (path and query are compared verbatim); malformed values and mismatches are rejected with ``invalid_grant``
 - ``me`` - The user's profile URL; falls back to the value stored with the auth code
 - ``scope`` - The requested scope; falls back to the value stored with the auth code
+- ``code_verifier`` - PKCE code verifier (RFC 7636), required when the auth
+  code was issued with a ``code_challenge``. 43-128 characters from the
+  unreserved set ``[A-Za-z0-9._~-]``. The server recomputes the challenge from
+  the verifier (``S256`` SHA-256 + base64url-without-padding, or ``plain``
+  string equality) and compares in constant time. Mismatches, missing
+  verifiers when a challenge was stored, and verifiers submitted when no
+  challenge was stored are all rejected with ``invalid_grant``.
 
 **Example Request:**
 
@@ -297,6 +311,10 @@ All endpoints may return these error responses:
 - Invalid authorization code
 - ``redirect_uri`` sent on token exchange is malformed (invalid URL, contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
 - ``redirect_uri`` sent on token exchange does not match the value stored with the auth code (after lowercasing scheme and host)
+- ``code_verifier`` is missing on token exchange when the auth code was issued with a ``code_challenge``
+- ``code_verifier`` does not match the stored ``code_challenge`` under the stored ``code_challenge_method`` (``S256`` or ``plain``)
+- ``code_verifier`` is submitted on token exchange but no ``code_challenge`` was stored with the auth code
+- ``code_verifier`` is malformed (length outside 43-128 or characters outside the unreserved set ``[A-Za-z0-9._~-]``)
 
 **400 Bad Request — ``invalid_request``**
 
@@ -316,6 +334,12 @@ All endpoints may return these error responses:
 
 - ``redirect_uri`` on the authorization endpoint is malformed (invalid URL,
   contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
+
+**400 Bad Request — ``invalid_request`` (authorization endpoint)**
+
+- ``code_challenge`` on the authorization endpoint is malformed (length
+  outside 43-128 or characters outside the unreserved set ``[A-Za-z0-9._~-]``)
+- ``code_challenge_method`` is not one of ``S256`` or ``plain``
 
 **404 Not Found**
 

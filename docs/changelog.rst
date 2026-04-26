@@ -17,6 +17,7 @@ Unreleased
 * Fixed the IndieAuth auth-code timeout calculation to use ``timedelta.total_seconds()`` so codes older than one day are now correctly rejected
 * Validated IndieAuth ``redirect_uri`` values: the authorization endpoint rejects malformed values (invalid URL, any ``#`` delimiter, userinfo, or a non-``http``/``https`` scheme) with HTTP 400 before issuing a code, and the token endpoint rejects malformed submissions with ``invalid_grant``; the comparison between the submitted and stored values now lowercases scheme and host while preserving path and query verbatim
 * Fixed the consent approval and denial redirects to merge ``code``/``state``/``me`` (or ``error``/``state``) into an existing ``redirect_uri`` query string instead of breaking it with a duplicate ``?`` separator
+* Added PKCE (RFC 7636) support to the IndieAuth authorization and token endpoints: the authorization endpoint accepts ``code_challenge`` and ``code_challenge_method`` (``S256`` and ``plain``, defaulting to ``plain`` when only the challenge is sent) and stores them on the ``Auth`` row; the token endpoint requires a matching ``code_verifier`` whenever a challenge was stored, comparing in constant time. Auth codes issued before this change continue to be redeemable without a ``code_verifier``, preserving backwards compatibility for legacy clients. Migration ``0011_auth_code_challenge`` adds the new nullable ``Auth.code_challenge`` and ``Auth.code_challenge_method`` columns.
 
 0.5.3 (2025-10-28)
 ------------------

@@ -43,6 +43,8 @@ class Auth(GenKeyMixin):
     redirect_uri = models.CharField(max_length=1024)
     scope = models.CharField(max_length=256, null=True, blank=True)  # noqa
     me = models.CharField(max_length=512)
+    code_challenge = models.CharField(max_length=128, null=True, blank=True)  # noqa: DJ001
+    code_challenge_method = models.CharField(max_length=8, null=True, blank=True)  # noqa: DJ001
 
     class Meta:
         unique_together = ("me", "client_id", "scope", "owner")

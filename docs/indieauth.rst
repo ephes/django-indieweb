@@ -100,6 +100,10 @@ The consent screen template can be customized by overriding ``indieweb/consent.h
               {% if scope %}
               <input type="hidden" name="scope" value="{{ scope }}">
               {% endif %}
+              {% if code_challenge %}
+              <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+              <input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">
+              {% endif %}
 
               <button type="submit" name="action" value="approve">Approve</button>
               <button type="submit" name="action" value="deny">Deny</button>
@@ -115,6 +119,11 @@ Available template context variables:
 * ``me`` - The user's identity URL
 * ``scope`` - Space-separated list of requested scopes
 * ``scope_list`` - Python list of individual scopes
+* ``code_challenge`` - PKCE challenge from the authorization request, or
+  ``None`` when no PKCE was sent. Custom templates that omit this hidden
+  input will silently drop PKCE and will not interoperate with PKCE clients.
+* ``code_challenge_method`` - PKCE method (``S256`` or ``plain``) paired with
+  ``code_challenge``
 
 Security Considerations
 -----------------------
@@ -125,7 +134,22 @@ Security Considerations
    Micropub endpoint rejects expired tokens with HTTP 401
 4. **CSRF Protection**: The consent form includes Django's CSRF token
 5. **User Authentication**: Users must be logged in to approve/deny requests
-6. **redirect_uri Validation**: Submitted ``redirect_uri`` values must be
+6. **PKCE (RFC 7636)**: The authorization endpoint accepts an optional
+   ``code_challenge`` (43-128 characters from the unreserved set
+   ``[A-Za-z0-9._~-]``) and ``code_challenge_method`` (``S256`` or
+   ``plain``; defaults to ``plain`` when ``code_challenge`` is sent without a
+   method, per RFC 7636 §4.3). Malformed challenges and unsupported methods
+   are rejected with HTTP 400 *before* any authorization code is issued.
+   When an auth code was issued with a ``code_challenge``, the token
+   endpoint requires a matching ``code_verifier`` and rejects any mismatch,
+   any missing verifier, any verifier submitted without a stored challenge,
+   and any verifier outside the RFC length and character set with
+   ``invalid_grant``. The S256 verification computes
+   ``BASE64URL-WITHOUT-PADDING(SHA256(verifier))`` and compares it to the
+   stored challenge in constant time. Auth codes issued before this change
+   (no ``code_challenge`` stored) continue to be redeemable without a
+   ``code_verifier``, preserving backwards compatibility for legacy clients.
+7. **redirect_uri Validation**: Submitted ``redirect_uri`` values must be
    syntactically valid URLs using the ``http`` or ``https`` scheme. They must
    not contain a fragment delimiter (``#``) at all, even with no fragment
    content, and must not include userinfo (``user:pass@``). The authorization

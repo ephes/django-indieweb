@@ -45,11 +45,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Enforce token scopes for Micropub and IndieAuth operations.
   - Outcome: read, create, update, delete, undelete, and media operations enforce appropriate scopes and return spec-appropriate errors.
 
-### Auth Hardening
-
-- [ ] Add PKCE (RFC 7636) to IndieAuth authorization and token exchange.
-  - References: `src/indieweb/models.py`, `src/indieweb/views.py`.
-  - Outcome: authorization stores `code_challenge` and `code_challenge_method`; token exchange validates `code_verifier` for S256 and plain challenges, with backwards-compatible behavior for auth codes issued without a challenge.
 ### Micropub Media Endpoint and Uploads
 
 - [ ] Add a Micropub media endpoint.

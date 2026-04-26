@@ -8,6 +8,7 @@ Tests for `django-indieweb` auth endpoint.
 """
 
 from datetime import datetime, timedelta, timezone  # noqa: E501
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -289,6 +290,250 @@ def test_consent_denial_merges_existing_query(client, user):
     assert qs["next"] == ["/x"]
     assert qs["error"] == ["access_denied"]
     assert qs["state"] == ["1234567890"]
+
+
+PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+PKCE_S256_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad_method", ["MD5", "sha256", "S512", "PLAIN", " plain"])
+def test_get_rejects_unsupported_pkce_method(client, user, bad_method):
+    """Authorization GET rejects code_challenge_method values outside {plain, S256}."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": PKCE_S256_CHALLENGE,
+        "code_challenge_method": bad_method,
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "bad_challenge",
+    [
+        "",  # empty
+        "short",  # too short for S256-style fingerprint but irrelevant — caught by length rule
+        "a" * 129,  # too long
+        "abc!def",  # disallowed character
+        "abc def",  # whitespace
+        "abc/def",  # slash not in unreserved
+    ],
+)
+def test_get_rejects_invalid_pkce_challenge(client, user, bad_challenge):
+    """Authorization GET rejects malformed code_challenge values."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": bad_challenge,
+        "code_challenge_method": "S256",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_get_accepts_no_pkce_legacy(client, user, auth_endpoint_url):
+    """Authorization GET still accepts a request without PKCE parameters (legacy clients)."""
+    client.login(username=user.username, password="password")
+    response = client.get(auth_endpoint_url)
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_get_defaults_method_to_plain(client, user):
+    """When only code_challenge is sent, the default method is ``plain`` per RFC 7636 §4.3."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": PKCE_VERIFIER,  # any RFC-valid string
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_consent_approval_persists_pkce(client, user):
+    """Consent approve stores code_challenge and effective code_challenge_method."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+        "code_challenge": PKCE_S256_CHALLENGE,
+        "code_challenge_method": "S256",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 302
+    auth = Auth.objects.get(client_id="https://webapp.example.org", me="http://example.org")
+    assert auth.code_challenge == PKCE_S256_CHALLENGE
+    assert auth.code_challenge_method == "S256"
+
+
+@pytest.mark.django_db
+def test_consent_approval_defaults_method_to_plain(client, user):
+    """Consent approve persists ``plain`` as the default method when none is sent."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+        "code_challenge": PKCE_VERIFIER,
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 302
+    auth = Auth.objects.get(client_id="https://webapp.example.org", me="http://example.org")
+    assert auth.code_challenge == PKCE_VERIFIER
+    assert auth.code_challenge_method == "plain"
+
+
+@pytest.mark.django_db
+def test_consent_approval_rejects_bad_pkce(client, user):
+    """Consent approve rejects malformed PKCE inputs before creating an Auth row."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+        "code_challenge": "abc!def",
+        "code_challenge_method": "S256",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 400
+    assert Auth.objects.filter(client_id="https://webapp.example.org").count() == 0
+
+
+@pytest.mark.django_db
+def test_get_renders_pkce_into_consent_context(client, user):
+    """Authorization GET propagates PKCE values into the render context."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": PKCE_S256_CHALLENGE,
+        "code_challenge_method": "S256",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 200
+    assert response.context["code_challenge"] == PKCE_S256_CHALLENGE
+    assert response.context["code_challenge_method"] == "S256"
+
+
+def test_consent_template_source_carries_pkce_hidden_inputs():
+    """Bundled consent.html must render PKCE hidden inputs when a challenge is in context.
+
+    This is a static check on the template source rather than a render assertion:
+    the test base.html intentionally has no ``{% block content %}``, so block
+    output is discarded by ``render_to_string`` here. Reading the source still
+    catches the regression (template author dropped the hidden inputs).
+    """
+    from django.template.loader import get_template
+
+    source = Path(get_template("indieweb/consent.html").origin.name).read_text()
+    assert 'name="code_challenge"' in source
+    assert 'name="code_challenge_method"' in source
+    assert "{% if code_challenge %}" in source
+
+
+@pytest.mark.django_db
+def test_pkce_round_trip_through_consent_screen(client, user):
+    """End-to-end: PKCE GET -> consent form submit -> token exchange with verifier."""
+    client.login(username=user.username, password="password")
+    auth_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": PKCE_S256_CHALLENGE,
+        "code_challenge_method": "S256",
+    }
+    get_resp = client.get(f"{auth_url}?{urlencode(url_params)}")
+    assert get_resp.status_code == 200
+
+    # Submit the consent form using only what the rendered template carries.
+    ctx = get_resp.context
+    form_data = {
+        "action": "approve",
+        "client_id": ctx["client_id"],
+        "redirect_uri": ctx["redirect_uri"],
+        "state": ctx["state"],
+        "me": ctx["me"],
+        "scope": ctx["scope"],
+        "code_challenge": ctx["code_challenge"],
+        "code_challenge_method": ctx["code_challenge_method"],
+    }
+    post_resp = client.post(auth_url, data=form_data)
+    assert post_resp.status_code == 302
+
+    auth = Auth.objects.get(client_id="https://webapp.example.org", me="http://example.org")
+    assert auth.code_challenge == PKCE_S256_CHALLENGE
+    assert auth.code_challenge_method == "S256"
+
+    token_resp = client.post(
+        reverse("indieweb:token"),
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "redirect_uri": auth.redirect_uri,
+            "code_verifier": PKCE_VERIFIER,
+        },
+    )
+    assert token_resp.status_code == 201
+
+
+@pytest.mark.django_db
+def test_consent_approval_rejects_unsupported_method(client, user):
+    """Consent approve rejects code_challenge_method values outside {plain, S256}."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+        "code_challenge": PKCE_S256_CHALLENGE,
+        "code_challenge_method": "MD5",
+    }
+    response = client.post(base_url, data=form_data)
+    assert response.status_code == 400
+    assert Auth.objects.filter(client_id="https://webapp.example.org").count() == 0
 
 
 @pytest.mark.django_db

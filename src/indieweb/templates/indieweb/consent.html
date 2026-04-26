@@ -29,6 +29,10 @@
         {% if scope %}
           <input type="hidden" name="scope" value="{{ scope }}">
         {% endif %}
+        {% if code_challenge %}
+          <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+          <input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">
+        {% endif %}
 
         <div class="consent-actions">
           <button type="submit" name="action" value="approve" class="btn btn-primary">Approve</button>

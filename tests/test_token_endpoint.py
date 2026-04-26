@@ -179,6 +179,104 @@ def test_token_rejects_path_only_difference_in_redirect_uri(client, auth, token_
     assert "invalid_grant" in response.content.decode("utf-8")
 
 
+PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+PKCE_S256_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+
+@pytest.mark.django_db
+def test_token_legacy_no_pkce_round_trip(client, auth, token_endpoint_url, token_payload):
+    """Auth code with no stored challenge accepts a token request with no verifier (legacy)."""
+    assert auth.code_challenge in (None, "")
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_rejects_missing_verifier_when_challenge_stored(client, auth, token_endpoint_url, token_payload):
+    """If the auth row has a code_challenge, a missing code_verifier is invalid_grant."""
+    auth.code_challenge = PKCE_S256_CHALLENGE
+    auth.code_challenge_method = "S256"
+    auth.save()
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+    # PKCE failure deletes the auth row to preserve one-time-use semantics.
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_token_rejects_verifier_when_no_challenge_stored(client, auth, token_endpoint_url, token_payload):
+    """If no challenge is stored, submitting a verifier is invalid_grant."""
+    token_payload["code_verifier"] = PKCE_VERIFIER
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_token_accepts_correct_s256_verifier(client, auth, token_endpoint_url, token_payload):
+    """A correct S256 verifier matches the stored S256 challenge."""
+    auth.code_challenge = PKCE_S256_CHALLENGE
+    auth.code_challenge_method = "S256"
+    auth.save()
+    token_payload["code_verifier"] = PKCE_VERIFIER
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_accepts_correct_plain_verifier(client, auth, token_endpoint_url, token_payload):
+    """A correct plain verifier matches the stored plain challenge."""
+    auth.code_challenge = PKCE_VERIFIER
+    auth.code_challenge_method = "plain"
+    auth.save()
+    token_payload["code_verifier"] = PKCE_VERIFIER
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("method", ["plain", "S256"])
+def test_token_rejects_wrong_verifier(client, auth, token_endpoint_url, token_payload, method):
+    """Mismatched verifier is rejected for both methods."""
+    auth.code_challenge = PKCE_S256_CHALLENGE if method == "S256" else PKCE_VERIFIER
+    auth.code_challenge_method = method
+    auth.save()
+    token_payload["code_verifier"] = "WRONGverifierWRONGverifierWRONGverifierWRONG"  # 44 chars
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "bad_verifier",
+    [
+        "short",  # below RFC minimum 43
+        "a" * 42,  # exactly below minimum
+        "a" * 129,  # above RFC maximum 128
+        "abc!" + "a" * 40,  # disallowed character
+        "abc def" + "a" * 36,  # whitespace
+        "abc/def" + "a" * 36,  # slash not in unreserved
+    ],
+)
+def test_token_rejects_malformed_verifier(client, auth, token_endpoint_url, token_payload, bad_verifier):
+    """Verifiers outside the RFC unreserved set or length bounds are rejected."""
+    auth.code_challenge = PKCE_VERIFIER
+    auth.code_challenge_method = "plain"
+    auth.save()
+    token_payload["code_verifier"] = bad_verifier
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+
+
 @pytest.mark.django_db
 def test_token_reissue_resets_expires_at(client, settings, token_endpoint_url, token_payload, user):
     """Reissuing a token (same client/scope/me) refreshes expires_at."""

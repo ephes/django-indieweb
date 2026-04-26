@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import math
+import re
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlparse, urlunparse
@@ -32,6 +36,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_EXPIRES_IN = 86400
 ALLOWED_REDIRECT_URI_SCHEMES = ("http", "https")
+ALLOWED_PKCE_METHODS = ("plain", "S256")
+PKCE_UNRESERVED_RE = re.compile(r"^[A-Za-z0-9._~\-]+$")
+PKCE_CHALLENGE_MIN = 43
+PKCE_CHALLENGE_MAX = 128
+PKCE_VERIFIER_MIN = 43
+PKCE_VERIFIER_MAX = 128
 
 
 def _validate_redirect_uri(value: str) -> str | None:
@@ -69,6 +79,47 @@ def _normalize_redirect_uri(value: str) -> str:
     netloc = parsed.netloc.lower()
     scheme = parsed.scheme.lower()
     return parsed._replace(scheme=scheme, netloc=netloc).geturl()
+
+
+def _validate_pkce_request(challenge: str | None, method: str | None) -> tuple[str, str] | None:
+    """Validate PKCE inputs from an authorization request.
+
+    Returns the normalized ``(challenge, method)`` pair on success, or ``None``
+    if the inputs are malformed. ``method`` defaults to ``"plain"`` per
+    RFC 7636 §4.3 when the caller sent a challenge without a method. A caller
+    that sent neither parameter never reaches this function.
+    """
+    if not challenge:
+        return None
+    if not (PKCE_CHALLENGE_MIN <= len(challenge) <= PKCE_CHALLENGE_MAX):
+        return None
+    if not PKCE_UNRESERVED_RE.match(challenge):
+        return None
+    effective_method = method if method else "plain"
+    if effective_method not in ALLOWED_PKCE_METHODS:
+        return None
+    return challenge, effective_method
+
+
+def _verify_pkce(stored_challenge: str, stored_method: str, submitted_verifier: str) -> bool:
+    """Verify a submitted ``code_verifier`` against a stored challenge.
+
+    Returns ``True`` only when the verifier is well-formed (RFC 7636 length and
+    character set) and produces the stored challenge under ``stored_method``.
+    """
+    if not submitted_verifier:
+        return False
+    if not (PKCE_VERIFIER_MIN <= len(submitted_verifier) <= PKCE_VERIFIER_MAX):
+        return False
+    if not PKCE_UNRESERVED_RE.match(submitted_verifier):
+        return False
+    if stored_method == "plain":
+        return hmac.compare_digest(stored_challenge, submitted_verifier)
+    if stored_method == "S256":
+        digest = hashlib.sha256(submitted_verifier.encode("ascii")).digest()
+        computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        return hmac.compare_digest(stored_challenge, computed)
+    return False
 
 
 def _append_redirect_params(redirect_uri: str, params: dict[str, str]) -> str:
@@ -186,6 +237,16 @@ class AuthView(CSRFExemptMixin, View):
             logger.info("rejected invalid redirect_uri on auth get")
             return HttpResponse("invalid redirect_uri", status=400)
 
+        code_challenge = request.GET.get("code_challenge")
+        code_challenge_method = request.GET.get("code_challenge_method")
+        effective_method: str | None = None
+        if code_challenge is not None or code_challenge_method is not None:
+            pkce = _validate_pkce_request(code_challenge, code_challenge_method)
+            if pkce is None:
+                logger.info("rejected invalid PKCE parameters on auth get")
+                return HttpResponse("invalid_request", status=400)
+            code_challenge, effective_method = pkce
+
         # Parse scope into list for display
         scope_list = []
         if scope:
@@ -199,81 +260,93 @@ class AuthView(CSRFExemptMixin, View):
             "me": me,
             "scope": scope,
             "scope_list": scope_list,
+            "code_challenge": code_challenge,
+            "code_challenge_method": effective_method,
         }
         return render(request, "indieweb/consent.html", context)
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         logger.info(f"auth view post: {request}, {args}, {kwargs}")
 
-        # Check if this is a consent form submission
         action = request.POST.get("action")
         if action in ["approve", "deny"]:
-            # Handle consent form submission
-            client_id = request.POST.get("client_id")
-            redirect_uri = request.POST.get("redirect_uri")
-            state = request.POST.get("state")
-            me = request.POST.get("me")
-            scope = request.POST.get("scope")
+            return self._handle_consent(request, action)
+        return self._verify_auth_code(request)
 
-            # Validate required parameters
-            if not all([client_id, redirect_uri, state, me]):
-                return HttpResponse("Missing required parameters", status=400)
+    def _handle_consent(self, request: HttpRequest, action: str) -> HttpResponseBase:
+        client_id = request.POST.get("client_id")
+        redirect_uri = request.POST.get("redirect_uri")
+        state = request.POST.get("state")
+        me = request.POST.get("me")
+        scope = request.POST.get("scope")
 
-            # These are verified to be not None above
-            assert client_id is not None
-            assert redirect_uri is not None
-            assert state is not None
-            assert me is not None
+        if not all([client_id, redirect_uri, state, me]):
+            return HttpResponse("Missing required parameters", status=400)
 
-            if _validate_redirect_uri(redirect_uri) is None:
-                logger.info("rejected invalid redirect_uri on auth consent")
-                return HttpResponse("invalid redirect_uri", status=400)
+        assert client_id is not None
+        assert redirect_uri is not None
+        assert state is not None
+        assert me is not None
 
-            if action == "approve":
-                # User approved - create auth code and redirect
-                if not request.user.is_authenticated:
-                    return HttpResponse("User not authenticated", status=401)
+        if _validate_redirect_uri(redirect_uri) is None:
+            logger.info("rejected invalid redirect_uri on auth consent")
+            return HttpResponse("invalid redirect_uri", status=400)
 
-                try:
-                    auth = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
-                    auth.delete()
-                except Auth.DoesNotExist:
-                    pass
+        code_challenge = request.POST.get("code_challenge")
+        code_challenge_method = request.POST.get("code_challenge_method")
+        stored_challenge: str | None = None
+        stored_method: str | None = None
+        if code_challenge is not None or code_challenge_method is not None:
+            pkce = _validate_pkce_request(code_challenge, code_challenge_method)
+            if pkce is None:
+                logger.info("rejected invalid PKCE parameters on auth consent")
+                return HttpResponse("invalid_request", status=400)
+            stored_challenge, stored_method = pkce
 
-                auth = Auth.objects.create(
-                    owner=request.user,
-                    client_id=client_id,
-                    redirect_uri=redirect_uri,
-                    state=state,
-                    scope=scope,
-                    me=me,
-                )
-                url_params: dict[str, str] = {"code": auth.key, "state": state, "me": me}
-                target = _append_redirect_params(redirect_uri, url_params)
-                logger.info("auth view consent approved")
-                return redirect(target)
-            else:
-                # User denied - redirect with error
-                deny_params: dict[str, str] = {"error": "access_denied", "state": state}
-                target = _append_redirect_params(redirect_uri, deny_params)
-                logger.info("auth view consent denied")
-                return redirect(target)
-        else:
-            # Original auth code verification flow
-            auth_code = request.POST.get("code")
-            client_id = request.POST.get("client_id")
+        if action == "deny":
+            deny_params: dict[str, str] = {"error": "access_denied", "state": state}
+            target = _append_redirect_params(redirect_uri, deny_params)
+            logger.info("auth view consent denied")
+            return redirect(target)
 
-            if not auth_code or not client_id:
-                return HttpResponse("Missing code or client_id", status=400)
+        if not request.user.is_authenticated:
+            return HttpResponse("User not authenticated", status=401)
 
-            logger.info(f"auth view post verification: {client_id}, {auth_code}")
-            try:
-                auth = Auth.objects.get(key=auth_code, client_id=client_id)
-                response_values = {"me": auth.me}
-                response = urlencode(response_values)
-                return HttpResponse(response, status=200)
-            except Auth.DoesNotExist:
-                return HttpResponse("Invalid authorization code", status=400)
+        try:
+            existing = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
+            existing.delete()
+        except Auth.DoesNotExist:
+            pass
+
+        auth = Auth.objects.create(
+            owner=request.user,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            state=state,
+            scope=scope,
+            me=me,
+            code_challenge=stored_challenge,
+            code_challenge_method=stored_method,
+        )
+        url_params: dict[str, str] = {"code": auth.key, "state": state, "me": me}
+        target = _append_redirect_params(redirect_uri, url_params)
+        logger.info("auth view consent approved")
+        return redirect(target)
+
+    def _verify_auth_code(self, request: HttpRequest) -> HttpResponseBase:
+        auth_code = request.POST.get("code")
+        client_id = request.POST.get("client_id")
+
+        if not auth_code or not client_id:
+            return HttpResponse("Missing code or client_id", status=400)
+
+        logger.info(f"auth view post verification: {client_id}")
+        try:
+            auth = Auth.objects.get(key=auth_code, client_id=client_id)
+        except Auth.DoesNotExist:
+            return HttpResponse("Invalid authorization code", status=400)
+        response_values = {"me": auth.me}
+        return HttpResponse(urlencode(response_values), status=200)
 
 
 class TokenView(CSRFExemptMixin, View):
@@ -313,6 +386,7 @@ class TokenView(CSRFExemptMixin, View):
         code = request.POST.get("code")
         client_id = request.POST.get("client_id")
         redirect_uri = request.POST.get("redirect_uri")
+        code_verifier = request.POST.get("code_verifier")
 
         # These are sometimes sent but not required by spec
         me = request.POST.get("me")
@@ -339,6 +413,18 @@ class TokenView(CSRFExemptMixin, View):
                 if stored != submitted:
                     logger.error("Redirect URI mismatch on token exchange")
                     return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
+            if auth.code_challenge:
+                if not code_verifier or not _verify_pkce(
+                    auth.code_challenge, auth.code_challenge_method or "plain", code_verifier
+                ):
+                    logger.error("PKCE verification failed on token exchange")
+                    auth.delete()
+                    return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+            elif code_verifier:
+                logger.error("PKCE verifier submitted without stored challenge")
+                auth.delete()
+                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
             # Use values from auth object if not provided in request
             me = me or auth.me
