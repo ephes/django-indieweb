@@ -121,8 +121,10 @@ Security Considerations
 
 1. **HTTPS Required**: Always use HTTPS in production for all IndieAuth endpoints
 2. **Auth Code Timeout**: Auth codes expire after 60 seconds by default
-3. **CSRF Protection**: The consent form includes Django's CSRF token
-4. **User Authentication**: Users must be logged in to approve/deny requests
+3. **Token Expiration**: Access tokens expire after 24 hours by default; the
+   Micropub endpoint rejects expired tokens with HTTP 401
+4. **CSRF Protection**: The consent form includes Django's CSRF token
+5. **User Authentication**: Users must be logged in to approve/deny requests
 
 Configuration
 -------------
@@ -130,7 +132,10 @@ Configuration
 Configure IndieAuth behavior in your Django settings::
 
     # Auth code expiration time in seconds (default: 60)
-    INDIEAUTH_CODE_TIMEOUT = 60
+    INDIWEB_AUTH_CODE_TIMEOUT = 60
+
+    # Access token lifetime in seconds (default: 86400, i.e. 24 hours)
+    INDIEWEB_TOKEN_EXPIRES_IN = 86400
 
     # Login URL for redirecting unauthenticated users
     LOGIN_URL = "/accounts/login/"

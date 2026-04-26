@@ -149,7 +149,13 @@ Returns an access token.
     HTTP/1.1 201 Created
     Content-Type: application/x-www-form-urlencoded
 
-    access_token=xyz789&scope=create&me=https://user.example.com&expires_in=10
+    access_token=xyz789&scope=create&me=https://user.example.com&expires_in=86400
+
+The ``expires_in`` value is the remaining token lifetime in seconds. The
+default lifetime is 24 hours and can be tuned with the
+``INDIEWEB_TOKEN_EXPIRES_IN`` setting (see :doc:`configuration`). Reissuing a
+token via the IndieAuth flow refreshes its expiration. Tokens whose
+``expires_at`` has passed are rejected with HTTP 401 by the Micropub endpoint.
 
 **Error Response:**
 

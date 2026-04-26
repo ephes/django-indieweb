@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+import math
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -13,6 +14,7 @@ from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
@@ -26,6 +28,8 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TOKEN_EXPIRES_IN = 86400
 
 
 class CSRFExemptMixin(View):
@@ -62,11 +66,13 @@ class TokenAuthMixin(View):
         if key is not None:
             try:
                 self.token = Token.objects.select_related("owner").get(key=key)
-                if self.token.owner.is_active:
-                    return True
-                else:
+                if not self.token.owner.is_active:
                     logger.warning(f"Token owner is not active: {self.token.owner}")
                     return False
+                if self.token.is_expired():
+                    logger.warning(f"Token expired: {key[:8]}...")
+                    return False
+                return True
             except Token.DoesNotExist:
                 logger.warning(f"Token not found: {key[:8]}...")
                 return False
@@ -220,10 +226,22 @@ class TokenView(CSRFExemptMixin, View):
     """
 
     def send_token(self, me: str, client_id: str, scope: str | None, owner: AbstractBaseUser) -> HttpResponse:
-        token, created = Token.objects.get_or_create(me=me, client_id=client_id, scope=scope, owner_id=owner.pk)
+        lifetime = int(getattr(settings, "INDIEWEB_TOKEN_EXPIRES_IN", DEFAULT_TOKEN_EXPIRES_IN))
+        expires_at = timezone.now() + timedelta(seconds=lifetime)
+        token, created = Token.objects.get_or_create(
+            me=me,
+            client_id=client_id,
+            scope=scope,
+            owner_id=owner.pk,
+            defaults={"expires_at": expires_at},
+        )
+        if not created:
+            token.expires_at = expires_at
+            token.save(update_fields=["expires_at", "modified"])
+        remaining = max(0, math.floor((expires_at - timezone.now()).total_seconds()))
         response_values: dict[str, str | int] = {
             "access_token": token.key,
-            "expires_in": 10,
+            "expires_in": remaining,
             "scope": token.scope or "",
             "me": token.me,
         }
@@ -263,7 +281,7 @@ class TokenView(CSRFExemptMixin, View):
 
             # Check if auth code is still valid
             timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
-            if (datetime.now(timezone.utc) - auth.created).seconds > timeout:
+            if (timezone.now() - auth.created).total_seconds() > timeout:
                 logger.error(f"Auth code expired for client_id={client_id}")
                 auth.delete()  # Clean up expired auth
                 return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")

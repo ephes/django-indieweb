@@ -14,6 +14,7 @@ import pytest
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.urls import reverse
+from django.utils import timezone
 
 from indieweb import models
 
@@ -96,3 +97,60 @@ def test_token_exchange_without_me_parameter(client, auth, token_endpoint_url):
     data = parse_qs(unquote(response.content.decode("utf-8")))
     assert "access_token" in data
     assert data["me"][0] == auth.me  # Should get 'me' from auth object
+
+
+@pytest.mark.django_db
+def test_auth_code_timeout_multi_day(client, auth, token_endpoint_url, token_payload):
+    """Auth codes older than one day must be rejected even when seconds-of-day is small."""
+    # timedelta.seconds wraps at one day; total_seconds() must be used.
+    auth.created = auth.created - timedelta(days=2, seconds=5)
+    auth.save()
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_token_response_advertises_configured_lifetime(client, settings, token_endpoint_url, token_payload):
+    """Token response expires_in should reflect the configured token lifetime."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    expires_in = int(data["expires_in"][0])
+    # Allow tiny clock drift in the round trip.
+    assert 3590 <= expires_in <= 3600
+
+
+@pytest.mark.django_db
+def test_token_row_gets_expires_at(client, settings, token_endpoint_url, token_payload):
+    """Token rows must persist an expires_at consistent with the configured lifetime."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    token = models.Token.objects.get(key=data["access_token"][0])
+    assert token.expires_at is not None
+    delta = token.expires_at - timezone.now()
+    # Allow tiny clock drift in the round trip.
+    assert timedelta(seconds=3590) <= delta <= timedelta(seconds=3600)
+
+
+@pytest.mark.django_db
+def test_token_reissue_resets_expires_at(client, settings, token_endpoint_url, token_payload, user):
+    """Reissuing a token (same client/scope/me) refreshes expires_at."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    # Pre-create a token row that is about to expire.
+    stale = models.Token.objects.create(
+        owner=user,
+        client_id=token_payload["client_id"],
+        me=token_payload["me"],
+        scope=token_payload["scope"],
+        expires_at=timezone.now() + timedelta(seconds=5),
+    )
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 200
+    stale.refresh_from_db()
+    assert stale.expires_at is not None
+    delta = stale.expires_at - timezone.now()
+    assert delta >= timedelta(seconds=3590)

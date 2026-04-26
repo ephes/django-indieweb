@@ -12,6 +12,9 @@ Unreleased
 * Switched hook execution from ``pre-commit`` to ``prek`` and updated hook revisions for Python 3.14 compatibility
 * Added a dedicated backlog page to the documentation navigation
 * Raised dependency floors and refreshed ``uv.lock`` to resolve open Dependabot alerts for Django, pytest, requests, urllib3, sqlparse, Pygments, filelock, and virtualenv
+* Added ``Token.expires_at`` plus the ``INDIEWEB_TOKEN_EXPIRES_IN`` setting (default 86400 seconds); ``TokenView`` now persists the expiration and reports the live remaining lifetime in ``expires_in``
+* ``TokenAuthMixin`` now rejects expired access tokens with HTTP 401; tokens issued before this change have ``expires_at=NULL`` and remain valid until reissued
+* Fixed the IndieAuth auth-code timeout calculation to use ``timedelta.total_seconds()`` so codes older than one day are now correctly rejected
 
 0.5.3 (2025-10-28)
 ------------------

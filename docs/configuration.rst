@@ -23,6 +23,29 @@ Controls how long authorization codes remain valid before they must be exchanged
 .. note::
    Authorization codes are single-use. Once exchanged for a token, they cannot be reused.
 
+INDIEWEB_TOKEN_EXPIRES_IN
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Controls how long newly issued or reissued access tokens remain valid.
+
+**Default:** ``86400`` (seconds — 24 hours)
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_TOKEN_EXPIRES_IN = 3600  # 1 hour
+
+The token endpoint reports the remaining lifetime in the ``expires_in`` field of
+its response, and the Micropub endpoint rejects expired tokens with HTTP 401.
+
+.. note::
+   Tokens created before this field existed have ``expires_at`` set to ``NULL``
+   and continue to be accepted indefinitely until they are reissued. Operators
+   that want to retire those tokens should delete them or trigger a reissue
+   through the IndieAuth flow.
+
 URL Configuration
 -----------------
 

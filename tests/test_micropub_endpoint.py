@@ -7,11 +7,13 @@ test_django-indieweb
 Tests for `django-indieweb` micropub endpoint.
 """
 
+from datetime import timedelta
 from urllib.parse import unquote
 
 import pytest
 from django.contrib.auth.models import User
 from django.urls import reverse
+from django.utils import timezone
 
 from indieweb import models
 
@@ -168,6 +170,45 @@ def test_http_authorization_header(client, token, micropub_endpoint_url, micropu
     response = client.post(micropub_endpoint_url, data=micropub_payload, HTTP_AUTHORIZATION=auth_header)
     assert response.status_code == 201
     assert "Location" in response
+
+
+@pytest.mark.django_db
+def test_unexpired_token_is_accepted(client, user, micropub_endpoint_url, micropub_payload):
+    """Tokens with a future expires_at should authenticate normally."""
+    token = models.Token.objects.create(
+        me="http://example.org",
+        client_id="https://webapp.example.org",
+        scope="post",
+        owner=user,
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 201
+
+
+@pytest.mark.django_db
+def test_expired_token_is_rejected(client, user, micropub_endpoint_url, micropub_payload):
+    """Tokens whose expires_at is in the past must be rejected with 401."""
+    token = models.Token.objects.create(
+        me="http://example.org",
+        client_id="https://webapp.example.org",
+        scope="post",
+        owner=user,
+        expires_at=timezone.now() - timedelta(seconds=1),
+    )
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_legacy_null_expiry_token_is_accepted(client, token, micropub_endpoint_url, micropub_payload):
+    """Tokens with expires_at=None remain valid (backwards compatible)."""
+    assert token.expires_at is None
+    auth_header = f"Bearer {token.key}"
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 201
 
 
 @pytest.mark.django_db

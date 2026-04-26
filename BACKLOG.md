@@ -44,18 +44,11 @@ When adding or completing items, keep each entry specific enough for an agent or
   - Outcome: token authorization validates the client according to documented rules.
 - [ ] Enforce token scopes for Micropub and IndieAuth operations.
   - Outcome: read, create, update, delete, undelete, and media operations enforce appropriate scopes and return spec-appropriate errors.
-- [ ] Add token expiration handling.
-  - Current issue: `TokenView.send_token()` returns `expires_in=10` without corresponding expiration enforcement.
-  - Outcome: token lifetime behavior and response metadata are consistent.
-
 ### Auth Hardening
 
 - [ ] Add PKCE (RFC 7636) to IndieAuth authorization and token exchange.
   - References: `src/indieweb/models.py`, `src/indieweb/views.py`.
   - Outcome: authorization stores `code_challenge` and `code_challenge_method`; token exchange validates `code_verifier` for S256 and plain challenges, with backwards-compatible behavior for auth codes issued without a challenge.
-- [ ] Fix auth-code timeout calculation.
-  - Reference: `src/indieweb/views.py`.
-  - Outcome: auth-code expiry uses `total_seconds()` instead of `.seconds`, with regression coverage for codes older than one day.
 - [ ] Validate IndieAuth `redirect_uri` values.
   - Reference: `src/indieweb/views.py`.
   - Outcome: redirect URIs reject fragments and invalid schemes, matching documented normalization and comparison rules.

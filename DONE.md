@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-26
 
+### Add Token Expiration Handling and Fix Auth-Code Timeout Calculation
+
+- Added `Token.expires_at` (`DateTimeField(null=True, blank=True, db_index=True)`) plus migration `0010_token_expires_at` and a `Token.is_expired()` helper.
+- Added the `INDIEWEB_TOKEN_EXPIRES_IN` setting (default 86400 seconds) and updated `TokenView.send_token()` to persist `expires_at` on create and reissue and to report the live remaining lifetime in `expires_in` instead of the previous hardcoded `10`.
+- Updated `TokenAuthMixin.authenticated()` to reject tokens whose `expires_at` is in the past with HTTP 401. Legacy tokens with `expires_at=NULL` remain accepted for backwards compatibility until they are reissued.
+- Replaced `(now - auth.created).seconds` with `total_seconds()` in `TokenView.post()` so auth codes older than one day are correctly rejected.
+- Added regression tests covering: token response advertising the configured lifetime, persisted `expires_at`, reissue refresh, expired-token rejection on the Micropub endpoint, legacy null-expiry acceptance, and multi-day-old auth-code rejection.
+- Documentation: updated `docs/api.rst`, `docs/configuration.rst`, and `docs/indieauth.rst` for the new setting and 24-hour default lifetime.
+- Changelog: updated `docs/changelog.rst`.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` all passed.
+
 ### Triage and Resolve Open Dependabot Alerts
 
 - Raised the runtime Django dependency floor to `Django>=5.2.13,<6.0`.

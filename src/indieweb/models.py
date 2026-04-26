@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator, URLValidator
 from django.db import models
+from django.utils import timezone
 from django.utils.crypto import get_random_string
 
 
@@ -71,12 +72,24 @@ class Token(GenKeyMixin):
     client_id = models.CharField(max_length=512)
     me = models.CharField(max_length=512)
     scope = models.CharField(max_length=256, null=True, blank=True)  # noqa
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         unique_together = ("me", "client_id", "scope", "owner")
 
     def __str__(self) -> str:
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
+
+    def is_expired(self) -> bool:
+        """Return True if the token has an expires_at in the past.
+
+        Tokens with ``expires_at`` set to ``None`` are treated as
+        non-expiring for backwards compatibility with rows created
+        before expiration tracking was added.
+        """
+        if self.expires_at is None:
+            return False
+        return self.expires_at <= timezone.now()
 
 
 class Webmention(models.Model):
