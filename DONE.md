@@ -4,6 +4,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-26
 
+### Add Backlog Page to Documentation Navigation
+
+- Added `docs/backlog.rst` as a dedicated documentation page for the Markdown backlog workflow.
+- Added the Backlog page to the Sphinx sidebar navigation.
+- Documentation: updated `docs/index.rst` and `docs/development.rst`.
+- Changelog: updated `docs/changelog.rst`.
+- Validation: `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv run pytest`, and `git diff --check` all passed.
+
 ### Switch Hook Runner to prek and Fix pyupgrade on Python 3.14
 
 - Upgraded hook revisions, including `pyupgrade` from `v3.21.0` to `v3.21.2`, which fixes the observed Python 3.14 crash.

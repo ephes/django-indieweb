@@ -18,6 +18,7 @@ Welcome to django-indieweb's documentation!
    api
    configuration
    development
+   backlog
    changelog
    modules
 
@@ -44,8 +45,7 @@ Features
 Project Planning
 ----------------
 
-Planned work is tracked in `BACKLOG.md <https://github.com/ephes/django-indieweb/blob/develop/BACKLOG.md>`__.
-Completed work is recorded in `DONE.md <https://github.com/ephes/django-indieweb/blob/develop/DONE.md>`__.
+Planned work is tracked in the project backlog. See :doc:`backlog`.
 
 Installation
 ------------

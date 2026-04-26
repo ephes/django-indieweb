@@ -10,6 +10,7 @@ Unreleased
 * Linked the backlog workflow from the project documentation
 * Clarified that completed backlog items must keep docs and changelog entries aligned with implementation changes
 * Switched hook execution from ``pre-commit`` to ``prek`` and updated hook revisions for Python 3.14 compatibility
+* Added a dedicated backlog page to the documentation navigation
 
 0.5.3 (2025-10-28)
 ------------------

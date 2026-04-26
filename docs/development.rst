@@ -99,13 +99,7 @@ To build the documentation locally::
 Project Backlog
 ---------------
 
-Planned work is tracked in the repository root `BACKLOG.md <https://github.com/ephes/django-indieweb/blob/develop/BACKLOG.md>`__.
-Completed work is moved to `DONE.md <https://github.com/ephes/django-indieweb/blob/develop/DONE.md>`__.
-
-This project no longer uses Beads. When a backlog item changes behavior, configuration, public APIs, workflows,
-examples, or user-facing usage, update the relevant documentation in the same change. Update
-``docs/changelog.rst`` when the completed item changes behavior, fixes a bug, adds a feature, changes
-configuration, or affects users.
+Planned and completed work are described in :doc:`backlog`.
 
 Building and Publishing Releases
 --------------------------------
