@@ -296,12 +296,19 @@ def test_post_create_rejects_other_scopes(client, user, micropub_endpoint_url, m
 @pytest.mark.django_db
 @pytest.mark.parametrize("scope", ["update", "create update", "update delete"])
 def test_post_action_update_accepts_update_scope(client, user, micropub_endpoint_url, scope):
-    """A POST with ``action=update`` requires the ``update`` scope and reaches the 501 stub."""
+    """A POST with ``action=update`` requires the ``update`` scope and reaches the action handler.
+
+    The fresh in-memory handler has no entry at the submitted URL, so the action handler
+    raises ``ValueError`` and the view maps that to ``400 invalid_request``. The point of
+    this test is that the scope gate accepts the scope (no 403); the body assertion is
+    proof we reached the action handler rather than the 403 path.
+    """
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     payload = {"action": "update", "url": "https://example.org/post/1"}
     response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
-    assert response.status_code == 501
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
 
 
 @pytest.mark.django_db
@@ -319,12 +326,18 @@ def test_post_action_update_rejects_non_update_scope(client, user, micropub_endp
 @pytest.mark.django_db
 @pytest.mark.parametrize("scope", ["delete", "create delete", "delete update"])
 def test_post_action_delete_accepts_delete_scope(client, user, micropub_endpoint_url, scope):
-    """A POST with ``action=delete`` requires the ``delete`` scope and reaches the 501 stub."""
+    """A POST with ``action=delete`` requires the ``delete`` scope and reaches the action handler.
+
+    The fresh in-memory handler has no entry at the submitted URL, so the action handler
+    raises ``ValueError`` and the view maps that to ``400 invalid_request``. The scope gate
+    accepting the scope (i.e. not returning 403) is what this test asserts.
+    """
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     payload = {"action": "delete", "url": "https://example.org/post/1"}
     response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
-    assert response.status_code == 501
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
 
 
 @pytest.mark.django_db
@@ -342,12 +355,18 @@ def test_post_action_delete_rejects_non_delete_scope(client, user, micropub_endp
 @pytest.mark.django_db
 @pytest.mark.parametrize("scope", ["undelete", "delete undelete", "create undelete"])
 def test_post_action_undelete_accepts_undelete_scope(client, user, micropub_endpoint_url, scope):
-    """A POST with ``action=undelete`` requires the project-defined ``undelete`` scope."""
+    """A POST with ``action=undelete`` requires the project-defined ``undelete`` scope.
+
+    The fresh in-memory handler has nothing in its deleted set, so the action handler raises
+    ``ValueError`` and the view maps that to ``400 invalid_request``. The scope gate
+    accepting the scope (i.e. not returning 403) is what this test asserts.
+    """
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     payload = {"action": "undelete", "url": "https://example.org/post/1"}
     response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
-    assert response.status_code == 501
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
 
 
 @pytest.mark.django_db

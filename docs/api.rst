@@ -277,6 +277,136 @@ Creates a new post using the configured content handler.
     HTTP/1.1 201 Created
     Location: https://yoursite.com/posts/123/
 
+Update Action
+~~~~~~~~~~~~~
+
+Update an existing post via ``action=update``. Per the Micropub specification
+(§3.7), update requests must be JSON. The body carries any of the
+``replace``, ``add``, and ``delete`` keys; their semantics match the spec.
+
+**Request Body Keys:**
+
+- ``action`` - Must be ``"update"``
+- ``url`` - The URL of the entry to update (required)
+- ``replace`` *(optional)* - Object whose keys are property names and values
+  are arrays of replacement values. The named properties are overwritten.
+- ``add`` *(optional)* - Object whose keys are property names and values are
+  arrays of values to append to those properties.
+- ``delete`` *(optional)* - Either a list of property names to delete entirely,
+  or an object whose keys are property names and values are arrays of specific
+  values to remove from each property.
+
+**Example Request — replace:**
+
+.. code-block:: http
+
+    POST /indieweb/micropub/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: application/json
+
+    {
+        "action": "update",
+        "url": "https://yoursite.com/posts/123/",
+        "replace": {"content": ["Updated content"]}
+    }
+
+**Example Request — add and delete combined:**
+
+.. code-block:: http
+
+    POST /indieweb/micropub/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: application/json
+
+    {
+        "action": "update",
+        "url": "https://yoursite.com/posts/123/",
+        "add": {"category": ["new-tag"]},
+        "delete": ["draft"]
+    }
+
+**Response:**
+
+- ``204 No Content`` when the update succeeds and the entry's URL is unchanged
+- ``201 Created`` with a ``Location`` header when the configured handler
+  returns an entry whose URL differs from the submitted URL (§3.7)
+- ``400 Bad Request`` body ``invalid_request`` when the entry is unknown to
+  the handler, ``url`` is missing, the body is not JSON or not a JSON object,
+  the body contains none of ``replace``/``add``/``delete`` (§3.4 requires at
+  least one), values inside ``replace``/``add`` are not arrays (§3.4 requires
+  arrays), or ``delete`` is neither a list of strings nor a map of property
+  names to arrays
+- ``500 Internal Server Error`` when the configured handler raises an
+  exception other than ``ValueError`` (logged via ``logger.exception``)
+
+Form-encoded update requests are rejected with ``400 invalid_request``;
+update bodies must be JSON.
+
+Delete Action
+~~~~~~~~~~~~~
+
+Delete an existing post via ``action=delete``. Both form-encoded and JSON
+bodies are accepted; both require ``url``.
+
+**Form-Encoded Example:**
+
+.. code-block:: http
+
+    POST /indieweb/micropub/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: application/x-www-form-urlencoded
+
+    action=delete&url=https://yoursite.com/posts/123/
+
+**JSON Example:**
+
+.. code-block:: http
+
+    POST /indieweb/micropub/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: application/json
+
+    {"action": "delete", "url": "https://yoursite.com/posts/123/"}
+
+**Response:**
+
+- ``204 No Content`` on success (delete cannot relocate)
+- ``400 Bad Request`` body ``invalid_request`` when the entry is unknown to
+  the handler or ``url`` is missing
+- ``500 Internal Server Error`` when the configured handler raises an
+  exception other than ``ValueError``
+
+Undelete Action
+~~~~~~~~~~~~~~~
+
+Restore a previously-deleted post via ``action=undelete``. Both form-encoded
+and JSON bodies are accepted; both require ``url``.
+
+**Form-Encoded Example:**
+
+.. code-block:: http
+
+    POST /indieweb/micropub/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: application/x-www-form-urlencoded
+
+    action=undelete&url=https://yoursite.com/posts/123/
+
+**Response:**
+
+- ``204 No Content`` when the undelete succeeds and the entry's URL is unchanged
+- ``201 Created`` with a ``Location`` header when the configured handler
+  returns an entry whose URL differs from the submitted URL (§3.10)
+- ``400 Bad Request`` body ``invalid_request`` when the URL is not in the
+  handler's deleted set or ``url`` is missing
+- ``500 Internal Server Error`` when the configured handler raises an
+  exception other than ``ValueError``
+
 Query Endpoints
 ~~~~~~~~~~~~~~~
 
@@ -324,6 +454,20 @@ All endpoints may return these error responses:
 - ``client_id`` on token exchange is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (fail-closed)
+- Micropub ``POST`` with ``Content-Type: application/json`` whose body
+  cannot be parsed as JSON or does not parse to a JSON object (rejected
+  before scope/action dispatch so a malformed update body cannot fall
+  through to the create path)
+- Micropub ``POST action=update``/``delete``/``undelete`` against an unknown
+  ``url``, missing ``url``, or — for ``action=update`` — a non-JSON request
+  body, an empty update payload (none of ``replace``/``add``/``delete``),
+  a non-array operation value (``replace``/``add`` values must be arrays per
+  §3.4), or a ``delete`` value that is neither a list of property names nor
+  a map of property names to arrays. The Micropub specification's response
+  listings for these actions are limited; this project chose
+  ``400 invalid_request`` for all three so client errors look consistent
+  with the IndieAuth/token-endpoint behavior, rather than guessing
+  handler-specific permission semantics with a ``404`` or ``403``.
 
 **401 Unauthorized**
 
@@ -372,6 +516,13 @@ All endpoints may return these error responses:
 
 - Missing required parameters on the authorization endpoint
 
+**500 Internal Server Error**
+
+- A configured Micropub handler raised an exception other than
+  ``ValueError`` while servicing ``POST action=update``/``delete``/``undelete``.
+  The exception is logged via ``logger.exception`` so the stack trace stays
+  in the server log rather than the response body.
+
 Scopes
 ------
 
@@ -382,9 +533,9 @@ not satisfy ``create``.
 - ``create`` - Required for ``POST`` requests that create new posts. The
   legacy alias ``post`` is also accepted.
 - ``update`` - Required for ``POST action=update`` and for ``GET ?q=source``
-  (which is typically used to fetch a post for editing). The
-  ``update``/``delete``/``undelete`` handlers are not yet implemented and
-  return ``501 Not Implemented`` after the scope check passes.
+  (which is typically used to fetch a post for editing). ``GET ?q=source``
+  is not yet implemented and returns ``501 Not Implemented`` after the scope
+  check passes.
 - ``delete`` - Required for ``POST action=delete``.
 - ``undelete`` - Required for ``POST action=undelete``.
 - ``post`` - Legacy alias for ``create``.

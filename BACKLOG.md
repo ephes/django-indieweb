@@ -30,9 +30,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Micropub Core CRUD and Queries
 
-- [ ] Implement Micropub update/delete/undelete actions.
-  - References: `src/indieweb/views.py`, `docs/api.rst`, `docs/concepts.rst`, `docs/micropub.rst`.
-  - Outcome: update/delete/undelete work through the configured handler with tests and docs.
 - [ ] Implement Micropub source query.
   - References: `src/indieweb/views.py`, `docs/concepts.rst`.
   - Outcome: source queries return supported entry data with read-scope enforcement.

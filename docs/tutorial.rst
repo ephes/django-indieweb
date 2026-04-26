@@ -199,8 +199,10 @@ To persist content, configure your own handler:
    # settings.py
    INDIEWEB_MICROPUB_HANDLER = "myapp.micropub_handler.BlogPostMicropubHandler"
 
-See :doc:`micropub` for a full handler example (create, retrieve, update, delete stubs). The default handler
-stores entries in memory only; update/delete/undelete currently return HTTP 501 until implemented in your handler.
+See :doc:`micropub` for a full handler example (create, retrieve, update, delete stubs). The default
+in-memory handler implements update, delete, and undelete in process memory only — entries do not persist
+across restarts. Configure your own handler for durable storage. ``GET ?q=source`` remains unimplemented
+and returns HTTP 501.
 
 .. code-block:: python
 

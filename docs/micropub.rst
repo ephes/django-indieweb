@@ -163,6 +163,69 @@ Tags/categories (comma-separated or array) - ``location`` - Geographic
 location (geo URI format) - ``in-reply-to`` - URL this post is replying
 to - ``photo`` - Photo URL(s) - ``published`` - Publication date
 
+Update, Delete, Undelete
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The endpoint also supports the Micropub update, delete, and undelete actions.
+Updates are JSON-only (per Micropub §3.7); delete and undelete accept either
+form-encoded or JSON bodies. Update bodies must contain at least one of
+``replace``, ``add``, or ``delete``, and the values inside each operation
+must be arrays (per Micropub §3.4) — empty bodies and scalar operation
+values are rejected with ``400 invalid_request``.
+
+Update and undelete return ``204 No Content`` on success, or ``201 Created``
+with a ``Location`` header when the configured handler relocates the entry.
+Delete always returns ``204 No Content`` (the handler interface does not
+return an entry on delete, so a relocation response is not possible). All
+three return ``400 invalid_request`` when the entry is unknown to the
+handler or ``url`` is missing, and ``500`` when the handler raises an
+unexpected exception.
+
+**Update (replace, JSON):**
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "action": "update",
+       "url": "https://example.com/posts/123/",
+       "replace": {"content": ["Updated content"]}
+     }'
+
+**Update (add and delete combined, JSON):**
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "action": "update",
+       "url": "https://example.com/posts/123/",
+       "add": {"category": ["new-tag"]},
+       "delete": ["draft"]
+     }'
+
+**Delete (form-encoded):**
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -d "action=delete" \
+     -d "url=https://example.com/posts/123/"
+
+**Undelete (form-encoded):**
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -d "action=undelete" \
+     -d "url=https://example.com/posts/123/"
+
 Query Endpoints
 ~~~~~~~~~~~~~~~
 
@@ -256,19 +319,30 @@ Error Handling
 
 The Micropub endpoint returns the following HTTP status codes:
 
-- ``201 Created`` - Success, with a ``Location`` header pointing at the new
-  entry
-- ``400 Bad Request`` - Invalid request data (e.g. the configured handler
-  raised on entry creation)
+- ``201 Created`` - Success on entry create, and on update/undelete actions
+  whose handler returns a relocated entry URL; a ``Location`` header points
+  at the new or canonical URL. Delete cannot relocate.
+- ``204 No Content`` - Success on update/delete/undelete actions when the
+  entry's URL did not change (delete always returns this on success)
+- ``400 Bad Request`` - Invalid request data: the configured handler raised
+  on entry creation; an action request had an unknown ``url`` (handler
+  raised ``ValueError``), missing ``url``, malformed JSON, a non-object
+  JSON body, or — for ``action=update`` — a non-JSON body, an empty update
+  payload (no ``replace``/``add``/``delete``), a non-array operation value,
+  or an otherwise spec-non-conformant operation shape. Action failures use
+  the plain-text body ``invalid_request``.
 - ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
   token's owner is inactive
 - ``403 Forbidden`` - body ``authorization error`` when the token lacks the
   scope required for the requested operation; body ``invalid_client`` when
   the token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR``
-- ``501 Not Implemented`` - ``POST action=update``/``delete``/``undelete``
-  and ``GET ?q=source``: the scope check passed but the handler is not
-  implemented yet
+- ``500 Internal Server Error`` - The configured handler raised an unexpected
+  exception (e.g. database failure) during ``update``/``delete``/``undelete``;
+  the exception is logged via ``logger.exception`` so the stack trace stays
+  in the server log rather than the response body
+- ``501 Not Implemented`` - ``GET ?q=source``: the scope check passed but
+  the source query is not implemented yet
 
 See :doc:`api` for the full per-operation scope mapping and the complete
 error-response listing across all IndieWeb endpoints.
@@ -330,7 +404,7 @@ Then in settings:
 Next Steps
 ----------
 
-- Implement update and delete operations
+- Implement the ``GET ?q=source`` source query
 - Add media endpoint support for file uploads
 - Implement WebSub for real-time updates
 - Add support for more post types (events, RSVPs, etc.)

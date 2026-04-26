@@ -33,6 +33,8 @@ from .processors import WebmentionProcessor
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
 
+    from .handlers import MicropubEntry
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_EXPIRES_IN = 86400
@@ -644,7 +646,7 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
         if request.content_type == "application/json":
             try:
                 payload = json.loads(request.body)
-            except (json.JSONDecodeError, AttributeError):
+            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
                 return None
             if isinstance(payload, dict):
                 value = payload.get("action")
@@ -694,17 +696,199 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             return True
         return False
 
+    def _reject_invalid_json(self, request: HttpRequest) -> HttpResponse | None:
+        """Reject a request with ``Content-Type: application/json`` whose body fails to parse.
+
+        Returns a ``400 invalid_request`` response when the body cannot be decoded as JSON
+        or does not decode to an object; otherwise ``None``. Called at the top of ``post()``
+        so that malformed JSON cannot fall through to the create path or the action handlers
+        and silently produce surprising behavior (e.g. an empty entry being created).
+
+        Catches ``json.JSONDecodeError`` (syntax errors), ``UnicodeDecodeError`` (invalid
+        UTF-8 in ``request.body``; ``json.loads`` decodes bytes as UTF-8 internally), and
+        ``AttributeError`` (defensive — ``request.body`` should always be bytes, but a
+        misbehaving middleware could substitute it). All three become ``400 invalid_request``
+        rather than a ``500`` from the unhandled exception path.
+        """
+        if request.content_type != "application/json":
+            return None
+        try:
+            payload = json.loads(request.body)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            return self._invalid_request()
+        if not isinstance(payload, dict):
+            return self._invalid_request()
+        return None
+
+    def _action_payload(self, request: HttpRequest) -> dict[str, Any] | None:
+        """Return the parsed JSON body for an action POST, or ``None`` if it isn't JSON.
+
+        Used by ``action=update`` (which is JSON-only per Micropub §3.7) and as a fallback
+        for ``url`` extraction on JSON-bodied delete/undelete requests. By the time this
+        runs in the action path the body has already been validated by ``_reject_invalid_json``,
+        so the ``json.loads`` call is expected to succeed; the defensive ``except`` mirrors
+        the guard's catch list so this helper is safe to call independently.
+        """
+        if request.content_type != "application/json":
+            return None
+        try:
+            payload = json.loads(request.body)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _action_url(self, request: HttpRequest) -> str | None:
+        """Return the target ``url`` for an action POST, accepting form-encoded and JSON bodies."""
+        url = request.POST.get("url")
+        if url:
+            return url
+        payload = self._action_payload(request)
+        if payload is None:
+            return None
+        value = payload.get("url")
+        if isinstance(value, str) and value:
+            return value
+        return None
+
+    def _invalid_request(self) -> HttpResponse:
+        """Return the standard 400 plain-text body the action handlers use for client errors."""
+        return HttpResponse("invalid_request", status=400)
+
+    def _action_response(self, request: HttpRequest, entry: MicropubEntry, submitted_url: str) -> HttpResponse:
+        """Build a success response for ``update``/``undelete``: 204, or 201+Location if URL changed."""
+        if entry.url == submitted_url:
+            return HttpResponse(status=204)
+        response = HttpResponse(status=201)
+        if entry.url.startswith("http"):
+            response["Location"] = entry.url
+        else:
+            response["Location"] = request.build_absolute_uri(entry.url)
+        return response
+
+    @staticmethod
+    def _valid_property_map(value: Any) -> bool:
+        """Return whether ``value`` is a dict mapping property names to arrays of values (§3.4)."""
+        if not isinstance(value, dict):
+            return False
+        return all(isinstance(prop_values, list) for prop_values in value.values())
+
+    @staticmethod
+    def _valid_delete_value(value: Any) -> bool:
+        """Return whether a Micropub ``delete`` value is well-formed (§3.4).
+
+        A ``delete`` is either a list of property-name strings, or a dict mapping property
+        names to arrays of values to remove from those properties.
+        """
+        if isinstance(value, list):
+            return all(isinstance(name, str) for name in value)
+        if isinstance(value, dict):
+            return all(isinstance(prop_values, list) for prop_values in value.values())
+        return False
+
+    def _validate_update_operations(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Validate and extract update operations from a JSON update payload per Micropub §3.4.
+
+        The spec requires that an update body include at least one of ``replace``, ``add``,
+        or ``delete``; that ``replace`` and ``add`` map property names to *arrays* of values;
+        and that ``delete`` is either a list of property names or a map of property names to
+        arrays of values to remove. Scalar values inside operations and an empty update body
+        are spec violations and must be rejected here rather than papered over by the
+        handler's normalization. Returns the operations dict on success, or ``None`` on any
+        validation failure.
+        """
+        updates: dict[str, Any] = {}
+        for key in ("replace", "add"):
+            if key not in payload:
+                continue
+            if not self._valid_property_map(payload[key]):
+                return None
+            updates[key] = payload[key]
+        if "delete" in payload:
+            if not self._valid_delete_value(payload["delete"]):
+                return None
+            updates["delete"] = payload["delete"]
+        if not updates:
+            return None
+        return updates
+
+    def _handle_update(self, request: HttpRequest) -> HttpResponse:
+        """Dispatch ``action=update``. JSON-only; validates the body shape before forwarding.
+
+        Returns ``500`` (not ``400``) for handler exceptions other than ``ValueError`` so a
+        database error or handler bug does not surface as a non-retryable client error.
+        """
+        url = self._action_url(request)
+        if not url:
+            return self._invalid_request()
+        payload = self._action_payload(request)
+        if payload is None:
+            return self._invalid_request()
+        updates = self._validate_update_operations(payload)
+        if updates is None:
+            return self._invalid_request()
+        handler = get_micropub_handler()
+        try:
+            entry = handler.update_entry(url, updates, self.token.owner)
+        except ValueError as exc:
+            logger.warning(f"update_entry rejected url={url!r}: {exc}")
+            return self._invalid_request()
+        except Exception:
+            logger.exception(f"Unexpected error in update_entry for url={url!r}")
+            return HttpResponse(status=500)
+        return self._action_response(request, entry, url)
+
+    def _handle_delete(self, request: HttpRequest) -> HttpResponse:
+        """Dispatch ``action=delete``. Accepts form-encoded and JSON bodies; both need ``url``."""
+        url = self._action_url(request)
+        if not url:
+            return self._invalid_request()
+        handler = get_micropub_handler()
+        try:
+            handler.delete_entry(url, self.token.owner)
+        except ValueError as exc:
+            logger.warning(f"delete_entry rejected url={url!r}: {exc}")
+            return self._invalid_request()
+        except Exception:
+            logger.exception(f"Unexpected error in delete_entry for url={url!r}")
+            return HttpResponse(status=500)
+        return HttpResponse(status=204)
+
+    def _handle_undelete(self, request: HttpRequest) -> HttpResponse:
+        """Dispatch ``action=undelete``. Accepts form-encoded and JSON bodies; both need ``url``."""
+        url = self._action_url(request)
+        if not url:
+            return self._invalid_request()
+        handler = get_micropub_handler()
+        try:
+            entry = handler.undelete_entry(url, self.token.owner)
+        except ValueError as exc:
+            logger.warning(f"undelete_entry rejected url={url!r}: {exc}")
+            return self._invalid_request()
+        except Exception:
+            logger.exception(f"Unexpected error in undelete_entry for url={url!r}")
+            return HttpResponse(status=500)
+        return self._action_response(request, entry, url)
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Handle POST requests to create or modify content."""
         self.request = request
+
+        json_error = self._reject_invalid_json(request)
+        if json_error is not None:
+            return json_error
 
         if not self._scope_authorized(request):
             return HttpResponse("authorization error", status=403)
 
         action = self._post_action(request)
-        if action in ["update", "delete", "undelete"]:
-            # TODO: Implement update/delete/undelete actions
-            return HttpResponse("Not implemented", status=501)
+        if action == "update":
+            return self._handle_update(request)
+        if action == "delete":
+            return self._handle_delete(request)
+        if action == "undelete":
+            return self._handle_undelete(request)
 
         # Parse properties from request
         properties = self.parse_request_data(request)

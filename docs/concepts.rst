@@ -190,13 +190,11 @@ full mapping.
 
 - ``create`` - Required for ``POST`` requests that create new posts (legacy
   alias ``post`` is also accepted)
-- ``update`` - Required for ``POST action=update`` and ``GET ?q=source``;
-  the update handler is not yet implemented and returns ``501`` after the
-  scope check
-- ``delete`` - Required for ``POST action=delete``; the delete handler is
-  not yet implemented and returns ``501`` after the scope check
-- ``undelete`` - Required for ``POST action=undelete``; the undelete handler
-  is not yet implemented and returns ``501`` after the scope check
+- ``update`` - Required for ``POST action=update`` and ``GET ?q=source``.
+  The update action is implemented; ``GET ?q=source`` is not and returns
+  ``501`` after the scope check
+- ``delete`` - Required for ``POST action=delete``
+- ``undelete`` - Required for ``POST action=undelete``
 
 Best Practices
 --------------
@@ -225,9 +223,7 @@ Current implementation limitations:
 
 1. **No token revocation UI** - Must delete via Django admin
 2. **No media endpoint** - Can't upload images
-3. **No update/delete/undelete handlers** - Per-operation scopes are enforced
-   for these actions, but the handlers themselves return ``501 Not Implemented``
-4. **No source query** - ``GET ?q=source`` enforces the ``update`` scope but
+3. **No source query** - ``GET ?q=source`` enforces the ``update`` scope but
    the handler returns ``501 Not Implemented``
 
 Future Enhancements
@@ -236,12 +232,10 @@ Future Enhancements
 Potential improvements for full IndieWeb support:
 
 1. **Media Endpoint** - Handle file uploads
-2. **Micropub Update/Delete/Undelete Handlers** - Per-operation scopes are
-   enforced; the handler bodies still return ``501 Not Implemented``
-3. **Micropub Source Query** - ``GET ?q=source`` enforces the ``update``
+2. **Micropub Source Query** - ``GET ?q=source`` enforces the ``update``
    scope; the handler still returns ``501 Not Implemented``
-4. **Token Management** - UI for viewing/revoking tokens
-5. **WebSub** - Real-time updates
+3. **Token Management** - UI for viewing/revoking tokens
+4. **WebSub** - Real-time updates
 
 Resources
 ---------

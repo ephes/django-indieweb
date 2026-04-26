@@ -199,10 +199,10 @@ Security Considerations
    require an authenticated token. Stored ``scope`` is split on whitespace
    and compared as an exact token, so ``createXYZ`` does not satisfy
    ``create``. Scope failures return HTTP 403 with the plain-text body
-   ``authorization error``. The ``update``/``delete``/``undelete`` handlers
-   are not yet implemented and return ``501 Not Implemented`` after the scope
-   check succeeds; this lets clients discover scope-related authorization
-   failures without first depending on those handlers.
+   ``authorization error``. The ``update``, ``delete``, and ``undelete``
+   actions dispatch into the configured ``MicropubContentHandler``; only
+   ``GET ?q=source`` remains unimplemented and returns ``501 Not Implemented``
+   after the scope check succeeds.
 
 Configuration
 -------------
