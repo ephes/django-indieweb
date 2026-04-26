@@ -4,6 +4,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-26
 
+### Verify Micropub Create Flow End to End
+
+- Confirmed Micropub create handles form-encoded and JSON bodies and returns `201 Created` with an absolute `Location` header.
+- Coverage: `tests/test_micropub_create.py` and `tests/test_micropub_endpoint.py`.
+- Implementation reference: `src/indieweb/views.py`, `src/indieweb/handlers.py`.
+- Documentation: no changes needed; `docs/micropub.rst` already matches the current create behavior.
+- Changelog: no entry needed; verification only, no behavior change.
+- Validation: `uv run pytest tests/test_micropub_create.py tests/test_token_endpoint.py tests/test_auth_endpoint.py` and `uv run pytest tests/test_h_card.py tests/test_h_card_extra_classes.py tests/test_h_card_integration.py tests/test_h_card_templatetags.py --cov=indieweb.h_card --cov-report=term-missing` passed during the backlog audit.
+
 ### Add Backlog Page to Documentation Navigation
 
 - Added `docs/backlog.rst` as a dedicated documentation page for the Markdown backlog workflow.

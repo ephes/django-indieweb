@@ -8,21 +8,28 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Investigate the currently reported Webmention breakage.
-  - Reference: GH-15.
-  - Outcome: reproduction steps and failing regression coverage exist before implementation changes.
-- [ ] Fix broken Webmention behavior.
-  - Depends on the investigation item above.
-  - Outcome: expected Webmention receive/process/display behavior is restored with regression tests.
-- [ ] Complete Webmention spec compliance.
-  - Reference: GH-13.
-  - Outcome: implementation behavior is aligned with the Webmention spec and documented.
+- [ ] Make Webmention receiving asynchronous.
+  - Reference: `src/indieweb/views.py`.
+  - Outcome: the receiver returns an accepted/queued response and processing happens outside the request path; tests cover slow or timing-out sources.
+- [ ] Canonicalize URLs during target-link verification.
+  - Reference: `src/indieweb/processors.py`.
+  - Outcome: target checks handle common URL variations such as fragments, trailing slashes, `www`, and query-parameter ordering.
+- [ ] Handle source removal and `410 Gone` semantics for existing Webmentions.
+  - Reference: `src/indieweb/processors.py`.
+  - Outcome: removed sources update existing Webmentions consistently, with tests and documentation.
+- [ ] Follow and test HTTP redirects in Webmention receive and send paths.
+  - References: `src/indieweb/processors.py`, `src/indieweb/senders.py`.
+  - Outcome: redirect behavior is explicit, bounded, and covered by regression tests.
+- [ ] Complete the Webmention authorship fallback chain.
+  - Reference: `src/indieweb/processors.py`.
+  - Outcome: authorship extraction supports `rel=author` and page-level h-card fallback where appropriate.
+- [ ] Evaluate Webmention vouch support.
+  - Outcome: decide whether to support the `vouch` parameter; if yes, add model, receiver, sender, tests, and docs.
+- [ ] Evaluate Salmentions support.
+  - Outcome: decide whether to detect and send salmentions; if yes, add tests and documentation.
 
 ### Micropub Core CRUD and Queries
 
-- [ ] Verify Micropub create flow and content creation end to end.
-  - References: `docs/concepts.rst`, `tests/test_micropub_create.py`, `src/indieweb/views.py`.
-  - Outcome: create behavior is covered by tests and docs no longer contain stale claims.
 - [ ] Implement Micropub update/delete/undelete actions.
   - References: `src/indieweb/views.py`, `docs/api.rst`, `docs/concepts.rst`, `docs/micropub.rst`.
   - Outcome: update/delete/undelete work through the configured handler with tests and docs.
@@ -36,10 +43,22 @@ When adding or completing items, keep each entry specific enough for an agent or
   - Reference: `src/indieweb/views.py`.
   - Outcome: token authorization validates the client according to documented rules.
 - [ ] Enforce token scopes for Micropub and IndieAuth operations.
-  - Outcome: read, create, update, delete, and undelete operations enforce appropriate scopes and return spec-appropriate errors.
+  - Outcome: read, create, update, delete, undelete, and media operations enforce appropriate scopes and return spec-appropriate errors.
 - [ ] Add token expiration handling.
   - Current issue: `TokenView.send_token()` returns `expires_in=10` without corresponding expiration enforcement.
   - Outcome: token lifetime behavior and response metadata are consistent.
+
+### Auth Hardening
+
+- [ ] Add PKCE (RFC 7636) to IndieAuth authorization and token exchange.
+  - References: `src/indieweb/models.py`, `src/indieweb/views.py`.
+  - Outcome: authorization stores `code_challenge` and `code_challenge_method`; token exchange validates `code_verifier` for S256 and plain challenges, with backwards-compatible behavior for auth codes issued without a challenge.
+- [ ] Fix auth-code timeout calculation.
+  - Reference: `src/indieweb/views.py`.
+  - Outcome: auth-code expiry uses `total_seconds()` instead of `.seconds`, with regression coverage for codes older than one day.
+- [ ] Validate IndieAuth `redirect_uri` values.
+  - Reference: `src/indieweb/views.py`.
+  - Outcome: redirect URIs reject fragments and invalid schemes, matching documented normalization and comparison rules.
 
 ### Micropub Media Endpoint and Uploads
 
@@ -56,12 +75,12 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Documentation Audit
 
-- [ ] Audit Micropub docs for stale functionality notes.
-  - References: `docs/concepts.rst`, `docs/micropub.rst`.
-  - Outcome: documentation matches the current implementation.
-- [ ] Verify h-card support and update docs.
-  - Reference: GH-14.
-  - Outcome: close or document the h-card support gap with tests/docs as needed.
+- [ ] Audit IndieWeb docs for stale settings, commands, and behavior notes.
+  - Known issues: `docs/indieauth.rst` uses the wrong setting name `INDIEAUTH_CODE_TIMEOUT`; the correct setting is `INDIWEB_AUTH_CODE_TIMEOUT`. `docs/development.rst` references `make -C docs html`, but the current workflow uses `just docs` or `sphinx-build`.
+  - Outcome: documentation matches current IndieAuth, Micropub, Webmention, and development workflows.
+- [ ] Close h-card utility coverage gaps and confirm support status.
+  - Reference: `src/indieweb/h_card.py`.
+  - Outcome: normalization and validation edge cases are covered by focused tests, and docs accurately describe supported h-card behavior.
 - [ ] Clean up TODO and future-enhancement notes after related changes ship.
 
 ### Token Management UI
@@ -79,6 +98,23 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Add configurable CORS header support.
   - Reference: `docs/api.rst`.
   - Outcome: CORS behavior is documented and covered by tests.
+
+### Tooling and Maintainability
+
+- [ ] Add a GitHub Actions workflow for pull requests and pushes to `develop`.
+  - Outcome: CI runs the tox matrix, mypy, Ruff, prek hooks, and Sphinx with warnings as errors.
+- [ ] Pin Django to a supported version range and test supported Django versions.
+  - References: `pyproject.toml`, `tox.ini`.
+  - Outcome: supported Django/Python combinations are explicit and exercised in tox.
+- [ ] Update Ruff target version to Python 3.10.
+  - Reference: `pyproject.toml`.
+  - Outcome: `tool.ruff.target-version` matches `requires-python = ">=3.10"`.
+- [ ] Add a coverage gate.
+  - Reference: `pyproject.toml`.
+  - Outcome: coverage has a documented `fail_under` threshold based on the current baseline.
+- [ ] Remove the `django-model-utils` runtime dependency safely.
+  - References: `pyproject.toml`, `src/indieweb/migrations/0001_initial.py`.
+  - Outcome: initial migrations no longer import `model_utils.fields`, and the dependency can be removed without breaking fresh installs.
 
 ## Priority 4
 
