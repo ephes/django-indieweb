@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-26
 
+### Triage and Resolve Open Dependabot Alerts
+
+- Raised the runtime Django dependency floor to `Django>=5.2.13,<6.0`.
+- Raised direct development dependency floors for `pytest>=9.0.3` and `requests>=2.33.0`.
+- Refreshed `uv.lock` so vulnerable locked packages resolve to patched versions: Django `5.2.13`, pytest `9.0.3`, requests `2.33.1`, urllib3 `2.6.3`, sqlparse `0.5.5`, Pygments `2.20.0`, filelock `3.29.0`, and virtualenv `21.2.4`.
+- Updated `TokenView.send_token()` to query by `owner_id` for compatibility with newer `django-stubs` while keeping the public type generic for custom user models.
+- Documentation: no usage docs changed; dependency/security status is recorded in the changelog.
+- Changelog: updated `docs/changelog.rst`.
+- Validation: `uv sync`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
+
 ### Verify Micropub Create Flow End to End
 
 - Confirmed Micropub create handles form-encoded and JSON bodies and returns `201 Created` with an absolute `Location` header.

@@ -220,7 +220,7 @@ class TokenView(CSRFExemptMixin, View):
     """
 
     def send_token(self, me: str, client_id: str, scope: str | None, owner: AbstractBaseUser) -> HttpResponse:
-        token, created = Token.objects.get_or_create(me=me, client_id=client_id, scope=scope, owner=owner)
+        token, created = Token.objects.get_or_create(me=me, client_id=client_id, scope=scope, owner_id=owner.pk)
         response_values: dict[str, str | int] = {
             "access_token": token.key,
             "expires_in": 10,

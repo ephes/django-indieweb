@@ -37,7 +37,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "Django",
+    "Django>=5.2.13,<6.0",
     "django-model-utils",
     "mf2py",
     "beautifulsoup4",
@@ -50,11 +50,11 @@ dev = [
     "django-stubs[compatible-mypy]",
     "furo",
     "mypy",
-    "pytest >= 6",
+    "pytest>=9.0.3",
     "pytest-cov >= 3",
     "pytest-django",
     "ruff",
-    "requests",
+    "requests>=2.33.0",
     "tox",
     "types-requests",
     "sphinxcontrib-mermaid>=1.0.0",

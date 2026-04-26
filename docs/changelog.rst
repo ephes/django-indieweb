@@ -11,6 +11,7 @@ Unreleased
 * Clarified that completed backlog items must keep docs and changelog entries aligned with implementation changes
 * Switched hook execution from ``pre-commit`` to ``prek`` and updated hook revisions for Python 3.14 compatibility
 * Added a dedicated backlog page to the documentation navigation
+* Raised dependency floors and refreshed ``uv.lock`` to resolve open Dependabot alerts for Django, pytest, requests, urllib3, sqlparse, Pygments, filelock, and virtualenv
 
 0.5.3 (2025-10-28)
 ------------------
