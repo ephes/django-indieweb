@@ -124,9 +124,12 @@ POST Request
 
 - ``code`` - The authorization code from the auth endpoint
 - ``client_id`` - The client application's URL
-- ``redirect_uri`` - Must match the original auth request
-- ``me`` - The user's profile URL
-- ``scope`` - The requested scope
+
+**Optional Parameters:**
+
+- ``redirect_uri`` - If sent, it must match the value used in the original auth request; mismatches are rejected with ``invalid_grant``
+- ``me`` - The user's profile URL; falls back to the value stored with the auth code
+- ``scope`` - The requested scope; falls back to the value stored with the auth code
 
 **Example Request:**
 
@@ -288,20 +291,29 @@ Error Responses
 
 All endpoints may return these error responses:
 
-**401 Unauthorized**
+**400 Bad Request — ``invalid_grant``**
 
-- Missing or invalid authentication token
 - Expired authorization code
 - Invalid authorization code
+- ``redirect_uri`` sent on token exchange does not match the value stored with the auth code
+
+**400 Bad Request — ``invalid_request``**
+
+- Missing required ``code`` or ``client_id`` on token exchange
+
+**401 Unauthorized**
+
+- Missing or invalid access token
+- Expired access token
+- User account associated with the token is inactive
 
 **403 Forbidden**
 
 - Token lacks required scope
-- User account is inactive
 
 **404 Not Found**
 
-- Missing required parameters
+- Missing required parameters on the authorization endpoint
 
 Scopes
 ------

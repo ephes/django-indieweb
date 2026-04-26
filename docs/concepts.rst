@@ -171,9 +171,10 @@ Authorization Codes
 Access Tokens
 ~~~~~~~~~~~~~
 
-- Long-lived (no built-in expiration)
+- Expire after ``INDIEWEB_TOKEN_EXPIRES_IN`` seconds (default 86400, i.e. 24 hours); reissuing the token via the IndieAuth flow refreshes the expiration
+- Tokens issued before expiration tracking was added have ``expires_at=NULL`` and remain valid until they are reissued or deleted
 - Bound to user, client, and scope
-- Can be revoked by deleting Token object
+- Can be revoked by deleting the Token object
 - Should be transmitted over HTTPS only
 
 Scopes
@@ -212,11 +213,10 @@ Limitations
 Current implementation limitations:
 
 1. **Micropub is not functional** - Only returns success without creating content
-2. **No token expiration** - Tokens are valid indefinitely
-3. **No token revocation UI** - Must delete via Django admin
-4. **No scope enforcement** - Only checks for "post" in scope
-5. **No media endpoint** - Can't upload images
-6. **No update/delete** - Only create operations
+2. **No token revocation UI** - Must delete via Django admin
+3. **No scope enforcement** - Only checks for "post" in scope
+4. **No media endpoint** - Can't upload images
+5. **No update/delete** - Only create operations
 
 Future Enhancements
 -------------------

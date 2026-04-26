@@ -69,7 +69,7 @@ When adding or completing items, keep each entry specific enough for an agent or
 ### Documentation Audit
 
 - [ ] Audit IndieWeb docs for stale settings, commands, and behavior notes.
-  - Known issues: `docs/indieauth.rst` uses the wrong setting name `INDIEAUTH_CODE_TIMEOUT`; the correct setting is `INDIWEB_AUTH_CODE_TIMEOUT`. `docs/development.rst` references `make -C docs html`, but the current workflow uses `just docs` or `sphinx-build`.
+  - Known issues: `docs/development.rst` references `make -C docs html`, but the current workflow uses `just docs` or `sphinx-build`. `docs/concepts.rst` still claims "Micropub is not functional", which contradicts the documented Micropub create flow.
   - Outcome: documentation matches current IndieAuth, Micropub, Webmention, and development workflows.
 - [ ] Close h-card utility coverage gaps and confirm support status.
   - Reference: `src/indieweb/h_card.py`.

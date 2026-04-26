@@ -255,8 +255,11 @@ For server-side applications, you might want to validate tokens:
            key = auth_header.split()[1]
            try:
                token = Token.objects.get(key=key)
-               if token.owner.is_active:
-                   return token
+               if not token.owner.is_active:
+                   return None
+               if token.is_expired():
+                   return None
+               return token
            except Token.DoesNotExist:
                pass
        return None
@@ -267,7 +270,7 @@ Security Considerations
 1. **Always verify the state parameter** to prevent CSRF attacks
 2. **Use HTTPS in production** for all endpoints
 3. **Store tokens securely** - consider using session storage instead of localStorage
-4. **Implement token expiration** if needed (not built-in)
+4. **Tune token lifetime** via the ``INDIEWEB_TOKEN_EXPIRES_IN`` setting (default 86400 seconds); see :doc:`configuration`
 5. **Validate redirect_uri** matches registered client applications
 
 Debugging Tips
