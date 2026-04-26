@@ -11,7 +11,7 @@
 - Run tests: `uv run pytest` (or `just test`); target specific tests with `uv run pytest tests/test_file.py::TestClass::test_case -v`.
 - Type checks: `uv run mypy` (or `just typecheck`).
 - Lint/format: `uv run ruff check .` and `uv run ruff format .` (line length 119, double quotes).
-- Full matrix or pre-commit hooks: `tox` or `tox -e pre-commit`.
+- Full matrix or configured hooks: `tox` or `tox -e hooks`.
 - Docs preview: `just docs` to rebuild Sphinx and open HTML locally.
 
 ## Coding Style & Naming Conventions

@@ -31,7 +31,7 @@ This project uses:
 - Django
 - uv for packaging and dependency management
 - Ruff for linting and formatting (line length: 119)
-- Pre-commit hooks for code quality
+- prek hooks for code quality
 
 ## Build, Test, and Development Commands
 
@@ -88,10 +88,10 @@ uv run ruff format .
 # Fix linting issues automatically
 uv run ruff check --fix .
 
-# Run all pre-commit hooks
-tox -e pre-commit
+# Run all configured hooks
+tox -e hooks
 # Or
-pre-commit run --all-files
+uv run prek run --all-files
 ```
 
 ### Documentation
@@ -161,7 +161,7 @@ uv publish --token your_token
   - Views/handlers in `indieweb`
   - Templates in `templates/indieweb/`
   - Static assets under `static/indieweb/`
-- **Pre-commit hooks** for:
+- **prek hooks** for:
   - Trailing whitespace
   - End of file fixing
   - YAML/TOML validation
@@ -193,7 +193,7 @@ A feature is NOT considered complete until:
 
 1. **All tests pass** - Run `uv run pytest` to ensure no regressions
 2. **MyPy type checking passes** - Run `uv run mypy` with no type errors
-3. **Pre-commit hooks pass** - Run `pre-commit run --all-files`
+3. **Configured hooks pass** - Run `uv run prek run --all-files`
 4. **New functionality has tests** - Add comprehensive tests for any new features
 5. **Documentation is updated** - Update relevant docs if behavior changes
 

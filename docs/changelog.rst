@@ -9,6 +9,7 @@ Unreleased
 * Added ``BACKLOG.md`` and ``DONE.md`` as the repository-local work tracking workflow
 * Linked the backlog workflow from the project documentation
 * Clarified that completed backlog items must keep docs and changelog entries aligned with implementation changes
+* Switched hook execution from ``pre-commit`` to ``prek`` and updated hook revisions for Python 3.14 compatibility
 
 0.5.3 (2025-10-28)
 ------------------

@@ -8,9 +8,9 @@ django-indieweb
 .. image:: https://img.shields.io/pypi/v/django-indieweb.svg?style=for-the-badge
    :target: https://pypi.org/project/django-indieweb/
 
-.. image:: https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white&style=for-the-badge
-   :target: https://github.com/pre-commit/pre-commit
-   :alt: pre-commit
+.. image:: https://img.shields.io/badge/prek-enabled-brightgreen?style=for-the-badge
+   :target: https://github.com/j178/prek
+   :alt: prek
 
 A Django application that provides IndieAuth, Micropub, and Webmention endpoints for IndieWeb integration
 

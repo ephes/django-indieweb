@@ -84,7 +84,7 @@ Ready to contribute? Here's how to set up ``django-indieweb`` for local developm
     $ uv run mypy                      # Type checking
     $ uv run ruff check .              # Linting
     $ uv run ruff format .             # Code formatting
-    $ uv run pre-commit run --all-files  # All pre-commit checks
+    $ uv run prek run --all-files  # All configured hooks
 
 6. To test against multiple Python versions (3.10, 3.11, 3.12, 3.13), use tox::
 
@@ -141,8 +141,8 @@ Here's a quick reference of development commands::
     # Fix linting issues
     uv run ruff check --fix .
 
-    # Run all pre-commit hooks
-    pre-commit run --all-files
+    # Run all configured hooks
+    uv run prek run --all-files
 
     # Build documentation locally
     cd docs && uv run sphinx-build -b html . _build/html

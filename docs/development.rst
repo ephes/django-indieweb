@@ -39,9 +39,9 @@ To run tests for a specific Python version::
 
     tox -e py313
 
-To run pre-commit checks::
+To run configured hooks::
 
-    tox -e pre-commit
+    tox -e hooks
 
 Code Quality
 ------------
@@ -60,9 +60,9 @@ Fix linting issues automatically::
 
     uv run ruff check --fix .
 
-Run all pre-commit hooks::
+Run all configured hooks::
 
-    pre-commit run --all-files
+    uv run prek run --all-files
 
 Type Checking
 -------------

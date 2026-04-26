@@ -31,6 +31,10 @@ lint:
 typecheck:
     uv run mypy
 
+# Run configured repository hooks
+hooks:
+    uv run prek run --all-files
+
 # Remove build artifacts
 clean-build:
     rm -fr build/
