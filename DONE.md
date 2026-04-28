@@ -2,6 +2,19 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-04-28
+
+### Canonicalize URLs During Target-Link Verification
+
+- Replaced receive-side Webmention target verification in `src/indieweb/processors.py` with parsed `href` extraction via BeautifulSoup and conservative canonical URL comparison, preserving the previous lenient "any `href` attribute" behavior while removing raw substring matching. The matching policy ignores fragments, lowercases scheme and host only, treats one leading `www.` hostname as equivalent, treats one trailing slash on non-root paths as equivalent, and sorts decoded query key/value pairs with `keep_blank_values=True` while preserving duplicate pairs. Userinfo and explicit ports must match exactly.
+- Applied the same canonical URL comparison to microformats2 target matching for `in-reply-to`, `like-of`, `repost-of`, `bookmark-of`, and `mention-of`, plus parsed HTML `href` content and conservative plain-text URL-token fallback. Reply/like/repost classification now works when the source uses a supported target URL variant.
+- Preserved storage semantics: `Webmention.source_url` and `Webmention.target_url` remain the submitted values. Endpoint domain validation in `WebmentionEndpoint.is_valid_target()` is unchanged.
+- Out of scope: asynchronous receiving, redirect following, `410 Gone`/source-removal semantics beyond the existing behavior, and the full authorship fallback chain remain tracked separately in `BACKLOG.md`.
+- Added focused regression tests in `tests/test_webmention_processor.py` for exact links, non-anchor `href` values, fragments in either source or submitted target, scheme/host case normalization, leading `www.`, trailing slash equivalence, root-path slash preservation, path case significance, query-parameter ordering, duplicate query pair preservation, different-path/query rejection, malformed href handling, process-level canonical target verification, dict-shaped microformats URL properties, plain-text URL-token fallback, and canonical microformats classification.
+- Documentation: updated `docs/webmention.rst` with the receive-side target matching policy; checked `docs/api.rst` and `docs/concepts.rst` and no changes were needed because they do not document this target-link verification detail.
+- Changelog: updated `docs/changelog.rst` with the Webmention target verification behavior fix.
+- Validation: `uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
+
 ## 2026-04-26
 
 ### Decide and Implement IndieAuth-Side Scope Handling and Token-Issuance Semantics

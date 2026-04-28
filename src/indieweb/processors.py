@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 import mf2py
+from bs4 import BeautifulSoup, Tag
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.dispatch import Signal
@@ -28,6 +29,107 @@ logger = logging.getLogger(__name__)
 
 # Signal sent when a webmention is received and processed
 webmention_received = Signal()
+TRAILING_TEXT_URL_PUNCTUATION = ".,;:!?\"'"
+LEADING_TEXT_URL_PUNCTUATION = "([{<\"'"
+WRAPPING_TEXT_URL_PUNCTUATION = {
+    ")": "(",
+    "]": "[",
+    "}": "{",
+    ">": "<",
+}
+
+
+def _canonical_netloc_for_match(parsed: ParseResult) -> str | None:
+    """Return a canonical netloc for URL target matching, or ``None`` if malformed."""
+    try:
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None
+
+    if not host:
+        return None
+
+    normalized_host = host.lower()
+    if normalized_host.startswith("www."):
+        normalized_host = normalized_host[4:]
+    if ":" in normalized_host and not normalized_host.startswith("["):
+        normalized_host = f"[{normalized_host}]"
+
+    userinfo = ""
+    if "@" in parsed.netloc:
+        userinfo = parsed.netloc.rsplit("@", 1)[0] + "@"
+
+    netloc = f"{userinfo}{normalized_host}"
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return netloc
+
+
+def _canonicalize_url_for_match(value: str) -> str:
+    """Return a conservative canonical URL string for Webmention target matching."""
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return value
+
+    if not parsed.scheme or not parsed.netloc:
+        return value
+
+    scheme = parsed.scheme.lower()
+    netloc = _canonical_netloc_for_match(parsed)
+    if netloc is None:
+        return value
+
+    path = parsed.path
+    if path not in ("", "/") and path.endswith("/"):
+        path = path[:-1]
+
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    query = urlencode(sorted(query_pairs))
+
+    return urlunparse((scheme, netloc, path, parsed.params, query, ""))
+
+
+def _is_absolute_url_for_match(value: str) -> bool:
+    """Return whether ``value`` is eligible for URL canonicalization matching."""
+    try:
+        parsed = urlparse(value)
+        return bool(parsed.scheme and parsed.netloc)
+    except ValueError:
+        return False
+
+
+def _urls_match(left: str, right: str) -> bool:
+    """Compare two URLs using the conservative Webmention target matching policy."""
+    if left == right:
+        return True
+    if not _is_absolute_url_for_match(left) or not _is_absolute_url_for_match(right):
+        return False
+    return _canonicalize_url_for_match(left) == _canonicalize_url_for_match(right)
+
+
+def _html_links_to_target(html_content: str, target_url: str) -> bool:
+    """Return whether ``html_content`` contains an href value matching ``target_url``."""
+    soup = BeautifulSoup(html_content, "html.parser")
+    for tag in soup.find_all(href=True):
+        if isinstance(tag, Tag):
+            href = tag.get("href")
+            if isinstance(href, str) and _urls_match(href, target_url):
+                return True
+    return False
+
+
+def _strip_plain_text_url_punctuation(value: str) -> str:
+    """Strip surrounding prose punctuation without removing balanced URL parentheses."""
+    candidate = value.lstrip(LEADING_TEXT_URL_PUNCTUATION).rstrip(TRAILING_TEXT_URL_PUNCTUATION)
+    while candidate:
+        closing = candidate[-1]
+        opening = WRAPPING_TEXT_URL_PUNCTUATION.get(closing)
+        if opening is None or candidate.count(opening) >= candidate.count(closing):
+            break
+        candidate = candidate[:-1]
+    return candidate
 
 
 class WebmentionProcessor:
@@ -146,9 +248,7 @@ class WebmentionProcessor:
 
     def _verify_target_link(self, html_content: str, target_url: str) -> bool:
         """Verify that the target URL is linked in the source content."""
-        # Simple check for the URL in href attributes
-        # This could be made more sophisticated with proper HTML parsing
-        return f'href="{target_url}"' in html_content or f"href='{target_url}'" in html_content
+        return _html_links_to_target(html_content, target_url)
 
     def _parse_microformats(self, webmention: Webmention, html_content: str, source_url: str, target_url: str) -> None:
         """Parse microformats2 data from HTML content."""
@@ -216,15 +316,15 @@ class WebmentionProcessor:
 
                 # Check various properties for the target URL
                 for prop in ["in-reply-to", "like-of", "repost-of", "bookmark-of", "mention-of"]:
-                    if target_url in properties.get(prop, []):
+                    if self._property_links_to_target(properties, prop, target_url):
                         return item
 
                 # Check content for the URL
                 content = properties.get("content", [])
                 for c in content:
-                    if isinstance(c, dict) and target_url in c.get("html", ""):
+                    if isinstance(c, dict) and self._content_links_to_target(c, target_url):
                         return item
-                    elif isinstance(c, str) and target_url in c:
+                    elif isinstance(c, str) and self._text_links_to_target(c, target_url):
                         return item
 
             # Recursively search children
@@ -235,6 +335,38 @@ class WebmentionProcessor:
                     return result
 
         return None
+
+    def _property_links_to_target(self, properties: dict[str, Any], prop: str, target_url: str) -> bool:
+        """Return whether a microformats URL property matches the target."""
+        values = properties.get(prop, [])
+        if not isinstance(values, list):
+            values = [values]
+        for value in values:
+            if isinstance(value, str) and _urls_match(value, target_url):
+                return True
+            if isinstance(value, dict):
+                candidate = value.get("value")
+                if isinstance(candidate, str) and _urls_match(candidate, target_url):
+                    return True
+        return False
+
+    def _content_links_to_target(self, content: dict[str, Any], target_url: str) -> bool:
+        """Return whether parsed microformats content links to the target."""
+        html = content.get("html")
+        if isinstance(html, str) and _html_links_to_target(html, target_url):
+            return True
+        value = content.get("value")
+        return isinstance(value, str) and self._text_links_to_target(value, target_url)
+
+    def _text_links_to_target(self, value: str, target_url: str) -> bool:
+        """Return whether a plain-text microformats value is exactly or URL-token linked to the target."""
+        if _urls_match(value, target_url):
+            return True
+        for token in value.split():
+            candidate = _strip_plain_text_url_punctuation(token)
+            if _urls_match(candidate, target_url):
+                return True
+        return False
 
     def _search_for_any_h_entry(self, items: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Recursively search for any h-entry (fallback)."""
@@ -396,13 +528,13 @@ class WebmentionProcessor:
         properties = h_entry.get("properties", {})
 
         # Check for specific mention types
-        if target_url in properties.get("in-reply-to", []):
+        if self._property_links_to_target(properties, "in-reply-to", target_url):
             return "reply"
-        elif target_url in properties.get("like-of", []):
+        elif self._property_links_to_target(properties, "like-of", target_url):
             return "like"
-        elif target_url in properties.get("repost-of", []):
+        elif self._property_links_to_target(properties, "repost-of", target_url):
             return "repost"
-        elif target_url in properties.get("bookmark-of", []):
+        elif self._property_links_to_target(properties, "bookmark-of", target_url):
             return "mention"  # Treat bookmarks as mentions for now
 
         # Default to generic mention

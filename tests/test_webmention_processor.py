@@ -24,6 +24,84 @@ class TestWebmentionProcessor:
         """Create a RequestFactory instance."""
         return RequestFactory()
 
+    def test_verify_target_link_accepts_exact_absolute_link(self, processor):
+        """Test that exact absolute target links still verify."""
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    def test_verify_target_link_matches_source_fragment_variant(self, processor):
+        """Test that a source link with a fragment matches a target without it."""
+        target_url = "https://mysite.com/article"
+        html_content = '<html><body><a href="https://mysite.com/article#comments">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    def test_verify_target_link_matches_submitted_fragment_variant(self, processor):
+        """Test that a submitted target with a fragment matches a source link without it."""
+        target_url = "https://mysite.com/article#comments"
+        html_content = '<html><body><a href="https://mysite.com/article">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    def test_verify_target_link_matches_scheme_and_host_case_variants(self, processor):
+        """Test that scheme and host case differences are ignored."""
+        target_url = "https://mysite.com/Post"
+        html_content = '<html><body><a href="HTTPS://MySite.COM/Post">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    def test_verify_target_link_matches_leading_www_variant(self, processor):
+        """Test that leading www on the host is ignored during target matching."""
+        target_url = "https://mysite.com/article"
+        html_content = '<html><body><a href="https://www.mysite.com/article">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    def test_verify_target_link_matches_trailing_slash_variant(self, processor):
+        """Test that one trailing slash on non-root paths is ignored."""
+        target_url = "https://mysite.com/article"
+        html_content = '<html><body><a href="https://mysite.com/article/">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    def test_verify_target_link_matches_query_parameter_order_variant(self, processor):
+        """Test that query parameter ordering is ignored."""
+        target_url = "https://mysite.com/article?a=1&b=2"
+        html_content = '<html><body><a href="https://mysite.com/article?b=2&a=1">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    def test_verify_target_link_accepts_non_anchor_href(self, processor):
+        """Test that structured href extraction preserves non-anchor href matching."""
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><head><link rel="canonical" href="{target_url}"></head></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is True
+
+    @pytest.mark.parametrize(
+        ("href", "target_url"),
+        [
+            ("https://mysite.com/other", "https://mysite.com/article"),
+            ("https://mysite.com/article?a=2", "https://mysite.com/article?a=1"),
+            ("https://mysite.com/article?a=1&a=1", "https://mysite.com/article?a=1"),
+            ("https://mysite.com/foo", "https://mysite.com/Foo"),
+            ("https://mysite.com/", "https://mysite.com"),
+        ],
+    )
+    def test_verify_target_link_rejects_non_equivalent_urls(self, processor, href, target_url):
+        """Test that genuinely different target URLs do not verify."""
+        html_content = f'<html><body><a href="{href}">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is False
+
+    def test_verify_target_link_handles_malformed_href_without_crashing(self, processor):
+        """Test that malformed href values do not crash target verification."""
+        html_content = '<html><body><a href="http://[broken">Link</a></body></html>'
+
+        assert processor._verify_target_link(html_content, "https://mysite.com/article") is False
+
     def test_processor_fetches_source_url(self, processor):
         """Test that processor fetches the source URL."""
         source_url = "https://example.com/post"
@@ -50,6 +128,27 @@ class TestWebmentionProcessor:
                 source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
             )
             assert webmention.status == "verified"
+
+    def test_processor_verifies_canonical_equivalent_target_link(self, processor):
+        """Test processing succeeds when the source links a canonical-equivalent target."""
+        source_url = "https://example.com/canonical-source"
+        target_url = "https://mysite.com/article?a=1&b=2"
+        html_content = '<html><body><a href="https://www.mysite.com/article/?b=2&a=1#comments">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.text = html_content
+            mock_response.headers = {"content-type": "text/html"}
+            mock_client.get.return_value = mock_response
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.source_url == source_url
+            assert webmention.target_url == target_url
 
     def test_processor_handles_fetch_errors(self, processor):
         """Test that processor handles fetch errors gracefully."""
@@ -269,6 +368,88 @@ class TestWebmentionProcessor:
 
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.mention_type == "repost"
+
+    def test_processor_classifies_microformats_with_canonical_target_variant(self, processor):
+        """Test microformats mention type matching uses canonical URL equivalence."""
+        source_url = "https://example.com/canonical-reply"
+        target_url = "https://mysite.com/article?a=1&b=2"
+
+        html_content = """
+        <html>
+        <body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="https://www.mysite.com/article/?b=2&a=1#comments">Reply</a>
+                <div class="e-content">This is a reply</div>
+            </article>
+        </body>
+        </html>
+        """
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.text = html_content
+            mock_response.headers = {"content-type": "text/html"}
+            mock_client.get.return_value = mock_response
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.mention_type == "reply"
+
+    def test_search_for_mentioning_entry_matches_dict_property_value(self, processor):
+        """Test microformats URL properties can match dict-shaped values."""
+        target_url = "https://mysite.com/article"
+        items = [
+            {
+                "type": ["h-entry"],
+                "properties": {
+                    "like-of": [{"value": "https://www.mysite.com/article#liked"}],
+                },
+            }
+        ]
+
+        assert processor._search_for_mentioning_entry(items, target_url) == items[0]
+
+    def test_search_for_mentioning_entry_matches_plain_text_url_token(self, processor):
+        """Test plain text content can conservatively match target URL tokens."""
+        target_url = "https://en.wikipedia.org/wiki/Foo_(bar)"
+        items = [
+            {
+                "type": ["h-entry"],
+                "properties": {
+                    "content": [
+                        {
+                            "value": (
+                                "Reading https://en.wikipedia.org/wiki/Foo_(bar), then https://example.com/other."
+                            ),
+                        }
+                    ],
+                },
+            }
+        ]
+
+        assert processor._search_for_mentioning_entry(items, target_url) == items[0]
+
+    def test_search_for_mentioning_entry_matches_angle_bracketed_plain_text_url_token(self, processor):
+        """Test angle-bracketed plain text URL tokens can match the target."""
+        target_url = "https://mysite.com/article"
+        items = [
+            {
+                "type": ["h-entry"],
+                "properties": {
+                    "content": [
+                        {
+                            "value": "Reading <https://mysite.com/article> now.",
+                        }
+                    ],
+                },
+            }
+        ]
+
+        assert processor._search_for_mentioning_entry(items, target_url) == items[0]
 
     def test_processor_handles_no_microformats(self, processor):
         """Test that processor handles pages without microformats."""

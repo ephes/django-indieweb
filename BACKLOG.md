@@ -11,9 +11,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Make Webmention receiving asynchronous.
   - Reference: `src/indieweb/views.py`.
   - Outcome: the receiver returns an accepted/queued response and processing happens outside the request path; tests cover slow or timing-out sources.
-- [ ] Canonicalize URLs during target-link verification.
-  - Reference: `src/indieweb/processors.py`.
-  - Outcome: target checks handle common URL variations such as fragments, trailing slashes, `www`, and query-parameter ordering.
 - [ ] Handle source removal and `410 Gone` semantics for existing Webmentions.
   - Reference: `src/indieweb/processors.py`.
   - Outcome: removed sources update existing Webmentions consistently, with tests and documentation.

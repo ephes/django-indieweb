@@ -115,6 +115,39 @@ Create a custom spam checker:
                 'details': 'Keyword-based detection'
             }
 
+Target URL Matching
+===================
+
+When receiving a Webmention, django-indieweb fetches the source page and
+verifies that it links to the submitted ``target`` URL before marking the
+Webmention as verified. Target verification parses HTML ``href`` attributes
+from the source page and compares them with a conservative canonical URL
+matching policy. The stored ``Webmention.source_url`` and
+``Webmention.target_url`` remain the submitted values; canonicalization is
+used only while matching.
+
+The same matching policy is also used when parsing microformats2 target
+properties such as ``u-in-reply-to``, ``u-like-of``, and ``u-repost-of``, so
+reply/like/repost classification still works when the source page uses a
+common URL variant.
+
+Supported matching variants:
+
+* URL fragments are ignored, so ``https://mysite.com/post#comments`` matches
+  ``https://mysite.com/post``.
+* URL scheme and host case are ignored, while path case remains significant.
+* A leading ``www.`` hostname is treated as equivalent to the bare hostname.
+* One trailing slash on non-root paths is treated as equivalent.
+* Query parameters are compared independent of order. Duplicate query
+  key/value pairs are preserved and must still match.
+
+The receiver does not resolve relative source links during target verification,
+does not follow redirects as part of this matching step, and does not broaden
+endpoint domain validation. The submitted ``target`` must still pass the
+Webmention endpoint's domain check before processing begins. Userinfo and
+explicit ports, if present, must match exactly; default ports are not
+normalized away.
+
 Template Usage
 ==============
 
