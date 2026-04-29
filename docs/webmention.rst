@@ -195,12 +195,16 @@ authorship fallback chain:
 * Explicit ``author`` data on the ``h-entry`` has priority. Nested ``h-card``
   author data is used directly, and URL-valued ``author`` references are
   resolved to matching ``h-card`` items already present in the fetched source
-  document.
+  document. Same-page author ``h-card`` URL matching uses the same
+  conservative URL policy described in `Target URL Matching`_, so common
+  variants such as fragments, scheme/host case, a leading ``www.``, one
+  non-root trailing slash, and query-parameter ordering do not prevent a local
+  h-card match.
 * If the ``h-entry`` has no explicit author, ``rel=author`` links are resolved
   against the final fetched source URL and matched to ``h-card`` items already
-  present in the same parsed document. Same-page fragment links such as
-  ``href="#author"`` can match an ``h-card`` with the corresponding HTML
-  ``id``.
+  present in the same parsed document using that same conservative URL policy.
+  Same-page fragment links such as ``href="#author"`` can match an ``h-card``
+  with the corresponding HTML ``id``.
 * If neither explicit author data nor ``rel=author`` yields an author, a single
   unambiguous page-level ``h-card`` outside the ``h-entry`` is used as a
   fallback author. If multiple page-level ``h-card`` items are present, no

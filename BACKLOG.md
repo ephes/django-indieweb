@@ -29,12 +29,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 2
 
-### Webmentions Reliability and Compliance
-
-- [ ] Align Webmention author h-card URL matching with canonical URL matching.
-  - References: `src/indieweb/processors.py`, `tests/test_webmention_processor.py`.
-  - Outcome: same-page h-card lookup for explicit author URL references and `rel=author` uses the same conservative canonical URL comparison already used for target verification, with regression tests for trailing slash, leading `www.`, scheme/host case, and query ordering variants.
-
 ### Documentation Audit
 
 - [ ] Audit IndieWeb docs for stale settings, commands, and behavior notes.

@@ -1219,6 +1219,101 @@ class TestWebmentionProcessor:
             assert webmention.author_photo == "https://example.com/avatar.jpg"
             assert webmention.mention_type == "like"
 
+    @pytest.mark.parametrize(
+        ("author_reference", "h_card_url"),
+        [
+            ("https://example.com/author/", "https://example.com/author"),
+            ("https://www.example.com/author", "https://example.com/author"),
+            ("HTTPS://Example.COM/author", "https://example.com/author"),
+            ("https://example.com/author#bio", "https://example.com/author"),
+            ("https://example.com/author?b=2&a=1", "https://example.com/author?a=1&b=2"),
+        ],
+    )
+    def test_processor_matches_explicit_author_reference_to_canonical_hcard_url(
+        self, processor, author_reference, h_card_url
+    ):
+        """Test explicit URL-valued p-author references use canonical h-card URL matching."""
+        source_url = "https://example.com/post/123"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <body>
+            <div class="h-card">
+                <img class="u-photo" src="https://example.com/avatar.jpg" alt="John">
+                <a class="p-name u-url" href="{h_card_url}">John Doe</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-like-of" href="{target_url}">Liked this</a>
+                <data class="p-author" value="{author_reference}"></data>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "John Doe"
+            assert webmention.author_url == h_card_url
+            assert webmention.author_photo == "https://example.com/avatar.jpg"
+
+    def test_processor_matches_rel_author_to_canonical_hcard_url(self, processor):
+        """Test rel=author uses canonical h-card URL matching."""
+        source_url = "https://example.com/post/123"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="https://www.example.com/author/?b=2&a=1"></head>
+        <body>
+            <div class="h-card">
+                <img class="u-photo" src="https://example.com/avatar.jpg" alt="John">
+                <a class="p-name u-url" href="https://example.com/author?a=1&b=2">John Doe</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-like-of" href="{target_url}">Liked this</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "John Doe"
+            assert webmention.author_url == "https://example.com/author?a=1&b=2"
+            assert webmention.author_photo == "https://example.com/avatar.jpg"
+
+    def test_find_h_card_by_url_ignores_non_string_url_properties(self, processor):
+        """Test malformed h-card URL properties do not crash canonical h-card lookup."""
+        items = [
+            {
+                "type": ["h-card"],
+                "properties": {
+                    "name": ["Broken"],
+                    "url": [{"value": "https://example.com/author"}, None],
+                },
+            },
+            {
+                "type": ["h-card"],
+                "properties": {
+                    "name": ["John Doe"],
+                    "url": ["https://example.com/author"],
+                },
+            },
+        ]
+
+        h_card = processor._search_items_for_h_card(items, "https://example.com/author/")
+
+        assert h_card == items[1]
+
     def test_processor_handles_nested_hcard_in_hfeed(self, processor):
         """Test that processor handles h-card nested inside an h-feed structure."""
         source_url = "https://example.com/feed"
@@ -1586,3 +1681,42 @@ class TestWebmentionProcessor:
             assert webmention.author_name == "Local Profile Name"
             assert webmention.author_url == "https://example.com/authors/local"
             assert webmention.author_photo == "https://example.com/local-profile.jpg"
+
+    def test_processor_uses_local_profile_after_canonical_hcard_url_match(self, processor):
+        """Test Profile overrides still apply after canonical h-card URL matching."""
+        user = get_user_model().objects.create_user(username="canonicalauthor", email="canonical@example.com")
+        Profile.objects.create(
+            user=user,
+            h_card={
+                "name": ["Canonical Profile Name"],
+                "url": ["https://example.com/authors/canonical"],
+                "photo": ["https://example.com/canonical-profile.jpg"],
+            },
+        )
+        source_url = "https://remote.example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="https://www.example.com/authors/canonical/"></head>
+        <body>
+            <div class="h-card">
+                <img class="u-photo" src="https://remote.example.com/remote.jpg" alt="Remote">
+                <a class="p-name u-url" href="https://example.com/authors/canonical">Remote Parsed Name</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Canonical Profile Name"
+            assert webmention.author_url == "https://example.com/authors/canonical"
+            assert webmention.author_photo == "https://example.com/canonical-profile.jpg"

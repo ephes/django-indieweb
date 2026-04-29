@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Align Webmention Author H-Card URL Matching with Canonical URL Matching
+
+- Updated receive-side Webmention same-page author lookup in `src/indieweb/processors.py` so h-card `url` properties are compared with the existing `_urls_match()` conservative canonical URL policy instead of exact string membership.
+- Matching policy: explicit URL-valued `p-author` references and local `rel=author` links resolve against the final fetched source URL, preserve same-document fragment `id` lookup first, then match same-page h-card `u-url` values with the existing target-verification policy. That policy ignores fragments, lowercases scheme and host, treats a leading `www.` hostname as equivalent, treats one trailing slash on non-root paths as equivalent, and compares query parameters independent of order while preserving duplicate key/value pairs. Non-string h-card URL property values are ignored defensively.
+- Preserved behavior: unmatched explicit author URL references still fall back to URL-as-name, `rel=author` with no matching h-card can still fall through to a single page-level h-card, multiple page-level h-cards remain ambiguous, relative author/photo URLs continue to resolve against the final fetched source URL after redirects, and local `Profile` overrides still apply after an author is extracted.
+- Out of scope: asynchronous Webmention receiving, remote author-page fetching, vouch support, Salmentions, and unrelated endpoint, target-link, redirect, source-removal, spam, or source/target storage behavior remain unchanged.
+- Added focused regression tests in `tests/test_webmention_processor.py` for explicit author URL matches across trailing slash, leading `www.`, scheme/host case, ignored-fragment, and query-order variants; `rel=author` using the same canonical h-card URL matching path; malformed non-string h-card URL properties; unmatched URL-as-name fallback; fragment `id` matching; local `Profile` override after canonical h-card matching; and page-level h-card ambiguity behavior.
+- Documentation: updated `docs/webmention.rst` with the canonical same-page author h-card matching policy. Checked `docs/api.rst`, `docs/concepts.rst`, and `docs/h-card.rst`; no changes were needed because endpoint/status response shapes, conceptual protocol wording, and local h-card model/template-tag usage did not change.
+- Changelog: updated `docs/changelog.rst` with the receive-side author h-card URL matching fix.
+- Validation: `uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
+
 ### Complete the Webmention Authorship Fallback Chain
 
 - Added receive-side Webmention authorship fallbacks in `src/indieweb/processors.py` without changing endpoint responses, storage semantics, or network behavior.

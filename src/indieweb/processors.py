@@ -406,8 +406,11 @@ class WebmentionProcessor:
             if "h-card" in item.get("type", []):
                 properties = item.get("properties", {})
                 urls = properties.get("url", [])
-                if url in urls:
-                    return item
+                if not isinstance(urls, list):
+                    urls = [urls]
+                for candidate_url in urls:
+                    if isinstance(candidate_url, str) and _urls_match(candidate_url, url):
+                        return item
 
             # Recursively search children
             children = item.get("children", [])
