@@ -1,5 +1,6 @@
 """Test cases for WebmentionProcessor."""
 
+from datetime import timedelta
 from unittest.mock import Mock, patch
 
 import pytest
@@ -8,6 +9,24 @@ from django.utils import timezone as django_timezone
 
 from indieweb.models import Webmention
 from indieweb.processors import WebmentionProcessor
+
+
+def _mock_source_response(
+    mock_get_class,
+    *,
+    status_code,
+    text="",
+    content_type="text/html",
+):
+    """Configure the patched httpx client to return a source response."""
+    mock_client = Mock()
+    mock_get_class.return_value.__enter__.return_value = mock_client
+    mock_response = Mock()
+    mock_response.status_code = status_code
+    mock_response.text = text
+    mock_response.headers = {"content-type": content_type}
+    mock_client.get.return_value = mock_response
+    return mock_response
 
 
 @pytest.mark.django_db
@@ -558,6 +577,58 @@ class TestWebmentionProcessor:
 
                 assert webmention.status == "spam"
                 assert webmention.spam_check_result["is_spam"] is True
+                assert webmention.verified_at is None
+
+    @override_settings(INDIEWEB_SPAM_CHECKER="indieweb.interfaces.NoOpSpamChecker")
+    def test_processor_clears_verified_timestamp_and_preserves_fields_when_existing_webmention_becomes_spam(
+        self, processor
+    ):
+        """Test that spam reclassification clears timestamps and preserves parsed fields."""
+        source_url = "https://spam.com/post"
+        target_url = "https://mysite.com/article"
+        Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            status="verified",
+            author_name="Original Author",
+            content="Original content",
+            content_html="<p>Original content</p>",
+            mention_type="reply",
+            verified_at=django_timezone.now() - timedelta(days=1),
+        )
+
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <div class="p-author h-card">
+                    <a class="p-name" href="https://spam.com">Spam Author</a>
+                </div>
+                <a class="u-like-of" href="{target_url}">Liked</a>
+                <div class="e-content">Spam content</div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
+                mock_check.return_value = {
+                    "is_spam": True,
+                    "confidence": 0.95,
+                    "details": "Spam keywords detected",
+                }
+
+                webmention = processor.process_webmention(source_url, target_url)
+
+                assert webmention.status == "spam"
+                assert webmention.verified_at is None
+                assert webmention.author_name == "Original Author"
+                assert webmention.content == "Original content"
+                assert webmention.content_html == "<p>Original content</p>"
+                assert webmention.mention_type == "reply"
 
     def test_processor_updates_existing_webmention(self, processor):
         """Test that processor updates existing webmention."""
@@ -611,6 +682,7 @@ class TestWebmentionProcessor:
         """Test that processor handles when source is deleted."""
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
+        verified_at = django_timezone.now()
 
         # Create existing verified webmention
         existing = Webmention.objects.create(
@@ -618,27 +690,132 @@ class TestWebmentionProcessor:
             target_url=target_url,
             status="verified",
             author_name="John Doe",
+            author_url="https://example.com/author",
+            author_photo="https://example.com/avatar.jpg",
             content="Original content",
+            content_html="<p>Original content</p>",
+            verified_at=verified_at,
         )
 
         with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 410  # Gone
-
-            mock_client.get.return_value = mock_response
+            _mock_source_response(mock_get_class, status_code=410)
 
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.id == existing.id
             assert webmention.status == "failed"
+            assert webmention.source_url == source_url
+            assert webmention.target_url == target_url
+            assert webmention.verified_at is None
             # Original content should be preserved
             assert webmention.author_name == "John Doe"
+            assert webmention.author_url == "https://example.com/author"
+            assert webmention.author_photo == "https://example.com/avatar.jpg"
             assert webmention.content == "Original content"
+            assert webmention.content_html == "<p>Original content</p>"
+
+    def test_processor_clears_verified_timestamp_when_source_no_longer_links_target(self, processor):
+        """Test that a verified webmention fails when the source no longer links the target."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+
+        existing = Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            status="verified",
+            author_name="John Doe",
+            content="Original content",
+            verified_at=django_timezone.now(),
+        )
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(
+                mock_get_class,
+                status_code=200,
+                text="<html><body><p>The old target link is gone.</p></body></html>",
+            )
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.id == existing.id
+            assert webmention.status == "failed"
+            assert webmention.verified_at is None
+            assert webmention.author_name == "John Doe"
+            assert webmention.content == "Original content"
+
+    def test_processor_can_reverify_existing_failed_webmention(self, processor):
+        """Test that a failed webmention can become verified again when the link returns."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        existing = Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            status="failed",
+            author_name="Old Name",
+            content="Original content",
+            verified_at=django_timezone.now() - timedelta(days=1),
+        )
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <div class="p-author h-card">
+                    <a class="p-name" href="https://example.com">New Name</a>
+                </div>
+                <div class="e-content">Restored content <a href="{target_url}">link</a></div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            before = django_timezone.now()
+            webmention = processor.process_webmention(source_url, target_url)
+            after = django_timezone.now()
+
+            assert webmention.id == existing.id
+            assert webmention.status == "verified"
+            assert webmention.author_name == "New Name"
+            assert "Restored content" in webmention.content
+            assert webmention.verified_at is not None
+            assert before <= webmention.verified_at <= after
+
+    def test_processor_handles_new_gone_source_without_verified_timestamp(self, processor):
+        """Test that a new webmention with a gone source fails predictably."""
+        source_url = "https://example.com/gone"
+        target_url = "https://mysite.com/article"
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=410)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "failed"
+            assert webmention.source_url == source_url
+            assert webmention.target_url == target_url
+            assert webmention.verified_at is None
+
+    def test_processor_clears_verified_timestamp_on_failed_fetch(self, processor):
+        """Test that failed reprocessing clears stale verification timestamps."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        existing = Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            status="verified",
+            verified_at=django_timezone.now(),
+        )
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=404)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.id == existing.id
+            assert webmention.status == "failed"
+            assert webmention.verified_at is None
 
     def test_processor_emits_signal(self, processor):
         """Test that processor emits webmention_received signal."""

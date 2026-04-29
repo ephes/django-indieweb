@@ -178,29 +178,25 @@ class WebmentionProcessor:
             # Check response status
             if response.status_code == 410:
                 # Source has been deleted
-                webmention.status = "failed"
-                webmention.save()
+                self._mark_webmention_failed(webmention)
                 logger.info(f"Source URL returned 410 Gone: {source_url}")
                 return webmention
 
             if response.status_code != 200:
-                webmention.status = "failed"
-                webmention.save()
+                self._mark_webmention_failed(webmention)
                 logger.warning(f"Failed to fetch source URL {source_url}: {response.status_code}")
                 return webmention
 
             # Check content type
             content_type = response.headers.get("content-type", "").lower()
             if not content_type.startswith("text/html"):
-                webmention.status = "failed"
-                webmention.save()
+                self._mark_webmention_failed(webmention)
                 logger.warning(f"Source URL is not HTML: {content_type}")
                 return webmention
 
             # Verify target link exists
             if not self._verify_target_link(response.text, target_url):
-                webmention.status = "failed"
-                webmention.save()
+                self._mark_webmention_failed(webmention)
                 logger.warning(f"Target URL {target_url} not found in source")
                 return webmention
 
@@ -214,7 +210,9 @@ class WebmentionProcessor:
                 webmention.spam_check_result = spam_result
                 if spam_result.get("is_spam", False):
                     webmention.status = "spam"
-                    webmention.save()
+                    webmention.verified_at = None
+                    webmention.save(update_fields=["spam_check_result", "status", "verified_at", "modified"])
+                    webmention.refresh_from_db()
                     logger.info(f"Webmention marked as spam: {source_url}")
                     return webmention
 
@@ -236,9 +234,15 @@ class WebmentionProcessor:
 
         except Exception as e:
             logger.error(f"Error processing webmention from {source_url}: {e}")
-            webmention.status = "failed"
-            webmention.save()
+            self._mark_webmention_failed(webmention)
             return webmention
+
+    def _mark_webmention_failed(self, webmention: Webmention) -> None:
+        """Mark a Webmention as failed without discarding previously parsed fields."""
+        webmention.status = "failed"
+        webmention.verified_at = None
+        webmention.save(update_fields=["status", "verified_at", "modified"])
+        webmention.refresh_from_db()
 
     def _fetch_source(self, source_url: str) -> httpx.Response:
         """Fetch the source URL."""

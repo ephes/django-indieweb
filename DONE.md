@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-28
 
+### Handle Source Removal and `410 Gone` Semantics for Existing Webmentions
+
+- Added a shared failed-state update path in `src/indieweb/processors.py` so receive-side Webmention reprocessing consistently marks rows `failed` and clears `verified_at` when the source can no longer be verified.
+- Source-removal policy: if an existing Webmention source returns `410 Gone`, or returns `200 text/html` but no longer links to the submitted target, the existing row is marked `failed`, `verified_at` is set to `NULL`, and the submitted `source_url`/`target_url` plus previously parsed author/content/published/mention-type fields are preserved. Other processor failure paths that mark a row `failed` also clear `verified_at`, but are not documented as explicit removal signals because they may be transient. Spam reclassification also clears `verified_at` and preserves previously parsed fields when a row is marked `spam`. If the source later returns valid HTML that links to the target again, reprocessing can mark the same row `verified` with a fresh timestamp.
+- Out of scope: asynchronous Webmention receiving, redirect following, authorship fallback changes, vouch support, and Salmentions remain tracked separately in `BACKLOG.md`.
+- Added focused regression tests in `tests/test_webmention_processor.py` for existing verified `410 Gone` handling, HTML sources that no longer link to the target, new `410 Gone` rows, failed-fetch timestamp clearing, spam reclassification timestamp clearing and parsed-field preservation, and re-verifying an existing failed row when the source link returns.
+- Documentation: updated `docs/webmention.rst` with the reprocessing/source-removal behavior and field-preservation policy; checked `docs/api.rst` and `docs/concepts.rst` and no changes were needed because endpoint status response shape and conceptual Webmention wording did not change.
+- Changelog: updated `docs/changelog.rst` with the receive-side source-removal and stale timestamp behavior fix.
+- Validation: `uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
+
 ### Canonicalize URLs During Target-Link Verification
 
 - Replaced receive-side Webmention target verification in `src/indieweb/processors.py` with parsed `href` extraction via BeautifulSoup and conservative canonical URL comparison, preserving the previous lenient "any `href` attribute" behavior while removing raw substring matching. The matching policy ignores fragments, lowercases scheme and host only, treats one leading `www.` hostname as equivalent, treats one trailing slash on non-root paths as equivalent, and sorts decoded query key/value pairs with `keep_blank_values=True` while preserving duplicate pairs. Userinfo and explicit ports must match exactly.

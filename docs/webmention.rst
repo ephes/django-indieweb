@@ -148,6 +148,36 @@ Webmention endpoint's domain check before processing begins. Userinfo and
 explicit ports, if present, must match exactly; default ports are not
 normalized away.
 
+Reprocessing and Source Removal
+===============================
+
+Incoming Webmentions are keyed by the submitted ``source`` and ``target`` URLs.
+When the same pair is processed again, django-indieweb updates the existing
+``Webmention`` row rather than creating a duplicate.
+
+If a previously verified source returns ``410 Gone`` during reprocessing, the
+row is marked ``failed`` and ``verified_at`` is cleared. The submitted
+``source_url`` and ``target_url`` are preserved, and previously parsed fields
+such as author, content, HTML content, mention type, and published date are
+left intact so applications can keep historical display or moderation context.
+
+The same failed-state update is used when a source fetch succeeds with
+``text/html`` but the source page no longer links to the submitted target. This
+represents a removed Webmention: it is no longer considered currently verified,
+but the stored parsed fields are not destructively cleared.
+
+Other processing failures, including non-``200`` responses, non-HTML responses,
+and fetch errors, also mark the Webmention ``failed`` and clear ``verified_at``.
+Those failures are not treated as explicit source-removal signals in the
+documentation because they may be transient. If the source later returns valid
+HTML that links to the target again, reprocessing can mark the existing row
+``verified`` and assign a fresh ``verified_at`` timestamp.
+
+Spam reclassification also clears ``verified_at``. The source may still link to
+the target, but a ``spam`` row is not advertised as currently verified, and
+previously parsed author, content, published, and mention-type fields are
+preserved.
+
 Template Usage
 ==============
 

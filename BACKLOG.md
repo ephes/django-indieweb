@@ -11,9 +11,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Make Webmention receiving asynchronous.
   - Reference: `src/indieweb/views.py`.
   - Outcome: the receiver returns an accepted/queued response and processing happens outside the request path; tests cover slow or timing-out sources.
-- [ ] Handle source removal and `410 Gone` semantics for existing Webmentions.
-  - Reference: `src/indieweb/processors.py`.
-  - Outcome: removed sources update existing Webmentions consistently, with tests and documentation.
 - [ ] Follow and test HTTP redirects in Webmention receive and send paths.
   - References: `src/indieweb/processors.py`, `src/indieweb/senders.py`.
   - Outcome: redirect behavior is explicit, bounded, and covered by regression tests.
