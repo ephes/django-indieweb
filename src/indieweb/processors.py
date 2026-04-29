@@ -418,47 +418,81 @@ class WebmentionProcessor:
 
         return None
 
+    def _find_h_card_by_author_reference(
+        self, parsed: dict[str, Any], author_url: str, base_url: str
+    ) -> dict[str, Any] | None:
+        """Find an h-card referenced by an author URL or same-document fragment."""
+        resolved_url = urljoin(base_url, author_url)
+        parsed_url = urlparse(resolved_url)
+
+        if parsed_url.fragment:
+            h_card = self._find_h_card_by_id(parsed, parsed_url.fragment)
+            if h_card:
+                return h_card
+
+        return self._find_h_card_by_url(parsed, resolved_url)
+
+    def _find_h_card_by_id(self, parsed: dict[str, Any], element_id: str) -> dict[str, Any] | None:
+        """Find an h-card by its parsed HTML id."""
+        items = parsed.get("items", [])
+        return self._search_items_for_h_card_id(items, element_id)
+
+    def _search_items_for_h_card_id(self, items: list[dict[str, Any]], element_id: str) -> dict[str, Any] | None:
+        """Recursively search through items and their children for an h-card with a matching id."""
+        for item in items:
+            if "h-card" in item.get("type", []) and item.get("id") == element_id:
+                return item
+
+            children = item.get("children", [])
+            if children:
+                result = self._search_items_for_h_card_id(children, element_id)
+                if result:
+                    return result
+
+        return None
+
     def _extract_author(self, h_entry: dict[str, Any], parsed: dict[str, Any], base_url: str) -> dict[str, str]:
         """
         Extract author information from h-entry.
 
-        Implements a subset of the microformats2 authorship algorithm:
+        Implements the receive-side local/same-page portion of the microformats2 authorship algorithm:
         - Extracts author from nested h-card in author property
         - Resolves author URL references to h-cards on the same page
+        - Uses rel=author references to h-cards already parsed from the page
+        - Falls back to a single unambiguous page-level h-card when no explicit author exists
         - Falls back to using URL as name if no h-card found
 
         Does NOT currently implement:
         - Fetching remote author URLs
-        - Following rel=author links
-        - Using page-level h-card as fallback
 
         See: https://indieweb.org/authorship
         """
         properties = h_entry.get("properties", {})
         author_data = properties.get("author", [])
 
-        if not author_data:
-            return {}
+        if author_data:
+            author = author_data[0] if isinstance(author_data, list) else author_data
+            return self._extract_explicit_author(author, parsed, base_url)
 
-        author = author_data[0] if isinstance(author_data, list) else author_data
+        rel_author = self._find_author_from_rel_author(parsed, base_url)
+        if rel_author:
+            return rel_author
 
-        # If author is a string, check if it's a URL
+        return self._find_page_h_card_author(parsed, base_url)
+
+    def _extract_explicit_author(
+        self, author: str | dict[str, Any], parsed: dict[str, Any], base_url: str
+    ) -> dict[str, str]:
+        """Extract author data from an h-entry author property."""
         if isinstance(author, str):
-            # If it looks like a URL, try to find a matching h-card
-            if author.startswith("http://") or author.startswith("https://"):
-                # Look for h-card with matching URL in the parsed items
-                h_card = self._find_h_card_by_url(parsed, author)
+            if self._is_author_url_reference(author):
+                h_card = self._find_h_card_by_author_reference(parsed, author, base_url)
                 if h_card:
-                    # Extract info from the h-card
-                    card_props = h_card.get("properties", {})
-                    return {
-                        "name": self._get_first_property(card_props, "name"),
-                        "url": self._get_first_property(card_props, "url"),
-                        "photo": self._get_first_property(card_props, "photo"),
-                    }
+                    return self._extract_h_card_author(h_card, base_url)
                 # If no h-card found, use URL as both url and name (fallback to previous behavior)
                 # This ensures something is visible to users even when the h-card is missing
-                return {"url": author, "name": author, "photo": ""}
+                resolved_author_url = urljoin(base_url, author)
+                return {"url": resolved_author_url, "name": resolved_author_url, "photo": ""}
             # Otherwise, it's a plain text name
             return {"name": author}
 
@@ -471,21 +505,78 @@ class WebmentionProcessor:
                 # Might be a simplified format
                 author_props = author
 
-            result = {
-                "name": self._get_first_property(author_props, "name"),
-                "url": self._get_first_property(author_props, "url"),
-                "photo": self._get_first_property(author_props, "photo"),
-            }
-
-            # Make relative URLs absolute
-            if result["url"] and not result["url"].startswith("http"):
-                result["url"] = urljoin(base_url, result["url"])
-            if result["photo"] and not result["photo"].startswith("http"):
-                result["photo"] = urljoin(base_url, result["photo"])
-
-            return result
+            return self._extract_author_properties(author_props, base_url)
 
         return {}
+
+    def _is_author_url_reference(self, value: str) -> bool:
+        """Return whether a string author value should be treated as a URL reference."""
+        parsed = urlparse(value)
+        return parsed.scheme in ("http", "https") or value.startswith(("/", "./", "../", "#"))
+
+    def _find_author_from_rel_author(self, parsed: dict[str, Any], base_url: str) -> dict[str, str]:
+        """Resolve rel=author links to h-cards already present in the parsed source document."""
+        rels = parsed.get("rels", {})
+        author_urls = rels.get("author", [])
+        if not isinstance(author_urls, list):
+            author_urls = [author_urls]
+
+        for author_url in author_urls:
+            if not isinstance(author_url, str):
+                continue
+            h_card = self._find_h_card_by_author_reference(parsed, author_url, base_url)
+            if h_card:
+                return self._extract_h_card_author(h_card, base_url)
+
+        return {}
+
+    def _find_page_h_card_author(self, parsed: dict[str, Any], base_url: str) -> dict[str, str]:
+        """Use a single page-level h-card as a conservative fallback author."""
+        h_cards = self._find_page_level_h_cards(parsed)
+        if len(h_cards) != 1:
+            return {}
+        return self._extract_h_card_author(h_cards[0], base_url)
+
+    def _find_page_level_h_cards(self, parsed: dict[str, Any]) -> list[dict[str, Any]]:
+        """Find h-cards outside h-entry items for page-level authorship fallback."""
+        items = parsed.get("items", [])
+        return self._collect_page_level_h_cards(items)
+
+    def _collect_page_level_h_cards(
+        self, items: list[dict[str, Any]], inside_h_entry: bool = False
+    ) -> list[dict[str, Any]]:
+        """Collect h-cards that are not descendants of an h-entry."""
+        h_cards = []
+        for item in items:
+            item_types = item.get("type", [])
+            item_inside_h_entry = inside_h_entry or "h-entry" in item_types
+            if "h-card" in item_types and not item_inside_h_entry:
+                h_cards.append(item)
+
+            children = item.get("children", [])
+            if children:
+                h_cards.extend(self._collect_page_level_h_cards(children, item_inside_h_entry))
+
+        return h_cards
+
+    def _extract_h_card_author(self, h_card: dict[str, Any], base_url: str) -> dict[str, str]:
+        """Extract normalized author fields from an h-card item."""
+        return self._extract_author_properties(h_card.get("properties", {}), base_url)
+
+    def _extract_author_properties(self, properties: dict[str, Any], base_url: str) -> dict[str, str]:
+        """Extract author properties and resolve relative URL fields."""
+        result = {
+            "name": self._get_first_property(properties, "name"),
+            "url": self._get_first_property(properties, "url"),
+            "photo": self._get_first_property(properties, "photo"),
+        }
+
+        if result["url"]:
+            result["url"] = urljoin(base_url, result["url"])
+        if result["photo"]:
+            result["photo"] = urljoin(base_url, result["photo"])
+
+        return result
 
     def _extract_content(self, h_entry: dict[str, Any]) -> dict[str, str]:
         """Extract content from h-entry."""

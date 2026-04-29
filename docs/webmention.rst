@@ -185,6 +185,40 @@ preserved for every followed redirect status (``301``, ``302``, ``303``,
 only when it returns HTTP ``200``, ``201``, or ``202``; redirect errors return
 the existing ``{"success": False, ...}`` result shape.
 
+Authorship Extraction
+=====================
+
+When a received Webmention source page contains microformats2, django-indieweb
+extracts author details for the selected ``h-entry`` with a local/same-page
+authorship fallback chain:
+
+* Explicit ``author`` data on the ``h-entry`` has priority. Nested ``h-card``
+  author data is used directly, and URL-valued ``author`` references are
+  resolved to matching ``h-card`` items already present in the fetched source
+  document.
+* If the ``h-entry`` has no explicit author, ``rel=author`` links are resolved
+  against the final fetched source URL and matched to ``h-card`` items already
+  present in the same parsed document. Same-page fragment links such as
+  ``href="#author"`` can match an ``h-card`` with the corresponding HTML
+  ``id``.
+* If neither explicit author data nor ``rel=author`` yields an author, a single
+  unambiguous page-level ``h-card`` outside the ``h-entry`` is used as a
+  fallback author. If multiple page-level ``h-card`` items are present, no
+  fallback author is guessed.
+* If an explicit URL-valued author reference has no matching ``h-card``, the
+  resolved author URL is stored as both the author URL and display name for
+  backwards compatibility.
+
+Relative author URLs and photo URLs resolve against the final fetched source
+URL, not the originally submitted source URL when redirects occurred. If the
+resulting author URL matches a local ``Profile`` URL on the configured Django
+``Site`` domain, the local profile's name, URL, and photo override the parsed
+source-page author fields.
+
+django-indieweb does not fetch remote author pages during Webmention receiving.
+``rel=author`` support is limited to author ``h-card`` data already available in
+the fetched source document.
+
 Reprocessing and Source Removal
 ===============================
 
@@ -349,11 +383,12 @@ Common issues and solutions:
   - The source page may use URL references for author data (e.g., ``<data class="p-author" value="https://example.com/author"></data>``)
   - This is valid microformats2 markup following the authorship algorithm
   - Django-indieweb automatically looks for a matching h-card **on the same page** with the referenced URL
+  - If the entry has no explicit author, same-page ``rel=author`` links and one unambiguous page-level h-card can also provide author data
   - Ensure the source page includes a separate h-card with matching URL, name, and photo properties
   - The h-card may be nested in structures like h-feeds - the parser searches recursively
   - Example services using this pattern: feed.city, some Mastodon webmention bridges
   - If no matching h-card is found, the URL will be displayed as the name (fallback behavior)
-  - **Limitation**: Django-indieweb does not currently fetch remote author URLs or follow rel=author links (full authorship algorithm)
+  - **Limitation**: Django-indieweb does not currently fetch remote author URLs; author data must be present in the fetched source document
 
 **Spam checker rejecting valid webmentions**
   - Review your spam checker implementation

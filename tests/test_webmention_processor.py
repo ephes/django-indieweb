@@ -4,10 +4,11 @@ from datetime import timedelta
 from unittest.mock import Mock, patch
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.test import RequestFactory, override_settings
 from django.utils import timezone as django_timezone
 
-from indieweb.models import Webmention
+from indieweb.models import Profile, Webmention
 from indieweb.processors import WebmentionProcessor
 
 
@@ -1306,3 +1307,282 @@ class TestWebmentionProcessor:
             assert webmention.author_url == "https://example.com/nonexistent"
             assert webmention.author_photo == ""
             assert webmention.mention_type == "like"
+
+    def test_processor_handles_relative_author_url_without_matching_hcard(self, processor):
+        """Test relative author URL references fall back to an absolute URL as the name."""
+        source_url = "https://example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <a class="u-like-of" href="{target_url}">Liked</a>
+                <data class="p-author" value="/authors/missing"></data>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "https://example.com/authors/missing"
+            assert webmention.author_url == "https://example.com/authors/missing"
+            assert webmention.author_photo == ""
+
+    def test_processor_uses_rel_author_fragment_to_find_same_page_hcard(self, processor):
+        """Test rel=author can point to an h-card already present on the same page."""
+        source_url = "https://example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="#author"></head>
+        <body>
+            <div id="author" class="h-card">
+                <img class="u-photo" src="/avatar.jpg" alt="Alice">
+                <a class="p-name u-url" href="/authors/alice">Alice Author</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <div class="e-content">Reply content</div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Alice Author"
+            assert webmention.author_url == "https://example.com/authors/alice"
+            assert webmention.author_photo == "https://example.com/avatar.jpg"
+
+    def test_processor_prefers_explicit_author_over_rel_author_and_page_hcard(self, processor):
+        """Test explicit h-entry author data has priority over later authorship fallbacks."""
+        source_url = "https://example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="#rel-author"></head>
+        <body>
+            <div id="rel-author" class="h-card">
+                <a class="p-name u-url" href="/authors/rel">Rel Author</a>
+            </div>
+            <div class="h-card">
+                <a class="p-name u-url" href="/authors/page">Page Author</a>
+            </div>
+            <article class="h-entry">
+                <div class="p-author h-card">
+                    <a class="p-name u-url" href="/authors/explicit">Explicit Author</a>
+                </div>
+                <a class="u-like-of" href="{target_url}">Liked</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Explicit Author"
+            assert webmention.author_url == "https://example.com/authors/explicit"
+
+    def test_processor_resolves_relative_rel_author_to_same_page_hcard(self, processor):
+        """Test relative rel=author links resolve against the source base URL."""
+        source_url = "https://example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="/authors/bob"></head>
+        <body>
+            <div class="h-card">
+                <a class="p-name u-url" href="/authors/bob">Bob Author</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-repost-of" href="{target_url}">Repost</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Bob Author"
+            assert webmention.author_url == "https://example.com/authors/bob"
+
+    def test_processor_uses_final_source_url_as_rel_author_base_after_redirect(self, processor):
+        """Test relative rel=author links resolve against the final redirected source URL."""
+        source_url = "https://old.example.com/posts/source"
+        final_url = "https://new.example.com/posts/final"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="/authors/carol"></head>
+        <body>
+            <div class="h-card">
+                <img class="u-photo" src="avatar.jpg" alt="Carol">
+                <a class="p-name u-url" href="/authors/carol">Carol Author</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-like-of" href="{target_url}">Liked</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=302, headers={"Location": final_url}),
+                _source_response(status_code=200, text=html_content),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Carol Author"
+            assert webmention.author_url == "https://new.example.com/authors/carol"
+            assert webmention.author_photo == "https://new.example.com/posts/avatar.jpg"
+
+    def test_processor_uses_single_page_level_hcard_fallback(self, processor):
+        """Test a single page-level h-card is used when an h-entry has no author."""
+        source_url = "https://example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <body>
+            <div class="h-card">
+                <img class="u-photo" src="/dana.jpg" alt="Dana">
+                <a class="p-name u-url" href="/authors/dana">Dana Author</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <div class="e-content">No explicit author here.</div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Dana Author"
+            assert webmention.author_url == "https://example.com/authors/dana"
+            assert webmention.author_photo == "https://example.com/dana.jpg"
+
+    def test_processor_uses_page_hcard_when_rel_author_has_no_matching_hcard(self, processor):
+        """Test an unresolved rel=author link can fall through to the page-level h-card fallback."""
+        source_url = "https://example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="/authors/missing"></head>
+        <body>
+            <div class="h-card">
+                <a class="p-name u-url" href="/authors/erin">Erin Author</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Erin Author"
+            assert webmention.author_url == "https://example.com/authors/erin"
+
+    def test_processor_declines_ambiguous_page_level_hcard_fallback(self, processor):
+        """Test multiple page-level h-cards do not produce a guessed fallback author."""
+        source_url = "https://example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <body>
+            <div class="h-card"><a class="p-name u-url" href="/authors/one">One Author</a></div>
+            <div class="h-card"><a class="p-name u-url" href="/authors/two">Two Author</a></div>
+            <article class="h-entry">
+                <a class="u-like-of" href="{target_url}">Liked</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == ""
+            assert webmention.author_url == ""
+            assert webmention.author_photo == ""
+
+    def test_processor_uses_local_profile_for_rel_author_hcard(self, processor):
+        """Test local Profile data still overrides authors extracted through rel=author."""
+        user = get_user_model().objects.create_user(username="localauthor", email="local@example.com")
+        Profile.objects.create(
+            user=user,
+            h_card={
+                "name": ["Local Profile Name"],
+                "url": ["https://example.com/authors/local"],
+                "photo": ["https://example.com/local-profile.jpg"],
+            },
+        )
+        source_url = "https://remote.example.com/posts/source"
+        target_url = "https://mysite.com/article"
+
+        html_content = f'''
+        <html>
+        <head><link rel="author" href="https://example.com/authors/local"></head>
+        <body>
+            <div class="h-card">
+                <img class="u-photo" src="https://remote.example.com/remote.jpg" alt="Remote">
+                <a class="p-name u-url" href="https://example.com/authors/local">Remote Parsed Name</a>
+            </div>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_name == "Local Profile Name"
+            assert webmention.author_url == "https://example.com/authors/local"
+            assert webmention.author_photo == "https://example.com/local-profile.jpg"

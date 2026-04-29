@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Complete the Webmention Authorship Fallback Chain
+
+- Added receive-side Webmention authorship fallbacks in `src/indieweb/processors.py` without changing endpoint responses, storage semantics, or network behavior.
+- Authorship policy: explicit `h-entry` author data remains highest priority. Nested author `h-card` data is extracted directly; string author URL references are resolved against the final fetched source URL and matched to same-page `h-card` items by URL or same-document fragment id. If no h-card matches an explicit URL-valued author reference, the resolved URL is still used as both author URL and display name for backwards compatibility. When an entry has no explicit author, `rel=author` links are resolved against the final fetched source URL and matched to h-cards already present in the parsed source document. If `rel=author` yields no author, a single unambiguous page-level h-card outside an h-entry is used as fallback; multiple page-level h-cards are treated as ambiguous and no fallback author is guessed.
+- Relative author URLs and author photo URLs resolve against the final fetched source URL after redirects, preserving the redirect behavior from the previous slice. Extracted local author URLs still pass through the existing `Profile` override so local profile fields replace parsed author fields.
+- Out of scope: asynchronous Webmention receiving, remote author-page fetching, vouch support, Salmentions, and unrelated target-link, endpoint-domain, redirect, source-removal, spam, or source/target storage behavior remain unchanged.
+- Follow-up: added a Priority 2 backlog item to align same-page author h-card URL matching with the conservative canonical URL matcher already used for Webmention target verification.
+- Added focused regression tests in `tests/test_webmention_processor.py` for relative unmatched author URL fallback, same-page fragment `rel=author`, explicit author precedence over `rel=author` and page-level h-cards, relative `rel=author`, redirected final-URL `rel=author` base handling, single page-level h-card fallback, unresolved `rel=author` falling through to page-level fallback, conservative ambiguous page-level h-card handling, and local `Profile` override through a `rel=author`-extracted local author URL. Existing nested `p-author h-card`, same-page author URL reference, unmatched URL-as-name, redirect, source-removal, and endpoint tests remain covered.
+- Documentation: updated `docs/webmention.rst` with the authorship extraction policy and remote-fetch limitation. Checked `docs/api.rst`, `docs/concepts.rst`, and `docs/h-card.rst`; no changes were needed because endpoint/status response shapes, conceptual protocol wording, and local h-card model/template-tag usage did not change.
+- Changelog: updated `docs/changelog.rst` with the receive-side authorship fallback improvement.
+- Validation: `uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
+
 ### Follow and Test HTTP Redirects in Webmention Receive and Send Paths
 
 - Added shared Webmention HTTP redirect handling in `src/indieweb/http_client.py` with an explicit limit of 5 redirects per request. Redirects are followed only to `http` and `https` URLs after resolving relative `Location` values against the URL that produced the redirect; redirect loops and excessive chains fail through the same bounded limit.
