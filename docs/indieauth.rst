@@ -39,6 +39,20 @@ Example consent screen::
 
     [Approve] [Deny]
 
+Managing Access Tokens
+----------------------
+
+Authenticated site users can review and revoke their own issued IndieAuth/
+Micropub access tokens at ``/indieweb/tokens/``. The page lists token metadata
+such as client ID, identity URL, scope, creation/update timestamps, expiration,
+and active/expired status. It does not display full bearer token keys.
+
+Each token row includes a CSRF-protected revoke form. Revoking a token deletes
+that ``Token`` row, so the bearer credential immediately stops authenticating
+Micropub and other token-protected requests. Users only see and revoke tokens
+owned by their own Django account; tokens for other users are not listed and
+cannot be revoked through this UI.
+
 Authentication vs Authorization
 -------------------------------
 
@@ -139,8 +153,10 @@ Security Considerations
 
 1. **HTTPS Required**: Always use HTTPS in production for all IndieAuth endpoints
 2. **Auth Code Timeout**: Auth codes expire after 60 seconds by default
-3. **Token Expiration**: Access tokens expire after 24 hours by default; the
-   Micropub endpoint rejects expired tokens with HTTP 401
+3. **Token Expiration and Revocation**: Access tokens expire after 24 hours by
+   default; the Micropub endpoint rejects expired tokens with HTTP 401. Users
+   can also revoke their own tokens at ``/indieweb/tokens/``; revocation
+   deletes the token row and immediately invalidates the bearer credential.
 4. **CSRF Protection**: The consent form includes Django's CSRF token
 5. **User Authentication**: Users must be logged in to approve/deny requests
 6. **PKCE (RFC 7636)**: The authorization endpoint accepts an optional

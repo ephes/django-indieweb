@@ -33,11 +33,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 - [ ] Clean up TODO and future-enhancement notes after related changes ship.
 
-### Token Management UI
-
-- [ ] Add token revocation UI.
-  - Outcome: users can revoke tokens and docs describe the workflow.
-
 ## Priority 3
 
 ### API Hardening

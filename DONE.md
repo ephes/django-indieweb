@@ -4,6 +4,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Add Token Revocation UI
+
+- Added an authenticated browser token management page at `indieweb:tokens` (`/indieweb/tokens/`) that lists only the current user's IndieAuth/Micropub access tokens with client, identity, scope, created/modified, expiration, and active/expired metadata while never displaying full bearer token keys.
+- Added a CSRF-protected `POST` revoke action at `indieweb:token-revoke` (`/indieweb/tokens/<pk>/revoke/`) that deletes only tokens owned by the logged-in user. Missing or foreign token IDs return `404`, `GET` does not revoke, and deleting a token immediately stops that bearer token from authenticating Micropub requests.
+- Added focused pytest coverage in `tests/test_token_management.py` for login redirects, owner-only listing, empty-state rendering, active/expired indicators, owned-token revocation, CSRF enforcement, revoked-token authentication failure, foreign-token protection, and GET safety.
+- Documentation: updated `docs/indieauth.rst`, `docs/api.rst`, `docs/configuration.rst`, and `docs/concepts.rst` with the token management workflow, URL, CSRF POST revocation behavior, owner boundary, and distinction from the token endpoint protocol. No generated docs under `docs/_build` were updated.
+- Changelog: updated `docs/changelog.rst` with an Unreleased entry for the new browser token management UI.
+- Validation: `uv run pytest tests/test_token_endpoint.py tests/test_micropub_endpoint.py -q`, `uv run pytest tests/test_token_management.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, `git diff --check`, and `git diff --cached --stat` passed.
+
 ### Close H-Card Utility Coverage Gaps and Confirm Support Status
 
 - Added focused pytest coverage for h-card utility behavior in `tests/test_h_card.py`, covering recursive hyphen-to-underscore property normalization, scalar-to-list normalization, nested `adr`/`org` normalization, invalid top-level validation inputs, invalid nested `adr`/`org` list items, first top-level h-card selection, no-h-card parsing, base-URL resolution, and nested parsed `h-adr` property-name normalization.

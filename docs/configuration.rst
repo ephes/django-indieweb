@@ -39,6 +39,9 @@ Controls how long newly issued or reissued access tokens remain valid.
 
 The token endpoint reports the remaining lifetime in the ``expires_in`` field of
 its response, and the Micropub endpoint rejects expired tokens with HTTP 401.
+Authenticated users can revoke their own tokens manually at
+``/indieweb/tokens/``; revocation deletes the ``Token`` row and immediately
+invalidates the bearer credential.
 
 .. note::
    Tokens created before this field existed have ``expires_at`` set to ``NULL``
@@ -118,6 +121,8 @@ This creates the following endpoints:
 
 - ``/indieweb/auth/`` - Authorization endpoint
 - ``/indieweb/token/`` - Token endpoint
+- ``/indieweb/tokens/`` - Browser UI for viewing and revoking the logged-in user's tokens
+- ``/indieweb/tokens/<pk>/revoke/`` - CSRF-protected POST action for revoking one owned token
 - ``/indieweb/micropub/`` - Micropub endpoint
 - ``/indieweb/webmention/`` - Webmention receive endpoint
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
@@ -135,6 +140,8 @@ You can customize the URL paths:
    urlpatterns = [
        path('auth/', views.AuthView.as_view(), name='indieauth'),
        path('token/', views.TokenView.as_view(), name='token'),
+       path('tokens/', views.TokenManagementView.as_view(), name='tokens'),
+       path('tokens/<int:pk>/revoke/', views.TokenRevokeView.as_view(), name='token-revoke'),
        path('api/micropub/', views.MicropubView.as_view(), name='micropub'),
        path('webmention/', views.WebmentionEndpoint.as_view(), name='webmention'),
        path('webmention/<int:pk>/', views.WebmentionStatusView.as_view(), name='webmention-status'),

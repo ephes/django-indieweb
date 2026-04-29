@@ -182,7 +182,8 @@ Access Tokens
 - Expire after ``INDIEWEB_TOKEN_EXPIRES_IN`` seconds (default 86400, i.e. 24 hours); reissuing the token via the IndieAuth flow refreshes the expiration
 - Tokens issued before expiration tracking was added have ``expires_at=NULL`` and remain valid until they are reissued or deleted
 - Bound to user, client, and scope
-- Can be revoked by deleting the Token object
+- Can be revoked by the owning user at ``/indieweb/tokens/`` or by deleting
+  the ``Token`` object directly
 - Should be transmitted over HTTPS only
 
 Scopes
@@ -235,8 +236,7 @@ Limitations
 
 Current implementation limitations:
 
-1. **No token revocation UI** - Must delete via Django admin
-2. **No media endpoint** - Can't upload images
+1. **No media endpoint** - Can't upload images
 
 Future Enhancements
 -------------------
@@ -244,8 +244,7 @@ Future Enhancements
 Potential improvements for full IndieWeb support:
 
 1. **Media Endpoint** - Handle file uploads
-2. **Token Management** - UI for viewing/revoking tokens
-3. **WebSub** - Real-time updates
+2. **WebSub** - Real-time updates
 
 Resources
 ---------

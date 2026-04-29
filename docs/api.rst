@@ -11,10 +11,11 @@ This document describes the IndieWeb endpoints provided by django-indieweb.
 Endpoints Overview
 ------------------
 
-django-indieweb provides four main endpoints:
+django-indieweb provides these endpoints and browser views:
 
 - ``/indieweb/auth/`` - IndieAuth authorization endpoint
 - ``/indieweb/token/`` - Token endpoint for exchanging auth codes
+- ``/indieweb/tokens/`` - Browser UI for authenticated users to view and revoke their own tokens
 - ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
 
@@ -185,6 +186,26 @@ default lifetime is 24 hours and can be tuned with the
 ``INDIEWEB_TOKEN_EXPIRES_IN`` setting (see :doc:`configuration`). Reissuing a
 token via the IndieAuth flow refreshes its expiration. Tokens whose
 ``expires_at`` has passed are rejected with HTTP 401 by the Micropub endpoint.
+
+Token Management UI
+-------------------
+
+**URL:** ``/indieweb/tokens/``
+
+This browser-facing page lets authenticated Django users review their own
+issued IndieAuth/Micropub access tokens and revoke tokens they no longer want
+to keep active. It is not an OAuth/IndieAuth token revocation protocol
+endpoint and does not change the ``/indieweb/token/`` wire protocol.
+
+The list shows token metadata including ``client_id``, ``me``, ``scope``,
+``created``, ``modified``, ``expires_at``, and active/expired status. Full
+bearer token keys are not displayed.
+
+Each token can be revoked with a CSRF-protected ``POST`` to
+``/indieweb/tokens/<pk>/revoke/``. Revocation deletes the matching ``Token``
+row, so the bearer token immediately stops authenticating Micropub requests.
+Users can only list and revoke tokens owned by their own account. Missing or
+foreign token IDs return ``404`` from the revoke view.
 
 **Error Response:**
 

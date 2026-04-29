@@ -584,6 +584,33 @@ class TokenView(CSRFExemptMixin, View):
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
 
+class UserLoginRequiredMixin(View):
+    """Mixin for browser views that require a logged-in Django user."""
+
+    def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
+        if not request.user.is_authenticated:
+            login_url = getattr(settings, "LOGIN_URL", "/accounts/login/")
+            return redirect(f"{login_url}?next={request.get_full_path()}")
+        return super().dispatch(request, *args, **kwargs)
+
+
+class TokenManagementView(UserLoginRequiredMixin, View):
+    """List access tokens owned by the authenticated user."""
+
+    def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
+        tokens = Token.objects.filter(owner_id=request.user.pk).order_by("-created")
+        return render(request, "indieweb/tokens.html", {"tokens": tokens})
+
+
+class TokenRevokeView(UserLoginRequiredMixin, View):
+    """Revoke an access token owned by the authenticated user."""
+
+    def post(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponseBase:
+        token = get_object_or_404(Token, pk=pk, owner_id=request.user.pk)
+        token.delete()
+        return redirect("indieweb:tokens")
+
+
 class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
     """
     Micropub endpoint for creating posts.
