@@ -20,6 +20,7 @@ from django.dispatch import Signal
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
+from .http_client import RedirectedResponse, request_with_webmention_redirects
 from .models import Profile, Webmention
 
 if TYPE_CHECKING:
@@ -173,7 +174,8 @@ class WebmentionProcessor:
 
         try:
             # Fetch source URL
-            response = self._fetch_source(source_url)
+            fetched = self._fetch_source(source_url)
+            response = fetched.response
 
             # Check response status
             if response.status_code == 410:
@@ -201,7 +203,7 @@ class WebmentionProcessor:
                 return webmention
 
             # Parse microformats2
-            self._parse_microformats(webmention, response.text, source_url, target_url)
+            self._parse_microformats(webmention, response.text, fetched.final_url, target_url)
 
             # Check for spam (reload checker for test compatibility)
             spam_checker = self._get_spam_checker()
@@ -244,20 +246,20 @@ class WebmentionProcessor:
         webmention.save(update_fields=["status", "verified_at", "modified"])
         webmention.refresh_from_db()
 
-    def _fetch_source(self, source_url: str) -> httpx.Response:
-        """Fetch the source URL."""
+    def _fetch_source(self, source_url: str) -> RedirectedResponse:
+        """Fetch the source URL with explicit bounded redirect handling."""
         headers = {"User-Agent": "django-indieweb/1.0"}
         with httpx.Client() as client:
-            return client.get(source_url, headers=headers, timeout=30)
+            return request_with_webmention_redirects(client, "GET", source_url, headers=headers, timeout=30)
 
     def _verify_target_link(self, html_content: str, target_url: str) -> bool:
         """Verify that the target URL is linked in the source content."""
         return _html_links_to_target(html_content, target_url)
 
-    def _parse_microformats(self, webmention: Webmention, html_content: str, source_url: str, target_url: str) -> None:
+    def _parse_microformats(self, webmention: Webmention, html_content: str, base_url: str, target_url: str) -> None:
         """Parse microformats2 data from HTML content."""
         # Parse microformats
-        parsed = mf2py.parse(doc=html_content, url=source_url)
+        parsed = mf2py.parse(doc=html_content, url=base_url)
 
         # Find h-entry that mentions the target
         h_entry = self._find_mentioning_entry(parsed, target_url)
@@ -266,7 +268,7 @@ class WebmentionProcessor:
             return
 
         # Extract author information
-        author = self._extract_author(h_entry, parsed, source_url)
+        author = self._extract_author(h_entry, parsed, base_url)
 
         # Check if this is a local author
         author_url = author.get("url", "")
@@ -416,7 +418,7 @@ class WebmentionProcessor:
 
         return None
 
-    def _extract_author(self, h_entry: dict[str, Any], parsed: dict[str, Any], source_url: str) -> dict[str, str]:
+    def _extract_author(self, h_entry: dict[str, Any], parsed: dict[str, Any], base_url: str) -> dict[str, str]:
         """
         Extract author information from h-entry.
 
@@ -477,9 +479,9 @@ class WebmentionProcessor:
 
             # Make relative URLs absolute
             if result["url"] and not result["url"].startswith("http"):
-                result["url"] = urljoin(source_url, result["url"])
+                result["url"] = urljoin(base_url, result["url"])
             if result["photo"] and not result["photo"].startswith("http"):
-                result["photo"] = urljoin(source_url, result["photo"])
+                result["photo"] = urljoin(base_url, result["photo"])
 
             return result
 

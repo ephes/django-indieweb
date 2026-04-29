@@ -148,6 +148,43 @@ Webmention endpoint's domain check before processing begins. Userinfo and
 explicit ports, if present, must match exactly; default ports are not
 normalized away.
 
+HTTP Redirects
+==============
+
+django-indieweb follows HTTP redirects explicitly for Webmention network
+requests. Redirect handling is bounded to 5 redirects per request and only
+continues to ``http`` and ``https`` URLs. Redirect chains that exceed the
+limit, redirect to another scheme, loop until the limit is reached, or raise a
+network/client error are treated as request failures.
+
+Receive-side source fetches follow redirects before validating the source
+document. The submitted ``Webmention.source_url`` and ``Webmention.target_url``
+are preserved exactly as submitted, but the final fetched source URL is used as
+the microformats2 parsing base URL. This means relative author and photo URLs
+from a redirected source page resolve against the page that actually returned
+the HTML.
+
+After redirects, the receive-side source response must still be HTTP ``200``
+with a ``text/html`` content type and must link to the submitted target under
+the target matching policy above. A final ``410 Gone``, non-``200`` response,
+non-HTML response, missing target link, unsupported redirect, or excessive
+redirect chain marks the Webmention ``failed`` through the same failed-state
+path described below.
+
+Send-side endpoint discovery follows redirects for both the initial ``HEAD``
+request and the fallback ``GET`` request. Relative Webmention endpoints found
+in ``Link`` headers or HTML ``<link rel="webmention">`` / ``<a
+rel="webmention">`` elements are resolved against the final target page URL
+after redirects, not the originally requested URL.
+
+When sending outgoing Webmentions, source-content fetches also follow the same
+bounded redirect policy. Endpoint delivery ``POST`` requests follow redirects
+with the original ``POST`` method and ``source``/``target`` form payload
+preserved for every followed redirect status (``301``, ``302``, ``303``,
+``307``, and ``308``). The final endpoint response is considered successful
+only when it returns HTTP ``200``, ``201``, or ``202``; redirect errors return
+the existing ``{"success": False, ...}`` result shape.
+
 Reprocessing and Source Removal
 ===============================
 

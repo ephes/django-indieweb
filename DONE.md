@@ -2,6 +2,19 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-04-29
+
+### Follow and Test HTTP Redirects in Webmention Receive and Send Paths
+
+- Added shared Webmention HTTP redirect handling in `src/indieweb/http_client.py` with an explicit limit of 5 redirects per request. Redirects are followed only to `http` and `https` URLs after resolving relative `Location` values against the URL that produced the redirect; redirect loops and excessive chains fail through the same bounded limit.
+- Receive-side policy: `WebmentionProcessor._fetch_source()` follows bounded redirects when fetching the submitted source URL, while `Webmention.source_url` and `Webmention.target_url` remain the submitted values. The final fetched URL is used as the microformats2 parsing base so relative author/photo URLs resolve against the actual source page. Final `410 Gone`, non-`200`, non-HTML, missing-target-link, unsupported redirect, and excessive-redirect outcomes use the existing failed-state path that clears `verified_at` and preserves parsed fields.
+- Send-side policy: `WebmentionSender.discover_endpoint()` follows bounded redirects for both `HEAD` and fallback `GET`; relative `Link` and HTML endpoints discovered after redirects resolve against the final target page URL. `fetch_content()` follows the same bounded redirect policy. `send_webmention()` follows endpoint redirects for `301`, `302`, `303`, `307`, and `308` while preserving the original `POST` method and `source`/`target` form payload; final `200`, `201`, and `202` remain success, while redirect errors return the existing `{"success": False, ...}` shape.
+- Out of scope: asynchronous Webmention receiving, authorship fallback changes, vouch support, Salmentions, and target-URL canonical redirect verification remain tracked separately in `BACKLOG.md` or intentionally unimplemented.
+- Added focused regression tests in `tests/test_webmention_processor.py` for successful redirected source verification, preservation of submitted URLs, final-URL microformats base resolution, redirect-limit failure clearing stale `verified_at`, redirected non-HTML failure, and redirected non-`200` failure. Added focused tests in `tests/test_webmention_sender.py` for redirected endpoint discovery, final-URL relative endpoint resolution, redirected content fetches, preserved endpoint `POST` payloads, and safe failure shapes on redirect errors.
+- Documentation: updated `docs/webmention.rst` with the receive/send redirect policy and endpoint `POST` behavior; checked `docs/api.rst` and `docs/concepts.rst` and no changes were needed because endpoint/status response shapes and conceptual IndieWeb wording did not change.
+- Changelog: updated `docs/changelog.rst` with the explicit bounded Webmention redirect behavior fix.
+- Validation: `uv run pytest tests/test_webmention_processor.py tests/test_webmention_sender.py tests/test_webmention_endpoint.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, and `git diff --check` passed.
+
 ## 2026-04-28
 
 ### Handle Source Removal and `410 Gone` Semantics for Existing Webmentions

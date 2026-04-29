@@ -29,6 +29,15 @@ def _mock_source_response(
     return mock_response
 
 
+def _source_response(*, status_code, text="", content_type="text/html", headers=None):
+    """Build a mocked source response for redirect chains."""
+    mock_response = Mock()
+    mock_response.status_code = status_code
+    mock_response.text = text
+    mock_response.headers = headers if headers is not None else {"content-type": content_type}
+    return mock_response
+
+
 @pytest.mark.django_db
 class TestWebmentionProcessor:
     """Test cases for the WebmentionProcessor class."""
@@ -147,6 +156,161 @@ class TestWebmentionProcessor:
                 source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
             )
             assert webmention.status == "verified"
+
+    def test_processor_follows_source_redirect_and_preserves_submitted_urls(self, processor):
+        """Test source redirects verify the submitted source/target row."""
+        source_url = "https://example.com/post"
+        final_url = "https://cdn.example.com/posts/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=302, headers={"Location": final_url}),
+                _source_response(status_code=200, text=html_content),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.source_url == source_url
+            assert webmention.target_url == target_url
+            assert mock_client.get.call_args_list[0].args[0] == source_url
+            assert mock_client.get.call_args_list[1].args[0] == final_url
+
+    def test_processor_resolves_relative_source_redirect_location(self, processor):
+        """Test relative source redirect locations resolve against the redirecting URL."""
+        source_url = "https://example.com/posts/original"
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=302, headers={"Location": "/posts/final"}),
+                _source_response(status_code=200, text=html_content),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert mock_client.get.call_args_list[1].args[0] == "https://example.com/posts/final"
+
+    def test_processor_uses_final_source_url_as_microformats_base_after_redirect(self, processor):
+        """Test relative author URLs resolve against the final redirected source URL."""
+        source_url = "https://old.example.com/posts/original"
+        final_url = "https://new.example.com/final/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <div class="p-author h-card">
+                    <img class="u-photo" src="avatar.jpg" alt="Jane">
+                    <a class="p-name u-url" href="author">Jane Doe</a>
+                </div>
+                <div class="e-content">
+                    Content with <a href="{target_url}">link</a>
+                </div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=301, headers={"Location": final_url}),
+                _source_response(status_code=200, text=html_content),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.author_url == "https://new.example.com/final/author"
+            assert webmention.author_photo == "https://new.example.com/final/avatar.jpg"
+
+    def test_processor_fails_when_source_redirect_limit_is_exceeded(self, processor):
+        """Test excess redirects fail predictably and clear stale verification."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        existing = Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            status="verified",
+            verified_at=django_timezone.now(),
+        )
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=302, headers={"Location": f"https://example.com/r{i}"}) for i in range(6)
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.id == existing.id
+            assert webmention.status == "failed"
+            assert webmention.verified_at is None
+
+    def test_processor_fails_when_source_redirect_lands_on_non_html(self, processor):
+        """Test redirected non-HTML source responses remain failed."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=302, headers={"Location": "https://example.com/data.json"}),
+                _source_response(status_code=200, text='{"ok": true}', content_type="application/json"),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "failed"
+            assert webmention.verified_at is None
+
+    def test_processor_fails_when_source_redirect_lands_on_non_200(self, processor):
+        """Test redirected non-200 source responses remain failed."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=302, headers={"Location": "https://example.com/missing"}),
+                _source_response(status_code=404, text="Not found"),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "failed"
+            assert webmention.verified_at is None
+
+    def test_processor_fails_when_source_redirect_uses_unsupported_scheme(self, processor):
+        """Test source redirects only continue to HTTP and HTTPS URLs."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(
+                status_code=302,
+                headers={"Location": "mailto:a@example.com"},
+            )
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "failed"
+            assert mock_client.get.call_count == 1
 
     def test_processor_verifies_canonical_equivalent_target_link(self, processor):
         """Test processing succeeds when the source links a canonical-equivalent target."""

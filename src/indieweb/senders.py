@@ -6,6 +6,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup, Tag
 
+from .http_client import request_with_webmention_redirects
+
 
 class WebmentionSender:
     """Sends webmentions to target URLs."""
@@ -49,20 +51,22 @@ class WebmentionSender:
         try:
             # First try HEAD request to check Link headers
             with httpx.Client() as client:
-                response = client.head(target_url, timeout=self.timeout)
+                discovered = request_with_webmention_redirects(client, "HEAD", target_url, timeout=self.timeout)
+                response = discovered.response
                 response.raise_for_status()
 
                 # Check Link header
                 link_header = response.headers.get("Link", "")
                 endpoint = self._parse_link_header(link_header)
                 if endpoint:
-                    return urljoin(target_url, endpoint)
+                    return urljoin(discovered.final_url, endpoint)
 
                 # Fall back to GET request to parse HTML
-                response = client.get(target_url, timeout=self.timeout)
+                discovered = request_with_webmention_redirects(client, "GET", target_url, timeout=self.timeout)
+                response = discovered.response
                 response.raise_for_status()
 
-                return self._parse_html_for_endpoint(response.text, target_url)
+                return self._parse_html_for_endpoint(response.text, discovered.final_url)
 
         except Exception:
             # Return None for any errors during discovery
@@ -130,7 +134,14 @@ class WebmentionSender:
         """
         try:
             with httpx.Client() as client:
-                response = client.post(endpoint, data={"source": source, "target": target}, timeout=self.post_timeout)
+                delivered = request_with_webmention_redirects(
+                    client,
+                    "POST",
+                    endpoint,
+                    data={"source": source, "target": target},
+                    timeout=self.post_timeout,
+                )
+                response = delivered.response
 
                 # Accept 200, 201, or 202 as success
                 if response.status_code in [200, 201, 202]:
@@ -164,7 +175,8 @@ class WebmentionSender:
         """
         try:
             with httpx.Client() as client:
-                response = client.get(url, timeout=self.timeout)
+                fetched = request_with_webmention_redirects(client, "GET", url, timeout=self.timeout)
+                response = fetched.response
                 response.raise_for_status()
                 return response.text
         except Exception:
