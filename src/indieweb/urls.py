@@ -22,6 +22,7 @@ urlpatterns = [
     path("tokens/", views.TokenManagementView.as_view(), name="tokens"),
     path("tokens/<int:pk>/revoke/", views.TokenRevokeView.as_view(), name="token-revoke"),
     path("micropub/", views.MicropubView.as_view(), name="micropub"),
+    path("media/", views.MicropubMediaView.as_view(), name="media"),
     path("webmention/", views.WebmentionEndpoint.as_view(), name="webmention"),
     path("webmention/<int:pk>/", views.WebmentionStatusView.as_view(), name="webmention-status"),
 ]

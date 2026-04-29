@@ -36,7 +36,7 @@ Look through ``BACKLOG.md`` for planned feature work. Keep the item current
 while you work and move completed items to ``DONE.md`` with validation,
 documentation, and changelog notes.
 Micropub ships with an in-memory handler; contributions adding richer handlers,
-media upload support, or additional post types are welcome.
+multipart create-upload handling, or additional post types are welcome.
 
 Write Documentation
 ~~~~~~~~~~~~~~~~~~~

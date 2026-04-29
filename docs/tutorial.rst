@@ -58,6 +58,7 @@ After installation, you'll have these endpoints available:
 - ``/indieweb/auth/`` - IndieAuth authorization (consent)
 - ``/indieweb/token/`` - Token exchange
 - ``/indieweb/micropub/`` - Micropub content creation and editing (uses configured handler)
+- ``/indieweb/media/`` - Micropub media uploads (uses Django storage)
 - ``/indieweb/webmention/`` - Webmention receive endpoint (Link rel="webmention" is advertised)
 - ``/indieweb/webmention/<pk>/`` - Webmention status lookup
 
@@ -89,7 +90,7 @@ Client-Side Implementation
           const client_id = window.location.origin;
           const redirect_uri = window.location.origin + '/auth/callback';
           const state = Math.random().toString(36).substring(2, 15);
-          const scope = 'create';
+          const scope = 'create media';
 
           // Store state for verification
           sessionStorage.setItem('indieauth_state', state);
@@ -132,7 +133,7 @@ Client-Side Implementation
               client_id: window.location.origin,
               redirect_uri: window.location.origin + '/auth/callback',
               me: me,
-              scope: 'create'
+              scope: 'create media'
           })
       })
       .then(response => response.text())
@@ -188,6 +189,44 @@ Creating a Post
            console.log('Post created! Location:', response.headers.get('Location'));
        }
    });
+
+Uploading Media
+~~~~~~~~~~~~~~~
+
+Discover the media endpoint from Micropub config, then upload files with a
+token that has ``media`` scope. The endpoint stores the file through Django's
+configured storage backend and returns the media URL in the ``Location``
+header:
+
+.. code-block:: javascript
+
+   fetch('/indieweb/micropub/?q=config', {
+       headers: {
+           'Authorization': 'Bearer ' + localStorage.getItem('micropub_token')
+       }
+   })
+   .then(response => response.json())
+   .then(config => {
+       const formData = new FormData();
+       formData.append('file', fileInput.files[0]);
+
+       return fetch(config['media-endpoint'], {
+           method: 'POST',
+           headers: {
+               'Authorization': 'Bearer ' + localStorage.getItem('micropub_token')
+           },
+           body: formData
+       });
+   })
+   .then(response => {
+       if (response.status === 201) {
+           console.log('Media URL:', response.headers.get('Location'));
+       }
+   });
+
+Use the returned URL as a ``photo`` property in a later Micropub create or
+update request. Files sent directly to ``/indieweb/micropub/`` in multipart
+create requests are still ignored; upload them to ``/indieweb/media/`` first.
 
 Extending the Micropub Endpoint
 -------------------------------
@@ -302,7 +341,8 @@ Common Issues
 **403 Forbidden on micropub endpoint**
    Token doesn't have the scope required for the requested operation. Create
    requires ``create`` or the legacy alias ``post``; source and update require
-   ``update``; delete requires ``delete``; undelete requires ``undelete``.
+   ``update``; delete requires ``delete``; undelete requires ``undelete``; and
+   media uploads require ``media``.
 
 **Redirect loops**
    Check that login redirect URLs are properly configured in Django settings

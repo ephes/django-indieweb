@@ -24,13 +24,13 @@ Features
 
 * IndieAuth authentication endpoint
 * IndieAuth token endpoint
-* Micropub endpoint with content creation, source query, update, delete, and undelete support
+* Micropub endpoint with content creation, source query, update, delete, undelete, and media upload support
 * Webmention sending and receiving
 * Pluggable content handler system for Micropub
 * Pluggable interfaces for Webmention URL resolution and spam checking
 * Support for both form-encoded and JSON Micropub requests
 * Microformats2 parsing for rich webmention content
-* Micropub query endpoints (config, syndicate-to, source)
+* Micropub query endpoints (config with media-endpoint discovery, syndicate-to, source)
 * Django integration
 
 Installation
@@ -67,6 +67,7 @@ Quick Start
    * ``/indieweb/auth/`` - Authentication endpoint
    * ``/indieweb/token/`` - Token endpoint
    * ``/indieweb/micropub/`` - Micropub endpoint
+   * ``/indieweb/media/`` - Micropub media endpoint
    * ``/indieweb/webmention/`` - Webmention endpoint
 
 5. To use Micropub for content creation and editing, create a custom content handler::

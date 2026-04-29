@@ -100,6 +100,77 @@ which case existing tokens for that client must stop working immediately.
    working as long as it satisfies the configured validator (or the
    validator is unset).
 
+INDIEWEB_MEDIA_MAX_UPLOAD_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum file size accepted by the Micropub media endpoint at
+``/indieweb/media/``.
+
+**Default:** ``10485760`` (10 MiB)
+
+Requests whose uploaded ``file`` part is larger than this value are rejected
+with HTTP 413 and body ``invalid_request`` before storage is called.
+django-indieweb enforces this limit after Django has finished parsing the
+multipart body, which means oversized uploads can still consume temporary disk
+and bandwidth before the view rejects them. For denial-of-service protection,
+also configure a complementary limit at the web server, reverse proxy, CDN, or
+Django deployment layer, for example nginx ``client_max_body_size``.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_MEDIA_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB
+
+Set this to ``None`` to disable django-indieweb's media endpoint size check.
+If you do that, enforce an upload limit outside this view so authenticated
+clients cannot fill local or remote storage.
+
+INDIEWEB_MEDIA_ALLOWED_TYPES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Iterable of MIME content types accepted by the Micropub media endpoint.
+
+**Default:** common image, audio, and video types:
+
+.. code-block:: python
+
+   (
+       "image/jpeg",
+       "image/png",
+       "image/gif",
+       "image/webp",
+       "image/heic",
+       "image/heif",
+       "audio/mpeg",
+       "audio/mp4",
+       "audio/ogg",
+       "audio/wav",
+       "audio/webm",
+       "video/mp4",
+       "video/quicktime",
+       "video/ogg",
+       "video/webm",
+   )
+
+Uploads whose ``file`` part reports a content type outside the allowlist are
+rejected with HTTP 415 and body ``invalid_request`` before storage is called.
+The value is based on the upload's submitted content type; if your deployment
+needs stronger guarantees, inspect files after upload or use storage/server
+policies that prevent active content from executing on your primary domain.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_MEDIA_ALLOWED_TYPES = ("image/jpeg", "image/png", "image/webp")
+
+Set this to ``None`` to disable django-indieweb's content-type check. If you
+allow broad uploads, serve media from a separate origin or with defensive
+headers such as ``Content-Disposition: attachment`` for risky types.
+
 URL Configuration
 -----------------
 
@@ -124,6 +195,7 @@ This creates the following endpoints:
 - ``/indieweb/tokens/`` - Browser UI for viewing and revoking the logged-in user's tokens
 - ``/indieweb/tokens/<pk>/revoke/`` - CSRF-protected POST action for revoking one owned token
 - ``/indieweb/micropub/`` - Micropub endpoint
+- ``/indieweb/media/`` - Micropub media endpoint
 - ``/indieweb/webmention/`` - Webmention receive endpoint
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
 
@@ -143,6 +215,7 @@ You can customize the URL paths:
        path('tokens/', views.TokenManagementView.as_view(), name='tokens'),
        path('tokens/<int:pk>/revoke/', views.TokenRevokeView.as_view(), name='token-revoke'),
        path('api/micropub/', views.MicropubView.as_view(), name='micropub'),
+       path('api/media/', views.MicropubMediaView.as_view(), name='media'),
        path('webmention/', views.WebmentionEndpoint.as_view(), name='webmention'),
        path('webmention/<int:pk>/', views.WebmentionStatusView.as_view(), name='webmention-status'),
    ]

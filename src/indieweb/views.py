@@ -7,18 +7,21 @@ import json
 import logging
 import math
 import re
+import uuid
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from pathlib import PurePath
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qsl, urlparse, urlunparse
 from urllib.parse import urlencode as urllib_urlencode
 
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.exceptions import ValidationError
+from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
@@ -32,6 +35,7 @@ from .processors import WebmentionProcessor
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
+    from django.core.files.uploadedfile import UploadedFile
 
     from .handlers import MicropubEntry
 
@@ -45,6 +49,26 @@ PKCE_CHALLENGE_MIN = 43
 PKCE_CHALLENGE_MAX = 128
 PKCE_VERIFIER_MIN = 43
 PKCE_VERIFIER_MAX = 128
+MICROPUB_MEDIA_SCOPE = "media"
+MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
+DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES = (
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/wav",
+    "audio/webm",
+    "video/mp4",
+    "video/quicktime",
+    "video/ogg",
+    "video/webm",
+)
 
 
 def _validate_redirect_uri(value: str) -> str | None:
@@ -217,6 +241,22 @@ def _append_redirect_params(redirect_uri: str, params: dict[str, str]) -> str:
     parsed = urlparse(redirect_uri)
     merged = parse_qsl(parsed.query, keep_blank_values=True) + list(params.items())
     return urlunparse(parsed._replace(query=urllib_urlencode(merged)))
+
+
+def _reverse_request_namespace(request: HttpRequest, name: str) -> str:
+    """Reverse ``name`` in the current URL namespace when one is active."""
+    namespace = request.resolver_match.namespace if request.resolver_match else ""
+    if namespace:
+        try:
+            return reverse(f"{namespace}:{name}")
+        except NoReverseMatch:
+            pass
+    try:
+        return reverse(name)
+    except NoReverseMatch:
+        # Useful in tests or direct view calls where resolver_match is absent,
+        # but the bundled URLconf is still mounted with its default namespace.
+        return reverse(f"indieweb:{name}")
 
 
 class CSRFExemptMixin(View):
@@ -1004,6 +1044,8 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             # Return configuration
             handler = get_micropub_handler()
             config = handler.get_config(self.token.owner)
+            if not config.get("media-endpoint"):
+                config["media-endpoint"] = request.build_absolute_uri(_reverse_request_namespace(request, "media"))
             return HttpResponse(json.dumps(config), content_type="application/json")
         elif q == "source":
             return self._handle_source_query(request)
@@ -1014,6 +1056,72 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             # Default response with user's me URL
             params = {"me": self.token.me}
             return HttpResponse(urlencode(params), status=200)
+
+
+class MicropubMediaView(CSRFExemptMixin, TokenAuthMixin, View):
+    """
+    Micropub media endpoint for direct file uploads.
+
+    Accepts multipart/form-data uploads with a single ``file`` part, stores
+    the file through Django's configured storage backend, and returns the
+    stored media URL in the Location header.
+    """
+
+    def _scope_authorized(self) -> bool:
+        """Require the conventional Micropub ``media`` scope for uploads."""
+        return self.authorized(self.token.client_id, self.token.scope, MICROPUB_MEDIA_SCOPE)
+
+    def _invalid_request(self) -> HttpResponse:
+        return HttpResponse("invalid_request", status=400)
+
+    def _storage_name(self, original_name: str) -> str:
+        """Return an unguessable storage key, preserving the lowercased final filename suffix."""
+        suffix = PurePath(original_name).suffix.lower()
+        return f"{MICROPUB_MEDIA_STORAGE_PREFIX}/{uuid.uuid4().hex}{suffix}"
+
+    def _absolute_storage_url(self, request: HttpRequest, stored_name: str) -> str:
+        url = default_storage.url(stored_name)
+        if url.startswith(("http://", "https://")):
+            return url
+        return request.build_absolute_uri(url)
+
+    def _upload_size_allowed(self, upload: UploadedFile) -> bool:
+        max_bytes = getattr(settings, "INDIEWEB_MEDIA_MAX_UPLOAD_BYTES", DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES)
+        if max_bytes is None:
+            return True
+        if upload.size is None:
+            # Custom upload handler with unknown size; reject rather than storing an unbounded file.
+            return False
+        return upload.size <= int(max_bytes)
+
+    def _upload_type_allowed(self, upload: UploadedFile) -> bool:
+        allowed_types = getattr(settings, "INDIEWEB_MEDIA_ALLOWED_TYPES", DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES)
+        if allowed_types is None:
+            return True
+        return upload.content_type in allowed_types
+
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        if not self._scope_authorized():
+            return HttpResponse("authorization error", status=403)
+
+        if request.content_type != "multipart/form-data" or "file" not in request.FILES:
+            return self._invalid_request()
+
+        upload = cast("UploadedFile", request.FILES["file"])
+        if not self._upload_size_allowed(upload):
+            return HttpResponse("invalid_request", status=413)
+        if not self._upload_type_allowed(upload):
+            return HttpResponse("invalid_request", status=415)
+
+        try:
+            stored_name = default_storage.save(self._storage_name(upload.name or ""), upload)
+        except OSError:
+            logger.exception("Unexpected error storing Micropub media upload")
+            return HttpResponse(status=500)
+
+        response = HttpResponse(status=201)
+        response["Location"] = self._absolute_storage_url(request, stored_name)
+        return response
 
 
 class WebmentionEndpoint(CSRFExemptMixin, View):

@@ -80,8 +80,9 @@ collapsed, duplicate tokens are removed while preserving first-seen order, and
 an empty or whitespace-only value is treated as no scope. Unknown scope names
 are intentionally preserved. IndieAuth and Micropub scopes are
 extension-defined, and clients may request values such as ``profile``,
-``media``, or site-specific scopes before django-indieweb implements matching
-resource-server behavior.
+``media``, or site-specific scopes. django-indieweb enforces ``media`` for
+direct uploads to the Micropub media endpoint; other unknown scopes are stored
+but have no built-in resource-server behavior unless your application adds it.
 
 Customizing the Consent Screen
 ------------------------------
@@ -234,12 +235,14 @@ Security Considerations
     ``update``; ``POST action=delete`` requires ``delete``;
     ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
     ``update`` (the spec does not define a separate read scope and the typical
-    use case for ``q=source`` is "fetch a post to edit it").
+    use case for ``q=source`` is "fetch a post to edit it"); and
+    ``POST /indieweb/media/`` requires ``media``.
     ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only
     require an authenticated token. Stored ``scope`` is split on whitespace
     and compared as an exact token, so ``createXYZ`` does not satisfy
-    ``create``. Scope failures return HTTP 403 with the plain-text body
-    ``authorization error``. The ``update``, ``delete``, and ``undelete``
+    ``create`` and ``mediaXYZ`` does not satisfy ``media``. Scope failures
+    return HTTP 403 with the plain-text body ``authorization error``. The
+    ``update``, ``delete``, and ``undelete``
     actions and the ``GET ?q=source`` query dispatch into the configured
     ``MicropubContentHandler`` after the scope check succeeds.
 

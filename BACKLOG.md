@@ -18,9 +18,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Micropub Media Endpoint and Uploads
 
-- [ ] Add a Micropub media endpoint.
-  - References: `docs/concepts.rst`, `docs/micropub.rst`.
-  - Outcome: media endpoint follows the Micropub spec, with storage integration, tests, and docs.
 - [ ] Handle multipart file uploads in Micropub form parsing.
   - Reference: `src/indieweb/views.py`.
   - Outcome: uploaded files are passed through the media flow rather than ignored.

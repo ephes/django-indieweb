@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Add a Micropub media endpoint
+
+- Added `indieweb:media` at `/indieweb/media/` for Micropub media endpoint uploads.
+- Reused the existing bearer-token authentication path, including expired-token rejection, inactive-owner rejection, and `INDIEWEB_CLIENT_ID_VALIDATOR` resource-server checks.
+- Required the exact `media` scope for uploads, matching common Micropub client practice while keeping create/update/delete scopes separate.
+- Accepted `multipart/form-data` requests with a `file` part, rejected uploads larger than `INDIEWEB_MEDIA_MAX_UPLOAD_BYTES` (default 10 MiB), rejected content types outside `INDIEWEB_MEDIA_ALLOWED_TYPES` (default common image/audio/video MIME types), stored accepted uploads through Django's configured storage backend under unguessable `indieweb/media/` keys, and returned `201 Created` with an absolute `Location` header.
+- Updated `GET /indieweb/micropub/?q=config` to advertise an absolute `media-endpoint` URL at the view layer unless a custom `MicropubContentHandler.get_config()` implementation already provides one.
+- Left multipart files sent directly to `/indieweb/micropub/` as follow-up work; regular Micropub create parsing still ignores uploaded files in this slice.
+- Documentation: updated `README.rst`, `CONTRIBUTING.rst`, `docs/api.rst`, `docs/micropub.rst`, `docs/concepts.rst`, `docs/configuration.rst`, `docs/tutorial.rst`, `docs/index.rst`, and `docs/indieauth.rst`; no generated docs under `docs/_build` were updated.
+- Changelog: updated `docs/changelog.rst` with an Unreleased media endpoint entry.
+- Validation: `uv run pytest tests/test_micropub_media.py -q`, `uv run pytest tests/test_micropub_endpoint.py tests/test_micropub_create.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, `git diff --check`, and `git diff --cached --stat` passed.
+
 ### Clean up TODO and future-enhancement notes after related changes ship
 
 - Audited current TODO, limitation, unsupported-feature, future-enhancement, and "not yet implemented" notes across `README.rst`, `docs/`, `src/`, `tests/`, and `BACKLOG.md`, excluding generated docs under `docs/_build`.

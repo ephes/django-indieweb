@@ -131,10 +131,15 @@ django-indieweb implements these protocols with three main components:
            +post() : create content
        }
 
+       class MicropubMediaView {
+           +post() : upload media
+       }
+
        Auth --> AuthView : creates
        AuthView --> TokenView : provides code
        TokenView --> Token : creates
        Token --> MicropubView : authenticates
+       Token --> MicropubMediaView : authenticates
 
 Data Flow
 ~~~~~~~~~
@@ -164,6 +169,16 @@ Data Flow
    - Creates return ``201 Created`` with a ``Location`` header; successful
      update/delete/undelete actions return ``204 No Content`` unless an
      update or undelete relocates the entry and returns ``201 Created``
+
+4. **Micropub Media Uploads**
+
+   - Client discovers the media endpoint from ``GET /indieweb/micropub/?q=config``
+   - Client sends ``multipart/form-data`` to ``/indieweb/media/`` with a
+     bearer token that has ``media`` scope
+   - The ``file`` part is stored through Django's configured storage backend
+     using an unguessable name
+   - The endpoint returns ``201 Created`` with a ``Location`` header that can
+     be used as a later Micropub ``photo``, ``audio``, or ``video`` URL value
 
 Security Model
 --------------
@@ -210,6 +225,7 @@ The Micropub resource server enforces scopes per operation; see :doc:`api` and
 - ``update`` - Required for ``POST action=update`` and ``GET ?q=source``.
 - ``delete`` - Required for ``POST action=delete``
 - ``undelete`` - Required for ``POST action=undelete``
+- ``media`` - Required for direct uploads to the Micropub media endpoint
 
 Best Practices
 --------------
@@ -236,17 +252,18 @@ Limitations
 
 Current implementation limitations:
 
-1. **No Micropub media endpoint or multipart upload handling** - The
-   Micropub endpoint accepts photo URL properties, but it does not yet provide
-   a media endpoint or process uploaded files.
+1. **No multipart upload handling on the Micropub create endpoint** - Direct
+   media uploads are supported at ``/indieweb/media/``, and Micropub create
+   requests accept photo URL properties, but uploaded files sent directly to
+   ``/indieweb/micropub/`` are still ignored.
 
 Future Enhancements
 -------------------
 
 Potential improvements for full IndieWeb support:
 
-1. **Micropub media endpoint and uploads** - Store uploaded media and expose a
-   media endpoint for clients
+1. **Multipart Micropub create uploads** - Route files sent directly to
+   ``/indieweb/micropub/`` through the same media storage flow
 2. **WebSub** - Real-time updates
 
 Resources

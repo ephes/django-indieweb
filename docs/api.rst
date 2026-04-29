@@ -17,6 +17,7 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/token/`` - Token endpoint for exchanging auth codes
 - ``/indieweb/tokens/`` - Browser UI for authenticated users to view and revoke their own tokens
 - ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
+- ``/indieweb/media/`` - Micropub media endpoint for direct media uploads
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
 
 IndieAuth Flow
@@ -511,6 +512,77 @@ body ``authorization error`` before source-query dispatch.
 
 Returns available syndication targets.
 
+Micropub Media Endpoint
+-----------------------
+
+**URL:** ``/indieweb/media/``
+
+The Micropub media endpoint accepts direct file uploads for clients that
+discover ``media-endpoint`` through ``GET /indieweb/micropub/?q=config``.
+It uses the same bearer-token authentication path as the Micropub endpoint,
+including token expiration, inactive-owner rejection, and the configured
+``INDIEWEB_CLIENT_ID_VALIDATOR`` resource-server policy.
+
+Uploads require the exact ``media`` scope. This follows the convention used by
+Quill and similar Micropub clients, while keeping django-indieweb's scope model
+explicit. The scope check is separate from ``create``/``post`` so a token that
+can create entries cannot upload files unless the user approved media access.
+
+POST Request
+~~~~~~~~~~~~
+
+Send a ``multipart/form-data`` request with one part named ``file``:
+
+.. code-block:: http
+
+    POST /indieweb/media/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: multipart/form-data; boundary=...
+
+    --...
+    Content-Disposition: form-data; name="file"; filename="sunset.jpg"
+    Content-Type: image/jpeg
+
+    ... binary data ...
+    --...--
+
+The uploaded file is stored through Django's configured storage backend using
+an unguessable name under ``indieweb/media/``. The suggested client filename is
+not used as the storage basename; only the final suffix is preserved.
+Uploads larger than ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES`` (default 10 MiB) are
+rejected before storage. Upload content types must be listed in
+``INDIEWEB_MEDIA_ALLOWED_TYPES`` (default: common image, audio, and video
+types).
+
+**Response:**
+
+.. code-block:: http
+
+    HTTP/1.1 201 Created
+    Location: https://yoursite.com/media/indieweb/media/ff176c461dd111e6b6ba3e1d05defe78.jpg
+
+The response body is empty. Clients can use the ``Location`` URL as a
+``photo``, ``audio``, or ``video`` property value in a later Micropub create or
+update request.
+
+**Error Response:**
+
+- ``400 Bad Request`` body ``invalid_request`` when the request is not
+  ``multipart/form-data`` or does not include a ``file`` part
+- ``401 Unauthorized`` body ``authentication error`` for missing, invalid, or
+  expired tokens, or inactive token owners
+- ``413 Payload Too Large`` body ``invalid_request`` when the uploaded file
+  exceeds ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``
+- ``415 Unsupported Media Type`` body ``invalid_request`` when the uploaded
+  file's content type is not in ``INDIEWEB_MEDIA_ALLOWED_TYPES``
+- ``403 Forbidden`` body ``authorization error`` when the token lacks the
+  ``media`` scope
+- ``403 Forbidden`` body ``invalid_client`` when the stored token's
+  ``client_id`` is rejected by ``INDIEWEB_CLIENT_ID_VALIDATOR``
+- ``500 Internal Server Error`` if the configured Django storage backend raises
+  unexpectedly while saving the upload
+
 Error Responses
 ---------------
 
@@ -555,6 +627,18 @@ All endpoints may return these error responses:
 - Micropub ``GET ?q=source`` with a missing ``url`` parameter or a ``url``
   unknown to the configured handler. Missing requested ``properties[]`` names
   are omitted from successful filtered responses instead of causing an error.
+- Micropub media endpoint upload requests that are not ``multipart/form-data``
+  or do not include a ``file`` part.
+
+**413 Payload Too Large — ``invalid_request``**
+
+- Micropub media endpoint upload whose ``file`` part exceeds
+  ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``.
+
+**415 Unsupported Media Type — ``invalid_request``**
+
+- Micropub media endpoint upload whose ``file`` content type is not listed in
+  ``INDIEWEB_MEDIA_ALLOWED_TYPES``.
 
 **401 Unauthorized**
 
@@ -569,10 +653,11 @@ All endpoints may return these error responses:
   requires ``create`` (or the legacy alias ``post``); ``POST action=update``
   requires ``update``; ``POST action=delete`` requires ``delete``;
   ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
-  ``update``. ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with
-  no ``q`` only require an authenticated token. Stored ``scope`` is split on
-  whitespace and matched as an exact token, so ``createXYZ`` does not satisfy
-  ``create``.
+  ``update``; and ``POST /indieweb/media/`` requires ``media``. ``GET
+  ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only require
+  an authenticated token. Stored ``scope`` is split on whitespace and matched
+  as an exact token, so ``createXYZ`` does not satisfy ``create`` and
+  ``mediaXYZ`` does not satisfy ``media``.
 - The stored token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (``invalid_client``)
@@ -638,6 +723,7 @@ accepted only when the auth code was issued with no scope.
   (which is typically used to fetch a post for editing).
 - ``delete`` - Required for ``POST action=delete``.
 - ``undelete`` - Required for ``POST action=undelete``.
+- ``media`` - Required for ``POST /indieweb/media/`` direct uploads.
 - ``post`` - Legacy alias for ``create``.
 
 ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only

@@ -5,9 +5,11 @@ Overview
 --------
 
 django-indieweb provides a Micropub endpoint that can create, query, update,
-delete, and undelete content in your Django application. The implementation
-uses a pluggable content handler system that allows you to integrate Micropub
-with any Django content model.
+delete, and undelete content in your Django application, plus a Micropub media
+endpoint for direct media uploads. The content endpoint uses a pluggable
+handler system that allows you to integrate Micropub with any Django content
+model; the media endpoint stores uploads through Django's configured storage
+backend.
 
 Quick Start
 -----------
@@ -21,7 +23,8 @@ enforced per operation: ``POST`` entry create requires ``create`` (the
 legacy alias ``post`` is still accepted), ``POST action=update`` requires
 ``update``, ``POST action=delete`` requires ``delete``,
 ``POST action=undelete`` requires ``undelete``, and ``GET ?q=source``
-requires ``update``. See :doc:`api` for the full mapping.
+requires ``update``. The media endpoint is available at ``/indieweb/media/``
+and requires ``media``. See :doc:`api` for the full mapping.
 
 2. Using the Default In-Memory Handler
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -167,6 +170,66 @@ Common h-entry properties are supported:
 - ``photo`` - Photo URL(s)
 - ``published`` - Publication date
 
+Media Endpoint
+~~~~~~~~~~~~~~
+
+``GET /indieweb/micropub/?q=config`` advertises the media endpoint as an
+absolute ``media-endpoint`` URL. Custom ``MicropubContentHandler.get_config()``
+overrides do not need to add this value themselves; the Micropub view injects
+the configured endpoint URL into the response.
+
+Upload media directly to ``/indieweb/media/`` with a token that has the
+``media`` scope. The request must be ``multipart/form-data`` with one part
+named ``file``:
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/media/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -F "file=@sunset.jpg;type=image/jpeg"
+
+Successful uploads are stored through Django's configured storage backend
+using an unguessable key under ``indieweb/media/``. The endpoint returns
+``201 Created`` with an absolute ``Location`` header and an empty body:
+
+.. code:: http
+
+   HTTP/1.1 201 Created
+   Location: https://example.com/media/indieweb/media/ff176c461dd111e6b6ba3e1d05defe78.jpg
+
+Use that URL as a later Micropub property value, for example:
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "type": ["h-entry"],
+       "properties": {
+         "content": ["A photo post"],
+         "photo": ["https://example.com/media/indieweb/media/ff176c461dd111e6b6ba3e1d05defe78.jpg"]
+       }
+     }'
+
+Multipart file uploads sent to ``/indieweb/micropub/`` itself are still not
+processed in this slice; send files to the media endpoint first, then include
+the returned URL in the Micropub create or update request.
+
+The media endpoint has two safety settings:
+
+- ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES`` defaults to 10 MiB. Larger uploads
+  return ``413 invalid_request`` before storage is called.
+- ``INDIEWEB_MEDIA_ALLOWED_TYPES`` defaults to common image, audio, and video
+  MIME types. Other content types return ``415 invalid_request`` before
+  storage is called.
+
+Set either value to ``None`` to disable that built-in check, but only when your
+web server, CDN, storage backend, or application enforces equivalent limits.
+If you allow broad content types such as HTML or SVG, serve uploaded media
+from a separate origin or with defensive headers such as
+``Content-Disposition: attachment``.
+
 Update, Delete, Undelete
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -242,6 +305,18 @@ Query Endpoints
 
 Returns supported post types and features.
 
+Example response excerpt:
+
+.. code:: json
+
+   {
+     "media-endpoint": "https://example.com/indieweb/media/",
+     "syndicate-to": [],
+     "post-types": [
+       {"type": "note", "name": "Note", "properties": ["content"]}
+     ]
+   }
+
 **Syndication Targets:**
 
 .. code:: bash
@@ -276,7 +351,8 @@ Testing Your Implementation
 
 1. **Get an access token** via IndieAuth with the ``create`` scope (or the
    legacy alias ``post``); use ``update``/``delete``/``undelete`` for those
-   actions, and ``update`` for ``GET ?q=source``
+   actions, ``update`` for ``GET ?q=source``, and ``media`` for direct media
+   uploads
 2. **Create a test post:**
 
 .. code:: bash
@@ -355,11 +431,17 @@ The Micropub endpoint returns the following HTTP status codes:
   raised ``ValueError``), missing ``url``, malformed JSON, a non-object
   JSON body, or — for ``action=update`` — a non-JSON body, an empty update
   payload (no ``replace``/``add``/``delete``), a non-array operation value,
-  or an otherwise spec-non-conformant operation shape; or a ``GET ?q=source``
-  request had a missing ``url`` or a ``url`` unknown to the handler. Action
-  and source-query client failures use the plain-text body ``invalid_request``.
+  or an otherwise spec-non-conformant operation shape; a ``GET ?q=source``
+  request had a missing ``url`` or a ``url`` unknown to the handler; or a
+  media endpoint upload was not ``multipart/form-data`` or lacked the ``file``
+  part. Action, source-query, and media-upload client failures use the
+  plain-text body ``invalid_request``.
 - ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
   token's owner is inactive
+- ``413 Payload Too Large`` - Media endpoint upload exceeded
+  ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``; body ``invalid_request``
+- ``415 Unsupported Media Type`` - Media endpoint upload content type was not
+  listed in ``INDIEWEB_MEDIA_ALLOWED_TYPES``; body ``invalid_request``
 - ``403 Forbidden`` - body ``authorization error`` when the token lacks the
   scope required for the requested operation; body ``invalid_client`` when
   the token's ``client_id`` is rejected by the configured
@@ -429,6 +511,6 @@ Then in settings:
 Next Steps
 ----------
 
-- Add a Micropub media endpoint and multipart file upload handling
+- Handle multipart file uploads sent directly to the Micropub create endpoint
 - Implement WebSub for real-time updates
 - Add support for more post types (events, RSVPs, etc.)
