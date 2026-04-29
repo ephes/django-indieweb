@@ -225,8 +225,32 @@ header:
    });
 
 Use the returned URL as a ``photo`` property in a later Micropub create or
-update request. Files sent directly to ``/indieweb/micropub/`` in multipart
-create requests are still ignored; upload them to ``/indieweb/media/`` first.
+update request.
+
+For simple photo posts, you can also send the uploaded file directly with the
+Micropub create request. This uses the create/post scope rule, not the
+``media`` scope, and stores the uploaded ``photo`` part through the same media
+storage policy:
+
+.. code-block:: javascript
+
+   const formData = new FormData();
+   formData.append('h', 'entry');
+   formData.append('content', 'Photo post from Micropub');
+   formData.append('photo', fileInput.files[0]);
+
+   fetch('/indieweb/micropub/', {
+       method: 'POST',
+       headers: {
+           'Authorization': 'Bearer ' + localStorage.getItem('micropub_token')
+       },
+       body: formData
+   })
+   .then(response => {
+       if (response.status === 201) {
+           console.log('Post created! Location:', response.headers.get('Location'));
+       }
+   });
 
 Extending the Micropub Endpoint
 -------------------------------
@@ -342,7 +366,8 @@ Common Issues
    Token doesn't have the scope required for the requested operation. Create
    requires ``create`` or the legacy alias ``post``; source and update require
    ``update``; delete requires ``delete``; undelete requires ``undelete``; and
-   media uploads require ``media``.
+   direct uploads to ``/indieweb/media/`` require ``media``. Multipart
+   ``photo`` uploads sent with a create request use the create/post rule.
 
 **Redirect loops**
    Check that login redirect URLs are properly configured in Django settings

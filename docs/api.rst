@@ -263,6 +263,7 @@ Creates a new post using the configured content handler.
 **Supported Content Types:**
 
 - ``application/x-www-form-urlencoded`` - Form-encoded data
+- ``multipart/form-data`` - Form data plus ``photo`` file uploads
 - ``application/json`` - JSON formatted data
 
 **Common Parameters:**
@@ -273,7 +274,7 @@ Creates a new post using the configured content handler.
 - ``category`` - Categories (comma-separated in form data, array in JSON)
 - ``in-reply-to`` - URL this post is replying to
 - ``location`` - Geographic location in geo URI format
-- ``photo`` - Photo URL(s)
+- ``photo`` - Photo URL(s), or uploaded photo files on multipart create requests
 - ``published`` - Publication date
 
 **Form-Encoded Example:**
@@ -286,6 +287,45 @@ Creates a new post using the configured content handler.
     Content-Type: application/x-www-form-urlencoded
 
     h=entry&content=Hello+World&category=test,indieweb
+
+**Multipart Create with Photo Upload Example:**
+
+.. code-block:: http
+
+    POST /indieweb/micropub/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: multipart/form-data; boundary=...
+
+    --...
+    Content-Disposition: form-data; name="h"
+
+    entry
+    --...
+    Content-Disposition: form-data; name="content"
+
+    Photo post
+    --...
+    Content-Disposition: form-data; name="photo"
+
+    https://photos.example.org/existing.jpg
+    --...
+    Content-Disposition: form-data; name="photo"; filename="sunset.jpg"
+    Content-Type: image/jpeg
+
+    ... binary data ...
+    --...--
+
+Uploaded ``photo`` files are stored through Django's configured storage
+backend using the same name generation, ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``
+limit, ``INDIEWEB_MEDIA_ALLOWED_TYPES`` allowlist, and absolute URL building
+as the direct media endpoint. The created entry receives the resulting
+absolute media URL(s) as ``photo`` property values. URL-valued ``photo`` form
+fields are preserved and precede uploaded media URLs.
+
+This is still a create operation: it requires ``create`` (or the legacy
+``post`` alias), not ``media``. The separate ``/indieweb/media/`` endpoint
+continues to require the exact ``media`` scope.
 
 **JSON Example:**
 
@@ -634,11 +674,15 @@ All endpoints may return these error responses:
 
 - Micropub media endpoint upload whose ``file`` part exceeds
   ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``.
+- Micropub multipart create upload whose ``photo`` part exceeds
+  ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``.
 
 **415 Unsupported Media Type — ``invalid_request``**
 
 - Micropub media endpoint upload whose ``file`` content type is not listed in
   ``INDIEWEB_MEDIA_ALLOWED_TYPES``.
+- Micropub multipart create upload whose ``photo`` content type is not listed
+  in ``INDIEWEB_MEDIA_ALLOWED_TYPES``.
 
 **401 Unauthorized**
 
@@ -653,10 +697,12 @@ All endpoints may return these error responses:
   requires ``create`` (or the legacy alias ``post``); ``POST action=update``
   requires ``update``; ``POST action=delete`` requires ``delete``;
   ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
-  ``update``; and ``POST /indieweb/media/`` requires ``media``. ``GET
-  ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only require
-  an authenticated token. Stored ``scope`` is split on whitespace and matched
-  as an exact token, so ``createXYZ`` does not satisfy ``create`` and
+  ``update``; ``POST /indieweb/media/`` requires ``media``; and multipart
+  create uploads sent to ``POST /indieweb/micropub/`` remain create requests,
+  requiring ``create`` or ``post`` rather than ``media``. ``GET ?q=config``,
+  ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only require an
+  authenticated token. Stored ``scope`` is split on whitespace and matched as
+  an exact token, so ``createXYZ`` does not satisfy ``create`` and
   ``mediaXYZ`` does not satisfy ``media``.
 - The stored token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
@@ -695,6 +741,8 @@ All endpoints may return these error responses:
   or raised any exception while servicing ``GET ?q=source``. The exception is
   logged via ``logger.exception`` so the stack trace stays in the server log
   rather than the response body.
+- The configured Django storage backend raised unexpectedly while saving a
+  Micropub media endpoint upload or multipart create ``photo`` upload.
 
 Scopes
 ------
@@ -723,7 +771,9 @@ accepted only when the auth code was issued with no scope.
   (which is typically used to fetch a post for editing).
 - ``delete`` - Required for ``POST action=delete``.
 - ``undelete`` - Required for ``POST action=undelete``.
-- ``media`` - Required for ``POST /indieweb/media/`` direct uploads.
+- ``media`` - Required for ``POST /indieweb/media/`` direct uploads. Multipart
+  create uploads sent to ``POST /indieweb/micropub/`` are covered by the
+  create/post scope because they create an entry.
 - ``post`` - Legacy alias for ``create``.
 
 ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only

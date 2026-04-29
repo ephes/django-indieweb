@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Handle multipart file uploads in Micropub form parsing
+
+- Updated `POST /indieweb/micropub/` multipart create parsing so uploaded `photo` file parts are no longer ignored.
+- Extracted shared private media upload helpers in `src/indieweb/views.py` so multipart create uploads and the direct `/indieweb/media/` endpoint use the same unguessable storage naming, `INDIEWEB_MEDIA_MAX_UPLOAD_BYTES` size limit, `INDIEWEB_MEDIA_ALLOWED_TYPES` content-type allowlist, Django storage backend, and absolute URL generation.
+- Multipart create uploads validate all submitted `photo` files before saving any, and clean up already-saved files if a later storage save fails, so a rejected batch does not leave known partial-upload orphans.
+- Preserved URL-valued `photo` form properties and appended stored upload URLs to the same `photo` property list before calling `MicropubContentHandler.create_entry()`. Multiple uploaded `photo` files are supported through `request.FILES.getlist("photo")`.
+- Kept scope behavior operation-based: multipart create uploads require `create` or the legacy `post` alias, while direct `/indieweb/media/` uploads continue to require `media`.
+- Added focused regression tests for one uploaded photo, multiple uploaded photos, mixed URL-valued and uploaded photos, URL-only photo create behavior, oversized uploads, disallowed content types, storage `OSError`, and create/post scope behavior.
+- Documentation: updated `docs/micropub.rst`, `docs/api.rst`, `docs/concepts.rst`, `docs/configuration.rst`, and `docs/tutorial.rst`; checked `README.rst` and `docs/index.rst` and no update was needed because their summaries were already broad enough. No generated docs under `docs/_build` were updated.
+- Changelog: updated `docs/changelog.rst` with an Unreleased multipart create upload entry.
+- Validation: `uv run pytest tests/test_micropub_media.py -q`, `uv run pytest tests/test_micropub_create.py -q`, `uv run pytest tests/test_micropub_endpoint.py tests/test_micropub_create.py tests/test_micropub_media.py -q`, `uv run pytest`, `uv run mypy`, `uv run ruff check .`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv build`, `git diff --check`, and `git diff --cached --stat` passed.
+
 ### Add a Micropub media endpoint
 
 - Added `indieweb:media` at `/indieweb/media/` for Micropub media endpoint uploads.

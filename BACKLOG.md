@@ -18,9 +18,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Micropub Media Endpoint and Uploads
 
-- [ ] Handle multipart file uploads in Micropub form parsing.
-  - Reference: `src/indieweb/views.py`.
-  - Outcome: uploaded files are passed through the media flow rather than ignored.
 - [ ] Document and test media uploads.
   - Outcome: examples and regression coverage exist for media endpoint and upload behavior.
 

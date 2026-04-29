@@ -71,6 +71,92 @@ DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES = (
 )
 
 
+class _MicropubMediaUploadError(Exception):
+    """Internal exception carrying the HTTP status for upload validation/storage failures."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(status_code)
+
+
+def _micropub_media_storage_name(original_name: str) -> str:
+    """Return an unguessable storage key, preserving the lowercased final filename suffix."""
+    suffix = PurePath(original_name).suffix.lower()
+    return f"{MICROPUB_MEDIA_STORAGE_PREFIX}/{uuid.uuid4().hex}{suffix}"
+
+
+def _absolute_storage_url(request: HttpRequest, stored_name: str) -> str:
+    url = default_storage.url(stored_name)
+    if url.startswith(("http://", "https://")):
+        return url
+    return request.build_absolute_uri(url)
+
+
+def _upload_size_allowed(upload: UploadedFile) -> bool:
+    max_bytes = getattr(settings, "INDIEWEB_MEDIA_MAX_UPLOAD_BYTES", DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES)
+    if max_bytes is None:
+        return True
+    if upload.size is None:
+        # Custom upload handler with unknown size; reject rather than storing an unbounded file.
+        return False
+    return upload.size <= int(max_bytes)
+
+
+def _upload_type_allowed(upload: UploadedFile) -> bool:
+    allowed_types = getattr(settings, "INDIEWEB_MEDIA_ALLOWED_TYPES", DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES)
+    if allowed_types is None:
+        return True
+    return upload.content_type in allowed_types
+
+
+def _validate_micropub_media_upload(upload: UploadedFile) -> None:
+    """Validate a Micropub media upload before storage."""
+    if not _upload_size_allowed(upload):
+        raise _MicropubMediaUploadError(413)
+    if not _upload_type_allowed(upload):
+        raise _MicropubMediaUploadError(415)
+
+
+def _save_micropub_media_upload(upload: UploadedFile) -> str:
+    """Store a Micropub media upload and return the stored name."""
+    try:
+        return default_storage.save(_micropub_media_storage_name(upload.name or ""), upload)
+    except OSError as exc:
+        logger.exception("Unexpected error storing Micropub media upload")
+        raise _MicropubMediaUploadError(500) from exc
+
+
+def _store_micropub_media_upload(request: HttpRequest, upload: UploadedFile) -> str:
+    """Validate and store a Micropub media upload, returning the absolute media URL."""
+    _validate_micropub_media_upload(upload)
+    return _absolute_storage_url(request, _save_micropub_media_upload(upload))
+
+
+def _store_micropub_media_uploads(request: HttpRequest, uploads: list[UploadedFile]) -> list[str]:
+    """Validate and store multiple uploads, cleaning up partial saves if storage fails."""
+    for upload in uploads:
+        _validate_micropub_media_upload(upload)
+
+    stored_names: list[str] = []
+    try:
+        for upload in uploads:
+            stored_names.append(_save_micropub_media_upload(upload))
+    except _MicropubMediaUploadError:
+        for stored_name in stored_names:
+            try:
+                default_storage.delete(stored_name)
+            except OSError:
+                logger.exception(f"Failed to clean up stored Micropub media upload {stored_name!r}")
+        raise
+    return [_absolute_storage_url(request, stored_name) for stored_name in stored_names]
+
+
+def _micropub_media_upload_error_response(exc: _MicropubMediaUploadError) -> HttpResponse:
+    if exc.status_code in {413, 415}:
+        return HttpResponse("invalid_request", status=exc.status_code)
+    return HttpResponse(status=exc.status_code)
+
+
 def _validate_redirect_uri(value: str) -> str | None:
     """Validate a ``redirect_uri`` per IndieAuth.
 
@@ -712,10 +798,10 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             if list_props:
                 properties.update(list_props)
 
-        # Handle file uploads
-        if "photo" in request.FILES:
-            # Multipart uploads are tracked with the Micropub media endpoint backlog work.
-            pass
+        photo_uploads = request.FILES.getlist("photo")
+        for media_url in _store_micropub_media_uploads(request, photo_uploads):
+            photo_values = properties.setdefault("photo", [])
+            photo_values.append(media_url)
 
         return properties
 
@@ -1010,7 +1096,10 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             return self._handle_undelete(request)
 
         # Parse properties from request
-        properties = self.parse_request_data(request)
+        try:
+            properties = self.parse_request_data(request)
+        except _MicropubMediaUploadError as exc:
+            return _micropub_media_upload_error_response(exc)
 
         # Get the content handler and create entry
         handler = get_micropub_handler()
@@ -1074,32 +1163,6 @@ class MicropubMediaView(CSRFExemptMixin, TokenAuthMixin, View):
     def _invalid_request(self) -> HttpResponse:
         return HttpResponse("invalid_request", status=400)
 
-    def _storage_name(self, original_name: str) -> str:
-        """Return an unguessable storage key, preserving the lowercased final filename suffix."""
-        suffix = PurePath(original_name).suffix.lower()
-        return f"{MICROPUB_MEDIA_STORAGE_PREFIX}/{uuid.uuid4().hex}{suffix}"
-
-    def _absolute_storage_url(self, request: HttpRequest, stored_name: str) -> str:
-        url = default_storage.url(stored_name)
-        if url.startswith(("http://", "https://")):
-            return url
-        return request.build_absolute_uri(url)
-
-    def _upload_size_allowed(self, upload: UploadedFile) -> bool:
-        max_bytes = getattr(settings, "INDIEWEB_MEDIA_MAX_UPLOAD_BYTES", DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES)
-        if max_bytes is None:
-            return True
-        if upload.size is None:
-            # Custom upload handler with unknown size; reject rather than storing an unbounded file.
-            return False
-        return upload.size <= int(max_bytes)
-
-    def _upload_type_allowed(self, upload: UploadedFile) -> bool:
-        allowed_types = getattr(settings, "INDIEWEB_MEDIA_ALLOWED_TYPES", DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES)
-        if allowed_types is None:
-            return True
-        return upload.content_type in allowed_types
-
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         if not self._scope_authorized():
             return HttpResponse("authorization error", status=403)
@@ -1108,19 +1171,13 @@ class MicropubMediaView(CSRFExemptMixin, TokenAuthMixin, View):
             return self._invalid_request()
 
         upload = cast("UploadedFile", request.FILES["file"])
-        if not self._upload_size_allowed(upload):
-            return HttpResponse("invalid_request", status=413)
-        if not self._upload_type_allowed(upload):
-            return HttpResponse("invalid_request", status=415)
-
         try:
-            stored_name = default_storage.save(self._storage_name(upload.name or ""), upload)
-        except OSError:
-            logger.exception("Unexpected error storing Micropub media upload")
-            return HttpResponse(status=500)
+            location = _store_micropub_media_upload(request, upload)
+        except _MicropubMediaUploadError as exc:
+            return _micropub_media_upload_error_response(exc)
 
         response = HttpResponse(status=201)
-        response["Location"] = self._absolute_storage_url(request, stored_name)
+        response["Location"] = location
         return response
 
 

@@ -104,12 +104,14 @@ INDIEWEB_MEDIA_MAX_UPLOAD_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Maximum file size accepted by the Micropub media endpoint at
-``/indieweb/media/``.
+``/indieweb/media/`` and by ``photo`` file parts on multipart create requests
+sent to ``/indieweb/micropub/``.
 
 **Default:** ``10485760`` (10 MiB)
 
-Requests whose uploaded ``file`` part is larger than this value are rejected
-with HTTP 413 and body ``invalid_request`` before storage is called.
+Requests whose uploaded ``file`` or ``photo`` part is larger than this value
+are rejected with HTTP 413 and body ``invalid_request`` before storage is
+called.
 django-indieweb enforces this limit after Django has finished parsing the
 multipart body, which means oversized uploads can still consume temporary disk
 and bandwidth before the view rejects them. For denial-of-service protection,
@@ -123,14 +125,15 @@ Django deployment layer, for example nginx ``client_max_body_size``.
    # settings.py
    INDIEWEB_MEDIA_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MiB
 
-Set this to ``None`` to disable django-indieweb's media endpoint size check.
-If you do that, enforce an upload limit outside this view so authenticated
+Set this to ``None`` to disable django-indieweb's media upload size check. If
+you do that, enforce an upload limit outside these views so authenticated
 clients cannot fill local or remote storage.
 
 INDIEWEB_MEDIA_ALLOWED_TYPES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Iterable of MIME content types accepted by the Micropub media endpoint.
+Iterable of MIME content types accepted by the Micropub media endpoint and by
+``photo`` file parts on multipart create requests.
 
 **Default:** common image, audio, and video types:
 
@@ -154,8 +157,9 @@ Iterable of MIME content types accepted by the Micropub media endpoint.
        "video/webm",
    )
 
-Uploads whose ``file`` part reports a content type outside the allowlist are
-rejected with HTTP 415 and body ``invalid_request`` before storage is called.
+Uploads whose ``file`` or ``photo`` part reports a content type outside the
+allowlist are rejected with HTTP 415 and body ``invalid_request`` before
+storage is called.
 The value is based on the upload's submitted content type; if your deployment
 needs stronger guarantees, inspect files after upload or use storage/server
 policies that prevent active content from executing on your primary domain.

@@ -183,6 +183,31 @@ class TestMicropubCreate:
         assert response.status_code == 201
 
     @pytest.mark.django_db
+    def test_handler_receives_photo_url_property(self, client, token, micropub_url, monkeypatch):
+        """Test that URL-valued photo properties are still forwarded unchanged."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        auth_header = f"Bearer {token.key}"
+        data = {
+            "h": "entry",
+            "content": "Check out this photo!",
+            "photo": "https://example.com/photo.jpg",
+        }
+
+        response = client.post(micropub_url, data=data, Authorization=auth_header)
+
+        assert response.status_code == 201
+        assert received_properties is not None
+        assert received_properties["photo"] == ["https://example.com/photo.jpg"]
+
+    @pytest.mark.django_db
     def test_query_config(self, client, token, micropub_url):
         """Test querying Micropub configuration."""
         auth_header = f"Bearer {token.key}"

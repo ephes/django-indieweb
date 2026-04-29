@@ -167,7 +167,7 @@ Common h-entry properties are supported:
 - ``category`` - Tags/categories (comma-separated or array)
 - ``location`` - Geographic location (geo URI format)
 - ``in-reply-to`` - URL this post is replying to
-- ``photo`` - Photo URL(s)
+- ``photo`` - Photo URL(s), or uploaded photo files on multipart create requests
 - ``published`` - Publication date
 
 Media Endpoint
@@ -212,11 +212,37 @@ Use that URL as a later Micropub property value, for example:
        }
      }'
 
-Multipart file uploads sent to ``/indieweb/micropub/`` itself are still not
-processed in this slice; send files to the media endpoint first, then include
-the returned URL in the Micropub create or update request.
+Multipart create requests sent directly to ``/indieweb/micropub/`` can also
+include ``photo`` file parts. These are create requests, so they require
+``create`` (or the legacy ``post`` alias), not ``media``. Each uploaded photo
+is validated and stored with the same policy as the direct media endpoint, and
+the resulting absolute media URL is appended to the entry's ``photo`` property
+before ``MicropubContentHandler.create_entry()`` is called. Existing URL-valued
+``photo`` form fields are preserved, so clients can send both referenced and
+uploaded photos in one create request:
 
-The media endpoint has two safety settings:
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -F "h=entry" \
+     -F "content=A photo post" \
+     -F "photo=https://photos.example.org/existing.jpg" \
+     -F "photo=@sunset.jpg;type=image/jpeg"
+
+The handler receives properties shaped like:
+
+.. code:: json
+
+   {
+     "content": ["A photo post"],
+     "photo": [
+       "https://photos.example.org/existing.jpg",
+       "https://example.com/media/indieweb/media/ff176c461dd111e6b6ba3e1d05defe78.jpg"
+     ]
+   }
+
+The media endpoint and multipart create uploads share two safety settings:
 
 - ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES`` defaults to 10 MiB. Larger uploads
   return ``413 invalid_request`` before storage is called.
@@ -438,18 +464,21 @@ The Micropub endpoint returns the following HTTP status codes:
   plain-text body ``invalid_request``.
 - ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
   token's owner is inactive
-- ``413 Payload Too Large`` - Media endpoint upload exceeded
+- ``413 Payload Too Large`` - Media endpoint or multipart create upload exceeded
   ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``; body ``invalid_request``
-- ``415 Unsupported Media Type`` - Media endpoint upload content type was not
-  listed in ``INDIEWEB_MEDIA_ALLOWED_TYPES``; body ``invalid_request``
+- ``415 Unsupported Media Type`` - Media endpoint or multipart create upload
+  content type was not listed in ``INDIEWEB_MEDIA_ALLOWED_TYPES``; body
+  ``invalid_request``
 - ``403 Forbidden`` - body ``authorization error`` when the token lacks the
   scope required for the requested operation; body ``invalid_client`` when
   the token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR``
 - ``500 Internal Server Error`` - The configured handler raised an unexpected
   exception (e.g. database failure) during ``update``/``delete``/``undelete``
-  or ``GET ?q=source``; the exception is logged via ``logger.exception`` so
-  the stack trace stays in the server log rather than the response body
+  or ``GET ?q=source``, or the configured storage backend raised while saving
+  a media endpoint or multipart create upload; the exception is logged via
+  ``logger.exception`` so the stack trace stays in the server log rather than
+  the response body
 
 See :doc:`api` for the full per-operation scope mapping and the complete
 error-response listing across all IndieWeb endpoints.
@@ -511,6 +540,5 @@ Then in settings:
 Next Steps
 ----------
 
-- Handle multipart file uploads sent directly to the Micropub create endpoint
 - Implement WebSub for real-time updates
 - Add support for more post types (events, RSVPs, etc.)

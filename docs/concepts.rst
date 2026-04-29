@@ -85,7 +85,7 @@ Common Properties
 - ``category`` - Tags/categories
 - ``in-reply-to`` - URL being replied to
 - ``location`` - Geographic coordinates
-- ``photo`` - Image URLs
+- ``photo`` - Image URLs, or uploaded photo files on multipart create requests
 
 Implementation Architecture
 ---------------------------
@@ -180,6 +180,17 @@ Data Flow
    - The endpoint returns ``201 Created`` with a ``Location`` header that can
      be used as a later Micropub ``photo``, ``audio``, or ``video`` URL value
 
+5. **Multipart Create Photo Uploads**
+
+   - Client can also send ``multipart/form-data`` directly to
+     ``/indieweb/micropub/`` for entry creation
+   - ``photo`` file parts are validated and stored through the same media
+     storage policy used by ``/indieweb/media/``
+   - Stored media URLs are appended to the created entry's ``photo`` property
+     alongside any URL-valued ``photo`` fields sent in the same request
+   - Because this creates an entry, the request uses the create/post scope
+     rule rather than the direct media endpoint's ``media`` scope
+
 Security Model
 --------------
 
@@ -250,21 +261,16 @@ For Users
 Limitations
 -----------
 
-Current implementation limitations:
-
-1. **No multipart upload handling on the Micropub create endpoint** - Direct
-   media uploads are supported at ``/indieweb/media/``, and Micropub create
-   requests accept photo URL properties, but uploaded files sent directly to
-   ``/indieweb/micropub/`` are still ignored.
+Current implementation limitations are tracked in ``BACKLOG.md``. Built-in
+rate limiting, built-in CORS support, WebSub, Webmention vouch support,
+Salmentions, and additional Micropub post types remain future work.
 
 Future Enhancements
 -------------------
 
 Potential improvements for full IndieWeb support:
 
-1. **Multipart Micropub create uploads** - Route files sent directly to
-   ``/indieweb/micropub/`` through the same media storage flow
-2. **WebSub** - Real-time updates
+1. **WebSub** - Real-time updates
 
 Resources
 ---------
