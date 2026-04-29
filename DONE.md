@@ -4,6 +4,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Close H-Card Utility Coverage Gaps and Confirm Support Status
+
+- Added focused pytest coverage for h-card utility behavior in `tests/test_h_card.py`, covering recursive hyphen-to-underscore property normalization, scalar-to-list normalization, nested `adr`/`org` normalization, invalid top-level validation inputs, invalid nested `adr`/`org` list items, first top-level h-card selection, no-h-card parsing, base-URL resolution, and nested parsed `h-adr` property-name normalization.
+- Reviewed `src/indieweb/h_card.py`, `src/indieweb/models.py`, `src/indieweb/templatetags/indieweb_tags.py`, and `src/indieweb/templates/indieweb/h-card.html` against the documented h-card support surface; no implementation changes were needed, and the existing consumer tests remained part of targeted validation.
+- Documentation: checked `docs/h-card.rst`; no h-card documentation update needed because the support/status wording still matches current behavior.
+- Changelog: no changelog update needed because this was test-only coverage and backlog bookkeeping, with no behavior, public API, configuration, or user-facing documentation change.
+- Validation: `uv run pytest tests/test_h_card.py -q`, `uv run pytest tests/test_h_card.py tests/test_h_card_extra_classes.py tests/test_h_card_integration.py tests/test_h_card_templatetags.py tests/test_profile_models.py -q`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, and `git diff --check` passed.
+
 ### Audit IndieWeb Docs for Stale Settings, Commands, and Behavior Notes
 
 - Audited the current development, contributor, README, Sphinx, IndieAuth, Micropub, Webmention, h-card, configuration, backlog, and changelog documentation against the current project workflow and recent endpoint behavior.

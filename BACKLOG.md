@@ -31,9 +31,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Documentation Follow-ups
 
-- [ ] Close h-card utility coverage gaps and confirm support status.
-  - Reference: `src/indieweb/h_card.py`.
-  - Outcome: normalization and validation edge cases are covered by focused tests, and docs accurately describe supported h-card behavior.
 - [ ] Clean up TODO and future-enhancement notes after related changes ship.
 
 ### Token Management UI
