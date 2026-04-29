@@ -77,6 +77,9 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Add a coverage gate.
   - Reference: `pyproject.toml`.
   - Outcome: coverage has a documented `fail_under` threshold based on the current baseline.
+- [ ] Add a `just loc` line-counting workflow.
+  - References: `justfile`, `pyproject.toml`, `../kptncook/justfile`.
+  - Outcome: running `just loc` produces repository line-count summaries using the same `uv run count-lines-of-code` workflow used in `../kptncook`, with any required dependency or tool configuration documented.
 - [ ] Remove the `django-model-utils` runtime dependency safely.
   - References: `pyproject.toml`, `src/indieweb/migrations/0001_initial.py`.
   - Outcome: initial migrations no longer import `model_utils.fields`, and the dependency can be removed without breaking fresh installs.
