@@ -13,7 +13,8 @@ Types of Contributions
 Report Bugs
 ~~~~~~~~~~~
 
-Report bugs at https://github.com/ephes/django-indieweb/issues.
+Report bugs at https://github.com/ephes/django-indieweb/issues. Planned work is
+tracked in ``BACKLOG.md`` in the repository root.
 
 If you are reporting a bug, please include:
 
@@ -24,16 +25,18 @@ If you are reporting a bug, please include:
 Fix Bugs
 ~~~~~~~~
 
-Look through the GitHub issues for bugs. Anything tagged with "bug"
-is open to whoever wants to implement it.
+Look through ``BACKLOG.md`` for planned bugfix work. If you fix an unlisted
+bug, add enough context to the pull request for the fix to be reviewed and
+record any remaining follow-up work in ``BACKLOG.md``.
 
 Implement Features
 ~~~~~~~~~~~~~~~~~~
 
-Look through the GitHub issues for features. Anything tagged with "feature"
-is open to whoever wants to implement it.
-Micropub ships with an in-memory handler; contributions adding richer handlers or
-update/delete support are welcome.
+Look through ``BACKLOG.md`` for planned feature work. Keep the item current
+while you work and move completed items to ``DONE.md`` with validation,
+documentation, and changelog notes.
+Micropub ships with an in-memory handler; contributions adding richer handlers,
+media upload support, or additional post types are welcome.
 
 Write Documentation
 ~~~~~~~~~~~~~~~~~~~
@@ -84,7 +87,8 @@ Ready to contribute? Here's how to set up ``django-indieweb`` for local developm
     $ uv run mypy                      # Type checking
     $ uv run ruff check .              # Linting
     $ uv run ruff format .             # Code formatting
-    $ uv run prek run --all-files  # All configured hooks
+    $ uv run prek run --all-files      # All configured hooks
+    $ uv run sphinx-build -W -b html docs docs/_build/html
 
 6. To test against multiple Python versions (3.10, 3.11, 3.12, 3.13), use tox::
 
@@ -107,8 +111,8 @@ Before you submit a pull request, check that it meets these guidelines:
 2. If the pull request adds functionality, the docs should be updated. Put
    your new functionality into a function with a docstring, and add the
    feature to the list in README.rst.
-3. The pull request should work for Python 3.10, 3.11, 3.12, and 3.13. The
-   GitHub Actions will run automatically to check this.
+3. The pull request should work for Python 3.10, 3.11, 3.12, and 3.13. Run
+   ``tox`` locally for the supported Python matrix.
 4. Add type annotations to new code. Run ``uv run mypy`` to check types.
 5. Follow the existing code style. Run ``uv run ruff format .`` to format code.
 
@@ -144,8 +148,11 @@ Here's a quick reference of development commands::
     # Run all configured hooks
     uv run prek run --all-files
 
-    # Build documentation locally
-    cd docs && uv run sphinx-build -b html . _build/html
+    # Build and preview documentation locally
+    just docs
+
+    # Validate documentation without opening a browser
+    uv run sphinx-build -W -b html docs docs/_build/html
 
     # Run tox for all Python versions
     tox

@@ -57,7 +57,7 @@ After installation, you'll have these endpoints available:
 
 - ``/indieweb/auth/`` - IndieAuth authorization (consent)
 - ``/indieweb/token/`` - Token exchange
-- ``/indieweb/micropub/`` - Micropub content creation (uses configured handler)
+- ``/indieweb/micropub/`` - Micropub content creation and editing (uses configured handler)
 - ``/indieweb/webmention/`` - Webmention receive endpoint (Link rel="webmention" is advertised)
 - ``/indieweb/webmention/<pk>/`` - Webmention status lookup
 
@@ -199,9 +199,12 @@ To persist content, configure your own handler:
    # settings.py
    INDIEWEB_MICROPUB_HANDLER = "myapp.micropub_handler.BlogPostMicropubHandler"
 
-See :doc:`micropub` for a full handler example (create, retrieve, update, delete stubs). The default
-in-memory handler implements source queries, update, delete, and undelete in process memory only — entries
-do not persist across restarts. Configure your own handler for durable storage.
+See :doc:`micropub` for a fuller handler example that implements create,
+source queries, update, and delete. The default in-memory handler implements
+source queries, update, delete, and undelete in process memory only — entries
+do not persist across restarts. The minimal durable-storage example below
+intentionally leaves editing methods as stubs until you map those operations
+to your own content model.
 
 .. code-block:: python
 
@@ -271,8 +274,10 @@ Security Considerations
 1. **Always verify the state parameter** to prevent CSRF attacks
 2. **Use HTTPS in production** for all endpoints
 3. **Store tokens securely** - consider using session storage instead of localStorage
-4. **Tune token lifetime** via the ``INDIEWEB_TOKEN_EXPIRES_IN`` setting (default 86400 seconds); see :doc:`configuration`
-5. **Validate redirect_uri** matches registered client applications
+4. **Tune token lifetime** via the ``INDIEWEB_TOKEN_EXPIRES_IN`` setting
+   (default 86400 seconds); see :doc:`configuration`
+5. **Validate redirect_uri and client_id** values; use
+   ``INDIEWEB_CLIENT_ID_VALIDATOR`` if only specific clients should be allowed
 
 Debugging Tips
 --------------
@@ -289,7 +294,7 @@ Common Issues
 **"Missing parameter" error**
    Ensure all required parameters are included in the request
 
-**401 Unauthorized on token endpoint**
+**400 invalid_grant on token endpoint**
    - Authorization code may have expired (60 second timeout)
    - Code may have already been used
    - Parameters don't match original auth request

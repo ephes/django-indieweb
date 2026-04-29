@@ -388,7 +388,9 @@ Common issues and solutions:
   - This is valid microformats2 markup following the authorship algorithm
   - Django-indieweb automatically looks for a matching h-card **on the same page** with the referenced URL
   - If the entry has no explicit author, same-page ``rel=author`` links and one unambiguous page-level h-card can also provide author data
-  - Ensure the source page includes a separate h-card with matching URL, name, and photo properties
+  - Ensure the source page includes a same-page h-card whose ``u-url`` matches
+    the referenced URL under the canonical matching policy above; name and
+    photo properties are used when present
   - The h-card may be nested in structures like h-feeds - the parser searches recursively
   - Example services using this pattern: feed.city, some Mastodon webmention bridges
   - If no matching h-card is found, the URL will be displayed as the name (fallback behavior)

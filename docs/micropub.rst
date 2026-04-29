@@ -4,9 +4,9 @@ Micropub Implementation Guide
 Overview
 --------
 
-django-indieweb now provides a fully functional Micropub endpoint that
-can create content in your Django application. The implementation uses a
-pluggable content handler system that allows you to integrate Micropub
+django-indieweb provides a Micropub endpoint that can create, query, update,
+delete, and undelete content in your Django application. The implementation
+uses a pluggable content handler system that allows you to integrate Micropub
 with any Django content model.
 
 Quick Start
@@ -157,11 +157,15 @@ The Micropub endpoint supports both form-encoded and JSON requests:
 Supported Properties
 ~~~~~~~~~~~~~~~~~~~~
 
-Common h-entry properties are supported: - ``content`` - The main
-content - ``name`` - Title/name of the entry - ``category`` -
-Tags/categories (comma-separated or array) - ``location`` - Geographic
-location (geo URI format) - ``in-reply-to`` - URL this post is replying
-to - ``photo`` - Photo URL(s) - ``published`` - Publication date
+Common h-entry properties are supported:
+
+- ``content`` - The main content
+- ``name`` - Title/name of the entry
+- ``category`` - Tags/categories (comma-separated or array)
+- ``location`` - Geographic location (geo URI format)
+- ``in-reply-to`` - URL this post is replying to
+- ``photo`` - Photo URL(s)
+- ``published`` - Publication date
 
 Update, Delete, Undelete
 ~~~~~~~~~~~~~~~~~~~~~~~~

@@ -102,6 +102,8 @@ django-indieweb implements these protocols with three main components:
            +redirect_uri: str
            +scope: str
            +me: str
+           +code_challenge: str
+           +code_challenge_method: str
            +created: datetime
        }
 
@@ -111,6 +113,7 @@ django-indieweb implements these protocols with three main components:
            +client_id: str
            +me: str
            +scope: str
+           +expires_at: datetime
            +created: datetime
        }
 
@@ -150,16 +153,17 @@ Data Flow
    - Token object created with access key
    - Access token returned to client
 
-3. **Content Creation**
+3. **Micropub Operations**
 
-   - Client sends POST to MicropubView with token
+   - Client sends a Micropub request to MicropubView with token
    - Token validated (exists, active user, scope matches the requested
      operation)
-   - The configured ``MicropubContentHandler`` creates the entry (the
-     in-memory handler ships by default; see :doc:`micropub` for custom
-     handlers)
-   - ``201 Created`` returned with a ``Location`` header pointing at the
-     new entry
+   - The configured ``MicropubContentHandler`` creates, retrieves, updates,
+     deletes, or undeletes entries (the in-memory handler ships by default;
+     see :doc:`micropub` for custom handlers)
+   - Creates return ``201 Created`` with a ``Location`` header; successful
+     update/delete/undelete actions return ``204 No Content`` unless an
+     update or undelete relocates the entry and returns ``201 Created``
 
 Security Model
 --------------

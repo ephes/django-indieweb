@@ -119,6 +119,8 @@ This creates the following endpoints:
 - ``/indieweb/auth/`` - Authorization endpoint
 - ``/indieweb/token/`` - Token endpoint
 - ``/indieweb/micropub/`` - Micropub endpoint
+- ``/indieweb/webmention/`` - Webmention receive endpoint
+- ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
 
 Custom URL Paths
 ~~~~~~~~~~~~~~~~
@@ -128,12 +130,14 @@ You can customize the URL paths:
 .. code-block:: python
 
    # urls.py
-   from indieweb.views import AuthView, TokenView, MicropubView
+   from indieweb import views
 
    urlpatterns = [
-       path('auth/', AuthView.as_view(), name='indieauth'),
-       path('token/', TokenView.as_view(), name='token'),
-       path('api/micropub/', MicropubView.as_view(), name='micropub'),
+       path('auth/', views.AuthView.as_view(), name='indieauth'),
+       path('token/', views.TokenView.as_view(), name='token'),
+       path('api/micropub/', views.MicropubView.as_view(), name='micropub'),
+       path('webmention/', views.WebmentionEndpoint.as_view(), name='webmention'),
+       path('webmention/<int:pk>/', views.WebmentionStatusView.as_view(), name='webmention-status'),
    ]
 
 Middleware Configuration
@@ -177,12 +181,16 @@ Database Configuration
 Models
 ~~~~~~
 
-django-indieweb creates two models:
+django-indieweb creates four models:
 
 1. **Auth** - Stores authorization codes temporarily
 2. **Token** - Stores access tokens
+3. **Webmention** - Stores incoming webmention source/target pairs, parsed
+   content, status, and spam-check results
+4. **Profile** - Stores user h-card data
 
-Both models use ``settings.AUTH_USER_MODEL`` for the user relationship.
+``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for
+their user relationships.
 
 Migrations
 ~~~~~~~~~~
@@ -242,22 +250,23 @@ Ensure your domain is in ``ALLOWED_HOSTS``:
 Extending Functionality
 -----------------------
 
-Custom Token Model
-~~~~~~~~~~~~~~~~~~
+Token Metadata
+~~~~~~~~~~~~~~
 
-To add fields to the Token model:
+The built-in ``Token`` model already includes ``created``, ``modified``,
+``client_id``, ``me``, ``scope``, and ``expires_at`` fields. To track
+application-specific token metadata without shadowing built-in fields, store it
+in a separate model related to ``Token``:
 
 .. code-block:: python
 
    # myapp/models.py
+   from django.db import models
    from indieweb.models import Token
 
-   class ExtendedToken(Token):
-       expires_at = models.DateTimeField(null=True)
+   class TokenMetadata(models.Model):
+       token = models.OneToOneField(Token, on_delete=models.CASCADE, related_name='metadata')
        last_used = models.DateTimeField(null=True)
-
-       class Meta:
-           db_table = 'indieweb_token'  # Use same table
 
 Custom Views
 ~~~~~~~~~~~~

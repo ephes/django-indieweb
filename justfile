@@ -55,6 +55,6 @@ docs:
     rm -f docs/django-indieweb.rst
     rm -f docs/modules.rst
     uv run sphinx-apidoc -o docs/ src/indieweb "**/migrations/*"
-    make -C docs clean
-    make -C docs html
+    rm -rf docs/_build/html
+    uv run sphinx-build -W -b html docs docs/_build/html
     uv run python -c "import webbrowser; from pathlib import Path; webbrowser.open(Path('docs/_build/html/index.html').absolute().as_uri())"

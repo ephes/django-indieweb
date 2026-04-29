@@ -91,10 +91,14 @@ The mypy configuration is defined in ``pyproject.toml`` and includes:
 Building Documentation
 ----------------------
 
-To build the documentation locally::
+To build and preview the documentation locally::
 
-    make -C docs html
-    open docs/_build/html/index.html
+    just docs
+
+For validation without opening a browser, run Sphinx directly with warnings
+treated as errors::
+
+    uv run sphinx-build -W -b html docs docs/_build/html
 
 Project Backlog
 ---------------
@@ -154,6 +158,12 @@ Development Commands Summary
 
     # Run linting
     uv run ruff check .
+
+    # Run configured hooks
+    uv run prek run --all-files
+
+    # Build documentation
+    uv run sphinx-build -W -b html docs docs/_build/html
 
     # Build package
     uv build

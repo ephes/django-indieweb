@@ -29,11 +29,8 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 2
 
-### Documentation Audit
+### Documentation Follow-ups
 
-- [ ] Audit IndieWeb docs for stale settings, commands, and behavior notes.
-  - Known issues: `docs/development.rst` references `make -C docs html`, but the current workflow uses `just docs` or `sphinx-build`.
-  - Outcome: documentation matches current IndieAuth, Micropub, Webmention, and development workflows.
 - [ ] Close h-card utility coverage gaps and confirm support status.
   - Reference: `src/indieweb/h_card.py`.
   - Outcome: normalization and validation edge cases are covered by focused tests, and docs accurately describe supported h-card behavior.

@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Audit IndieWeb Docs for Stale Settings, Commands, and Behavior Notes
+
+- Audited the current development, contributor, README, Sphinx, IndieAuth, Micropub, Webmention, h-card, configuration, backlog, and changelog documentation against the current project workflow and recent endpoint behavior.
+- Corrected current workflow guidance to prefer ``just docs`` for local preview and ``uv run sphinx-build -W -b html docs docs/_build/html`` for docs validation; updated ``just docs`` to run the same warning-as-error Sphinx build directly instead of shelling through ``make -C docs``.
+- Corrected current contributor workflow notes to use the Markdown backlog/DONE workflow, ``prek`` hooks, local tox matrix validation, and the current docs build command.
+- Corrected current behavior summaries and examples so README, index, API, concepts, Micropub, tutorial, and Webmention docs mention source query, update/delete/undelete, current Micropub query support, token expiration fields, PKCE fields, and canonical same-page author h-card URL matching where those summaries had lagged behind the detailed docs.
+- No change needed after audit: ``docs/indieauth.rst`` already covered PKCE, ``client_id`` validation, token expiration, scope normalization, token-exchange scope matching, and per-operation Micropub scopes; ``docs/h-card.rst`` already matched current h-card model/template-tag/parser support; the token lifetime and ``INDIEWEB_CLIENT_ID_VALIDATOR`` sections in ``docs/configuration.rst`` already matched current behavior; current limitations in ``docs/concepts.rst`` and ``docs/micropub.rst`` still match open backlog items for token revocation UI, media endpoint/uploads, WebSub, and additional post types.
+- Left open: the adjacent h-card utility coverage item and the broader TODO/future-enhancement cleanup item remain in ``BACKLOG.md`` because this slice did not add h-card tests or exhaustively resolve all future-enhancement notes.
+- Documentation: updated ``README.rst``, ``CONTRIBUTING.rst``, ``docs/development.rst``, ``docs/index.rst``, ``docs/api.rst``, ``docs/concepts.rst``, ``docs/configuration.rst``, ``docs/micropub.rst``, ``docs/tutorial.rst``, and ``docs/webmention.rst``.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased documentation-audit bullet.
+- Validation: ``uv run sphinx-build -W -b html docs docs/_build/html``, ``just docs``, ``uv run prek run --all-files``, ``uv run pytest``, ``uv run mypy``, ``uv run ruff check .``, ``uv build``, and ``git diff --check`` passed.
+
 ### Align Webmention Author H-Card URL Matching with Canonical URL Matching
 
 - Updated receive-side Webmention same-page author lookup in `src/indieweb/processors.py` so h-card `url` properties are compared with the existing `_urls_match()` conservative canonical URL policy instead of exact string membership.

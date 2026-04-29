@@ -4,17 +4,19 @@ API Reference
 This document describes the IndieWeb endpoints provided by django-indieweb.
 
 .. note::
-   The Micropub endpoint is now fully implemented with a pluggable content handler
-   system. See the :doc:`micropub` documentation for implementation details.
+   The Micropub endpoint supports content creation, source query, update,
+   delete, and undelete through a pluggable content handler system. See the
+   :doc:`micropub` documentation for implementation details.
 
 Endpoints Overview
 ------------------
 
-django-indieweb provides three main endpoints:
+django-indieweb provides four main endpoints:
 
 - ``/indieweb/auth/`` - IndieAuth authorization endpoint
 - ``/indieweb/token/`` - Token endpoint for exchanging auth codes
-- ``/indieweb/micropub/`` - Micropub endpoint for creating content
+- ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
+- ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
 
 IndieAuth Flow
 --------------

@@ -28,19 +28,20 @@ Features
 * **IndieAuth authentication endpoint** - For logging into IndieWeb sites
 * **IndieAuth authorization endpoint with consent screen** - For granting permissions to apps
 * **IndieAuth token endpoint** - For exchanging auth codes for access tokens
-* **Micropub endpoint with full content creation support**
+* **Micropub endpoint with content creation, source query, update, delete, and undelete support**
 * **Webmention support** - Send and receive cross-site conversations
 * **H-card profiles** - Store and display user profiles with microformats2
 * Pluggable content handler system for Micropub integration
 * Pluggable interfaces for Webmention URL resolution and spam checking
 * Support for both form-encoded and JSON Micropub requests
 * Microformats2 parsing for rich webmention content and h-cards
-* Micropub query endpoints (config, syndicate-to)
+* Micropub query endpoints (config, syndicate-to, source)
 * Django integration
 
 .. note::
-   The Micropub endpoint now includes a complete content creation system with a
-   pluggable handler architecture. See :doc:`micropub` for implementation details.
+   The Micropub endpoint now includes content creation, source query, update,
+   delete, and undelete actions through a pluggable handler architecture. See
+   :doc:`micropub` for implementation details.
 
 Project Planning
 ----------------
@@ -83,7 +84,7 @@ Quick Start
    * ``/indieweb/micropub/`` - Micropub endpoint
    * ``/indieweb/webmention/`` - Webmention endpoint
 
-5. To enable content creation via Micropub, create a content handler::
+5. To enable content creation and editing via Micropub, create a content handler::
 
     from indieweb.handlers import MicropubContentHandler, MicropubEntry
 
