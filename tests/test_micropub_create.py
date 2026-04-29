@@ -213,8 +213,8 @@ class TestMicropubCreate:
 
     @pytest.mark.django_db
     def test_missing_scope(self, client, user, micropub_url):
-        """Test that missing 'post' scope returns 403."""
-        # Create token without 'post' scope
+        """Test that a token without create/post scope returns 403."""
+        # Create token without the create scope or legacy post alias
         token = models.Token.objects.create(
             me="https://example.org", client_id="https://client.example.org", scope="read", owner=user
         )

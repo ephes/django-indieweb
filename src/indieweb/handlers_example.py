@@ -232,11 +232,11 @@ class ExistingBlogIntegrationHandler(MicropubContentHandler):
 
     def update_entry(self, url: str, updates: dict[str, Any], user: User) -> MicropubEntry:
         # Implement based on your model structure
-        raise NotImplementedError("Update not yet implemented")
+        raise NotImplementedError("Update mapping not implemented in this example")
 
     def delete_entry(self, url: str, user: User) -> None:
         # Implement based on your deletion strategy
-        raise NotImplementedError("Delete not yet implemented")
+        raise NotImplementedError("Delete mapping not implemented in this example")
 
     def undelete_entry(self, url: str, user: User) -> MicropubEntry:
         # Only if you support soft deletes

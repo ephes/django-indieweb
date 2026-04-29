@@ -219,9 +219,9 @@ For Service Providers
 
 1. Always use HTTPS in production
 2. Validate all parameters strictly
-3. Implement rate limiting
+3. Configure rate limiting for production traffic
 4. Log authorization attempts
-5. Consider token expiration
+5. Tune token lifetimes for your risk profile
 
 For Users
 ~~~~~~~~~
@@ -236,14 +236,17 @@ Limitations
 
 Current implementation limitations:
 
-1. **No media endpoint** - Can't upload images
+1. **No Micropub media endpoint or multipart upload handling** - The
+   Micropub endpoint accepts photo URL properties, but it does not yet provide
+   a media endpoint or process uploaded files.
 
 Future Enhancements
 -------------------
 
 Potential improvements for full IndieWeb support:
 
-1. **Media Endpoint** - Handle file uploads
+1. **Micropub media endpoint and uploads** - Store uploaded media and expose a
+   media endpoint for clients
 2. **WebSub** - Real-time updates
 
 Resources

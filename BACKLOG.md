@@ -27,12 +27,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Document and test media uploads.
   - Outcome: examples and regression coverage exist for media endpoint and upload behavior.
 
-## Priority 2
-
-### Documentation Follow-ups
-
-- [ ] Clean up TODO and future-enhancement notes after related changes ship.
-
 ## Priority 3
 
 ### API Hardening

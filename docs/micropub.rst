@@ -429,6 +429,6 @@ Then in settings:
 Next Steps
 ----------
 
-- Add media endpoint support for file uploads
+- Add a Micropub media endpoint and multipart file upload handling
 - Implement WebSub for real-time updates
 - Add support for more post types (events, RSVPs, etc.)

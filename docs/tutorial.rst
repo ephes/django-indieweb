@@ -221,10 +221,10 @@ to your own content model.
            return MicropubEntry(url=post.get_absolute_url(), properties=properties)
 
        def update_entry(self, url, updates, user):
-           raise NotImplementedError("Update not yet implemented")
+           raise NotImplementedError("Update mapping not implemented in this example")
 
        def delete_entry(self, url, user):
-           raise NotImplementedError("Delete not yet implemented")
+           raise NotImplementedError("Delete mapping not implemented in this example")
 
        def undelete_entry(self, url, user):
            raise NotImplementedError("Undelete not supported")

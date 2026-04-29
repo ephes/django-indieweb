@@ -674,7 +674,7 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
 
         # Handle file uploads
         if "photo" in request.FILES:
-            # TODO: Handle file uploads
+            # Multipart uploads are tracked with the Micropub media endpoint backlog work.
             pass
 
         return properties

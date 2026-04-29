@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Clean up TODO and future-enhancement notes after related changes ship
+
+- Audited current TODO, limitation, unsupported-feature, future-enhancement, and "not yet implemented" notes across `README.rst`, `docs/`, `src/`, `tests/`, and `BACKLOG.md`, excluding generated docs under `docs/_build`.
+- Clarified current support-status wording for the remaining Micropub media endpoint/upload gap, built-in rate limiting, and built-in CORS support so those notes map to open backlog work rather than shipped IndieAuth, Micropub, Webmention, or token-management behavior.
+- Reworded the Micropub multipart upload inline comment to point at the media endpoint backlog work, and clarified tutorial/example handler `NotImplementedError` stubs as example-specific mappings.
+- Updated stale test commentary around create/post scope requirements without changing test behavior.
+- Left still-valid future work notes in place for open backlog items: Micropub media endpoint and multipart uploads, WebSub, Webmention vouch, Salmentions, rate limiting, CORS, additional Micropub post types, CI, dependency cleanup, and related tooling items. Also left current Webmention remote author-page fetching limitations in place because they still match implementation behavior.
+- Documentation: updated `docs/concepts.rst`, `docs/micropub.rst`, `docs/api.rst`, and `docs/tutorial.rst`; checked `docs/indieauth.rst`, `docs/configuration.rst`, `docs/webmention.rst`, current historical `docs/changelog.rst` entries, `src/indieweb/views.py`, and `src/indieweb/handlers_example.py` in context. No generated docs under `docs/_build` were updated.
+- Changelog: updated `docs/changelog.rst` with an Unreleased documentation-cleanup note because current user-facing support/status wording changed.
+- Validation: `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv run ruff check .`, `git diff --check`, `uv run pytest`, `uv run mypy`, and `uv build` passed.
+- Staging check: `git diff --cached --stat` was reviewed after staging.
+
 ### Add Token Revocation UI
 
 - Added an authenticated browser token management page at `indieweb:tokens` (`/indieweb/tokens/`) that lists only the current user's IndieAuth/Micropub access tokens with client, identity, scope, created/modified, expiration, and active/expired metadata while never displaying full bearer token keys.

@@ -649,11 +649,14 @@ Rate Limiting
 -------------
 
 Currently, no rate limiting is implemented.
+Configure rate limiting in your Django deployment until built-in endpoint
+rate limiting is added.
 
 CORS Support
 ------------
 
-CORS headers are not automatically added. Configure your Django middleware if needed.
+CORS headers are not automatically added by django-indieweb. Configure your
+Django middleware if needed.
 
 
 H-Card Support
