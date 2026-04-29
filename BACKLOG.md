@@ -16,11 +16,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 - [ ] Evaluate Salmentions support.
   - Outcome: decide whether to detect and send salmentions; if yes, add tests and documentation.
 
-### Micropub Media Endpoint and Uploads
-
-- [ ] Document and test media uploads.
-  - Outcome: examples and regression coverage exist for media endpoint and upload behavior.
-
 ## Priority 3
 
 ### API Hardening

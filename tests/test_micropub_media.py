@@ -67,6 +67,61 @@ def test_media_upload_stores_file_and_returns_absolute_location(client, settings
 
 
 @pytest.mark.django_db
+def test_media_upload_location_can_feed_json_micropub_create(
+    client, settings, tmp_path, user, media_url, micropub_url, monkeypatch
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    token = _make_token(user, "create media")
+
+    media_response = client.post(
+        media_url,
+        data={"file": _upload()},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert media_response.status_code == 201
+    assert media_response.content == b""
+    media_location = media_response["Location"]
+    parsed_media_location = urlparse(media_location)
+    assert parsed_media_location.scheme in {"http", "https"}
+    assert parsed_media_location.netloc
+    assert parsed_media_location.path.startswith(settings.MEDIA_URL)
+    stored_name = parsed_media_location.path.removeprefix(settings.MEDIA_URL)
+    assert default_storage.exists(stored_name)
+
+    received_properties = None
+
+    class CapturingHandler(InMemoryMicropubHandler):
+        def create_entry(self, properties, user):
+            nonlocal received_properties
+            received_properties = properties
+            return super().create_entry(properties, user)
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: CapturingHandler())
+    create_response = client.post(
+        micropub_url,
+        data=json.dumps(
+            {
+                "type": ["h-entry"],
+                "properties": {
+                    "content": ["Photo post"],
+                    "photo": [media_location],
+                },
+            }
+        ),
+        content_type="application/json",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert create_response.status_code == 201
+    parsed_create_location = urlparse(create_response["Location"])
+    assert parsed_create_location.scheme in {"http", "https"}
+    assert parsed_create_location.netloc
+    assert received_properties is not None
+    assert received_properties["photo"] == [media_location]
+
+
+@pytest.mark.django_db
 def test_media_upload_without_filename_suffix_stores_extensionless_name(client, settings, tmp_path, user, media_url):
     settings.MEDIA_ROOT = str(tmp_path)
     token = _make_token(user, "media")

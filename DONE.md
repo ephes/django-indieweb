@@ -4,6 +4,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Document and test media uploads
+
+- Added a focused end-to-end regression test proving the documented direct media upload flow: a token with ``create media`` uploads an image to ``POST /indieweb/media/``, receives an absolute ``Location`` with an empty ``201`` response body, and then uses that exact URL as the ``photo`` property in a JSON ``POST /indieweb/micropub/`` create request.
+- The test captures the configured Micropub handler and asserts ``create_entry()`` receives ``photo: [media_location]`` from the direct media endpoint before the create response returns ``201`` with an absolute ``Location``.
+- Documentation: checked ``docs/micropub.rst``, ``docs/api.rst``, ``docs/configuration.rst``, and ``docs/tutorial.rst``. No documentation changes were needed because they already describe the direct media endpoint flow, multipart create uploads, shared upload validation settings, scope distinction, deployment warnings, and error response shapes accurately. No generated docs under ``docs/_build`` were updated.
+- Changelog: no changelog update was needed because this slice added regression coverage and backlog bookkeeping only, with no behavior, public API, configuration, or user-facing documentation change.
+- Validation: ``uv run pytest tests/test_micropub_media.py -q``, ``uv run pytest tests/test_micropub_create.py tests/test_micropub_media.py -q``, ``uv run pytest``, ``uv run mypy``, ``uv run ruff check .``, ``uv run sphinx-build -W -b html docs docs/_build/html``, ``uv run prek run --all-files``, ``uv build``, and ``git diff --check`` passed.
+
 ### Handle multipart file uploads in Micropub form parsing
 
 - Updated `POST /indieweb/micropub/` multipart create parsing so uploaded `photo` file parts are no longer ignored.
