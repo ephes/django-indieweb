@@ -364,7 +364,8 @@ There is no Salmention-specific setting in django-indieweb today.
 Salmention support is deliberately deferred because receiving it needs source
 snapshot and nested-response persistence, and sending it needs outbound target
 tracking for each original post. See :doc:`webmention` for the support-status
-details and current ordinary Webmention reprocessing behavior.
+details, the receive-side persistence design, and current ordinary Webmention
+reprocessing behavior.
 
 URL Configuration
 -----------------

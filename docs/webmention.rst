@@ -306,9 +306,106 @@ django-indieweb does not record the prior outbound target set for each original
 post or know when an application has updated a rendered permalink with a newly
 accepted response.
 
-No Salmention setting is available. Future support needs explicit design for
-source snapshot persistence, nested response storage/display, outbound target
-tracking, and an operator- or application-driven resend workflow.
+No Salmention setting is available. Future receiving support should follow the
+persistence design below, while future sending support still needs outbound
+target tracking and an operator- or application-driven resend workflow.
+
+Receiving Persistence Design
+----------------------------
+
+The receive-side design for future Salmention support is intentionally separate
+from the current flattened ``Webmention`` row. The ``Webmention`` model should
+continue to represent a submitted Webmention from one ``source_url`` to one
+``target_url``. Receiving Salmentions needs additional related state because a
+nested response found inside a previously received source page is not itself a
+submitted Webmention to the original target, and storing it as another
+``Webmention`` row would misrepresent the protocol relationship.
+
+Future receive support should add a source snapshot model related to
+``Webmention``. The snapshot should store the latest fetched source HTML,
+the final URL after redirects, a content digest such as SHA-256, the fetch time,
+and a normalized parsed representation of the mentioning ``h-entry`` plus the
+set of nested response identities found inside that entry. Raw HTML is needed
+because the Salmention receiver must be able to compare a newly fetched source
+with previously stored source contents; the normalized parsed snapshot is needed
+so comparisons do not depend only on byte-for-byte HTML changes.
+
+Nested responses should be stored in a new child model related to the parent
+``Webmention``. Each child row should capture the extracted response URL or
+identity key, author fields, content fields, published date, mention type,
+first-seen/last-seen timestamps, a ``verified_at``-equivalent timestamp,
+current status, and a compact parsed snapshot of the nested ``h-entry``. Unless
+a future migration deliberately broadens the vocabulary, child mention types
+should use the same ``mention``, ``like``, ``reply``, and ``repost`` values as
+top-level ``Webmention`` rows. The child should be unique per parent
+Webmention and stable response key. Reusing ``Webmention`` for these child
+responses is not appropriate because the nested source normally links to the
+intermediate source, not necessarily to the original target URL, and should not
+share the ``source_url``/``target_url`` uniqueness contract for submitted
+Webmentions.
+
+Response identity should be derived conservatively. Prefer an explicit
+microformats2 identity such as a URL-valued ``uid`` or ``url`` property, then an
+HTML ``id`` resolved against the parent source's final fetched URL. A content
+digest can be stored for change detection, but it should not be the primary
+deduplication key because edits to a nested reply would otherwise create a new
+child response. Entries without a stable identity should not be promoted to
+durable child rows until the implementation defines an operator-visible policy
+for unstable responses.
+
+Status, spam, and moderation should be stored independently for child
+responses, but current displayability should still depend on the parent
+``Webmention`` remaining verified. A child found inside a verified parent
+source can start as verified, but if it later disappears from the parent source
+snapshot it should stop being considered currently verified without deleting
+historical author/content fields. If the parent later becomes ``failed`` or
+``spam`` because the source is gone, no longer links to the target, fails Vouch,
+or is reclassified by the spam checker, its children should also stop being
+currently displayable until a later verified parent reprocessing confirms them
+again. Future comparison code should create or update child rows only after the
+parent source has passed target-link verification, required Vouch checks, and
+spam classification.
+
+Spam classification can reuse the configured spam checker only through an
+explicit adapter contract. A future implementation should either pass a
+temporary ``Webmention``-shaped value populated from the child's parsed fields
+to the existing ``SpamChecker.check(webmention)`` API, or introduce and
+document a child-aware spam checker hook before using child rows for moderation.
+Vouch metadata should remain attached to the submitted parent Webmention only.
+A submitted ``vouch`` proves trust for the Webmention source; it does not
+directly verify every nested response embedded inside that source.
+
+Display/query support should expose verified child responses as inline responses
+under their parent Webmention. ``show_webmentions`` can continue querying
+verified top-level ``Webmention`` rows by ``target_url`` and prefetch verified
+children for those rows. The default top-level ordering should remain based on
+the parent Webmention's ``published`` or ``created`` timestamp; child responses
+should render under their parent ordered by their own ``published`` or
+first-seen timestamp. ``webmention_count`` should keep its current top-level
+counting semantics for backwards compatibility, with any nested-inclusive count
+added explicitly rather than changing the existing tag's result.
+
+Rendering should deduplicate a nested child that is also represented by a
+top-level ``Webmention`` to the same target. Storage may keep the child row as
+evidence of the parent's nested source snapshot, but display should prefer the
+direct top-level Webmention row and suppress the duplicate inline child. The
+same rule should apply when the same stable child identity is discovered under
+more than one parent for the same target: implementation slices should define a
+deterministic display policy before rendering duplicates.
+
+Queued processing must keep the existing async receive boundary. The endpoint
+should continue to validate, create or reuse the submitted ``Webmention`` row,
+enqueue the row ID, and return without fetching the source, parsing
+microformats2, running spam or Vouch checks, or comparing Salmention snapshots.
+Future source snapshot writes and nested-response comparison should live in
+``WebmentionProcessor``, ``process_queued_webmention()``, management commands,
+or explicit worker helper APIs.
+
+This design deliberately defers schema and processor changes to focused
+implementation slices so ordinary Webmention behavior, Vouch verification,
+duplicate reprocessing semantics, and existing template output remain
+unchanged until the required persistence and rendering primitives are added
+together with tests and migrations.
 
 Target URL Matching
 ===================

@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-30
 
+### Design persistence for receiving Salmentions
+
+- Designed the receiving-side Salmention persistence/display model against the current Webmention architecture and deliberately deferred schema/protocol implementation. The current `Webmention` row remains the top-level submitted `source_url`/`target_url` notification; future receive support should add a related source snapshot model and a separate related child response model rather than reusing `Webmention` for nested replies.
+- Documented the source snapshot contract: store latest raw source HTML, final fetched URL, a content digest, fetch timestamp, normalized parsed parent `h-entry`, and known nested response identities so duplicate receives can compare current source state against previously stored contents.
+- Documented the nested response contract: key children by stable nested `h-entry` identity, prefer URL-valued `uid`/`url` and then HTML `id` resolved against the parent source final URL, store content/author/published/type/status/snapshot fields, keep spam/moderation independent, and keep Vouch metadata attached only to the submitted parent Webmention.
+- Documented display/query semantics: verified child responses should render inline under their parent Webmention; child displayability depends on the parent remaining verified; direct top-level Webmentions should suppress duplicate inline children for the same response; `show_webmentions` can keep querying verified top-level rows by `target_url` and prefetch verified children; `webmention_count` should keep its current top-level count unless an explicit nested-inclusive API is added.
+- Preserved ordinary Webmention behavior: no endpoint, processor, model, migration, template, Vouch, async receive, duplicate receive, or status-response code changed. Future Salmention fetch/parse/compare work remains assigned to `WebmentionProcessor`, worker paths, management commands, or explicit helper APIs outside the queued receive request path.
+- Added follow-up backlog items for source snapshot persistence, nested response storage/duplicate comparison, and template query/rendering exposure. The separate outbound Salmention target-tracking design item remains open.
+- Documentation: updated `docs/webmention.rst` with the receive-side persistence design and refined `docs/configuration.rst` to point to that design. No `docs/api.rst` update was needed because endpoint/status response shapes did not change. No generated docs under `docs/_build` were updated.
+- Changelog: updated `docs/changelog.rst` with an Unreleased receive-side Salmention persistence design entry.
+- Validation: `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run prek run --all-files`, `uv run ruff check .`, `git diff --check`, `git diff --cached --check`, and `git diff --cached --stat` passed.
+
 ### Evaluate Salmentions support
 
 - Evaluated the Salmention living specification against the current Webmention receive/send architecture and deliberately deferred implementation. Receiving Salmentions requires storing fetched source contents for later comparison, detecting newly nested response ``h-entry`` items on duplicate receives, and representing/displaying nested child responses; the current ``Webmention`` model stores one flattened parsed mention per submitted ``source``/``target`` pair and does not keep source snapshots or nested response identities.
