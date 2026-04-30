@@ -9,7 +9,7 @@ from django.test import RequestFactory, override_settings
 from django.utils import timezone as django_timezone
 
 from indieweb.models import Profile, Webmention
-from indieweb.processors import WebmentionProcessor
+from indieweb.processors import WebmentionProcessor, process_queued_webmention
 
 
 def _mock_source_response(
@@ -157,6 +157,31 @@ class TestWebmentionProcessor:
                 source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
             )
             assert webmention.status == "verified"
+
+    def test_process_queued_webmention_processes_existing_row(self):
+        """Test the public worker helper dispatches processing for an existing row."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+        )
+
+        with patch("indieweb.processors.WebmentionProcessor") as mock_processor_class:
+            mock_processor = Mock()
+            mock_processor_class.return_value = mock_processor
+            mock_processor.process_webmention.return_value = webmention
+
+            result = process_queued_webmention(webmention.pk)
+
+        assert result == webmention
+        mock_processor.process_webmention.assert_called_once_with(
+            "https://example.com/post",
+            "https://mysite.com/article",
+        )
+
+    def test_process_queued_webmention_raises_for_missing_row(self):
+        """Test the public worker helper surfaces missing queued rows."""
+        with pytest.raises(Webmention.DoesNotExist):
+            process_queued_webmention(99999)
 
     def test_processor_follows_source_redirect_and_preserves_submitted_urls(self, processor):
         """Test source redirects verify the submitted source/target row."""

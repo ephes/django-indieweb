@@ -668,3 +668,14 @@ class WebmentionProcessor:
             pass
 
         return None
+
+
+def process_queued_webmention(webmention_id: int) -> Webmention:
+    """Process an existing queued Webmention row.
+
+    Queue integrations can call this helper from their worker process after the
+    receive endpoint has created or reused a pending ``Webmention`` row.
+    """
+    # Load by id first so worker integrations get an explicit DoesNotExist for missing queued rows.
+    webmention = Webmention.objects.get(pk=webmention_id)
+    return WebmentionProcessor().process_webmention(webmention.source_url, webmention.target_url)

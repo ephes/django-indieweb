@@ -623,6 +623,79 @@ update request.
 - ``500 Internal Server Error`` if the configured Django storage backend raises
   unexpectedly while saving the upload
 
+Webmention Endpoint
+-------------------
+
+**URL:** ``/indieweb/webmention/``
+
+The Webmention endpoint receives notifications that another page links to a
+page on the configured Django ``Site`` domain. Requests must be
+``application/x-www-form-urlencoded`` or another form submission that populates
+``request.POST``; JSON bodies are not supported by this endpoint.
+
+POST Request
+~~~~~~~~~~~~
+
+**Required Parameters:**
+
+- ``source`` - Absolute URL of the page that links to your content
+- ``target`` - Absolute URL on your configured ``Site`` domain
+
+The endpoint rejects missing parameters, malformed URLs, and targets whose
+network location does not exactly match the current ``Site.domain`` before
+processing or enqueueing.
+
+**Synchronous Response:**
+
+When ``INDIEWEB_WEBMENTION_ENQUEUE`` is unset, the endpoint processes the
+Webmention in the request path and returns ``201 Created`` with a ``Location``
+header pointing to the status endpoint:
+
+.. code-block:: http
+
+    HTTP/1.1 201 Created
+    Location: https://yoursite.com/indieweb/webmention/123/
+
+**Queued Response:**
+
+When ``INDIEWEB_WEBMENTION_ENQUEUE`` is configured, the endpoint creates or
+reuses the ``Webmention`` row, calls the configured enqueue hook with that row's
+primary key, and returns ``202 Accepted`` with a status ``Location``:
+
+.. code-block:: http
+
+    HTTP/1.1 202 Accepted
+    Location: https://yoursite.com/indieweb/webmention/123/
+
+In queued mode, the request path does not fetch or verify the source URL.
+Workers should call ``indieweb.processors.process_queued_webmention(pk)`` to
+run the existing processor and update the row status.
+
+**Error Response:**
+
+- ``400 Bad Request`` when ``source`` or ``target`` is missing, either value is
+  not a valid URL, or ``target`` is outside the configured ``Site`` domain
+- ``500 Internal Server Error`` in queued mode when the configured
+  ``INDIEWEB_WEBMENTION_ENQUEUE`` path cannot be imported, is not callable, or
+  raises while enqueueing
+
+Webmention Status Endpoint
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**URL:** ``/indieweb/webmention/<pk>/``
+
+Returns the stored status for a received Webmention:
+
+.. code-block:: http
+
+    HTTP/1.1 200 OK
+    Content-Type: application/json
+
+    {"source": "https://source.example/post", "target": "https://yoursite.com/post", "status": "pending"}
+
+The response includes ``verified_at`` when the Webmention has been verified.
+Missing IDs return ``404``.
+
 Error Responses
 ---------------
 

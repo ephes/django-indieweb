@@ -53,6 +53,9 @@ Add these settings to your Django settings:
     # Required: Spam checker (use default or implement your own)
     INDIEWEB_SPAM_CHECKER = 'indieweb.interfaces.NoOpSpamChecker'
 
+    # Optional: Queue incoming Webmention processing outside the request path
+    INDIEWEB_WEBMENTION_ENQUEUE = 'myproject.webmention_config.enqueue_webmention'
+
     # Optional: Comment adapter to convert webmentions to comments
     INDIEWEB_COMMENT_ADAPTER = 'myproject.webmention_config.MyCommentAdapter'
 
@@ -114,6 +117,68 @@ Create a custom spam checker:
                 'confidence': 0.9 if is_spam else 0.1,
                 'details': 'Keyword-based detection'
             }
+
+Receiving and Queued Processing
+===============================
+
+By default, ``POST /indieweb/webmention/`` preserves the historical synchronous
+behavior: after validating ``source`` and ``target``, it calls
+``WebmentionProcessor.process_webmention()`` in the request path and returns
+``201 Created`` with a ``Location`` header pointing to the status endpoint.
+
+For production deployments that use a task queue, set
+``INDIEWEB_WEBMENTION_ENQUEUE`` to a dotted path for a callable with this
+contract:
+
+.. code-block:: python
+
+    def enqueue_webmention(webmention_id: int) -> None:
+        ...
+
+When this setting is configured, the receive endpoint still performs the
+normal form validation, URL validation, and configured Django ``Site`` domain
+check before any persistence or enqueueing happens. For a valid request, it
+creates or reuses the ``Webmention`` row for the submitted ``source`` and
+``target`` pair, calls the configured enqueue hook with that row's primary key,
+and returns ``202 Accepted`` with a ``Location`` header pointing to
+``/indieweb/webmention/<pk>/``. The request path does not fetch the source URL,
+parse microformats2, run spam checks, or send ``webmention_received``; those
+steps remain owned by ``WebmentionProcessor`` in the worker process.
+
+Queue integrations should call ``process_queued_webmention()`` from the worker:
+
+.. code-block:: python
+
+    # myproject/webmention_config.py
+    from myproject.tasks import process_webmention_task
+
+    def enqueue_webmention(webmention_id: int) -> None:
+        process_webmention_task.delay(webmention_id)
+
+.. code-block:: python
+
+    # myproject/tasks.py
+    from indieweb.processors import process_queued_webmention
+
+    def process_webmention_task(webmention_id: int) -> None:
+        process_queued_webmention(webmention_id)
+
+``process_queued_webmention(webmention_id)`` loads the existing row and calls
+``WebmentionProcessor().process_webmention(webmention.source_url,
+webmention.target_url)``. If the row no longer exists, Django raises
+``Webmention.DoesNotExist`` so the queue's retry or failure policy can decide
+what to do.
+
+If ``INDIEWEB_WEBMENTION_ENQUEUE`` cannot be imported, is not callable, or the
+callable raises, the receive endpoint returns HTTP ``500`` and does not fall
+back to inline processing. This fail-closed behavior avoids claiming a
+Webmention was queued when processing cannot be scheduled. Missing parameters,
+malformed URLs, JSON bodies, and targets outside the configured ``Site`` domain
+still return HTTP ``400`` before the enqueue hook is loaded or called.
+Import and non-callable configuration failures happen before a row is persisted.
+If the callable itself raises, the ``Webmention`` row has already been created
+or reused and remains ``pending``; operators should rely on their queue retry
+path or manual cleanup to reconcile those rows.
 
 Target URL Matching
 ===================

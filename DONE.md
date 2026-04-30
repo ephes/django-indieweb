@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-29
 
+### Make Webmention receiving asynchronous
+
+- Added optional receive-side async queue integration with the ``INDIEWEB_WEBMENTION_ENQUEUE`` setting. When configured, ``POST /indieweb/webmention/`` validates the request, creates or reuses the submitted ``source``/``target`` ``Webmention`` row, calls the configured enqueue hook with the row's primary key, and returns ``202 Accepted`` with a status ``Location`` without fetching the source URL or calling ``WebmentionProcessor.process_webmention()`` in the request path.
+- Preserved backwards-compatible synchronous receiving when the enqueue hook is unset: valid requests still call ``WebmentionProcessor`` inline and return ``201 Created`` with the existing status ``Location`` semantics.
+- Added ``indieweb.processors.process_queued_webmention(webmention_id)`` so queue workers can load the existing row and run the existing processor behavior, keeping source fetching, target verification, parsing, spam checks, signals, and status transitions inside ``WebmentionProcessor``.
+- Added focused tests for queued ``202`` responses, persisted-id enqueueing, duplicate-row reuse without clearing parsed/verified fields, validation failures before enqueueing, processor-not-called behavior in async mode, enqueue failure/misconfiguration handling, and the queued processing helper.
+- Documentation: updated ``docs/webmention.rst``, ``docs/api.rst``, and ``docs/configuration.rst`` with the async receive flow, ``INDIEWEB_WEBMENTION_ENQUEUE`` callable contract, queued response semantics, worker helper, synchronous fallback, and fail-closed enqueue errors. No generated docs under ``docs/_build`` were updated.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased async Webmention receiving entry.
+- Validation: ``uv run pytest tests/test_webmention_endpoint.py -q``, ``uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q``, ``uv run pytest``, ``uv run mypy``, ``uv run ruff check .``, ``uv run sphinx-build -W -b html docs docs/_build/html``, ``uv run prek run --all-files``, ``uv build``, ``git diff --check``, and ``git diff --cached --stat`` passed.
+
 ### Document and test media uploads
 
 - Added a focused end-to-end regression test proving the documented direct media upload flow: a token with ``create media`` uploads an image to ``POST /indieweb/media/``, receives an absolute ``Location`` with an empty ``201`` response body, and then uses that exact URL as the ``photo`` property in a JSON ``POST /indieweb/micropub/`` create request.

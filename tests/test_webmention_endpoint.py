@@ -1,6 +1,7 @@
 """Test cases for Webmention endpoint."""
 
 import json
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
@@ -8,9 +9,11 @@ import pytest
 from django.contrib.sites.models import Site
 from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from indieweb.models import Webmention
 from indieweb.views import WebmentionEndpoint
+from tests import webmention_enqueue_hooks
 
 
 @pytest.mark.django_db
@@ -28,6 +31,10 @@ class TestWebmentionEndpoint:
     @pytest.fixture
     def site(self):
         return Site.objects.get_current()
+
+    @pytest.fixture(autouse=True)
+    def reset_webmention_enqueue_hooks(self):
+        webmention_enqueue_hooks.reset()
 
     def test_endpoint_exists(self, client):
         """Test that the webmention endpoint is accessible."""
@@ -176,6 +183,148 @@ class TestWebmentionEndpoint:
             )
 
             assert response.status_code == 201
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_async_webmention_returns_accepted_without_processing(self, mock_processor_class, client, site):
+        """Test async mode queues an existing row without processing in the request path."""
+        url = reverse("indieweb:webmention")
+
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": f"https://{site.domain}/post",
+            },
+        )
+
+        webmention = Webmention.objects.get(
+            source_url="https://other.com/reply",
+            target_url=f"https://{site.domain}/post",
+        )
+        assert response.status_code == 202
+        assert webmention.status == "pending"
+        assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
+        status_url = reverse("indieweb:webmention-status", args=[webmention.pk])
+        assert response["Location"] == f"http://testserver{status_url}"
+        mock_processor_class.assert_not_called()
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_async_webmention_reuses_existing_row_without_clearing_fields(self, mock_processor_class, client, site):
+        """Test duplicate async receives keep existing processor-owned state intact."""
+        source = "https://other.com/reply"
+        target = f"https://{site.domain}/post"
+        existing = Webmention.objects.create(
+            source_url=source,
+            target_url=target,
+            status="verified",
+            author_name="Existing Author",
+            content="Existing content",
+            verified_at=timezone.now() - timedelta(days=1),
+        )
+        verified_at = existing.verified_at
+
+        url = reverse("indieweb:webmention")
+        response = client.post(url, {"source": source, "target": target})
+
+        existing.refresh_from_db()
+        assert response.status_code == 202
+        assert Webmention.objects.filter(source_url=source, target_url=target).count() == 1
+        assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [existing.pk]
+        status_url = reverse("indieweb:webmention-status", args=[existing.pk])
+        assert response["Location"] == f"http://testserver{status_url}"
+        assert existing.status == "verified"
+        assert existing.verified_at == verified_at
+        assert existing.author_name == "Existing Author"
+        assert existing.content == "Existing content"
+        mock_processor_class.assert_not_called()
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    @patch("indieweb.views.WebmentionProcessor")
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"target": "https://example.com/post"},
+            {"source": "https://other.com/reply"},
+            {"source": "not-a-url", "target": "https://example.com/post"},
+            {"source": "https://other.com/reply", "target": "not-a-url"},
+            {"source": "https://other.com/reply", "target": "https://different.com/post"},
+        ],
+    )
+    def test_async_webmention_rejects_invalid_requests_before_enqueueing(
+        self,
+        mock_processor_class,
+        client,
+        payload,
+    ):
+        """Test validation failures do not enqueue or process Webmentions."""
+        url = reverse("indieweb:webmention")
+
+        response = client.post(url, payload)
+
+        assert response.status_code == 400
+        assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == []
+        assert Webmention.objects.count() == 0
+        mock_processor_class.assert_not_called()
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    def test_async_webmention_does_not_call_failing_processor(self, client, site):
+        """Test a failing processor is not invoked while async enqueueing is configured."""
+        url = reverse("indieweb:webmention")
+
+        with patch("indieweb.views.WebmentionProcessor") as mock_processor_class:
+            mock_processor_class.side_effect = AssertionError("processor should not be instantiated")
+            response = client.post(
+                url,
+                {
+                    "source": "https://other.com/reply",
+                    "target": f"https://{site.domain}/post",
+                },
+            )
+
+        assert response.status_code == 202
+        assert len(webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS) == 1
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.failing_enqueue")
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_async_webmention_enqueue_failure_returns_500(self, mock_processor_class, client, site):
+        """Test enqueue backend failures fail closed and avoid inline processing."""
+        url = reverse("indieweb:webmention")
+
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": f"https://{site.domain}/post",
+            },
+        )
+
+        assert response.status_code == 500
+        assert Webmention.objects.filter(
+            source_url="https://other.com/reply",
+            target_url=f"https://{site.domain}/post",
+        ).exists()
+        mock_processor_class.assert_not_called()
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.missing_enqueue")
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_async_webmention_misconfigured_enqueue_returns_500(self, mock_processor_class, client, site):
+        """Test an unimportable enqueue hook fails closed before persistence or processing."""
+        url = reverse("indieweb:webmention")
+
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": f"https://{site.domain}/post",
+            },
+        )
+
+        assert response.status_code == 500
+        assert Webmention.objects.count() == 0
+        mock_processor_class.assert_not_called()
 
     def test_json_request_not_supported(self, client, site):
         """Test that JSON requests are not supported per spec."""

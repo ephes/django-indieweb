@@ -175,6 +175,64 @@ Set this to ``None`` to disable django-indieweb's content-type check. If you
 allow broad uploads, serve media from a separate origin or with defensive
 headers such as ``Content-Disposition: attachment`` for risky types.
 
+INDIEWEB_WEBMENTION_ENQUEUE
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable ``(webmention_id: int) -> None`` that queues
+receive-side Webmention processing for a persisted ``Webmention`` row.
+
+**Default:** ``None`` (incoming Webmentions are processed synchronously)
+
+When unset, ``POST /indieweb/webmention/`` keeps the backwards-compatible
+synchronous behavior: it validates the submitted ``source`` and ``target``,
+processes the Webmention in the request path, and returns ``201 Created`` with
+a ``Location`` header for the status endpoint.
+
+When set, the receive endpoint validates the request and target domain, creates
+or reuses the ``Webmention`` row for the submitted ``source``/``target`` pair,
+calls the configured enqueue hook with that row's primary key, and returns
+``202 Accepted`` with a ``Location`` header for
+``/indieweb/webmention/<pk>/``. Source fetching, target-link verification,
+microformats2 parsing, spam checks, final status transitions, and
+``webmention_received`` signal emission happen later when a worker processes
+the queued row.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBMENTION_ENQUEUE = "myapp.webmentions.enqueue_webmention"
+
+.. code-block:: python
+
+   # myapp/webmentions.py
+   from myapp.tasks import process_webmention_task
+
+   def enqueue_webmention(webmention_id: int) -> None:
+       process_webmention_task.delay(webmention_id)
+
+.. code-block:: python
+
+   # myapp/tasks.py
+   from indieweb.processors import process_queued_webmention
+
+   def process_webmention_task(webmention_id: int) -> None:
+       process_queued_webmention(webmention_id)
+
+The configured enqueue callable should schedule work only. It should not call
+``process_queued_webmention()`` inline from the receive request unless your
+deployment intentionally wants synchronous behavior under a custom hook.
+
+.. note::
+   If the configured path cannot be imported, resolves to a non-callable, or
+   raises while enqueueing, the receive endpoint returns HTTP 500 and does not
+   fall back to inline processing. Invalid receive requests still return HTTP
+   400 before the hook is loaded or called. Import and non-callable failures
+   happen before a row is persisted; if the callable itself raises, the
+   ``Webmention`` row has already been created or reused and remains
+   ``pending`` until a queue retry path or manual cleanup reconciles it.
+
 URL Configuration
 -----------------
 

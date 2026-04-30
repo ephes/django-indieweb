@@ -8,9 +8,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Make Webmention receiving asynchronous.
-  - Reference: `src/indieweb/views.py`.
-  - Outcome: the receiver returns an accepted/queued response and processing happens outside the request path; tests cover slow or timing-out sources.
 - [ ] Evaluate Webmention vouch support.
   - Outcome: decide whether to support the `vouch` parameter; if yes, add model, receiver, sender, tests, and docs.
 - [ ] Evaluate Salmentions support.

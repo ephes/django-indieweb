@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, cast
@@ -77,6 +78,10 @@ class _MicropubMediaUploadError(Exception):
     def __init__(self, status_code: int) -> None:
         self.status_code = status_code
         super().__init__(status_code)
+
+
+class _WebmentionEnqueueError(Exception):
+    """Internal exception for configured Webmention enqueue failures."""
 
 
 def _micropub_media_storage_name(original_name: str) -> str:
@@ -262,6 +267,22 @@ def _client_id_allowed(client_id: str) -> bool:
     except Exception as exc:
         logger.error(f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={client_id!r}: {exc}")
         return False
+
+
+def _get_webmention_enqueue() -> Callable[[int], None] | None:
+    """Load the optional configured Webmention enqueue hook."""
+    enqueue_path = getattr(settings, "INDIEWEB_WEBMENTION_ENQUEUE", None)
+    if not enqueue_path:
+        return None
+    try:
+        enqueue = import_string(enqueue_path)
+    except Exception as exc:
+        logger.exception(f"Failed to load INDIEWEB_WEBMENTION_ENQUEUE {enqueue_path!r}")
+        raise _WebmentionEnqueueError from exc
+    if not callable(enqueue):
+        logger.error(f"INDIEWEB_WEBMENTION_ENQUEUE {enqueue_path!r} is not callable")
+        raise _WebmentionEnqueueError
+    return cast("Callable[[int], None]", enqueue)
 
 
 def _normalize_redirect_uri(value: str) -> str:
@@ -1209,6 +1230,28 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
         # Check target is on our domain
         if not self.is_valid_target(target):
             return HttpResponse(status=400)
+
+        try:
+            enqueue_webmention = _get_webmention_enqueue()
+        except _WebmentionEnqueueError:
+            return HttpResponse(status=500)
+
+        if enqueue_webmention is not None:
+            webmention, _ = Webmention.objects.get_or_create(
+                source_url=source,
+                target_url=target,
+            )
+            try:
+                enqueue_webmention(webmention.pk)
+            except Exception:
+                logger.exception(f"Failed to enqueue webmention {webmention.pk}")
+                return HttpResponse(status=500)
+
+            response = HttpResponse(status=202)  # Accepted for queued processing
+            response["Location"] = request.build_absolute_uri(
+                reverse("indieweb:webmention-status", args=[webmention.pk])
+            )
+            return response
 
         # Process synchronously
         processor = WebmentionProcessor()
