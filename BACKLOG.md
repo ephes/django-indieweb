@@ -14,9 +14,6 @@ No current Priority 1 items.
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Add nested response storage and duplicate comparison for receiving Salmentions.
-  - References: `src/indieweb/models.py`, `src/indieweb/processors.py`, `tests/test_webmention_processor.py`, `docs/webmention.rst`, https://indieweb.org/Salmention.
-  - Outcome: add a child response model related to a parent `Webmention`, key children by stable nested `h-entry` identity, compare duplicate receives against the stored source snapshot, create or update newly discovered child responses only after the parent verifies, make child displayability depend on the parent remaining verified, and preserve ordinary Webmention, Vouch, and duplicate receive semantics.
 - [ ] Expose nested Salmention responses in template queries and rendering.
   - References: `src/indieweb/templatetags/webmention_tags.py`, `src/indieweb/templates/indieweb/webmentions.html`, `src/indieweb/templates/indieweb/webmention_types/reply.html`, `tests/test_webmention_templatetags.py`, `docs/webmention.rst`.
   - Outcome: prefetch verified child responses for verified top-level `Webmention` rows, render them inline under their parent reply, suppress duplicate inline children when the same response is already represented by a direct top-level `Webmention` to the same target, document count semantics, and preserve the existing top-level `webmention_count` result unless an explicit nested-inclusive API is added.

@@ -24,7 +24,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from .http_client import RedirectedResponse, request_with_webmention_redirects
-from .models import Profile, Webmention, WebmentionSourceSnapshot
+from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 
 if TYPE_CHECKING:
     from .interfaces import SpamChecker
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Signal sent when a webmention is received and processed
 webmention_received = Signal()
+MAX_NESTED_RESPONSE_IDENTITY_LENGTH = 500
 TRAILING_TEXT_URL_PUNCTUATION = ".,;:!?\"'"
 LEADING_TEXT_URL_PUNCTUATION = "([{<\"'"
 WRAPPING_TEXT_URL_PUNCTUATION = {
@@ -283,10 +284,19 @@ class WebmentionProcessor:
                     logger.info(f"Webmention marked as spam: {source_url}")
                     return webmention
 
+            previous_nested_identities = self._previous_nested_response_identities(webmention)
+            nested_response_candidates = self._nested_response_candidates(h_entry or {}, fetched.final_url)
+
             # Mark as verified
             webmention.status = "verified"
             webmention.verified_at = timezone.now()
             webmention.save()
+            self._sync_nested_responses_safely(
+                webmention=webmention,
+                candidates=nested_response_candidates,
+                previous_identities=previous_nested_identities,
+                seen_at=fetched_at,
+            )
             self._store_source_snapshot_safely(
                 webmention=webmention,
                 raw_source_html=response.text,
@@ -550,6 +560,198 @@ class WebmentionProcessor:
         """Return a JSON-safe parsed snapshot without mutating the parser result."""
         return cast("dict[str, Any]", json.loads(json.dumps(value, sort_keys=True, default=str)))
 
+    def _previous_nested_response_identities(self, webmention: Webmention) -> set[str]:
+        """Return nested identities from the previous successful source snapshot."""
+        try:
+            values = WebmentionSourceSnapshot.objects.get(webmention=webmention).nested_response_identities
+        except WebmentionSourceSnapshot.DoesNotExist:
+            return set()
+        if not isinstance(values, list):
+            return set()
+        return {value for value in values if isinstance(value, str)}
+
+    def _nested_response_candidates(self, h_entry: dict[str, Any], base_url: str) -> list[dict[str, Any]]:
+        """Extract stable nested response rows from a parsed parent h-entry."""
+        candidates: list[dict[str, Any]] = []
+        seen_identities: set[str] = set()
+        for nested_entry in self._nested_h_entries(h_entry):
+            identity = self._nested_response_identity(nested_entry, base_url)
+            if not identity or identity in seen_identities:
+                continue
+            seen_identities.add(identity)
+            normalized_entry = self._normalize_snapshot_json(nested_entry)
+            author = self._extract_nested_response_author(nested_entry, base_url)
+            content = self._extract_content(nested_entry)
+            response_url = self._nested_response_url(nested_entry, base_url)
+            candidates.append(
+                {
+                    "identity": identity,
+                    "response_url": response_url,
+                    "author_name": author.get("name", ""),
+                    "author_url": author.get("url", ""),
+                    "author_photo": author.get("photo", ""),
+                    "content": content.get("text", ""),
+                    "content_html": content.get("html", ""),
+                    "published": self._extract_published(nested_entry),
+                    "mention_type": self._determine_mention_type(nested_entry, base_url),
+                    "parsed_h_entry": normalized_entry,
+                    "content_digest": self._nested_response_digest(normalized_entry),
+                }
+            )
+        return candidates
+
+    def _extract_nested_response_author(self, h_entry: dict[str, Any], base_url: str) -> dict[str, str]:
+        """Extract explicit child author data without falling back to the parent page author."""
+        properties = h_entry.get("properties", {})
+        if not isinstance(properties, dict):
+            return {}
+        author_data = properties.get("author", [])
+        if not author_data:
+            return {}
+        author = author_data[0] if isinstance(author_data, list) else author_data
+        return self._extract_nested_explicit_author(author, base_url)
+
+    def _extract_nested_explicit_author(self, author: str | dict[str, Any], base_url: str) -> dict[str, str]:
+        """Extract explicit child author data without document-level h-card fallbacks."""
+        if isinstance(author, str):
+            if self._is_author_url_reference(author):
+                resolved_author_url = urljoin(base_url, author)
+                return {"url": resolved_author_url, "name": resolved_author_url, "photo": ""}
+            return {"name": author}
+
+        if isinstance(author, dict):
+            author_props = author.get("properties", {}) if "properties" in author else author
+            if isinstance(author_props, dict):
+                return self._extract_author_properties(author_props, base_url)
+
+        return {}
+
+    def _nested_response_url(self, h_entry: dict[str, Any], base_url: str) -> str:
+        """Return the best URL for a nested response when one is available."""
+        properties = h_entry.get("properties", {})
+        if not isinstance(properties, dict):
+            return ""
+        # The display URL prefers u-url even when the stable identity prefers uid.
+        response_url = (
+            self._first_url_identity(properties.get("url"), base_url)
+            or self._first_url_identity(properties.get("uid"), base_url)
+            or ""
+        )
+        return response_url if len(response_url) <= MAX_NESTED_RESPONSE_IDENTITY_LENGTH else ""
+
+    def _nested_response_digest(self, normalized_entry: dict[str, Any]) -> str:
+        """Return a digest for change detection on a normalized nested h-entry."""
+        return hashlib.sha256(json.dumps(normalized_entry, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _sync_nested_responses_safely(
+        self,
+        *,
+        webmention: Webmention,
+        candidates: list[dict[str, Any]],
+        previous_identities: set[str],
+        seen_at: datetime,
+    ) -> None:
+        """Persist child responses without changing parent verification on failure."""
+        try:
+            self._sync_nested_responses(
+                webmention=webmention,
+                candidates=candidates,
+                previous_identities=previous_identities,
+                seen_at=seen_at,
+            )
+        except Exception:
+            logger.exception(f"Failed to sync nested responses for webmention {webmention.pk}")
+
+    def _sync_nested_responses(
+        self,
+        *,
+        webmention: Webmention,
+        candidates: list[dict[str, Any]],
+        previous_identities: set[str],
+        seen_at: datetime,
+    ) -> None:
+        """Create, update, and retire child responses for the latest verified parent source."""
+        current_identities = {candidate["identity"] for candidate in candidates}
+        newly_discovered_identities = current_identities - previous_identities
+        # The current slice upserts all stable current children; the previous snapshot comparison is kept explicit
+        # so later notification/rendering work can distinguish newly discovered nested responses.
+        if newly_discovered_identities:
+            logger.debug(
+                "Discovered %d new nested responses for webmention %s",
+                len(newly_discovered_identities),
+                webmention.pk,
+            )
+
+        for candidate in candidates:
+            self._upsert_nested_response(webmention=webmention, candidate=candidate, seen_at=seen_at)
+
+        # QuerySet.update() does not run auto_now, so modified is set explicitly for retired rows.
+        WebmentionNestedResponse.objects.filter(webmention=webmention).exclude(
+            identity__in=current_identities
+        ).exclude(status="missing").update(status="missing", verified_at=None, modified=timezone.now())
+
+    def _upsert_nested_response(
+        self,
+        *,
+        webmention: Webmention,
+        candidate: dict[str, Any],
+        seen_at: datetime,
+    ) -> None:
+        """Create or update one stable nested response row."""
+        defaults = {
+            "response_url": candidate["response_url"],
+            "author_name": candidate["author_name"],
+            "author_url": candidate["author_url"],
+            "author_photo": candidate["author_photo"],
+            "content": candidate["content"],
+            "content_html": candidate["content_html"],
+            "published": candidate["published"],
+            "mention_type": candidate["mention_type"],
+            "status": "verified",
+            "first_seen_at": seen_at,
+            "last_seen_at": seen_at,
+            "verified_at": seen_at,
+            "parsed_h_entry": candidate["parsed_h_entry"],
+            "content_digest": candidate["content_digest"],
+        }
+        nested_response, created = WebmentionNestedResponse.objects.get_or_create(
+            webmention=webmention,
+            identity=candidate["identity"],
+            defaults=defaults,
+        )
+        if created:
+            return
+
+        nested_response.status = "verified"
+        nested_response.last_seen_at = seen_at
+        nested_response.verified_at = seen_at
+        nested_response.parsed_h_entry = candidate["parsed_h_entry"]
+        nested_response.content_digest = candidate["content_digest"]
+        nested_response.mention_type = candidate["mention_type"]
+        update_fields = [
+            "status",
+            "last_seen_at",
+            "verified_at",
+            "parsed_h_entry",
+            "content_digest",
+            "mention_type",
+            "modified",
+        ]
+
+        for field in (
+            "response_url",
+            "author_name",
+            "author_url",
+            "author_photo",
+            "content",
+            "content_html",
+            "published",
+        ):
+            setattr(nested_response, field, candidate[field])
+            update_fields.append(field)
+
+        nested_response.save(update_fields=update_fields)
+
     def _nested_response_identities(self, h_entry: dict[str, Any], base_url: str) -> list[str]:
         """Collect stable identities for nested h-entry items inside the parent h-entry."""
         identities: set[str] = set()
@@ -576,13 +778,19 @@ class WebmentionProcessor:
         if isinstance(properties, dict):
             for prop in ("uid", "url"):
                 identity = self._first_url_identity(properties.get(prop), base_url)
-                if identity:
+                if self._valid_nested_response_identity(identity):
                     return identity
 
         element_id = h_entry.get("id")
         if isinstance(element_id, str) and element_id:
-            return urljoin(base_url, f"#{element_id}")
+            identity = urljoin(base_url, f"#{element_id}")
+            if self._valid_nested_response_identity(identity):
+                return identity
         return None
+
+    def _valid_nested_response_identity(self, identity: str | None) -> bool:
+        """Return whether an extracted nested response identity can be stored."""
+        return bool(identity and len(identity) <= MAX_NESTED_RESPONSE_IDENTITY_LENGTH)
 
     def _first_url_identity(self, values: Any, base_url: str) -> str | None:
         """Return the first HTTP(S) URL identity from a microformats property value."""

@@ -361,12 +361,11 @@ Salmention Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 There is no Salmention-specific setting in django-indieweb today.
-django-indieweb persists verified Webmention source snapshots as a foundation
-for future receive-side Salmention support, but full receiving is still
-deferred until nested-response storage, comparison, and rendering are added.
-Sending Salmentions also still needs outbound target tracking for each original
-post. See :doc:`webmention` for the support-status details and current ordinary
-Webmention reprocessing behavior.
+django-indieweb persists verified Webmention source snapshots and stable nested
+child response rows as a foundation for receive-side Salmention support, but
+nested rendering is still deferred. Sending Salmentions also still needs
+outbound target tracking for each original post. See :doc:`webmention` for the
+support-status details and current ordinary Webmention reprocessing behavior.
 
 URL Configuration
 -----------------
@@ -458,7 +457,7 @@ Database Configuration
 Models
 ~~~~~~
 
-django-indieweb creates five models:
+django-indieweb creates six models:
 
 1. **Auth** - Stores authorization codes temporarily
 2. **Token** - Stores access tokens
@@ -466,11 +465,17 @@ django-indieweb creates five models:
    content, status, and spam-check results
 4. **WebmentionSourceSnapshot** - Stores the latest verified fetched source
    snapshot related to a submitted Webmention for future Salmention comparison
-5. **Profile** - Stores user h-card data
+5. **WebmentionNestedResponse** - Stores stable nested ``h-entry`` responses
+   discovered inside verified parent Webmention sources for future Salmention
+   rendering
+6. **Profile** - Stores user h-card data
 
 ``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for their
 user relationships. ``WebmentionSourceSnapshot`` is tied one-to-one to a parent
 ``Webmention`` and cascades when that parent is deleted.
+``WebmentionNestedResponse`` is tied many-to-one to a parent ``Webmention``,
+is unique per parent and stable nested identity, and also cascades when the
+parent is deleted.
 
 Migrations
 ~~~~~~~~~~

@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.test import RequestFactory, override_settings
 from django.utils import timezone as django_timezone
 
-from indieweb.models import Profile, Webmention, WebmentionSourceSnapshot
+from indieweb.models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from indieweb.processors import WebmentionProcessor, process_queued_webmention
 
 
@@ -530,6 +530,30 @@ class TestWebmentionProcessor:
         assert snapshot.raw_source_html == html_content
         assert snapshot.content_digest == hashlib.sha256(html_content.encode("utf-8")).hexdigest()
 
+    def test_process_queued_webmention_creates_nested_responses(self):
+        """Test the worker helper can create child responses through WebmentionProcessor."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        webmention = Webmention.objects.create(source_url=source_url, target_url=target_url)
+        html_content = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/child">Child</a></article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            result = process_queued_webmention(webmention.pk)
+
+        assert result.status == "verified"
+        child = WebmentionNestedResponse.objects.get(webmention=result)
+        assert child.identity == "https://example.com/comments/child"
+        assert child.status == "verified"
+
     def test_process_queued_webmention_raises_for_missing_row(self):
         """Test the public worker helper surfaces missing queued rows."""
         with pytest.raises(Webmention.DoesNotExist):
@@ -881,6 +905,320 @@ class TestWebmentionProcessor:
             "https://example.com/post#child-with-id",
         ]
 
+    def test_processor_creates_nested_responses_after_verified_processing(self, processor):
+        """Test verified processing stores stable nested h-entry responses."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">In reply to</a>
+                <div class="e-content">
+                    Parent response
+                    <article class="h-entry">
+                        <a class="u-url" href="/comments/child">Permalink</a>
+                        <a class="u-in-reply-to" href="{source_url}">Reply</a>
+                        <div class="p-author h-card">
+                            <a class="p-name u-url" href="/authors/jane">Jane Child</a>
+                            <img class="u-photo" src="/authors/jane.jpg">
+                        </div>
+                        <time class="dt-published" datetime="2026-05-01T10:00:00+00:00">May 1</time>
+                        <div class="e-content"><p>Nested reply content</p></div>
+                    </article>
+                </div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        child = WebmentionNestedResponse.objects.get(webmention=webmention)
+        assert child.identity == "https://example.com/comments/child"
+        assert child.response_url == "https://example.com/comments/child"
+        assert child.author_name == "Jane Child"
+        assert child.author_url == "https://example.com/authors/jane"
+        assert child.author_photo == "https://example.com/authors/jane.jpg"
+        assert child.content == "Nested reply content"
+        assert child.content_html == "<p>Nested reply content</p>"
+        assert child.published is not None
+        assert child.mention_type == "reply"
+        assert child.status == "verified"
+        assert child.verified_at is not None
+        assert child.first_seen_at == child.last_seen_at
+        assert child.parsed_h_entry["type"] == ["h-entry"]
+        assert len(child.content_digest) == 64
+        assert child.is_currently_displayable is True
+
+    def test_processor_duplicate_receive_updates_existing_nested_response(self, processor):
+        """Test duplicate processing updates one child row without creating duplicates."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        first_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry">
+                    <a class="u-url" href="/comments/child">Child</a>
+                    <div class="e-content">First nested content</div>
+                </article>
+            </article>
+        </body></html>
+        '''
+        second_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry">
+                    <a class="u-url" href="/comments/child">Child</a>
+                    <div class="e-content">Updated nested content</div>
+                </article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        child = WebmentionNestedResponse.objects.get(webmention=webmention)
+        first_child_id = child.pk
+        first_seen_at = child.first_seen_at
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+            duplicate = processor.process_webmention(source_url, target_url)
+
+        child.refresh_from_db()
+        assert duplicate.pk == webmention.pk
+        assert WebmentionNestedResponse.objects.filter(webmention=webmention).count() == 1
+        assert child.pk == first_child_id
+        assert child.first_seen_at == first_seen_at
+        assert child.content == "Updated nested content"
+        assert child.status == "verified"
+
+    def test_processor_duplicate_receive_clears_missing_current_nested_fields(self, processor):
+        """Test current child fields stay consistent with the latest parsed nested snapshot."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        first_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry">
+                    <a class="u-url" href="/comments/child">Child</a>
+                    <a class="u-in-reply-to" href="{source_url}">Nested reply</a>
+                    <div class="p-author h-card">
+                        <a class="p-name u-url" href="/authors/jane">Jane Child</a>
+                    </div>
+                    <div class="e-content">First nested content</div>
+                </article>
+            </article>
+        </body></html>
+        '''
+        second_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry">
+                    <a class="u-url" href="/comments/child">Child</a>
+                </article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        child = WebmentionNestedResponse.objects.get(webmention=webmention)
+        assert child.content == "First nested content"
+        assert child.author_name == "Jane Child"
+        assert child.mention_type == "reply"
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+            processor.process_webmention(source_url, target_url)
+
+        child.refresh_from_db()
+        assert child.content == ""
+        assert child.content_html == ""
+        assert child.author_name == ""
+        assert child.author_url == ""
+        assert child.mention_type == "mention"
+        assert child.parsed_h_entry["properties"]["url"] == ["https://example.com/comments/child"]
+
+    def test_processor_creates_newly_discovered_nested_response_from_previous_snapshot(self, processor):
+        """Test duplicate processing creates stable children discovered after the previous snapshot."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        first_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/one">One</a></article>
+            </article>
+        </body></html>
+        '''
+        second_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/one">One</a></article>
+                <article class="h-entry"><a class="u-url" href="/comments/two">Two</a></article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert webmention.source_snapshot.nested_response_identities == ["https://example.com/comments/one"]
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+            processor.process_webmention(source_url, target_url)
+
+        assert WebmentionNestedResponse.objects.filter(webmention=webmention).count() == 2
+        assert WebmentionNestedResponse.objects.filter(
+            webmention=webmention,
+            identity="https://example.com/comments/two",
+            status="verified",
+        ).exists()
+        webmention.source_snapshot.refresh_from_db()
+        assert webmention.source_snapshot.nested_response_identities == [
+            "https://example.com/comments/one",
+            "https://example.com/comments/two",
+        ]
+
+    def test_processor_marks_disappeared_nested_responses_missing(self, processor):
+        """Test disappeared children stop being current without deleting historical fields."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        first_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/one">One</a></article>
+                <article class="h-entry">
+                    <a class="u-url" href="/comments/two">Two</a>
+                    <div class="e-content">Keep this historical content</div>
+                </article>
+            </article>
+        </body></html>
+        '''
+        second_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/one">One</a></article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        missing_child = WebmentionNestedResponse.objects.get(webmention=webmention, identity__endswith="/two")
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+            processor.process_webmention(source_url, target_url)
+
+        missing_child.refresh_from_db()
+        assert missing_child.status == "missing"
+        assert missing_child.verified_at is None
+        assert missing_child.content == "Keep this historical content"
+        assert missing_child.is_currently_displayable is False
+
+    def test_processor_marks_all_nested_responses_missing_when_current_source_has_none(self, processor):
+        """Test a verified source with no current children retires all stored child rows."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        first_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/one">One</a></article>
+                <article class="h-entry"><a class="u-url" href="/comments/two">Two</a></article>
+            </article>
+        </body></html>
+        '''
+        second_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <div class="e-content">Parent only</div>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert WebmentionNestedResponse.objects.filter(webmention=webmention, status="verified").count() == 2
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+            processor.process_webmention(source_url, target_url)
+
+        assert WebmentionNestedResponse.objects.filter(webmention=webmention, status="missing").count() == 2
+        webmention.source_snapshot.refresh_from_db()
+        assert webmention.source_snapshot.nested_response_identities == []
+
+    def test_processor_ignores_nested_entries_without_stable_identity(self, processor):
+        """Test nested h-entries without uid, url, or HTML id do not become durable child rows."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry">
+                    <div class="e-content">No stable identity</div>
+                </article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert webmention.status == "verified"
+        assert WebmentionNestedResponse.objects.filter(webmention=webmention).count() == 0
+        assert webmention.source_snapshot.nested_response_identities == []
+
+    def test_processor_ignores_overlong_nested_response_identity(self, processor):
+        """Test stable identities longer than the storage field are skipped."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        overlong_id = "child-" + ("x" * 520)
+        html_content = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry" id="{overlong_id}">
+                    <div class="e-content">Too long to store safely</div>
+                </article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert WebmentionNestedResponse.objects.filter(webmention=webmention).count() == 0
+        assert webmention.source_snapshot.nested_response_identities == []
+
     def test_processor_updates_existing_source_snapshot_on_duplicate_receive(self, processor):
         """Test duplicate Webmention processing updates the related snapshot row."""
         source_url = "https://example.com/post"
@@ -985,12 +1323,52 @@ class TestWebmentionProcessor:
         assert snapshot.raw_source_html == verified_html
         assert snapshot.content_digest == original_digest
 
+    def test_processor_failure_preserves_children_but_parent_status_controls_displayability(self, processor):
+        """Test later source failures do not update children from failed content."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        verified_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry">
+                    <a class="u-url" href="/comments/child">Child</a>
+                    <div class="e-content">Original child content</div>
+                </article>
+            </article>
+        </body></html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=verified_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        child = WebmentionNestedResponse.objects.get(webmention=webmention)
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=410)
+            processor.process_webmention(source_url, target_url)
+
+        webmention.refresh_from_db()
+        child.refresh_from_db()
+        assert webmention.status == "failed"
+        assert child.status == "verified"
+        assert child.content == "Original child content"
+        assert child.is_currently_displayable is False
+
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
     def test_processor_vouch_failure_does_not_create_source_snapshot(self, processor):
         """Test Vouch failures do not store snapshots for otherwise fetched sources."""
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
-        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        source_html = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/child">Child</a></article>
+            </article>
+        </body></html>
+        '''
 
         with patch("httpx.Client") as mock_get_class:
             mock_client = Mock()
@@ -1005,13 +1383,21 @@ class TestWebmentionProcessor:
 
         assert webmention.status == "failed"
         assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
+        assert not WebmentionNestedResponse.objects.filter(webmention=webmention).exists()
 
     @override_settings(INDIEWEB_SPAM_CHECKER="indieweb.interfaces.NoOpSpamChecker")
     def test_processor_spam_does_not_create_source_snapshot(self, processor):
         """Test spam-classified Webmentions do not store source snapshots."""
         source_url = "https://spam.example/post"
         target_url = "https://mysite.com/article"
-        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        html_content = f'''
+        <html><body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">Reply</a>
+                <article class="h-entry"><a class="u-url" href="/comments/child">Child</a></article>
+            </article>
+        </body></html>
+        '''
 
         with patch("httpx.Client") as mock_get_class:
             _mock_source_response(mock_get_class, status_code=200, text=html_content)
@@ -1027,6 +1413,7 @@ class TestWebmentionProcessor:
 
         assert webmention.status == "spam"
         assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
+        assert not WebmentionNestedResponse.objects.filter(webmention=webmention).exists()
 
     def test_processor_detects_mention_types(self, processor):
         """Test that processor correctly detects different mention types."""

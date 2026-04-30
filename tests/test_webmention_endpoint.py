@@ -11,7 +11,7 @@ from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from indieweb.models import Webmention, WebmentionSourceSnapshot
+from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from indieweb.views import WebmentionEndpoint
 from tests import webmention_enqueue_hooks
 
@@ -261,6 +261,7 @@ class TestWebmentionEndpoint:
         assert webmention.status == "pending"
         assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
         assert WebmentionSourceSnapshot.objects.count() == 0
+        assert WebmentionNestedResponse.objects.count() == 0
         status_url = reverse("indieweb:webmention-status", args=[webmention.pk])
         assert response["Location"] == f"http://testserver{status_url}"
         mock_processor_class.assert_not_called()

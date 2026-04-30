@@ -178,6 +178,65 @@ class WebmentionSourceSnapshot(models.Model):
         return f"Source snapshot for {self.webmention_id}"
 
 
+class WebmentionNestedResponse(models.Model):
+    """Nested response discovered inside a verified parent Webmention source."""
+
+    STATUS_CHOICES = [
+        ("verified", "Verified"),
+        ("missing", "Missing"),
+        ("failed", "Failed"),
+        ("spam", "Spam"),
+    ]
+
+    webmention = models.ForeignKey(
+        Webmention,
+        on_delete=models.CASCADE,
+        related_name="nested_responses",
+    )
+    identity = models.CharField(max_length=500)
+    response_url = models.URLField(max_length=500, blank=True)
+
+    author_name = models.CharField(max_length=200, blank=True)
+    author_url = models.URLField(blank=True)
+    author_photo = models.URLField(blank=True)
+
+    content = models.TextField(blank=True)
+    content_html = models.TextField(blank=True)
+    published = models.DateTimeField(null=True, blank=True)
+    mention_type = models.CharField(max_length=20, choices=Webmention.MENTION_TYPE_CHOICES, default="mention")
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="verified")
+    first_seen_at = models.DateTimeField()
+    last_seen_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True, blank=True)
+    parsed_h_entry = models.JSONField(default=dict, blank=True)
+    content_digest = models.CharField(max_length=64, blank=True)
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["webmention", "identity"], name="indieweb_nested_response_identity_uniq"),
+        ]
+        indexes = [
+            models.Index(fields=["webmention", "status"]),
+            models.Index(fields=["identity"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Nested {self.mention_type}: {self.identity}"
+
+    @property
+    def is_currently_displayable(self) -> bool:
+        """Return whether this child response is current under a verified parent."""
+        if self.status != "verified":
+            return False
+        if self.__class__.webmention.is_cached(self):
+            return self.webmention.status == "verified"
+        return Webmention.objects.only("status").filter(pk=self.webmention_id, status="verified").exists()
+
+
 class Profile(models.Model):
     """User profile with h-card data stored as JSON."""
 

@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
-from indieweb.models import Webmention, WebmentionSourceSnapshot
+from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 
 
 @pytest.mark.django_db
@@ -234,3 +234,133 @@ class TestWebmentionSourceSnapshotModel:
         webmention.delete()
 
         assert not WebmentionSourceSnapshot.objects.filter(pk=snapshot.pk).exists()
+
+
+@pytest.mark.django_db
+class TestWebmentionNestedResponseModel:
+    """Test cases for nested responses discovered inside a Webmention source."""
+
+    def test_create_nested_response(self):
+        """Test creating a nested response related to a parent Webmention."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+            status="verified",
+        )
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+        child = WebmentionNestedResponse.objects.create(
+            webmention=webmention,
+            identity="https://example.com/comments/1",
+            response_url="https://example.com/comments/1",
+            author_name="Nested Author",
+            author_url="https://author.example/",
+            author_photo="https://author.example/photo.jpg",
+            content="Nested content",
+            content_html="<p>Nested content</p>",
+            published=seen_at,
+            mention_type="reply",
+            status="verified",
+            first_seen_at=seen_at,
+            last_seen_at=seen_at,
+            verified_at=seen_at,
+            parsed_h_entry={"type": ["h-entry"]},
+            content_digest="d" * 64,
+        )
+
+        assert child.webmention == webmention
+        assert list(webmention.nested_responses.all()) == [child]
+        assert child.identity == "https://example.com/comments/1"
+        assert child.response_url == "https://example.com/comments/1"
+        assert child.author_name == "Nested Author"
+        assert child.content == "Nested content"
+        assert child.mention_type == "reply"
+        assert child.status == "verified"
+        assert child.is_currently_displayable is True
+        assert child.parsed_h_entry == {"type": ["h-entry"]}
+        assert child.content_digest == "d" * 64
+        assert child.created
+        assert child.modified
+
+    def test_nested_response_defaults_and_displayability(self):
+        """Test defaults and parent-status-dependent displayability."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+            status="verified",
+        )
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+        child = WebmentionNestedResponse.objects.create(
+            webmention=webmention,
+            identity="https://example.com/post#child",
+            first_seen_at=seen_at,
+            last_seen_at=seen_at,
+        )
+
+        assert child.status == "verified"
+        assert child.mention_type == "mention"
+        assert child.parsed_h_entry == {}
+        assert child.content_digest == ""
+        assert child.verified_at is None
+        assert child.is_currently_displayable is True
+
+        webmention.status = "failed"
+        webmention.save(update_fields=["status", "modified"])
+        child.refresh_from_db()
+
+        assert child.status == "verified"
+        assert child.is_currently_displayable is False
+
+    def test_nested_response_identity_unique_per_parent(self):
+        """Test that stable nested identities are unique per parent Webmention."""
+        first_parent = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+        )
+        second_parent = Webmention.objects.create(
+            source_url="https://example.net/post",
+            target_url="https://mysite.com/article",
+        )
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        identity = "https://comments.example/reply"
+
+        WebmentionNestedResponse.objects.create(
+            webmention=first_parent,
+            identity=identity,
+            first_seen_at=seen_at,
+            last_seen_at=seen_at,
+        )
+
+        with pytest.raises(IntegrityError), transaction.atomic():
+            WebmentionNestedResponse.objects.create(
+                webmention=first_parent,
+                identity=identity,
+                first_seen_at=seen_at,
+                last_seen_at=seen_at,
+            )
+
+        other_parent_child = WebmentionNestedResponse.objects.create(
+            webmention=second_parent,
+            identity=identity,
+            first_seen_at=seen_at,
+            last_seen_at=seen_at,
+        )
+        assert other_parent_child.identity == identity
+
+    def test_nested_response_cascades_with_webmention(self):
+        """Test deleting the parent Webmention deletes nested responses."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+        )
+        child = WebmentionNestedResponse.objects.create(
+            webmention=webmention,
+            identity="https://example.com/post#child",
+            first_seen_at=datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc),
+            last_seen_at=datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc),
+        )
+
+        webmention.delete()
+
+        assert not WebmentionNestedResponse.objects.filter(pk=child.pk).exists()

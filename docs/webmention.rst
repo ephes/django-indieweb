@@ -280,24 +280,24 @@ other interactions upstream. For example, if Bob replies to Alice and later
 displays Carol's reply to Bob, Bob's site can resend a Webmention to Alice so
 Alice can re-check Bob's page and display Carol's nested response.
 
-django-indieweb now stores a processor-owned source snapshot for each
-successfully verified incoming ``Webmention``. This is a persistence foundation
-for future Salmention receiving: duplicate submissions for the same
-``source``/``target`` pair still reprocess the existing ``Webmention`` row, and
-the related snapshot row is updated with the latest fetched source state.
+django-indieweb now stores processor-owned source snapshots and stable nested
+child response rows for successfully verified incoming ``Webmention`` sources.
+Duplicate submissions for the same ``source``/``target`` pair still reprocess
+the existing ``Webmention`` row. During that verified reprocessing, the
+processor compares the current nested response identities with the previous
+stored source snapshot before overwriting it, creates or updates child rows for
+stable nested ``h-entry`` responses, and marks children that disappeared from
+the latest verified source as missing.
 
-This does **not** mean full Salmention receiving is implemented. The processor
-does not yet compare previous and current nested ``h-entry`` structures, create
-child response records, send nested-response notifications, or render nested
-responses inline on the original target. A re-received Webmention remains
-ordinary Webmention reprocessing with source snapshot persistence, not a
-complete Salmention-specific nested-response update.
+This does **not** mean full Salmention receiving is implemented. Child response
+rows are persisted for future display, but django-indieweb does not yet render
+nested responses inline, send nested-response notifications, suppress duplicate
+display against direct top-level Webmentions, or implement outbound
+Salmention sending.
 
-Receiving Salmentions still needs additional persistence and display behavior:
-newly nested responses inside the source ``h-entry`` must be compared against
-the previous snapshot, stored as child responses separate from the flattened
-``Webmention`` row currently used for one source/target pair, and exposed by
-template/query code with clear duplicate-display semantics.
+Receiving Salmentions still needs display/query behavior: stored child
+responses must be exposed by template/query code with clear duplicate-display
+semantics before nested responses are visible on the original target.
 
 Sending Salmentions also needs application-level state that is not currently
 tracked here. The protocol expects a site to resend Webmentions to everything
@@ -309,9 +309,9 @@ django-indieweb does not record the prior outbound target set for each original
 post or know when an application has updated a rendered permalink with a newly
 accepted response.
 
-No Salmention setting is available. The source snapshot foundation below is
-always owned by verified processor/worker processing. Future receiving support
-still needs nested response storage and rendering, while future sending support
+No Salmention setting is available. Source snapshots and child response storage
+are always owned by verified processor/worker processing. Future receiving
+support still needs nested response rendering, while future sending support
 still needs outbound target tracking and an operator- or application-driven
 resend workflow.
 
@@ -326,37 +326,61 @@ nested response found inside a previously received source page is not itself a
 submitted Webmention to the original target, and storing it as another
 ``Webmention`` row would misrepresent the protocol relationship.
 
-Receive processing now stores a ``WebmentionSourceSnapshot`` row related
+Receive processing stores a ``WebmentionSourceSnapshot`` row related
 one-to-one to each submitted ``Webmention`` after normal verified processor
 processing succeeds. The snapshot stores the latest fetched source HTML, the
 final URL after redirects, a SHA-256 content digest, the fetch time, a
 normalized parsed representation of the mentioning parent ``h-entry``, and the
 set of known nested response identities found inside that entry. Raw HTML is
-stored because a future Salmention receiver must be able to compare a newly
-fetched source with previously stored source contents; the normalized parsed
-snapshot is stored so future comparisons do not depend only on byte-for-byte
-HTML changes.
+stored so a Salmention receiver can compare a newly fetched source with
+previously stored source contents; the normalized parsed snapshot is stored so
+comparisons do not depend only on byte-for-byte HTML changes.
 
 Snapshot writes are intentionally non-destructive. A later source failure,
 ``410 Gone`` response, non-HTML response, missing target link, Vouch failure, or
 spam classification marks the parent ``Webmention`` failed or spam as before
-but does not clear or replace the last successful source snapshot. A later
-verified reprocessing updates the same snapshot row rather than creating a
-second submitted ``Webmention`` row. If a source snapshot cannot be stored
-after otherwise successful verification, the processor logs the snapshot
-failure and leaves the parent Webmention verified.
+but does not clear or replace the last successful source snapshot or create
+child rows from the failed source. A later verified reprocessing updates the
+same snapshot row rather than creating a second submitted ``Webmention`` row.
+If a source snapshot cannot be stored after otherwise successful verification,
+the processor logs the snapshot failure and leaves the parent Webmention
+verified.
 
 Because snapshots store the raw HTML from the last successful source fetch,
 database storage grows with the size of those source documents. Operators that
 receive large volumes of Webmentions should account for that table in normal
 database retention and backup planning.
 
+Verified processing also stores ``WebmentionNestedResponse`` rows for stable
+nested ``h-entry`` descendants found inside the mentioning parent ``h-entry``.
+The processor reads the previous snapshot's nested identity set before storing
+the current snapshot, then creates or updates one child row per stable current
+identity. Existing children for the same parent and identity are updated in
+place rather than duplicated. Children that were previously stored but no
+longer appear in the latest verified source are marked ``missing`` without
+deleting historical author/content fields. Child synchronization happens only
+after the parent ``Webmention`` has been saved as ``verified``.
+
+Child writes follow the same non-destructive failure stance as source
+snapshots. If child response synchronization fails after otherwise successful
+parent verification, the processor logs the child sync failure and leaves the
+parent Webmention verified. The failed child sync does not clear the previous
+source snapshot or any previously stored child rows.
+
+When a stable child is seen again, its stored display fields are refreshed from
+the latest parsed nested ``h-entry``. If the latest verified parse omits
+content, author, ``published``, or reply/like/repost properties, the stored
+child fields are cleared or fall back to ``mention`` rather than preserving
+older current values. Child rows therefore represent the latest verified nested
+snapshot, not a historical maximum of every field ever seen.
+
 Queued processing keeps the async receive boundary. When
 ``INDIEWEB_WEBMENTION_ENQUEUE`` is configured, the receive endpoint validates
 the request, creates or reuses the submitted ``Webmention`` row, enqueues the
 row ID, and returns without fetching the source, parsing microformats2, running
-spam or Vouch checks, or writing source snapshots. Snapshot writes happen only
-when ``WebmentionProcessor`` runs synchronously or through worker paths such as
+spam or Vouch checks, writing source snapshots, comparing nested identities, or
+writing child response rows. Snapshot and child writes happen only when
+``WebmentionProcessor`` runs synchronously or through worker paths such as
 ``process_queued_webmention()``.
 
 Nested response identity extraction is conservative in this foundation slice.
@@ -364,21 +388,21 @@ Nested ``h-entry`` descendants inside the mentioning parent ``h-entry`` are
 recorded only when a stable identity is available: URL-valued ``uid`` is
 preferred, then URL-valued ``url``, then an HTML ``id`` resolved against the
 final fetched source URL. Entries without a stable identity are not stored in
-the identity set, and no child response rows are created yet.
+the identity set, and no child response rows are created for them.
 
-Nested responses should be stored in a new child model related to the parent
-``Webmention``. Each child row should capture the extracted response URL or
-identity key, author fields, content fields, published date, mention type,
-first-seen/last-seen timestamps, a ``verified_at``-equivalent timestamp,
-current status, and a compact parsed snapshot of the nested ``h-entry``. Unless
-a future migration deliberately broadens the vocabulary, child mention types
-should use the same ``mention``, ``like``, ``reply``, and ``repost`` values as
-top-level ``Webmention`` rows. The child should be unique per parent
-Webmention and stable response key. Reusing ``Webmention`` for these child
-responses is not appropriate because the nested source normally links to the
-intermediate source, not necessarily to the original target URL, and should not
-share the ``source_url``/``target_url`` uniqueness contract for submitted
-Webmentions.
+Nested responses are stored in ``WebmentionNestedResponse``, a child model
+related to the submitted parent ``Webmention``. Each child row captures the
+stable identity key, a response URL when one can be extracted, author fields,
+content fields, published date, mention type, first-seen/last-seen timestamps,
+a ``verified_at``-equivalent timestamp, current status, a compact parsed
+snapshot of the nested ``h-entry``, and a digest of that parsed snapshot for
+change detection. Child mention types use the same ``mention``, ``like``,
+``reply``, and ``repost`` vocabulary as top-level ``Webmention`` rows. Child
+rows are unique per parent Webmention and stable response key. Reusing
+``Webmention`` for these child responses is not appropriate because the nested
+source normally links to the intermediate source, not necessarily to the
+original target URL, and should not share the ``source_url``/``target_url``
+uniqueness contract for submitted Webmentions.
 
 Response identity should be derived conservatively. Prefer an explicit
 microformats2 identity such as a URL-valued ``uid`` or ``url`` property, then an
@@ -389,27 +413,32 @@ child response. Entries without a stable identity should not be promoted to
 durable child rows until the implementation defines an operator-visible policy
 for unstable responses.
 
-Status, spam, and moderation should be stored independently for child
-responses, but current displayability should still depend on the parent
-``Webmention`` remaining verified. A child found inside a verified parent
-source can start as verified, but if it later disappears from the parent source
-snapshot it should stop being considered currently verified without deleting
-historical author/content fields. If the parent later becomes ``failed`` or
-``spam`` because the source is gone, no longer links to the target, fails Vouch,
-or is reclassified by the spam checker, its children should also stop being
-currently displayable until a later verified parent reprocessing confirms them
-again. Future comparison code should create or update child rows only after the
-parent source has passed target-link verification, required Vouch checks, and
-spam classification.
+Status, spam, and moderation are stored independently for child responses, but
+current displayability still depends on the parent ``Webmention`` remaining
+verified. A child found inside a verified parent source starts as verified, but
+if it later disappears from the parent source snapshot it stops being currently
+verified without deleting historical author/content fields. If the parent later
+becomes ``failed`` or ``spam`` because the source is gone, no longer links to
+the target, fails Vouch, or is reclassified by the spam checker, child
+``is_currently_displayable`` returns false until a later verified parent
+reprocessing confirms the child again. Child rows are created or updated only
+after the parent source has passed target-link verification, required Vouch
+checks, and spam classification.
 
-Spam classification can reuse the configured spam checker only through an
-explicit adapter contract. A future implementation should either pass a
-temporary ``Webmention``-shaped value populated from the child's parsed fields
-to the existing ``SpamChecker.check(webmention)`` API, or introduce and
-document a child-aware spam checker hook before using child rows for moderation.
-Vouch metadata should remain attached to the submitted parent Webmention only.
-A submitted ``vouch`` proves trust for the Webmention source; it does not
-directly verify every nested response embedded inside that source.
+For bulk rendering or moderation queries, prefer filtering on both child and
+parent state, for example ``WebmentionNestedResponse.objects.filter(status="verified",
+webmention__status="verified").select_related("webmention")``. The bundled
+templates do not query child responses yet, but future rendering code should
+avoid checking parent status one child at a time.
+
+Child spam classification does not call the configured parent
+``SpamChecker.check(webmention)`` API in this slice. A future implementation
+should either pass a temporary ``Webmention``-shaped value populated from the
+child's parsed fields to that API, or introduce and document a child-aware spam
+checker hook before using child rows for moderation. Vouch metadata remains
+attached to the submitted parent Webmention only. A submitted ``vouch`` proves
+trust for the Webmention source; it does not directly verify every nested
+response embedded inside that source.
 
 Display/query support should expose verified child responses as inline responses
 under their parent Webmention. ``show_webmentions`` can continue querying
@@ -433,15 +462,15 @@ Queued processing must keep the existing async receive boundary. The endpoint
 should continue to validate, create or reuse the submitted ``Webmention`` row,
 enqueue the row ID, and return without fetching the source, parsing
 microformats2, running spam or Vouch checks, or comparing Salmention snapshots.
-Future nested-response comparison should live in ``WebmentionProcessor``,
+Nested-response comparison lives in ``WebmentionProcessor`` and therefore in
 ``process_queued_webmention()``, management commands, or explicit worker helper
-APIs.
+APIs that call the processor.
 
-This design deliberately keeps the remaining child-response schema, comparison,
-and rendering changes in focused implementation slices so ordinary Webmention
-behavior, Vouch verification, duplicate reprocessing semantics, and existing
-template output remain unchanged until those primitives are added together with
-tests and migrations.
+This design deliberately keeps rendering and outbound Salmention changes in
+focused implementation slices so ordinary Webmention behavior, Vouch
+verification, duplicate reprocessing semantics, and existing template output
+remain unchanged until those primitives are added together with tests and
+migrations.
 
 Target URL Matching
 ===================
@@ -688,6 +717,13 @@ Fields:
 * ``verified_at`` - When the mention was verified
 * ``vouch_verified_at`` - When the configured Vouch check succeeded
 * ``spam_check_result`` - JSON field with spam check details
+
+``WebmentionNestedResponse`` stores stable nested ``h-entry`` responses found
+inside a verified parent ``Webmention`` source. Rows are unique per parent
+``Webmention`` and stable identity key, store extracted author/content/type
+fields plus parsed child snapshots and digests, and use ``status`` plus the
+parent ``Webmention.status`` to decide current displayability. These rows are
+not exposed by the bundled templates yet.
 
 Testing Webmentions
 ===================

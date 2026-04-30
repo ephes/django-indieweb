@@ -2,6 +2,19 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-01
+
+### Add nested response storage and duplicate comparison for receiving Salmentions
+
+- Added ``WebmentionNestedResponse`` rows related to parent ``Webmention`` submissions, keyed uniquely by parent and stable nested response identity. Child rows store response URL when available, author/content/published/type fields, current status, first/last-seen and verified timestamps, a compact parsed nested ``h-entry`` snapshot, and a parsed snapshot digest.
+- Updated ``WebmentionProcessor`` so successful verified parent processing reads the previous ``WebmentionSourceSnapshot`` nested identity set before overwriting it, extracts stable nested ``h-entry`` candidates from the current parsed parent source, upserts current child rows, and marks disappeared children ``missing`` without deleting historical fields. Entries without stable identity are not promoted to durable child rows.
+- Review follow-up tightened duplicate child updates so current displayable fields are refreshed consistently with the latest parsed nested snapshot, skipped overlong stable identities that cannot fit the storage field, documented the previous-snapshot comparison hook, and added regression coverage for empty current child fields, all children disappearing, and overlong identities.
+- Preserved ordinary Webmention, Vouch, spam, duplicate receive, source snapshot, and async receive semantics. Failed fetches, ``410 Gone``, non-HTML responses, missing target links, Vouch failures, and spam classifications do not create or update child rows from failed source content. Queued receive requests still do not instantiate the processor, fetch, parse, verify Vouch, spam-check, compare snapshots, or write child rows; worker processing through ``process_queued_webmention()`` performs those writes.
+- Kept nested response rendering, template exposure, nested-inclusive counts, outbound Salmention sending, and outbound target tracking out of scope. The template rendering and outbound target-tracking backlog items remain open.
+- Documentation: updated ``docs/webmention.rst`` with the implemented child persistence/comparison behavior and remaining Salmention gaps; updated ``docs/configuration.rst`` for the model list and no-setting note. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased nested response storage/comparison entry.
+- Validation: ``uv run pytest tests/test_webmention_models.py tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q`` (156 passed), ``uv run pytest`` (611 passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed), ``uv build`` (passed), ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb --check --dry-run`` (no changes), and ``git diff --check`` (passed).
+
 ## 2026-04-30
 
 ### Add source snapshot persistence for receiving Salmentions
