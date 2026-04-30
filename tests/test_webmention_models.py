@@ -6,7 +6,7 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 
-from indieweb.models import Webmention
+from indieweb.models import Webmention, WebmentionSourceSnapshot
 
 
 @pytest.mark.django_db
@@ -164,3 +164,73 @@ class TestWebmentionModel:
 
         assert len(webmention.source_url) > 400
         assert webmention.source_url == long_url
+
+
+@pytest.mark.django_db
+class TestWebmentionSourceSnapshotModel:
+    """Test cases for persisted Webmention source snapshots."""
+
+    def test_create_source_snapshot(self):
+        """Test creating a source snapshot related to a Webmention."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+        )
+        fetched_at = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
+
+        snapshot = WebmentionSourceSnapshot.objects.create(
+            webmention=webmention,
+            raw_source_html="<html><body>source</body></html>",
+            final_source_url="https://example.com/final",
+            content_digest="a" * 64,
+            fetched_at=fetched_at,
+            parsed_h_entry={"type": ["h-entry"]},
+            nested_response_identities=["https://example.com/comment"],
+        )
+
+        assert snapshot.webmention == webmention
+        assert webmention.source_snapshot == snapshot
+        assert snapshot.raw_source_html == "<html><body>source</body></html>"
+        assert snapshot.final_source_url == "https://example.com/final"
+        assert snapshot.content_digest == "a" * 64
+        assert snapshot.fetched_at == fetched_at
+        assert snapshot.parsed_h_entry == {"type": ["h-entry"]}
+        assert snapshot.nested_response_identities == ["https://example.com/comment"]
+        assert snapshot.created
+        assert snapshot.modified
+
+    def test_source_snapshot_json_defaults(self):
+        """Test JSON snapshot fields default to empty structures."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+        )
+
+        snapshot = WebmentionSourceSnapshot.objects.create(
+            webmention=webmention,
+            raw_source_html="<html></html>",
+            final_source_url="https://example.com/post",
+            content_digest="b" * 64,
+            fetched_at=datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc),
+        )
+
+        assert snapshot.parsed_h_entry == {}
+        assert snapshot.nested_response_identities == []
+
+    def test_source_snapshot_cascades_with_webmention(self):
+        """Test deleting the parent Webmention deletes its source snapshot."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+        )
+        snapshot = WebmentionSourceSnapshot.objects.create(
+            webmention=webmention,
+            raw_source_html="<html></html>",
+            final_source_url="https://example.com/post",
+            content_digest="c" * 64,
+            fetched_at=datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc),
+        )
+
+        webmention.delete()
+
+        assert not WebmentionSourceSnapshot.objects.filter(pk=snapshot.pk).exists()

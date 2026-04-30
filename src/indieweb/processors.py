@@ -6,6 +6,8 @@ Handles fetching, parsing, and verifying webmentions.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -22,7 +24,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from .http_client import RedirectedResponse, request_with_webmention_redirects
-from .models import Profile, Webmention
+from .models import Profile, Webmention, WebmentionSourceSnapshot
 
 if TYPE_CHECKING:
     from .interfaces import SpamChecker
@@ -258,8 +260,10 @@ class WebmentionProcessor:
                 logger.warning(f"Target URL {target_url} not found in source")
                 return webmention
 
+            fetched_at = timezone.now()
+
             # Parse microformats2
-            self._parse_microformats(webmention, response.text, fetched.final_url, target_url)
+            _parsed, h_entry = self._parse_microformats(webmention, response.text, fetched.final_url, target_url)
 
             if not self._verify_vouch_for_webmention(webmention, source_url):
                 self._mark_webmention_failed(webmention)
@@ -283,6 +287,13 @@ class WebmentionProcessor:
             webmention.status = "verified"
             webmention.verified_at = timezone.now()
             webmention.save()
+            self._store_source_snapshot_safely(
+                webmention=webmention,
+                raw_source_html=response.text,
+                final_source_url=fetched.final_url,
+                fetched_at=fetched_at,
+                h_entry=h_entry,
+            )
 
             # Send signal
             webmention_received.send(
@@ -441,7 +452,13 @@ class WebmentionProcessor:
 
         return domain in trusted_domains
 
-    def _parse_microformats(self, webmention: Webmention, html_content: str, base_url: str, target_url: str) -> None:
+    def _parse_microformats(
+        self,
+        webmention: Webmention,
+        html_content: str,
+        base_url: str,
+        target_url: str,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Parse microformats2 data from HTML content."""
         # Parse microformats
         parsed = mf2py.parse(doc=html_content, url=base_url)
@@ -450,7 +467,7 @@ class WebmentionProcessor:
         h_entry = self._find_mentioning_entry(parsed, target_url)
         if not h_entry:
             # No microformats found, use defaults
-            return
+            return parsed, None
 
         # Extract author information
         author = self._extract_author(h_entry, parsed, base_url)
@@ -482,6 +499,104 @@ class WebmentionProcessor:
 
         # Determine mention type
         webmention.mention_type = self._determine_mention_type(h_entry, target_url)
+        return parsed, h_entry
+
+    def _store_source_snapshot(
+        self,
+        *,
+        webmention: Webmention,
+        raw_source_html: str,
+        final_source_url: str,
+        fetched_at: datetime,
+        h_entry: dict[str, Any] | None,
+    ) -> None:
+        """Persist the latest verified source snapshot for future Salmention comparison."""
+        normalized_h_entry = self._normalize_snapshot_json(h_entry or {})
+        nested_response_identities = self._nested_response_identities(h_entry or {}, final_source_url)
+        WebmentionSourceSnapshot.objects.update_or_create(
+            webmention=webmention,
+            defaults={
+                "raw_source_html": raw_source_html,
+                "final_source_url": final_source_url,
+                "content_digest": hashlib.sha256(raw_source_html.encode("utf-8")).hexdigest(),
+                "fetched_at": fetched_at,
+                "parsed_h_entry": normalized_h_entry,
+                "nested_response_identities": nested_response_identities,
+            },
+        )
+
+    def _store_source_snapshot_safely(
+        self,
+        *,
+        webmention: Webmention,
+        raw_source_html: str,
+        final_source_url: str,
+        fetched_at: datetime,
+        h_entry: dict[str, Any] | None,
+    ) -> None:
+        """Store a source snapshot without changing parent verification on failure."""
+        try:
+            self._store_source_snapshot(
+                webmention=webmention,
+                raw_source_html=raw_source_html,
+                final_source_url=final_source_url,
+                fetched_at=fetched_at,
+                h_entry=h_entry,
+            )
+        except Exception:
+            logger.exception(f"Failed to store source snapshot for webmention {webmention.pk}")
+
+    def _normalize_snapshot_json(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Return a JSON-safe parsed snapshot without mutating the parser result."""
+        return cast("dict[str, Any]", json.loads(json.dumps(value, sort_keys=True, default=str)))
+
+    def _nested_response_identities(self, h_entry: dict[str, Any], base_url: str) -> list[str]:
+        """Collect stable identities for nested h-entry items inside the parent h-entry."""
+        identities: set[str] = set()
+        for nested_entry in self._nested_h_entries(h_entry):
+            identity = self._nested_response_identity(nested_entry, base_url)
+            if identity:
+                identities.add(identity)
+        return sorted(identities)
+
+    def _nested_h_entries(self, item: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return h-entry descendants of a parsed microformats item, excluding the item itself."""
+        nested_entries: list[dict[str, Any]] = []
+        for child in item.get("children", []):
+            if not isinstance(child, dict):
+                continue
+            if "h-entry" in child.get("type", []):
+                nested_entries.append(child)
+            nested_entries.extend(self._nested_h_entries(child))
+        return nested_entries
+
+    def _nested_response_identity(self, h_entry: dict[str, Any], base_url: str) -> str | None:
+        """Return the preferred stable identity for a nested h-entry."""
+        properties = h_entry.get("properties", {})
+        if isinstance(properties, dict):
+            for prop in ("uid", "url"):
+                identity = self._first_url_identity(properties.get(prop), base_url)
+                if identity:
+                    return identity
+
+        element_id = h_entry.get("id")
+        if isinstance(element_id, str) and element_id:
+            return urljoin(base_url, f"#{element_id}")
+        return None
+
+    def _first_url_identity(self, values: Any, base_url: str) -> str | None:
+        """Return the first HTTP(S) URL identity from a microformats property value."""
+        candidates = values if isinstance(values, list) else [values]
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                candidate = candidate.get("value")
+            if not isinstance(candidate, str) or not candidate:
+                continue
+            resolved = urljoin(base_url, candidate)
+            parsed = urlparse(resolved)
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                return resolved
+        return None
 
     def _find_mentioning_entry(self, parsed: dict[str, Any], target_url: str) -> dict[str, Any] | None:
         """

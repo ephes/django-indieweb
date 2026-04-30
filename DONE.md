@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-30
 
+### Add source snapshot persistence for receiving Salmentions
+
+- Added a related ``WebmentionSourceSnapshot`` model for submitted ``Webmention`` rows, with the latest raw source HTML, final fetched source URL, SHA-256 digest, fetch timestamp, normalized parsed parent ``h-entry``, known nested response identities, and created/modified timestamps.
+- Updated ``WebmentionProcessor`` so successful verified processing stores or updates the one-to-one source snapshot after source fetch, HTML/content checks, target-link verification, microformats2 parsing, Vouch checks, and spam checks have passed. Duplicate receives update the existing parent row and snapshot row.
+- Preserved ordinary Webmention, Vouch, spam, duplicate receive, and async receive semantics. Failure paths do not clear or replace the last successful snapshot, snapshot storage failures do not demote an otherwise verified parent Webmention, Vouch success does not refresh away parsed fields, and queued receive requests still do not instantiate the processor, fetch, parse, spam-check, verify Vouch, or write snapshots.
+- Kept full Salmention receiving out of scope: no nested child response rows, no nested comparison, no nested rendering, no outbound Salmention sending, and no Salmention setting were added. The nested response storage/comparison and rendering backlog items remain open.
+- Documentation: updated ``docs/webmention.rst`` with implemented snapshot persistence and remaining Salmention gaps; updated ``docs/configuration.rst`` for the no-setting note and model list. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased source snapshot persistence entry.
+- Validation: ``uv run pytest tests/test_webmention_processor.py::TestWebmentionProcessor::test_processor_preserves_verified_status_when_source_snapshot_write_fails tests/test_webmention_processor.py::TestWebmentionProcessor::test_processor_preserves_parsed_fields_after_successful_vouch_verification -q`` (2 passed), ``uv run pytest tests/test_webmention_models.py tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q`` (142 passed), ``uv run pytest`` (597 passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed), ``uv build`` (passed), and ``git diff --check`` (passed).
+
 ### Design persistence for receiving Salmentions
 
 - Designed the receiving-side Salmention persistence/display model against the current Webmention architecture and deliberately deferred schema/protocol implementation. The current `Webmention` row remains the top-level submitted `source_url`/`target_url` notification; future receive support should add a related source snapshot model and a separate related child response model rather than reusing `Webmention` for nested replies.

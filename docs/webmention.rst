@@ -280,21 +280,24 @@ other interactions upstream. For example, if Bob replies to Alice and later
 displays Carol's reply to Bob, Bob's site can resend a Webmention to Alice so
 Alice can re-check Bob's page and display Carol's nested response.
 
-django-indieweb does not currently implement Salmention sending or receiving
-beyond ordinary Webmention behavior. Duplicate Webmention submissions for the
-same ``source``/``target`` pair are supported and reprocess the existing
-``Webmention`` row, but they do not store source-page snapshots, compare
-previous and current nested ``h-entry`` structures, create child response
-records, or render nested responses inline on the original target. That means a
-re-received Webmention is treated as normal Webmention reprocessing, not as a
-Salmention-specific nested-response update.
+django-indieweb now stores a processor-owned source snapshot for each
+successfully verified incoming ``Webmention``. This is a persistence foundation
+for future Salmention receiving: duplicate submissions for the same
+``source``/``target`` pair still reprocess the existing ``Webmention`` row, and
+the related snapshot row is updated with the latest fetched source state.
 
-Receiving Salmentions requires persistence that this package does not yet own:
-the fetched source contents must be stored in a form that can be compared on a
-later duplicate receive, newly nested responses inside the source ``h-entry``
-must be identified, and those nested responses need display/query semantics
-separate from the flattened ``Webmention`` row currently used for one
-source/target pair.
+This does **not** mean full Salmention receiving is implemented. The processor
+does not yet compare previous and current nested ``h-entry`` structures, create
+child response records, send nested-response notifications, or render nested
+responses inline on the original target. A re-received Webmention remains
+ordinary Webmention reprocessing with source snapshot persistence, not a
+complete Salmention-specific nested-response update.
+
+Receiving Salmentions still needs additional persistence and display behavior:
+newly nested responses inside the source ``h-entry`` must be compared against
+the previous snapshot, stored as child responses separate from the flattened
+``Webmention`` row currently used for one source/target pair, and exposed by
+template/query code with clear duplicate-display semantics.
 
 Sending Salmentions also needs application-level state that is not currently
 tracked here. The protocol expects a site to resend Webmentions to everything
@@ -306,12 +309,14 @@ django-indieweb does not record the prior outbound target set for each original
 post or know when an application has updated a rendered permalink with a newly
 accepted response.
 
-No Salmention setting is available. Future receiving support should follow the
-persistence design below, while future sending support still needs outbound
-target tracking and an operator- or application-driven resend workflow.
+No Salmention setting is available. The source snapshot foundation below is
+always owned by verified processor/worker processing. Future receiving support
+still needs nested response storage and rendering, while future sending support
+still needs outbound target tracking and an operator- or application-driven
+resend workflow.
 
-Receiving Persistence Design
-----------------------------
+Receiving Persistence
+---------------------
 
 The receive-side design for future Salmention support is intentionally separate
 from the current flattened ``Webmention`` row. The ``Webmention`` model should
@@ -321,14 +326,45 @@ nested response found inside a previously received source page is not itself a
 submitted Webmention to the original target, and storing it as another
 ``Webmention`` row would misrepresent the protocol relationship.
 
-Future receive support should add a source snapshot model related to
-``Webmention``. The snapshot should store the latest fetched source HTML,
-the final URL after redirects, a content digest such as SHA-256, the fetch time,
-and a normalized parsed representation of the mentioning ``h-entry`` plus the
-set of nested response identities found inside that entry. Raw HTML is needed
-because the Salmention receiver must be able to compare a newly fetched source
-with previously stored source contents; the normalized parsed snapshot is needed
-so comparisons do not depend only on byte-for-byte HTML changes.
+Receive processing now stores a ``WebmentionSourceSnapshot`` row related
+one-to-one to each submitted ``Webmention`` after normal verified processor
+processing succeeds. The snapshot stores the latest fetched source HTML, the
+final URL after redirects, a SHA-256 content digest, the fetch time, a
+normalized parsed representation of the mentioning parent ``h-entry``, and the
+set of known nested response identities found inside that entry. Raw HTML is
+stored because a future Salmention receiver must be able to compare a newly
+fetched source with previously stored source contents; the normalized parsed
+snapshot is stored so future comparisons do not depend only on byte-for-byte
+HTML changes.
+
+Snapshot writes are intentionally non-destructive. A later source failure,
+``410 Gone`` response, non-HTML response, missing target link, Vouch failure, or
+spam classification marks the parent ``Webmention`` failed or spam as before
+but does not clear or replace the last successful source snapshot. A later
+verified reprocessing updates the same snapshot row rather than creating a
+second submitted ``Webmention`` row. If a source snapshot cannot be stored
+after otherwise successful verification, the processor logs the snapshot
+failure and leaves the parent Webmention verified.
+
+Because snapshots store the raw HTML from the last successful source fetch,
+database storage grows with the size of those source documents. Operators that
+receive large volumes of Webmentions should account for that table in normal
+database retention and backup planning.
+
+Queued processing keeps the async receive boundary. When
+``INDIEWEB_WEBMENTION_ENQUEUE`` is configured, the receive endpoint validates
+the request, creates or reuses the submitted ``Webmention`` row, enqueues the
+row ID, and returns without fetching the source, parsing microformats2, running
+spam or Vouch checks, or writing source snapshots. Snapshot writes happen only
+when ``WebmentionProcessor`` runs synchronously or through worker paths such as
+``process_queued_webmention()``.
+
+Nested response identity extraction is conservative in this foundation slice.
+Nested ``h-entry`` descendants inside the mentioning parent ``h-entry`` are
+recorded only when a stable identity is available: URL-valued ``uid`` is
+preferred, then URL-valued ``url``, then an HTML ``id`` resolved against the
+final fetched source URL. Entries without a stable identity are not stored in
+the identity set, and no child response rows are created yet.
 
 Nested responses should be stored in a new child model related to the parent
 ``Webmention``. Each child row should capture the extracted response URL or
@@ -397,15 +433,15 @@ Queued processing must keep the existing async receive boundary. The endpoint
 should continue to validate, create or reuse the submitted ``Webmention`` row,
 enqueue the row ID, and return without fetching the source, parsing
 microformats2, running spam or Vouch checks, or comparing Salmention snapshots.
-Future source snapshot writes and nested-response comparison should live in
-``WebmentionProcessor``, ``process_queued_webmention()``, management commands,
-or explicit worker helper APIs.
+Future nested-response comparison should live in ``WebmentionProcessor``,
+``process_queued_webmention()``, management commands, or explicit worker helper
+APIs.
 
-This design deliberately defers schema and processor changes to focused
-implementation slices so ordinary Webmention behavior, Vouch verification,
-duplicate reprocessing semantics, and existing template output remain
-unchanged until the required persistence and rendering primitives are added
-together with tests and migrations.
+This design deliberately keeps the remaining child-response schema, comparison,
+and rendering changes in focused implementation slices so ordinary Webmention
+behavior, Vouch verification, duplicate reprocessing semantics, and existing
+template output remain unchanged until those primitives are added together with
+tests and migrations.
 
 Target URL Matching
 ===================

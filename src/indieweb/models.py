@@ -156,6 +156,28 @@ class Webmention(models.Model):
         return f"{self.mention_type}: {self.source_url} -> {self.target_url}"
 
 
+class WebmentionSourceSnapshot(models.Model):
+    """Latest fetched source snapshot for a submitted Webmention."""
+
+    webmention = models.OneToOneField(
+        Webmention,
+        on_delete=models.CASCADE,
+        related_name="source_snapshot",
+    )
+    raw_source_html = models.TextField()
+    final_source_url = models.URLField(max_length=500)
+    content_digest = models.CharField(max_length=64)
+    fetched_at = models.DateTimeField()
+    parsed_h_entry = models.JSONField(default=dict, blank=True)
+    nested_response_identities = models.JSONField(default=list, blank=True)
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"Source snapshot for {self.webmention_id}"
+
+
 class Profile(models.Model):
     """User profile with h-card data stored as JSON."""
 

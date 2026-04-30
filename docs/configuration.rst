@@ -361,11 +361,12 @@ Salmention Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 There is no Salmention-specific setting in django-indieweb today.
-Salmention support is deliberately deferred because receiving it needs source
-snapshot and nested-response persistence, and sending it needs outbound target
-tracking for each original post. See :doc:`webmention` for the support-status
-details, the receive-side persistence design, and current ordinary Webmention
-reprocessing behavior.
+django-indieweb persists verified Webmention source snapshots as a foundation
+for future receive-side Salmention support, but full receiving is still
+deferred until nested-response storage, comparison, and rendering are added.
+Sending Salmentions also still needs outbound target tracking for each original
+post. See :doc:`webmention` for the support-status details and current ordinary
+Webmention reprocessing behavior.
 
 URL Configuration
 -----------------
@@ -457,16 +458,19 @@ Database Configuration
 Models
 ~~~~~~
 
-django-indieweb creates four models:
+django-indieweb creates five models:
 
 1. **Auth** - Stores authorization codes temporarily
 2. **Token** - Stores access tokens
 3. **Webmention** - Stores incoming webmention source/target pairs, parsed
    content, status, and spam-check results
-4. **Profile** - Stores user h-card data
+4. **WebmentionSourceSnapshot** - Stores the latest verified fetched source
+   snapshot related to a submitted Webmention for future Salmention comparison
+5. **Profile** - Stores user h-card data
 
-``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for
-their user relationships.
+``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for their
+user relationships. ``WebmentionSourceSnapshot`` is tied one-to-one to a parent
+``Webmention`` and cascades when that parent is deleted.
 
 Migrations
 ~~~~~~~~~~

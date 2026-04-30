@@ -14,9 +14,6 @@ No current Priority 1 items.
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Add source snapshot persistence for receiving Salmentions.
-  - References: `src/indieweb/models.py`, `src/indieweb/processors.py`, `docs/webmention.rst`, https://indieweb.org/Salmention.
-  - Outcome: add a related source snapshot model for each submitted `Webmention`, including latest raw source HTML, final fetched URL, content digest, fetch timestamp, normalized parsed parent `h-entry`, and the known nested response identity set. Snapshot writes must run in `WebmentionProcessor` or worker paths, not in the queued receive endpoint.
 - [ ] Add nested response storage and duplicate comparison for receiving Salmentions.
   - References: `src/indieweb/models.py`, `src/indieweb/processors.py`, `tests/test_webmention_processor.py`, `docs/webmention.rst`, https://indieweb.org/Salmention.
   - Outcome: add a child response model related to a parent `Webmention`, key children by stable nested `h-entry` identity, compare duplicate receives against the stored source snapshot, create or update newly discovered child responses only after the parent verifies, make child displayability depend on the parent remaining verified, and preserve ordinary Webmention, Vouch, and duplicate receive semantics.

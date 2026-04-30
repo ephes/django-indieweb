@@ -11,7 +11,7 @@ from django.test import Client, RequestFactory, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from indieweb.models import Webmention
+from indieweb.models import Webmention, WebmentionSourceSnapshot
 from indieweb.views import WebmentionEndpoint
 from tests import webmention_enqueue_hooks
 
@@ -260,6 +260,7 @@ class TestWebmentionEndpoint:
         assert response.status_code == 202
         assert webmention.status == "pending"
         assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
+        assert WebmentionSourceSnapshot.objects.count() == 0
         status_url = reverse("indieweb:webmention-status", args=[webmention.pk])
         assert response["Location"] == f"http://testserver{status_url}"
         mock_processor_class.assert_not_called()
@@ -289,6 +290,7 @@ class TestWebmentionEndpoint:
         assert webmention.vouch_url == vouch
         assert webmention.vouch_verified_at is None
         assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
+        assert WebmentionSourceSnapshot.objects.count() == 0
         mock_processor_class.assert_not_called()
 
     @override_settings(
@@ -376,6 +378,7 @@ class TestWebmentionEndpoint:
         assert existing.status == "verified"
         assert existing.vouch_url == vouch
         assert existing.vouch_verified_at == vouch_verified_at
+        assert WebmentionSourceSnapshot.objects.count() == 0
         mock_processor_class.assert_not_called()
 
     @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")

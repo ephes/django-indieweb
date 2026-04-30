@@ -1,5 +1,6 @@
 """Test cases for WebmentionProcessor."""
 
+import hashlib
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
@@ -8,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.test import RequestFactory, override_settings
 from django.utils import timezone as django_timezone
 
-from indieweb.models import Profile, Webmention
+from indieweb.models import Profile, Webmention, WebmentionSourceSnapshot
 from indieweb.processors import WebmentionProcessor, process_queued_webmention
 
 
@@ -379,6 +380,8 @@ class TestWebmentionProcessor:
         assert webmention.author_url == "https://author.example/"
         assert "Hello from Vouch" in webmention.content
         assert "Hello from Vouch" in webmention.content_html
+        assert webmention.source_snapshot.raw_source_html == source_html
+        assert webmention.source_snapshot.content_digest == hashlib.sha256(source_html.encode("utf-8")).hexdigest()
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
     def test_processor_fails_untrusted_vouch_without_fetching_it(self, processor):
@@ -509,6 +512,23 @@ class TestWebmentionProcessor:
             "https://mysite.com/article",
             vouch_url="https://trusted.example/vouch-for-example",
         )
+
+    def test_process_queued_webmention_creates_source_snapshot(self):
+        """Test the worker helper can create snapshots through WebmentionProcessor."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        webmention = Webmention.objects.create(source_url=source_url, target_url=target_url)
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            result = process_queued_webmention(webmention.pk)
+
+        assert result.status == "verified"
+        snapshot = result.source_snapshot
+        assert snapshot.raw_source_html == html_content
+        assert snapshot.content_digest == hashlib.sha256(html_content.encode("utf-8")).hexdigest()
 
     def test_process_queued_webmention_raises_for_missing_row(self):
         """Test the public worker helper surfaces missing queued rows."""
@@ -816,6 +836,197 @@ class TestWebmentionProcessor:
             assert webmention.author_photo == "https://example.com/avatar.jpg"
             assert "Great article!" in webmention.content
             assert webmention.published is not None
+
+    def test_processor_creates_source_snapshot_after_verified_processing(self, processor):
+        """Test verified processing stores the latest fetched source snapshot."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry" id="parent">
+                <a class="u-in-reply-to" href="{target_url}">In reply to</a>
+                <div class="e-content">
+                    <p>Parent response</p>
+                    <article class="h-entry" id="child-with-id">
+                        <p class="p-name">Child with id</p>
+                    </article>
+                    <article class="h-entry">
+                        <a class="u-url" href="/comments/child-with-url">Child with URL</a>
+                    </article>
+                    <article class="h-entry">
+                        <data class="u-uid" value="https://example.com/comments/child-with-uid"></data>
+                    </article>
+                </div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        snapshot = webmention.source_snapshot
+        assert snapshot.raw_source_html == html_content
+        assert snapshot.final_source_url == source_url
+        assert snapshot.content_digest == hashlib.sha256(html_content.encode("utf-8")).hexdigest()
+        assert snapshot.fetched_at is not None
+        assert snapshot.parsed_h_entry["type"] == ["h-entry"]
+        assert snapshot.parsed_h_entry["id"] == "parent"
+        assert snapshot.nested_response_identities == [
+            "https://example.com/comments/child-with-uid",
+            "https://example.com/comments/child-with-url",
+            "https://example.com/post#child-with-id",
+        ]
+
+    def test_processor_updates_existing_source_snapshot_on_duplicate_receive(self, processor):
+        """Test duplicate Webmention processing updates the related snapshot row."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        first_html = f'<html><body><a href="{target_url}">First</a></body></html>'
+        second_html = f'<html><body><a href="{target_url}">Second</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        snapshot = webmention.source_snapshot
+        snapshot_id = snapshot.pk
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+            duplicate = processor.process_webmention(source_url, target_url)
+
+        duplicate_snapshot = duplicate.source_snapshot
+        assert duplicate.pk == webmention.pk
+        assert duplicate_snapshot.pk == snapshot_id
+        assert duplicate_snapshot.raw_source_html == second_html
+        assert duplicate_snapshot.content_digest == hashlib.sha256(second_html.encode("utf-8")).hexdigest()
+
+    def test_processor_preserves_verified_status_when_source_snapshot_write_fails(self, processor):
+        """Test snapshot storage failures do not demote an otherwise verified Webmention."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            with (
+                patch(
+                    "indieweb.processors.WebmentionSourceSnapshot.objects.update_or_create",
+                    side_effect=RuntimeError("snapshot unavailable"),
+                ),
+                patch("indieweb.processors.webmention_received.send") as mock_signal,
+            ):
+                webmention = processor.process_webmention(source_url, target_url)
+
+        webmention.refresh_from_db()
+        assert webmention.status == "verified"
+        assert webmention.verified_at is not None
+        assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
+        mock_signal.assert_called_once_with(
+            sender=WebmentionProcessor,
+            webmention=webmention,
+            source_url=source_url,
+            target_url=target_url,
+        )
+
+    @pytest.mark.parametrize(
+        ("status_code", "html_content", "content_type"),
+        [
+            (404, "Not found", "text/html"),
+            (200, '{"ok": true}', "application/json"),
+            (200, "<html><body>No target link</body></html>", "text/html"),
+        ],
+    )
+    def test_processor_failure_paths_do_not_create_source_snapshot(
+        self, processor, status_code, html_content, content_type
+    ):
+        """Test failed fetch, non-HTML, and missing-target paths do not store snapshots."""
+        source_url = f"https://example.com/post-{status_code}-{content_type}"
+        target_url = "https://mysite.com/article"
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(
+                mock_get_class,
+                status_code=status_code,
+                text=html_content,
+                content_type=content_type,
+            )
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert webmention.status == "failed"
+        assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
+
+    def test_processor_failure_does_not_update_existing_source_snapshot(self, processor):
+        """Test later failure preserves the previous successful source snapshot."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        verified_html = f'<html><body><a href="{target_url}">Verified</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=verified_html)
+            webmention = processor.process_webmention(source_url, target_url)
+
+        snapshot = webmention.source_snapshot
+        original_snapshot_id = snapshot.pk
+        original_digest = snapshot.content_digest
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=410)
+            processor.process_webmention(source_url, target_url)
+
+        snapshot.refresh_from_db()
+        assert snapshot.pk == original_snapshot_id
+        assert snapshot.raw_source_html == verified_html
+        assert snapshot.content_digest == original_digest
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_processor_vouch_failure_does_not_create_source_snapshot(self, processor):
+        """Test Vouch failures do not store snapshots for otherwise fetched sources."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
+
+            webmention = processor.process_webmention(
+                source_url,
+                target_url,
+                vouch_url="https://untrusted.example/vouch-for-example",
+            )
+
+        assert webmention.status == "failed"
+        assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
+
+    @override_settings(INDIEWEB_SPAM_CHECKER="indieweb.interfaces.NoOpSpamChecker")
+    def test_processor_spam_does_not_create_source_snapshot(self, processor):
+        """Test spam-classified Webmentions do not store source snapshots."""
+        source_url = "https://spam.example/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
+                mock_check.return_value = {
+                    "is_spam": True,
+                    "confidence": 0.95,
+                    "details": "Spam keywords detected",
+                }
+
+                webmention = processor.process_webmention(source_url, target_url)
+
+        assert webmention.status == "spam"
+        assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
 
     def test_processor_detects_mention_types(self, processor):
         """Test that processor correctly detects different mention types."""
