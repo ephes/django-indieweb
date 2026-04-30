@@ -357,6 +357,15 @@ verification fails closed for submitted vouchers. Configure a trust policy or
 at least one trusted voucher domain before enabling required mode in
 production.
 
+Salmention Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+There is no Salmention-specific setting in django-indieweb today.
+Salmention support is deliberately deferred because receiving it needs source
+snapshot and nested-response persistence, and sending it needs outbound target
+tracking for each original post. See :doc:`webmention` for the support-status
+details and current ordinary Webmention reprocessing behavior.
+
 URL Configuration
 -----------------
 

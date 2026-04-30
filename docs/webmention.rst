@@ -272,6 +272,44 @@ Outgoing Webmentions can include Vouch metadata explicitly:
 The ``send_webmentions`` management command also accepts ``--vouch`` to include
 the same voucher URL with each delivered Webmention.
 
+Salmention Support Status
+=========================
+
+Salmention is a Webmention extension for propagating downstream replies and
+other interactions upstream. For example, if Bob replies to Alice and later
+displays Carol's reply to Bob, Bob's site can resend a Webmention to Alice so
+Alice can re-check Bob's page and display Carol's nested response.
+
+django-indieweb does not currently implement Salmention sending or receiving
+beyond ordinary Webmention behavior. Duplicate Webmention submissions for the
+same ``source``/``target`` pair are supported and reprocess the existing
+``Webmention`` row, but they do not store source-page snapshots, compare
+previous and current nested ``h-entry`` structures, create child response
+records, or render nested responses inline on the original target. That means a
+re-received Webmention is treated as normal Webmention reprocessing, not as a
+Salmention-specific nested-response update.
+
+Receiving Salmentions requires persistence that this package does not yet own:
+the fetched source contents must be stored in a form that can be compared on a
+later duplicate receive, newly nested responses inside the source ``h-entry``
+must be identified, and those nested responses need display/query semantics
+separate from the flattened ``Webmention`` row currently used for one
+source/target pair.
+
+Sending Salmentions also needs application-level state that is not currently
+tracked here. The protocol expects a site to resend Webmentions to everything
+the original post previously sent Webmentions to after a newly received
+response has been incorporated into that original post's permalink. The current
+``WebmentionSender`` can explicitly send Webmentions for links found in a source
+page, and ``send_webmentions`` can be run again after a page changes, but
+django-indieweb does not record the prior outbound target set for each original
+post or know when an application has updated a rendered permalink with a newly
+accepted response.
+
+No Salmention setting is available. Future support needs explicit design for
+source snapshot persistence, nested response storage/display, outbound target
+tracking, and an operator- or application-driven resend workflow.
+
 Target URL Matching
 ===================
 

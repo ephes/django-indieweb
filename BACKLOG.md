@@ -8,10 +8,18 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Evaluate Salmentions support.
-  - Outcome: decide whether to detect and send salmentions; if yes, add tests and documentation.
+No current Priority 1 items.
 
 ## Priority 3
+
+### Webmentions Reliability and Compliance
+
+- [ ] Design persistence for receiving Salmentions.
+  - References: `src/indieweb/models.py`, `src/indieweb/processors.py`, `src/indieweb/templatetags/webmention_tags.py`, `docs/webmention.rst`, https://indieweb.org/Salmention.
+  - Outcome: decide how to store fetched source snapshots, nested response identities, parent/child relationships, and display/query semantics before implementing Salmention receive support.
+- [ ] Design outbound target tracking for sending Salmentions.
+  - References: `src/indieweb/senders.py`, `src/indieweb/management/commands/send_webmentions.py`, `docs/webmention.rst`, https://indieweb.org/Salmention.
+  - Outcome: decide how applications record the targets an original post previously sent Webmentions to and expose an explicit post-update resend workflow.
 
 ### API Hardening
 

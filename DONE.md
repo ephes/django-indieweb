@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-30
 
+### Evaluate Salmentions support
+
+- Evaluated the Salmention living specification against the current Webmention receive/send architecture and deliberately deferred implementation. Receiving Salmentions requires storing fetched source contents for later comparison, detecting newly nested response ``h-entry`` items on duplicate receives, and representing/displaying nested child responses; the current ``Webmention`` model stores one flattened parsed mention per submitted ``source``/``target`` pair and does not keep source snapshots or nested response identities.
+- Sending Salmentions also requires state the current sender layer does not track: the prior outbound target set for an original post and a reliable application signal that a newly accepted downstream response has been incorporated into the original post permalink. The existing ``WebmentionSender`` and ``send_webmentions`` command can explicitly resend ordinary Webmentions for a source URL, but that is not enough to claim Salmention sending support.
+- Preserved ordinary Webmention behavior: no endpoint, processor, model, sender, command, Vouch, async receive, duplicate receive, or template code changed.
+- Added follow-up backlog items to design receiving-side source snapshot/nested-response persistence and sending-side outbound target tracking/resend workflow before implementing Salmentions.
+- Documentation: updated ``docs/webmention.rst`` with the Salmention support status and rationale, and ``docs/configuration.rst`` to state that no Salmention setting exists today. No ``docs/api.rst`` update was needed because endpoint/status response shapes did not change. No generated docs under ``docs/_build`` were updated.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased Salmention support-status entry.
+- Validation: ``uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q``, ``uv run pytest tests/test_webmention_sender.py tests/test_send_webmentions_command.py -q``, ``uv run pytest``, ``uv run mypy``, ``uv run ruff check .``, ``uv run sphinx-build -W -b html docs docs/_build/html``, ``uv run prek run --all-files``, ``uv build``, ``git diff --check``, and ``git diff --cached --stat`` passed.
+
 ### Add Webmention Vouch trust-policy setting
 
 - Added ``INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY`` for receiver-side Vouch trust decisions in ``WebmentionProcessor``. The configured callable receives keyword arguments for the ``Webmention`` row, submitted source/target, submitted Vouch URL, and optional final Vouch URL after redirects. It must accept both the submitted URL and final URL for verification to continue.
