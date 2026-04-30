@@ -281,23 +281,18 @@ displays Carol's reply to Bob, Bob's site can resend a Webmention to Alice so
 Alice can re-check Bob's page and display Carol's nested response.
 
 django-indieweb now stores processor-owned source snapshots and stable nested
-child response rows for successfully verified incoming ``Webmention`` sources.
-Duplicate submissions for the same ``source``/``target`` pair still reprocess
-the existing ``Webmention`` row. During that verified reprocessing, the
-processor compares the current nested response identities with the previous
-stored source snapshot before overwriting it, creates or updates child rows for
-stable nested ``h-entry`` responses, and marks children that disappeared from
-the latest verified source as missing.
+child response rows for successfully verified incoming ``Webmention`` sources,
+and the bundled ``show_webmentions`` template tag renders verified children
+inline under verified parent replies. Duplicate submissions for the same
+``source``/``target`` pair still reprocess the existing ``Webmention`` row.
+During that verified reprocessing, the processor compares the current nested
+response identities with the previous stored source snapshot before overwriting
+it, creates or updates child rows for stable nested ``h-entry`` responses, and
+marks children that disappeared from the latest verified source as missing.
 
-This does **not** mean full Salmention receiving is implemented. Child response
-rows are persisted for future display, but django-indieweb does not yet render
-nested responses inline, send nested-response notifications, suppress duplicate
-display against direct top-level Webmentions, or implement outbound
-Salmention sending.
-
-Receiving Salmentions still needs display/query behavior: stored child
-responses must be exposed by template/query code with clear duplicate-display
-semantics before nested responses are visible on the original target.
+This does **not** mean full Salmention support is implemented. django-indieweb
+does not send nested-response notifications or implement outbound Salmention
+sending.
 
 Sending Salmentions also needs application-level state that is not currently
 tracked here. The protocol expects a site to resend Webmentions to everything
@@ -310,15 +305,15 @@ post or know when an application has updated a rendered permalink with a newly
 accepted response.
 
 No Salmention setting is available. Source snapshots and child response storage
-are always owned by verified processor/worker processing. Future receiving
-support still needs nested response rendering, while future sending support
-still needs outbound target tracking and an operator- or application-driven
-resend workflow.
+are always owned by verified processor/worker processing, and bundled nested
+rendering is part of the default ``show_webmentions`` template path. Future
+sending support still needs outbound target tracking and an operator- or
+application-driven resend workflow.
 
 Receiving Persistence
 ---------------------
 
-The receive-side design for future Salmention support is intentionally separate
+The receive-side design for Salmention support is intentionally separate
 from the current flattened ``Webmention`` row. The ``Webmention`` model should
 continue to represent a submitted Webmention from one ``source_url`` to one
 ``target_url``. Receiving Salmentions needs additional related state because a
@@ -428,8 +423,8 @@ checks, and spam classification.
 For bulk rendering or moderation queries, prefer filtering on both child and
 parent state, for example ``WebmentionNestedResponse.objects.filter(status="verified",
 webmention__status="verified").select_related("webmention")``. The bundled
-templates do not query child responses yet, but future rendering code should
-avoid checking parent status one child at a time.
+``show_webmentions`` path prefetches verified child responses for rendering so
+templates avoid checking parent status one child at a time.
 
 Child spam classification does not call the configured parent
 ``SpamChecker.check(webmention)`` API in this slice. A future implementation
@@ -440,23 +435,27 @@ attached to the submitted parent Webmention only. A submitted ``vouch`` proves
 trust for the Webmention source; it does not directly verify every nested
 response embedded inside that source.
 
-Display/query support should expose verified child responses as inline responses
-under their parent Webmention. ``show_webmentions`` can continue querying
-verified top-level ``Webmention`` rows by ``target_url`` and prefetch verified
-children for those rows. The default top-level ordering should remain based on
-the parent Webmention's ``published`` or ``created`` timestamp; child responses
-should render under their parent ordered by their own ``published`` or
-first-seen timestamp. ``webmention_count`` should keep its current top-level
-counting semantics for backwards compatibility, with any nested-inclusive count
-added explicitly rather than changing the existing tag's result.
+Display/query support exposes verified child responses as inline responses under
+their parent reply Webmention. ``show_webmentions`` continues querying verified
+top-level ``Webmention`` rows by ``target_url`` and prefetches verified children
+for those rows. The default top-level ordering remains based on the parent
+Webmention's ``published`` or ``created`` timestamp; child responses render
+under their parent ordered by their own ``published`` timestamp, falling back to
+``first_seen_at``. ``webmention_count`` keeps its current top-level counting
+semantics for backwards compatibility. If nested-inclusive counts are needed,
+they should be added through an explicit new API rather than changing this tag.
 
-Rendering should deduplicate a nested child that is also represented by a
-top-level ``Webmention`` to the same target. Storage may keep the child row as
-evidence of the parent's nested source snapshot, but display should prefer the
-direct top-level Webmention row and suppress the duplicate inline child. The
-same rule should apply when the same stable child identity is discovered under
-more than one parent for the same target: implementation slices should define a
-deterministic display policy before rendering duplicates.
+Rendering deduplicates a nested child that is also represented by a top-level
+``Webmention`` to the same target. Storage may keep the child row as evidence of
+the parent's nested source snapshot, but display prefers the direct top-level
+Webmention row and suppresses the duplicate inline child when the child
+``identity`` or ``response_url`` matches a verified top-level ``source_url`` for
+the same target. This suppression is type-agnostic: a direct top-level response
+can suppress a duplicate inline child even when ``show_webmentions`` is filtered
+to a different mention type. When the same stable child identity is discovered
+under more than one displayed parent for the same target, ``show_webmentions``
+renders that child only under the first parent in the existing top-level
+ordering and suppresses the later inline copies.
 
 Queued processing must keep the existing async receive boundary. The endpoint
 should continue to validate, create or reuse the submitted ``Webmention`` row,
@@ -466,11 +465,10 @@ Nested-response comparison lives in ``WebmentionProcessor`` and therefore in
 ``process_queued_webmention()``, management commands, or explicit worker helper
 APIs that call the processor.
 
-This design deliberately keeps rendering and outbound Salmention changes in
-focused implementation slices so ordinary Webmention behavior, Vouch
-verification, duplicate reprocessing semantics, and existing template output
-remain unchanged until those primitives are added together with tests and
-migrations.
+This design deliberately keeps outbound Salmention changes in focused
+implementation slices so ordinary Webmention behavior, Vouch verification,
+duplicate reprocessing semantics, and existing template output remain stable
+unless those primitives are added together with tests and documentation.
 
 Target URL Matching
 ===================
@@ -626,10 +624,12 @@ Basic Usage
     {# Show all webmentions for current page #}
     {% show_webmentions request.build_absolute_uri %}
 
+    {# Verified nested child responses render inline under verified parent replies #}
+
     {# Show only replies #}
     {% show_webmentions request.build_absolute_uri mention_type="reply" %}
 
-    {# Get webmention count #}
+    {# Get top-level webmention count #}
     {% webmention_count request.build_absolute_uri as count %}
     <p>This post has {{ count }} responses.</p>
 
@@ -641,6 +641,7 @@ You can override the default templates by creating your own:
 * ``indieweb/webmentions.html`` - Main container
 * ``indieweb/webmention_types/like.html`` - Like template
 * ``indieweb/webmention_types/reply.html`` - Reply template
+* ``indieweb/webmention_types/nested_response.html`` - Nested child response template
 * ``indieweb/webmention_types/repost.html`` - Repost template
 * ``indieweb/webmention_types/mention.html`` - Generic mention template
 
@@ -722,8 +723,9 @@ Fields:
 inside a verified parent ``Webmention`` source. Rows are unique per parent
 ``Webmention`` and stable identity key, store extracted author/content/type
 fields plus parsed child snapshots and digests, and use ``status`` plus the
-parent ``Webmention.status`` to decide current displayability. These rows are
-not exposed by the bundled templates yet.
+parent ``Webmention.status`` to decide current displayability. The bundled
+``show_webmentions`` tag renders verified child rows inline under verified
+parent replies, while ``webmention_count`` remains top-level-only.
 
 Testing Webmentions
 ===================

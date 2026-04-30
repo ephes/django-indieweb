@@ -1,11 +1,13 @@
 """Tests for webmention template tags."""
 
+from datetime import timedelta
+
 from django.template import Context, Template
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from indieweb.models import Webmention
+from indieweb.models import Webmention, WebmentionNestedResponse
 
 
 class WebmentionTemplateTagsTestCase(TestCase):
@@ -74,6 +76,39 @@ class WebmentionTemplateTagsTestCase(TestCase):
             status="pending",
         )
 
+    def render_webmentions(self, target_url=None, mention_type=None):
+        """Render the webmentions inclusion tag for tests."""
+        target_url = target_url or self.target_url
+        if mention_type:
+            template = Template("{% load webmention_tags %}{% show_webmentions target_url mention_type %}")
+            return template.render(Context({"target_url": target_url, "mention_type": mention_type}))
+
+        template = Template("{% load webmention_tags %}{% show_webmentions target_url %}")
+        return template.render(Context({"target_url": target_url}))
+
+    def create_nested_response(self, webmention, identity, **kwargs):
+        """Create a verified nested response for template rendering tests."""
+        seen_at = kwargs.pop("first_seen_at", timezone.now())
+        defaults = {
+            "response_url": identity,
+            "author_name": "Nested Author",
+            "author_url": "https://nested.example/author",
+            "content": "Nested response content",
+            "content_html": "<p>Nested response content</p>",
+            "published": seen_at,
+            "mention_type": "reply",
+            "status": "verified",
+            "last_seen_at": seen_at,
+            "verified_at": seen_at,
+        }
+        defaults.update(kwargs)
+        return WebmentionNestedResponse.objects.create(
+            webmention=webmention,
+            identity=identity,
+            first_seen_at=seen_at,
+            **defaults,
+        )
+
     def test_webmention_endpoint_link_tag(self):
         """Test the webmention_endpoint_link tag."""
         template = Template("{% load webmention_tags %}{% webmention_endpoint_link %}")
@@ -96,9 +131,7 @@ class WebmentionTemplateTagsTestCase(TestCase):
 
     def test_show_webmentions_tag(self):
         """Test the show_webmentions tag."""
-        template = Template("{% load webmention_tags %}{% show_webmentions target_url %}")
-        context = Context({"target_url": self.target_url})
-        rendered = template.render(context)
+        rendered = self.render_webmentions()
 
         # Should show approved and verified webmentions
         self.assertIn("Alice", rendered)
@@ -117,24 +150,236 @@ class WebmentionTemplateTagsTestCase(TestCase):
 
     def test_show_webmentions_empty(self):
         """Test show_webmentions with no webmentions."""
-        template = Template("{% load webmention_tags %}{% show_webmentions target_url %}")
-        context = Context({"target_url": "https://example.com/no-mentions/"})
-        rendered = template.render(context)
+        rendered = self.render_webmentions("https://example.com/no-mentions/")
 
         # Should render empty or with a no mentions message
         self.assertIn("webmentions", rendered)  # Container should still exist
 
     def test_show_webmentions_by_type(self):
         """Test show_webmentions filtering by type."""
-        template = Template('{% load webmention_tags %}{% show_webmentions target_url "like" %}')
-        context = Context({"target_url": self.target_url})
-        rendered = template.render(context)
+        rendered = self.render_webmentions(mention_type="like")
 
         # Should only show likes
         self.assertIn("Alice", rendered)
         self.assertNotIn("Bob", rendered)
         self.assertNotIn("Charlie", rendered)
         self.assertNotIn("News Site", rendered)
+
+    def test_verified_nested_response_renders_under_verified_parent_reply(self):
+        """Verified child rows render inline below their verified parent reply."""
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/reply/1",
+            author_name="Nested Carol",
+            content="Nested reply body",
+            content_html="<p>Nested reply body</p>",
+        )
+
+        rendered = self.render_webmentions()
+
+        self.assertIn('class="webmention-nested-responses"', rendered)
+        self.assertIn("Nested Carol", rendered)
+        self.assertIn("Nested reply body", rendered)
+        self.assertLess(rendered.index("This is a great post!"), rendered.index("Nested reply body"))
+
+    def test_verified_nested_response_does_not_render_under_non_verified_parent(self):
+        """A verified child is hidden when the parent Webmention is not verified."""
+        for status in ("failed", "spam", "pending"):
+            with self.subTest(status=status):
+                parent = Webmention.objects.create(
+                    source_url=f"https://parent.example/{status}",
+                    target_url=self.target_url,
+                    mention_type="reply",
+                    content=f"Parent {status}",
+                    status=status,
+                )
+                self.create_nested_response(
+                    parent,
+                    f"https://comments.example/{status}",
+                    content=f"Child under {status}",
+                    content_html=f"<p>Child under {status}</p>",
+                )
+
+        rendered = self.render_webmentions()
+
+        self.assertNotIn("Child under failed", rendered)
+        self.assertNotIn("Child under spam", rendered)
+        self.assertNotIn("Child under pending", rendered)
+
+    def test_non_verified_nested_response_does_not_render(self):
+        """Only verified child rows render inline."""
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/missing",
+            status="missing",
+            content="Missing child content",
+            content_html="<p>Missing child content</p>",
+        )
+
+        rendered = self.render_webmentions()
+
+        self.assertNotIn("Missing child content", rendered)
+
+    def test_direct_top_level_webmention_suppresses_duplicate_nested_response(self):
+        """A direct verified Webmention to the target wins over an inline child copy."""
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/direct-reply",
+            response_url="https://comments.example/direct-reply",
+            author_name="Inline Duplicate",
+            content="Inline duplicate content",
+            content_html="<p>Inline duplicate content</p>",
+        )
+        Webmention.objects.create(
+            source_url="https://comments.example/direct-reply",
+            target_url=self.target_url,
+            mention_type="reply",
+            author_name="Direct Reply",
+            content="Direct top-level content",
+            content_html="<p>Direct top-level content</p>",
+            published=timezone.now() + timedelta(minutes=1),
+            status="verified",
+        )
+
+        rendered = self.render_webmentions()
+
+        self.assertIn("Direct Reply", rendered)
+        self.assertIn("Direct top-level content", rendered)
+        self.assertNotIn("Inline Duplicate", rendered)
+        self.assertNotIn("Inline duplicate content", rendered)
+
+    def test_direct_top_level_suppression_ignores_current_type_filter(self):
+        """A filtered-out direct top-level Webmention still suppresses a duplicate child."""
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/direct-like",
+            response_url="https://comments.example/direct-like",
+            author_name="Filtered Inline Duplicate",
+            content="Filtered inline duplicate content",
+            content_html="<p>Filtered inline duplicate content</p>",
+        )
+        Webmention.objects.create(
+            source_url="https://comments.example/direct-like",
+            target_url=self.target_url,
+            mention_type="like",
+            author_name="Direct Like",
+            published=timezone.now() + timedelta(minutes=1),
+            status="verified",
+        )
+
+        rendered = self.render_webmentions(mention_type="reply")
+
+        self.assertIn("Bob", rendered)
+        self.assertNotIn("Direct Like", rendered)
+        self.assertNotIn("Filtered Inline Duplicate", rendered)
+        self.assertNotIn("Filtered inline duplicate content", rendered)
+
+    def test_duplicate_nested_identity_renders_once_under_first_displayed_parent(self):
+        """The first parent in top-level ordering owns a duplicated nested child."""
+        now = timezone.now()
+        older_parent = Webmention.objects.create(
+            source_url="https://blog.example/older-parent",
+            target_url=self.target_url,
+            mention_type="reply",
+            author_name="Older Parent",
+            content="Older parent content",
+            published=now - timedelta(days=2),
+            status="verified",
+        )
+        newer_parent = Webmention.objects.create(
+            source_url="https://blog.example/newer-parent",
+            target_url=self.target_url,
+            mention_type="reply",
+            author_name="Newer Parent",
+            content="Newer parent content",
+            published=now + timedelta(days=2),
+            status="verified",
+        )
+        shared_identity = "https://comments.example/shared"
+        self.create_nested_response(
+            older_parent,
+            shared_identity,
+            content="Child via older parent",
+            content_html="<p>Child via older parent</p>",
+        )
+        self.create_nested_response(
+            newer_parent,
+            shared_identity,
+            content="Child via newer parent",
+            content_html="<p>Child via newer parent</p>",
+        )
+
+        rendered = self.render_webmentions()
+
+        self.assertIn("Child via newer parent", rendered)
+        self.assertNotIn("Child via older parent", rendered)
+        self.assertLess(rendered.index("Newer parent content"), rendered.index("Child via newer parent"))
+
+    def test_nested_responses_are_ordered_by_published_or_first_seen(self):
+        """Children render newest first using published, falling back to first_seen_at."""
+        now = timezone.now()
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/older",
+            content="Older published child",
+            content_html="<p>Older published child</p>",
+            published=now - timedelta(days=2),
+            first_seen_at=now,
+        )
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/fallback",
+            content="Fallback first-seen child",
+            content_html="<p>Fallback first-seen child</p>",
+            published=None,
+            first_seen_at=now - timedelta(days=1),
+        )
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/newer",
+            content="Newer published child",
+            content_html="<p>Newer published child</p>",
+            published=now,
+            first_seen_at=now - timedelta(days=3),
+        )
+
+        rendered = self.render_webmentions()
+
+        self.assertLess(rendered.index("Newer published child"), rendered.index("Fallback first-seen child"))
+        self.assertLess(rendered.index("Fallback first-seen child"), rendered.index("Older published child"))
+
+    def test_show_webmentions_type_filter_still_filters_top_level_parents(self):
+        """Filtering top-level Webmentions by type does not leak nested replies."""
+        self.create_nested_response(
+            self.reply,
+            "https://comments.example/reply-filter",
+            content="Nested reply for filtered parent",
+            content_html="<p>Nested reply for filtered parent</p>",
+        )
+
+        rendered = self.render_webmentions(mention_type="like")
+
+        self.assertIn("Alice", rendered)
+        self.assertNotIn("Bob", rendered)
+        self.assertNotIn("Nested reply for filtered parent", rendered)
+
+    def test_webmention_count_does_not_include_nested_responses(self):
+        """webmention_count keeps its top-level-only count semantics."""
+        self.create_nested_response(self.reply, "https://comments.example/count-one")
+        self.create_nested_response(self.reply, "https://comments.example/count-two")
+
+        template = Template("{% load webmention_tags %}{% webmention_count target_url %}")
+        rendered = template.render(Context({"target_url": self.target_url})).strip()
+
+        self.assertEqual(rendered, "4")
+
+    def test_show_webmentions_prefetches_nested_responses(self):
+        """Rendering does not issue one query per parent or child."""
+        self.create_nested_response(self.reply, "https://comments.example/query-one")
+        self.create_nested_response(self.reply, "https://comments.example/query-two")
+
+        with self.assertNumQueries(2):
+            self.render_webmentions()
 
     def test_webmention_count_tag(self):
         """Test the webmention_count tag."""

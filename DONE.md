@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-01
 
+### Expose nested Salmention responses in template queries and rendering
+
+- Updated ``show_webmentions`` to keep querying verified top-level ``Webmention`` rows by target URL while prefetching verified ``WebmentionNestedResponse`` children for those rows. The tag attaches template-ready child lists without per-parent or per-child queries.
+- Rendered verified nested children inline under verified parent replies through a child-specific template partial. Child rendering supports reply, like, repost, and mention wording, preserves ordinary top-level templates, and leaves ``webmention_count`` top-level-only.
+- Added duplicate-display suppression so a verified direct top-level Webmention to the same target wins over an inline nested child with the same ``identity`` or ``response_url``. When the same child identity is discovered under multiple displayed parents, only the first parent in the existing top-level ordering renders it.
+- Review follow-up optimized the unfiltered ``show_webmentions`` path to derive direct top-level source URLs from already materialized rows, keeping the common nested rendering path to two queries while preserving type-agnostic duplicate suppression for filtered views.
+- Preserved endpoint, processor, async receive, Vouch, source snapshot, child storage, and outbound Salmention behavior. The outbound target-tracking backlog item remains open.
+- Documentation: updated ``docs/webmention.rst`` and ``docs/configuration.rst`` with nested rendering, duplicate suppression, child ordering, and count semantics. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased nested rendering entry and removed stale wording that described nested rendering as still unsupported.
+- Validation: ``uv run pytest tests/test_webmention_templatetags.py tests/test_webmention_models.py -q`` (43 passed, 3 subtests passed), ``uv run pytest tests/test_webmention_templatetags.py tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q`` (165 passed, 3 subtests passed), ``uv run pytest`` (621 passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed after ``ruff format`` reformatted one file on the first run), ``uv build`` (passed), and ``git diff --check`` (passed).
+
 ### Add nested response storage and duplicate comparison for receiving Salmentions
 
 - Added ``WebmentionNestedResponse`` rows related to parent ``Webmention`` submissions, keyed uniquely by parent and stable nested response identity. Child rows store response URL when available, author/content/published/type fields, current status, first/last-seen and verified timestamps, a compact parsed nested ``h-entry`` snapshot, and a parsed snapshot digest.

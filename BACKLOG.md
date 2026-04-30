@@ -14,9 +14,6 @@ No current Priority 1 items.
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Expose nested Salmention responses in template queries and rendering.
-  - References: `src/indieweb/templatetags/webmention_tags.py`, `src/indieweb/templates/indieweb/webmentions.html`, `src/indieweb/templates/indieweb/webmention_types/reply.html`, `tests/test_webmention_templatetags.py`, `docs/webmention.rst`.
-  - Outcome: prefetch verified child responses for verified top-level `Webmention` rows, render them inline under their parent reply, suppress duplicate inline children when the same response is already represented by a direct top-level `Webmention` to the same target, document count semantics, and preserve the existing top-level `webmention_count` result unless an explicit nested-inclusive API is added.
 - [ ] Design outbound target tracking for sending Salmentions.
   - References: `src/indieweb/senders.py`, `src/indieweb/management/commands/send_webmentions.py`, `docs/webmention.rst`, https://indieweb.org/Salmention.
   - Outcome: decide how applications record the targets an original post previously sent Webmentions to and expose an explicit post-update resend workflow.

@@ -363,9 +363,10 @@ Salmention Configuration
 There is no Salmention-specific setting in django-indieweb today.
 django-indieweb persists verified Webmention source snapshots and stable nested
 child response rows as a foundation for receive-side Salmention support, but
-nested rendering is still deferred. Sending Salmentions also still needs
-outbound target tracking for each original post. See :doc:`webmention` for the
-support-status details and current ordinary Webmention reprocessing behavior.
+the bundled ``show_webmentions`` template tag renders verified children inline
+under verified parent replies. Sending Salmentions still needs outbound target
+tracking for each original post. See :doc:`webmention` for the support-status
+details and current ordinary Webmention reprocessing behavior.
 
 URL Configuration
 -----------------

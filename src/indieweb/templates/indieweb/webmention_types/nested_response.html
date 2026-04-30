@@ -1,0 +1,48 @@
+{% firstof nested_response.response_url nested_response.identity as nested_response_url %}
+<article class="h-cite webmention-nested webmention-nested-{{ nested_response.mention_type }}">
+  <div class="nested-response h-entry">
+    <div class="nested-response-header">
+      <div class="p-author h-card">
+        {% if nested_response.author_photo %}
+          <img class="u-photo" src="{{ nested_response.author_photo }}" alt="{{ nested_response.author_name }}" width="40" height="40" loading="lazy">
+        {% endif %}
+        <span class="author-info">
+          {% if nested_response.author_url %}
+            <a class="p-name u-url" href="{{ nested_response.author_url }}" rel="nofollow">{{ nested_response.author_name|default:"Someone" }}</a>
+          {% else %}
+            <span class="p-name">{{ nested_response.author_name|default:"Someone" }}</span>
+          {% endif %}
+          <span class="nested-response-meta">
+            {% if nested_response.mention_type == "like" %}
+              <span class="webmention-action">liked this</span>
+            {% elif nested_response.mention_type == "repost" %}
+              <span class="webmention-action">reposted this</span>
+            {% elif nested_response.mention_type == "reply" %}
+              <span class="webmention-action">replied</span>
+            {% else %}
+              <span class="webmention-action">mentioned this</span>
+            {% endif %}
+            <a class="u-url" href="{{ nested_response_url }}" rel="nofollow">
+              {% if nested_response.published %}
+                <time class="dt-published" datetime="{{ nested_response.published|date:'c' }}">
+                  {{ nested_response.published|date:"M j, Y g:i A" }}
+                </time>
+              {% else %}
+                <span class="webmention-link">link</span>
+              {% endif %}
+            </a>
+          </span>
+        </span>
+      </div>
+    </div>
+    {% if nested_response.content or nested_response.content_html %}
+      <div class="e-content nested-response-content">
+        {% if nested_response.content_html %}
+          {{ nested_response.content_html|safe }}
+        {% elif nested_response.content %}
+          <p>{{ nested_response.content|linebreaks }}</p>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</article>

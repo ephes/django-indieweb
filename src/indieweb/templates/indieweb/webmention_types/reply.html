@@ -29,4 +29,11 @@
       <p>{{ webmention.content|linebreaks }}</p>
     {% endif %}
   </div>
+  {% if webmention.displayable_nested_responses %}
+    <div class="webmention-nested-responses">
+      {% for nested_response in webmention.displayable_nested_responses %}
+        {% include "indieweb/webmention_types/nested_response.html" with nested_response=nested_response %}
+      {% endfor %}
+    </div>
+  {% endif %}
 </div>

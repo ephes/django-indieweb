@@ -80,6 +80,56 @@
     margin-bottom: 0;
 }
 
+.webmention-nested-responses {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 1rem 0 0 3.75rem; /* Align with parent reply content. */
+    padding-left: 1rem;
+    border-left: 3px solid #ddd;
+}
+
+.webmention-nested {
+    padding: 0.75rem;
+    background-color: #fff;
+    border-radius: 8px;
+}
+
+.webmention-nested .nested-response-header {
+    margin-bottom: 0.5rem;
+}
+
+.webmention-nested .p-author {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+}
+
+.webmention-nested .u-photo {
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.webmention-nested .author-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.webmention-nested .nested-response-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    align-items: baseline;
+}
+
+.webmention-nested .nested-response-content {
+    margin-left: 3.125rem; /* 40px image + 10px gap */
+    color: #333;
+    font-size: 0.95rem;
+}
+
 /* Repost styles */
 .webmention-repost .p-repost {
     display: flex;
@@ -152,6 +202,8 @@
     }
 
     .webmention-reply .e-content,
+    .webmention-nested-responses,
+    .webmention-nested .nested-response-content,
     .webmention-mention .mention-content {
         margin-left: 0;
         margin-top: 0.75rem;
@@ -189,11 +241,20 @@
 
     .webmention time,
     .webmention-action,
+    .webmention-nested .nested-response-content,
     .webmention-mention .mention-content {
         color: #999;
     }
 
     .webmention-reply .e-content {
         color: #d0d0d0;
+    }
+
+    .webmention-nested-responses {
+        border-left-color: #444;
+    }
+
+    .webmention-nested {
+        background-color: #111;
     }
 }
