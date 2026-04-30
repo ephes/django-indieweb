@@ -2,6 +2,19 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-04-30
+
+### Evaluate Webmention vouch support
+
+- Evaluated the IndieWeb Vouch living specification and current Webmention receive/send architecture, and implemented a conservative support slice rather than deferring. The receive endpoint accepts an optional ``vouch`` form parameter, validates it as an HTTP(S) URL, persists it on ``Webmention.vouch_url``, and includes stored Vouch metadata in the status endpoint.
+- Preserved the asynchronous receive boundary: queued mode validates and stores submitted Vouch metadata, calls the configured enqueue hook, and returns ``202 Accepted`` without fetching source or voucher URLs or instantiating ``WebmentionProcessor`` in the request path.
+- Added processor-owned Vouch verification behind explicit receiver policy. ``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS`` enables verification against the configured Django ``Site`` domain plus approved voucher domains; ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED`` makes missing or unverifiable vouchers fail in processor/worker paths. Failed Vouch checks mark the row ``failed`` without clearing parsed fields.
+- Added outgoing opt-in support via ``WebmentionSender.send_webmention(..., vouch=...)``, ``WebmentionSender.send_webmentions(..., vouch_url=...)``, and ``python manage.py send_webmentions --vouch ...``.
+- Added focused tests for optional receive-side ``vouch`` validation, async persistence without processing, malformed Vouch rejection before enqueueing, duplicate receives preserving existing Vouch and parsed state, queued helper Vouch propagation, trusted/untrusted/missing Vouch processor behavior, outgoing sender payloads, and command-line ``--vouch`` handling.
+- Documentation: updated ``docs/webmention.rst``, ``docs/api.rst``, and ``docs/configuration.rst`` with the support status, receive/send workflows, async behavior, model/status fields, and new settings. No generated docs under ``docs/_build`` were updated.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased Webmention Vouch support entry.
+- Validation: ``uv run pytest tests/test_webmention_endpoint.py -q``, ``uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q``, ``uv run pytest tests/test_webmention_sender.py -q``, ``uv run pytest``, ``uv run mypy``, ``uv run ruff check .``, ``uv run sphinx-build -W -b html docs docs/_build/html``, ``uv run prek run --all-files``, ``uv build``, ``git diff --check``, and ``git diff --cached --stat`` passed.
+
 ## 2026-04-29
 
 ### Make Webmention receiving asynchronous

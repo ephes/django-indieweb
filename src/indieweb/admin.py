@@ -12,10 +12,10 @@ from .models import Auth, Profile, Token, Webmention
 
 @admin.register(Webmention)
 class WebmentionAdmin(admin.ModelAdmin):
-    list_display = ("source_url", "target_url", "status", "mention_type", "author_name", "created")
+    list_display = ("source_url", "target_url", "status", "mention_type", "author_name", "vouch_url", "created")
     list_filter = ("status", "mention_type", "created")
-    search_fields = ("source_url", "target_url", "author_name")
-    readonly_fields = ("verified_at", "spam_check_result", "created", "modified")
+    search_fields = ("source_url", "target_url", "vouch_url", "author_name")
+    readonly_fields = ("verified_at", "vouch_verified_at", "spam_check_result", "created", "modified")
     ordering = ("-created",)
     date_hierarchy = "created"
 
@@ -23,13 +23,13 @@ class WebmentionAdmin(admin.ModelAdmin):
         (
             "URLs",
             {
-                "fields": ("source_url", "target_url"),
+                "fields": ("source_url", "target_url", "vouch_url"),
             },
         ),
         (
             "Status",
             {
-                "fields": ("status", "mention_type", "verified_at"),
+                "fields": ("status", "mention_type", "verified_at", "vouch_verified_at"),
             },
         ),
         (

@@ -119,6 +119,7 @@ class Webmention(models.Model):
     # Core webmention fields
     source_url = models.URLField(max_length=500, db_index=True)
     target_url = models.URLField(max_length=500, db_index=True)
+    vouch_url = models.URLField(max_length=500, blank=True)
 
     # Status tracking
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
@@ -139,6 +140,7 @@ class Webmention(models.Model):
     created = models.DateTimeField(auto_now_add=True)
     modified = models.DateTimeField(auto_now=True)
     verified_at = models.DateTimeField(null=True, blank=True)
+    vouch_verified_at = models.DateTimeField(null=True, blank=True)
 
     # Optional spam check result
     spam_check_result = models.JSONField(null=True, blank=True)

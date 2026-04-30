@@ -56,6 +56,9 @@ Add these settings to your Django settings:
     # Optional: Queue incoming Webmention processing outside the request path
     INDIEWEB_WEBMENTION_ENQUEUE = 'myproject.webmention_config.enqueue_webmention'
 
+    # Optional: Verify submitted Vouch URLs from approved voucher domains
+    INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS = ('trusted.example',)
+
     # Optional: Comment adapter to convert webmentions to comments
     INDIEWEB_COMMENT_ADAPTER = 'myproject.webmention_config.MyCommentAdapter'
 
@@ -179,6 +182,67 @@ Import and non-callable configuration failures happen before a row is persisted.
 If the callable itself raises, the ``Webmention`` row has already been created
 or reused and remains ``pending``; operators should rely on their queue retry
 path or manual cleanup to reconcile those rows.
+
+Vouch Support
+=============
+
+Vouch is a backwards-compatible Webmention extension for spam and moderation
+signals. A sender may include an optional third form parameter, ``vouch``,
+whose value is an ``http`` or ``https`` URL on a site the receiver trusts. The
+voucher page should link to the source page's domain.
+
+django-indieweb accepts ``vouch`` on incoming Webmention POSTs, validates it as
+a URL when present, stores it on ``Webmention.vouch_url``, and exposes it from
+the status endpoint. Missing ``vouch`` values do not affect ordinary
+Webmentions unless ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED`` is enabled.
+
+Queued receiving preserves the async boundary: the request path validates and
+stores the optional ``vouch`` URL, calls the configured enqueue hook, and
+returns ``202`` without fetching the source or voucher URL. Voucher fetching
+and verification happen only in ``WebmentionProcessor`` or the worker helper
+that calls it.
+
+By default, submitted Vouch URLs are stored but not enforced. To verify
+submitted vouchers, configure ``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS``:
+
+.. code-block:: python
+
+    INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS = ("trusted.example", "events.example")
+
+When verification is enabled and a Webmention includes ``vouch``,
+django-indieweb checks that the submitted voucher URL is on the configured
+Django ``Site`` domain or one of the trusted domains, fetches the voucher URL
+with the same bounded redirect policy used for Webmention source fetches,
+requires the final voucher URL to remain on a trusted domain, requires an HTTP
+``200`` ``text/html`` response, and verifies that the voucher page contains an
+HTTP(S) HTML ``href`` whose domain matches the source URL's domain. A failed
+Vouch check marks the Webmention ``failed`` without clearing previously parsed
+fields.
+
+Set ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED = True`` to require a verifiable
+voucher for incoming Webmentions. When this is enabled, a Webmention with no
+stored ``vouch`` is marked ``failed`` by the processor. The endpoint still
+validates and queues quickly; required-mode failures happen in processor-owned
+logic. If required mode is enabled without trusted domains, only voucher URLs
+on the configured Django ``Site`` domain can pass the trust check; most
+deployments should configure at least one trusted external voucher domain.
+
+Outgoing Webmentions can include Vouch metadata explicitly:
+
+.. code-block:: python
+
+    from indieweb.senders import WebmentionSender
+
+    sender = WebmentionSender()
+    sender.send_webmention(
+        "https://mysite.com/post",
+        "https://example.com/article",
+        "https://example.com/webmention",
+        vouch="https://trusted.example/vouch-for-mysite",
+    )
+
+The ``send_webmentions`` management command also accepts ``--vouch`` to include
+the same voucher URL with each delivered Webmention.
 
 Target URL Matching
 ===================
@@ -369,6 +433,10 @@ Send webmentions for all links in a post:
     python manage.py send_webmentions https://mysite.com/new-post/ \
         --content '<p>Check out <a href="https://example.com">this site</a>!</p>'
 
+    # Include a Vouch URL
+    python manage.py send_webmentions https://mysite.com/new-post/ \
+        --vouch https://trusted.example/vouch-for-mysite
+
     # Dry run to see what would be sent
     python manage.py send_webmentions https://mysite.com/new-post/ --dry-run
 
@@ -411,6 +479,7 @@ Fields:
 
 * ``source_url`` - The URL that links to your content
 * ``target_url`` - Your URL that was linked to
+* ``vouch_url`` - Optional Vouch URL submitted with the Webmention
 * ``status`` - pending, verified, failed, or spam
 * ``mention_type`` - mention, like, reply, or repost
 * ``author_name``, ``author_url``, ``author_photo`` - Author info
@@ -418,6 +487,7 @@ Fields:
 * ``published`` - When the mention was published
 * ``created``, ``modified`` - Timestamps
 * ``verified_at`` - When the mention was verified
+* ``vouch_verified_at`` - When the configured Vouch check succeeded
 * ``spam_check_result`` - JSON field with spam check details
 
 Testing Webmentions

@@ -88,6 +88,28 @@ class TestWebmentionEndpoint:
         )
         assert response.status_code == 400
 
+        # Invalid vouch URL
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": "https://example.com/post",
+                "vouch": "not-a-url",
+            },
+        )
+        assert response.status_code == 400
+
+        # Unsupported vouch URL scheme
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": "https://example.com/post",
+                "vouch": "ftp://trusted.example/vouch",
+            },
+        )
+        assert response.status_code == 400
+
         # Invalid target URL
         response = client.post(
             url,
@@ -139,6 +161,39 @@ class TestWebmentionEndpoint:
         mock_processor.process_webmention.assert_called_once_with(
             "https://other.com/reply",
             f"https://{site.domain}/post",
+            vouch_url=None,
+        )
+
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_valid_webmention_accepts_optional_vouch(self, mock_processor_class, client, site):
+        """Test optional Vouch URLs are validated and passed to synchronous processing."""
+        url = reverse("indieweb:webmention")
+        vouch = "https://trusted.example/vouch-for-other"
+
+        mock_processor = MagicMock()
+        mock_processor_class.return_value = mock_processor
+        mock_webmention = Webmention(
+            id=1,
+            source_url="https://other.com/reply",
+            target_url=f"https://{site.domain}/post",
+            vouch_url=vouch,
+        )
+        mock_processor.process_webmention.return_value = mock_webmention
+
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": f"https://{site.domain}/post",
+                "vouch": vouch,
+            },
+        )
+
+        assert response.status_code == 201
+        mock_processor.process_webmention.assert_called_once_with(
+            "https://other.com/reply",
+            f"https://{site.domain}/post",
+            vouch_url=vouch,
         )
 
     @patch("indieweb.views.WebmentionProcessor")
@@ -211,6 +266,33 @@ class TestWebmentionEndpoint:
 
     @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
     @patch("indieweb.views.WebmentionProcessor")
+    def test_async_webmention_persists_vouch_without_processing(self, mock_processor_class, client, site):
+        """Test async mode stores Vouch metadata without fetching or processing in the request path."""
+        url = reverse("indieweb:webmention")
+        vouch = "https://trusted.example/vouch-for-other"
+
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": f"https://{site.domain}/post",
+                "vouch": vouch,
+            },
+        )
+
+        webmention = Webmention.objects.get(
+            source_url="https://other.com/reply",
+            target_url=f"https://{site.domain}/post",
+        )
+        assert response.status_code == 202
+        assert webmention.status == "pending"
+        assert webmention.vouch_url == vouch
+        assert webmention.vouch_verified_at is None
+        assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
+        mock_processor_class.assert_not_called()
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    @patch("indieweb.views.WebmentionProcessor")
     def test_async_webmention_reuses_existing_row_without_clearing_fields(self, mock_processor_class, client, site):
         """Test duplicate async receives keep existing processor-owned state intact."""
         source = "https://other.com/reply"
@@ -242,6 +324,33 @@ class TestWebmentionEndpoint:
 
     @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
     @patch("indieweb.views.WebmentionProcessor")
+    def test_async_webmention_without_vouch_does_not_clear_existing_vouch(self, mock_processor_class, client, site):
+        """Test duplicate async receives without Vouch keep existing Vouch metadata intact."""
+        source = "https://other.com/reply"
+        target = f"https://{site.domain}/post"
+        vouch = "https://trusted.example/vouch-for-other"
+        existing = Webmention.objects.create(
+            source_url=source,
+            target_url=target,
+            vouch_url=vouch,
+            vouch_verified_at=timezone.now() - timedelta(days=1),
+            status="verified",
+            verified_at=timezone.now() - timedelta(days=1),
+        )
+        vouch_verified_at = existing.vouch_verified_at
+
+        url = reverse("indieweb:webmention")
+        response = client.post(url, {"source": source, "target": target})
+
+        existing.refresh_from_db()
+        assert response.status_code == 202
+        assert existing.status == "verified"
+        assert existing.vouch_url == vouch
+        assert existing.vouch_verified_at == vouch_verified_at
+        mock_processor_class.assert_not_called()
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    @patch("indieweb.views.WebmentionProcessor")
     @pytest.mark.parametrize(
         "payload",
         [
@@ -251,6 +360,12 @@ class TestWebmentionEndpoint:
             {"source": "not-a-url", "target": "https://example.com/post"},
             {"source": "https://other.com/reply", "target": "not-a-url"},
             {"source": "https://other.com/reply", "target": "https://different.com/post"},
+            {"source": "https://other.com/reply", "target": "https://example.com/post", "vouch": "not-a-url"},
+            {
+                "source": "https://other.com/reply",
+                "target": "https://example.com/post",
+                "vouch": "ftp://trusted.example/vouch",
+            },
         ],
     )
     def test_async_webmention_rejects_invalid_requests_before_enqueueing(
@@ -439,6 +554,24 @@ class TestWebmentionEndpoint:
         assert data["source"] == webmention.source_url
         assert data["target"] == webmention.target_url
         assert data["status"] == webmention.status
+
+    def test_webmention_status_view_includes_vouch_metadata(self, client):
+        """Test the status endpoint includes stored Vouch metadata."""
+        vouch_verified_at = timezone.now()
+        webmention = Webmention.objects.create(
+            source_url="https://other.com/reply",
+            target_url="https://example.com/post",
+            status="verified",
+            vouch_url="https://trusted.example/vouch-for-other",
+            vouch_verified_at=vouch_verified_at,
+        )
+
+        url = reverse("indieweb:webmention-status", args=[webmention.pk])
+        response = client.get(url)
+
+        data = json.loads(response.content)
+        assert data["vouch"] == webmention.vouch_url
+        assert data["vouch_verified_at"] == vouch_verified_at.isoformat()
 
     def test_webmention_status_view_not_found(self, client):
         """Test that non-existent webmention returns 404."""

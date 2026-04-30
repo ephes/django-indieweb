@@ -233,6 +233,56 @@ deployment intentionally wants synchronous behavior under a custom hook.
    ``Webmention`` row has already been created or reused and remains
    ``pending`` until a queue retry path or manual cleanup reconciles it.
 
+INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional iterable of domains that django-indieweb may trust as Webmention
+Vouch voucher sites.
+
+**Default:** ``None`` (submitted Vouch URLs are stored but not verified)
+
+When this setting is ``None``, incoming Webmentions may include the optional
+``vouch`` form parameter, and django-indieweb validates and stores that URL,
+but Vouch does not affect whether the processor marks the Webmention
+``verified``.
+
+When set to an iterable of domain names, the processor verifies submitted
+Vouch URLs. A voucher URL must be on the configured Django ``Site`` domain or
+one of these domains. The voucher is fetched with the same bounded redirect
+policy used for Webmention source fetches, the final URL must remain on a
+trusted domain, the response must be HTTP ``200`` with ``text/html`` content,
+and the voucher page must contain an HTTP(S) HTML ``href`` to the submitted
+source URL's domain. If any Vouch check fails, the Webmention is marked
+``failed``.
+
+**Example:**
+
+.. code-block:: python
+
+   INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS = ("trusted.example", "events.example")
+
+Domain matching is exact after lowercasing and treating a leading ``www.`` as
+equivalent to the bare hostname. Subdomains are not implicitly trusted.
+
+INDIEWEB_WEBMENTION_VOUCH_REQUIRED
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Require incoming Webmentions to have a verifiable Vouch URL.
+
+**Default:** ``False``
+
+When ``False``, ordinary Webmentions without ``vouch`` continue to verify
+normally. When ``True``, the processor marks a Webmention ``failed`` if it has
+no stored ``vouch`` or if the configured Vouch verification does not succeed.
+This requirement is enforced in ``WebmentionProcessor`` and queued worker
+paths, not in the receive request path.
+
+When ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED`` is ``True`` and
+``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS`` is unset or empty, only voucher
+URLs on the configured Django ``Site`` domain can pass the trust check. Most
+deployments that require Vouch should also configure at least one trusted
+external voucher domain.
+
 URL Configuration
 -----------------
 

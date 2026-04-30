@@ -641,6 +641,13 @@ POST Request
 - ``source`` - Absolute URL of the page that links to your content
 - ``target`` - Absolute URL on your configured ``Site`` domain
 
+**Optional Parameters:**
+
+- ``vouch`` - Absolute ``http`` or ``https`` URL of a voucher page. When
+  present, the endpoint validates and stores it as Webmention Vouch metadata.
+  Receiver-side Vouch verification, if configured, happens later in
+  ``WebmentionProcessor`` or the queued worker path.
+
 The endpoint rejects missing parameters, malformed URLs, and targets whose
 network location does not exactly match the current ``Site.domain`` before
 processing or enqueueing.
@@ -668,13 +675,15 @@ primary key, and returns ``202 Accepted`` with a status ``Location``:
     Location: https://yoursite.com/indieweb/webmention/123/
 
 In queued mode, the request path does not fetch or verify the source URL.
-Workers should call ``indieweb.processors.process_queued_webmention(pk)`` to
-run the existing processor and update the row status.
+It also does not fetch or verify a submitted ``vouch`` URL. Workers should call
+``indieweb.processors.process_queued_webmention(pk)`` to run the existing
+processor and update the row status.
 
 **Error Response:**
 
-- ``400 Bad Request`` when ``source`` or ``target`` is missing, either value is
-  not a valid URL, or ``target`` is outside the configured ``Site`` domain
+- ``400 Bad Request`` when ``source`` or ``target`` is missing, ``source`` or
+  ``target`` is not a valid URL, submitted ``vouch`` is not a valid ``http`` or
+  ``https`` URL, or ``target`` is outside the configured ``Site`` domain
 - ``500 Internal Server Error`` in queued mode when the configured
   ``INDIEWEB_WEBMENTION_ENQUEUE`` path cannot be imported, is not callable, or
   raises while enqueueing
@@ -691,10 +700,12 @@ Returns the stored status for a received Webmention:
     HTTP/1.1 200 OK
     Content-Type: application/json
 
-    {"source": "https://source.example/post", "target": "https://yoursite.com/post", "status": "pending"}
+    {"source": "https://source.example/post", "target": "https://yoursite.com/post", "status": "pending", "vouch": "https://trusted.example/vouch"}
 
-The response includes ``verified_at`` when the Webmention has been verified.
-Missing IDs return ``404``.
+The response includes ``vouch`` when the Webmention has stored Vouch metadata,
+``verified_at`` when the Webmention has been verified, and
+``vouch_verified_at`` when configured Vouch verification has succeeded. Missing
+IDs return ``404``.
 
 Error Responses
 ---------------

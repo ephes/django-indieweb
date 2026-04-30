@@ -282,6 +282,27 @@ class TestWebmentionSender(TestCase):
         )
 
     @patch("httpx.Client")
+    def test_send_webmention_includes_vouch_when_provided(self, mock_client_class):
+        """Test sender can opt in to including a Vouch URL."""
+        mock_client = Mock()
+        mock_client_class.return_value.__enter__.return_value = mock_client
+
+        mock_response = Mock()
+        mock_response.status_code = 202
+        mock_client.post.return_value = mock_response
+
+        endpoint = "https://target.com/webmention"
+        vouch = "https://trusted.example/vouch-for-example"
+        result = self.sender.send_webmention(self.source_url, self.target_url, endpoint, vouch=vouch)
+
+        assert result["success"] is True
+        mock_client.post.assert_called_once_with(
+            endpoint,
+            data={"source": self.source_url, "target": self.target_url, "vouch": vouch},
+            timeout=30,
+        )
+
+    @patch("httpx.Client")
     def test_send_webmention_preserves_post_payload_across_endpoint_redirect(self, mock_client_class):
         """Test endpoint redirects keep the Webmention POST body."""
         endpoint = "https://target.com/webmention"
@@ -541,6 +562,26 @@ class TestWebmentionSender(TestCase):
                 assert len(results) == 1
                 assert results[0]["target"] == "https://target1.com/post"
                 assert results[0]["success"] is True
+
+    def test_send_webmentions_passes_vouch_to_each_delivery(self):
+        """Test bulk sending can include the same Vouch URL for each outgoing delivery."""
+        html_content = '<html><body><a href="https://target.com/post">Target</a></body></html>'
+        vouch = "https://trusted.example/vouch-for-example"
+
+        with patch.object(self.sender, "discover_endpoint") as mock_discover:
+            mock_discover.return_value = "https://target.com/webmention"
+            with patch.object(self.sender, "send_webmention") as mock_send:
+                mock_send.return_value = {"success": True, "status_code": 202}
+
+                results = self.sender.send_webmentions(self.source_url, html_content, vouch_url=vouch)
+
+        assert len(results) == 1
+        mock_send.assert_called_once_with(
+            self.source_url,
+            "https://target.com/post",
+            "https://target.com/webmention",
+            vouch=vouch,
+        )
 
     @patch("httpx.Client")
     def test_discover_endpoint_handles_fragment_and_query(self, mock_client_class):

@@ -121,24 +121,28 @@ class WebmentionSender:
 
         return None
 
-    def send_webmention(self, source: str, target: str, endpoint: str) -> dict:
+    def send_webmention(self, source: str, target: str, endpoint: str, vouch: str | None = None) -> dict:
         """Send a webmention to an endpoint.
 
         Args:
             source: The source URL (your post)
             target: The target URL (the linked post)
             endpoint: The webmention endpoint URL
+            vouch: Optional Vouch URL to include with the Webmention
 
         Returns:
             Dict with 'success', 'status_code', and optionally 'error'
         """
         try:
+            payload = {"source": source, "target": target}
+            if vouch:
+                payload["vouch"] = vouch
             with httpx.Client() as client:
                 delivered = request_with_webmention_redirects(
                     client,
                     "POST",
                     endpoint,
-                    data={"source": source, "target": target},
+                    data=payload,
                     timeout=self.post_timeout,
                 )
                 response = delivered.response
@@ -182,12 +186,15 @@ class WebmentionSender:
         except Exception:
             return None
 
-    def send_webmentions(self, source_url: str, html_content: str | None = None) -> list[dict]:
+    def send_webmentions(
+        self, source_url: str, html_content: str | None = None, vouch_url: str | None = None
+    ) -> list[dict]:
         """Send webmentions to all URLs found in the content.
 
         Args:
             source_url: The source URL (your post)
             html_content: Optional HTML content. If not provided, will be fetched.
+            vouch_url: Optional Vouch URL to include with each sent Webmention
 
         Returns:
             List of results for each webmention attempt
@@ -218,7 +225,7 @@ class WebmentionSender:
             endpoint = self.discover_endpoint(target_url)
             if endpoint:
                 # Send webmention
-                result = self.send_webmention(source_url, target_url, endpoint)
+                result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url)
                 result["target"] = target_url
                 result["endpoint"] = endpoint
                 results.append(result)

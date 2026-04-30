@@ -158,6 +158,180 @@ class TestWebmentionProcessor:
             )
             assert webmention.status == "verified"
 
+    def test_processor_stores_vouch_without_verification_when_policy_unset(self, processor):
+        """Test submitted Vouch metadata is stored without extra fetching by default."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-for-example"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
+
+            assert webmention.status == "verified"
+            assert webmention.vouch_url == vouch_url
+            assert webmention.vouch_verified_at is None
+            mock_client.get.assert_called_once_with(
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+            )
+
+    def test_processor_without_vouch_does_not_clear_existing_vouch(self, processor):
+        """Test synchronous duplicate processing preserves existing Vouch metadata."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-for-example"
+        vouch_verified_at = django_timezone.now() - timedelta(days=1)
+        Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            vouch_url=vouch_url,
+            vouch_verified_at=vouch_verified_at,
+        )
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "verified"
+            assert webmention.vouch_url == vouch_url
+            assert webmention.vouch_verified_at == vouch_verified_at
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_processor_verifies_trusted_vouch_linking_to_source_domain(self, processor):
+        """Test opt-in Vouch verification fetches trusted vouchers in processor-owned logic."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-for-example"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=200, text=vouch_html),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
+
+            assert webmention.status == "verified"
+            assert webmention.vouch_url == vouch_url
+            assert webmention.vouch_verified_at is not None
+            assert mock_client.get.call_args_list[0].args[0] == source_url
+            assert mock_client.get.call_args_list[1].args[0] == vouch_url
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_processor_preserves_parsed_fields_after_successful_vouch_verification(self, processor):
+        """Test successful Vouch verification does not overwrite parsed microformats fields."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-for-example"
+        source_html = f"""
+        <html>
+        <body>
+            <article class="h-entry">
+                <div class="p-author h-card">
+                    <a class="p-name u-url" href="https://author.example/">Jane Doe</a>
+                </div>
+                <div class="e-content">
+                    <p>Hello from Vouch <a href="{target_url}">target</a></p>
+                </div>
+            </article>
+        </body>
+        </html>
+        """
+        vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=200, text=vouch_html),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
+
+        webmention.refresh_from_db()
+        assert webmention.status == "verified"
+        assert webmention.vouch_verified_at is not None
+        assert webmention.author_name == "Jane Doe"
+        assert webmention.author_url == "https://author.example/"
+        assert "Hello from Vouch" in webmention.content
+        assert "Hello from Vouch" in webmention.content_html
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_processor_fails_untrusted_vouch_without_fetching_it(self, processor):
+        """Test Vouch verification rejects untrusted voucher domains before fetch."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
+
+            webmention = processor.process_webmention(
+                source_url,
+                target_url,
+                vouch_url="https://untrusted.example/vouch-for-example",
+            )
+
+            assert webmention.status == "failed"
+            assert webmention.vouch_verified_at is None
+            mock_client.get.assert_called_once_with(
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+            )
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_processor_fails_vouch_that_does_not_link_to_source_domain(self, processor):
+        """Test Vouch verification rejects vouchers that do not link to the source domain."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-for-example"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        vouch_html = '<html><body><a href="https://someone-else.example/">Elsewhere</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=200, text=vouch_html),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
+
+            assert webmention.status == "failed"
+            assert webmention.vouch_verified_at is None
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_REQUIRED=True)
+    def test_processor_fails_missing_vouch_when_required(self, processor):
+        """Test deployments can require Vouch without changing the endpoint request path."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+            assert webmention.status == "failed"
+            assert webmention.vouch_url == ""
+
     def test_process_queued_webmention_processes_existing_row(self):
         """Test the public worker helper dispatches processing for an existing row."""
         webmention = Webmention.objects.create(
@@ -176,6 +350,29 @@ class TestWebmentionProcessor:
         mock_processor.process_webmention.assert_called_once_with(
             "https://example.com/post",
             "https://mysite.com/article",
+            vouch_url=None,
+        )
+
+    def test_process_queued_webmention_passes_stored_vouch(self):
+        """Test queued processing includes persisted Vouch metadata."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+            vouch_url="https://trusted.example/vouch-for-example",
+        )
+
+        with patch("indieweb.processors.WebmentionProcessor") as mock_processor_class:
+            mock_processor = Mock()
+            mock_processor_class.return_value = mock_processor
+            mock_processor.process_webmention.return_value = webmention
+
+            result = process_queued_webmention(webmention.pk)
+
+        assert result == webmention
+        mock_processor.process_webmention.assert_called_once_with(
+            "https://example.com/post",
+            "https://mysite.com/article",
+            vouch_url="https://trusted.example/vouch-for-example",
         )
 
     def test_process_queued_webmention_raises_for_missing_row(self):

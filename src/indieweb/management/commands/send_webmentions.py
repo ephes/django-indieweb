@@ -3,7 +3,9 @@
 import sys
 from typing import Any
 
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
+from django.core.validators import URLValidator
 
 from indieweb.senders import WebmentionSender
 
@@ -22,16 +24,25 @@ class Command(BaseCommand):
         parser.add_argument(
             "--dry-run", action="store_true", help="Show what would be sent without actually sending", default=False
         )
+        parser.add_argument(
+            "--vouch", type=str, help="Optional Vouch URL to include with sent webmentions", default=None
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         """Handle the command."""
         source_url = options["source"]
         html_content = options["content"]
         dry_run = options["dry_run"]
+        vouch_url = options["vouch"]
 
         # Validate source URL
         if not source_url.startswith(("http://", "https://")):
             raise CommandError("Source URL must start with http:// or https://")
+        if vouch_url:
+            try:
+                URLValidator(schemes=["http", "https"])(vouch_url)
+            except ValidationError as exc:
+                raise CommandError("Vouch URL must be a valid http:// or https:// URL") from exc
 
         sender = WebmentionSender()
 
@@ -45,7 +56,7 @@ class Command(BaseCommand):
         if dry_run:
             self._handle_dry_run(sender, source_url, urls)
         else:
-            self._handle_send(sender, source_url, html_content)
+            self._handle_send(sender, source_url, html_content, vouch_url)
 
     def _resolve_content(self, sender: WebmentionSender, source_url: str, html_content: str | None) -> str:
         """Resolve HTML content from argument, stdin, or by fetching the source URL."""
@@ -80,9 +91,15 @@ class Command(BaseCommand):
             else:
                 self.stdout.write(f"  - {url} (no endpoint found)")
 
-    def _handle_send(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
+    def _handle_send(
+        self,
+        sender: WebmentionSender,
+        source_url: str,
+        html_content: str,
+        vouch_url: str | None,
+    ) -> None:
         """Send webmentions and display results."""
-        results = sender.send_webmentions(source_url, html_content)
+        results = sender.send_webmentions(source_url, html_content, vouch_url=vouch_url)
 
         if not results:
             self.stdout.write("No webmentions were sent (no valid targets found)")

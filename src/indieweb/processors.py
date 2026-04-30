@@ -121,6 +121,51 @@ def _html_links_to_target(html_content: str, target_url: str) -> bool:
     return False
 
 
+def _canonical_domain_for_vouch(value: str) -> str | None:
+    """Return a conservative domain string for Vouch matching."""
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in ("http", "https"):
+        return None
+    try:
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    normalized = host.lower()
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+    if ":" in normalized and not normalized.startswith("["):
+        normalized = f"[{normalized}]"
+    if port is not None:
+        normalized = f"{normalized}:{port}"
+    return normalized
+
+
+def _href_links_to_domain(href: str, source_domain: str) -> bool:
+    """Return whether an href points at the source domain for Vouch verification."""
+    return _canonical_domain_for_vouch(href) == source_domain
+
+
+def _html_links_to_source_domain(html_content: str, source_url: str) -> bool:
+    """Return whether ``html_content`` contains an HTTP(S) hyperlink to the source URL's domain."""
+    source_domain = _canonical_domain_for_vouch(source_url)
+    if source_domain is None:
+        return False
+
+    soup = BeautifulSoup(html_content, "html.parser")
+    for tag in soup.find_all(href=True):
+        if isinstance(tag, Tag):
+            href = tag.get("href")
+            if isinstance(href, str) and _href_links_to_domain(href, source_domain):
+                return True
+    return False
+
+
 def _strip_plain_text_url_punctuation(value: str) -> str:
     """Strip surrounding prose punctuation without removing balanced URL parentheses."""
     candidate = value.lstrip(LEADING_TEXT_URL_PUNCTUATION).rstrip(TRAILING_TEXT_URL_PUNCTUATION)
@@ -153,13 +198,14 @@ class WebmentionProcessor:
                 logger.error(f"Failed to load spam checker {spam_checker_path}: {e}")
         return None
 
-    def process_webmention(self, source_url: str, target_url: str) -> Webmention:
+    def process_webmention(self, source_url: str, target_url: str, vouch_url: str | None = None) -> Webmention:
         """
         Process a webmention by fetching and parsing the source.
 
         Args:
             source_url: The URL that mentions the target
             target_url: The URL being mentioned
+            vouch_url: Optional Vouch URL submitted with the Webmention
 
         Returns:
             Webmention object with processing results
@@ -167,10 +213,14 @@ class WebmentionProcessor:
         logger.info(f"Processing webmention from {source_url} to {target_url}")
 
         # Get or create webmention
-        webmention, created = Webmention.objects.get_or_create(
+        webmention, _created = Webmention.objects.get_or_create(
             source_url=source_url,
             target_url=target_url,
         )
+        if vouch_url is not None and webmention.vouch_url != vouch_url:
+            webmention.vouch_url = vouch_url
+            webmention.vouch_verified_at = None
+            webmention.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
 
         try:
             # Fetch source URL
@@ -204,6 +254,11 @@ class WebmentionProcessor:
 
             # Parse microformats2
             self._parse_microformats(webmention, response.text, fetched.final_url, target_url)
+
+            if not self._verify_vouch_for_webmention(webmention, source_url):
+                self._mark_webmention_failed(webmention)
+                logger.warning(f"Vouch verification failed for webmention from {source_url}")
+                return webmention
 
             # Check for spam (reload checker for test compatibility)
             spam_checker = self._get_spam_checker()
@@ -252,9 +307,76 @@ class WebmentionProcessor:
         with httpx.Client() as client:
             return request_with_webmention_redirects(client, "GET", source_url, headers=headers, timeout=30)
 
+    def _fetch_vouch(self, vouch_url: str) -> RedirectedResponse:
+        """Fetch a Vouch URL with the same bounded redirect policy as source fetches."""
+        headers = {"User-Agent": "django-indieweb/1.0"}
+        with httpx.Client() as client:
+            return request_with_webmention_redirects(client, "GET", vouch_url, headers=headers, timeout=30)
+
     def _verify_target_link(self, html_content: str, target_url: str) -> bool:
         """Verify that the target URL is linked in the source content."""
         return _html_links_to_target(html_content, target_url)
+
+    def _verify_vouch_for_webmention(self, webmention: Webmention, source_url: str) -> bool:
+        """Verify optional Vouch metadata when receiver policy enables it."""
+        if not webmention.vouch_url:
+            if getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_REQUIRED", False):
+                return False
+            return True
+
+        if not self._vouch_verification_enabled():
+            return True
+
+        if not self._vouch_domain_trusted(webmention.vouch_url):
+            return False
+
+        fetched = self._fetch_vouch(webmention.vouch_url)
+        response = fetched.response
+        if not self._vouch_domain_trusted(fetched.final_url):
+            return False
+        if response.status_code != 200:
+            return False
+        content_type = response.headers.get("content-type", "").lower()
+        if not content_type.startswith("text/html"):
+            return False
+        if not _html_links_to_source_domain(response.text, source_url):
+            return False
+
+        webmention.vouch_verified_at = timezone.now()
+        webmention.save(update_fields=["vouch_verified_at", "modified"])
+        return True
+
+    def _vouch_verification_enabled(self) -> bool:
+        """Return whether this deployment verifies submitted Vouch URLs."""
+        return (
+            getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_REQUIRED", False)
+            or getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS", None) is not None
+        )
+
+    def _vouch_domain_trusted(self, url: str) -> bool:
+        """Return whether a Vouch URL is on this site or an explicitly trusted domain."""
+        domain = _canonical_domain_for_vouch(url)
+        if domain is None:
+            return False
+
+        trusted_domains: set[str] = set()
+        try:
+            current_domain = _canonical_domain_for_vouch(f"https://{Site.objects.get_current().domain}")
+            if current_domain:
+                trusted_domains.add(current_domain)
+        except Site.DoesNotExist:
+            pass
+
+        configured_value = getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS", None) or ()
+        configured_domains = (configured_value,) if isinstance(configured_value, str) else configured_value
+        for configured_domain in configured_domains:
+            if isinstance(configured_domain, str):
+                configured_url = configured_domain if "://" in configured_domain else f"https://{configured_domain}"
+                normalized = _canonical_domain_for_vouch(configured_url)
+                if normalized:
+                    trusted_domains.add(normalized)
+
+        return domain in trusted_domains
 
     def _parse_microformats(self, webmention: Webmention, html_content: str, base_url: str, target_url: str) -> None:
         """Parse microformats2 data from HTML content."""
@@ -678,4 +800,8 @@ def process_queued_webmention(webmention_id: int) -> Webmention:
     """
     # Load by id first so worker integrations get an explicit DoesNotExist for missing queued rows.
     webmention = Webmention.objects.get(pk=webmention_id)
-    return WebmentionProcessor().process_webmention(webmention.source_url, webmention.target_url)
+    return WebmentionProcessor().process_webmention(
+        webmention.source_url,
+        webmention.target_url,
+        vouch_url=webmention.vouch_url or None,
+    )

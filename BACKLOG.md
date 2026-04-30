@@ -8,8 +8,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Evaluate Webmention vouch support.
-  - Outcome: decide whether to support the `vouch` parameter; if yes, add model, receiver, sender, tests, and docs.
 - [ ] Evaluate Salmentions support.
   - Outcome: decide whether to detect and send salmentions; if yes, add tests and documentation.
 

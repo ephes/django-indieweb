@@ -285,6 +285,19 @@ def _get_webmention_enqueue() -> Callable[[int], None] | None:
     return cast("Callable[[int], None]", enqueue)
 
 
+def _store_webmention_submission(source: str, target: str, vouch: str | None) -> Webmention:
+    """Create or reuse a submitted Webmention row, preserving existing state."""
+    webmention, _created = Webmention.objects.get_or_create(
+        source_url=source,
+        target_url=target,
+    )
+    if vouch is not None and webmention.vouch_url != vouch:
+        webmention.vouch_url = vouch
+        webmention.vouch_verified_at = None
+        webmention.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
+    return webmention
+
+
 def _normalize_redirect_uri(value: str) -> str:
     """Return ``value`` with scheme and host lowercased.
 
@@ -1214,6 +1227,7 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
         """Handle incoming webmentions."""
         source = request.POST.get("source")
         target = request.POST.get("target")
+        vouch = request.POST.get("vouch") or None
 
         # Basic validation
         if not source or not target:
@@ -1221,9 +1235,12 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
 
         # Validate URLs
         validator = URLValidator()
+        vouch_validator = URLValidator(schemes=["http", "https"])
         try:
             validator(source)
             validator(target)
+            if vouch is not None:
+                vouch_validator(vouch)
         except ValidationError:
             return HttpResponse(status=400)
 
@@ -1237,10 +1254,7 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
             return HttpResponse(status=500)
 
         if enqueue_webmention is not None:
-            webmention, _ = Webmention.objects.get_or_create(
-                source_url=source,
-                target_url=target,
-            )
+            webmention = _store_webmention_submission(source, target, vouch)
             try:
                 enqueue_webmention(webmention.pk)
             except Exception:
@@ -1256,7 +1270,7 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
         # Process synchronously
         processor = WebmentionProcessor()
         try:
-            webmention = processor.process_webmention(source, target)
+            webmention = processor.process_webmention(source, target, vouch_url=vouch)
             response = HttpResponse(status=201)  # Created
             response["Location"] = request.build_absolute_uri(
                 reverse("indieweb:webmention-status", args=[webmention.pk])
@@ -1305,8 +1319,14 @@ class WebmentionStatusView(View):
             "status": webmention.status,
         }
 
+        if webmention.vouch_url:
+            status_data["vouch"] = webmention.vouch_url
+
         if webmention.verified_at:
             status_data["verified_at"] = webmention.verified_at.isoformat()
+
+        if webmention.vouch_verified_at:
+            status_data["vouch_verified_at"] = webmention.vouch_verified_at.isoformat()
 
         return HttpResponse(
             json.dumps(status_data),

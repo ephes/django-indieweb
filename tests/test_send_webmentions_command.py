@@ -54,7 +54,42 @@ class TestSendWebmentionsCommand(TestCase):
         assert "✗ https://target2.com/post" in output
 
         mock_sender.send_webmentions.assert_called_once_with(
-            "https://example.com/my-post", '<a href="https://target1.com/post">Link</a>'
+            "https://example.com/my-post", '<a href="https://target1.com/post">Link</a>', vouch_url=None
+        )
+
+    def test_command_with_invalid_vouch_url(self):
+        """Test command rejects malformed Vouch URLs."""
+        with pytest.raises(CommandError) as exc:
+            call_command("send_webmentions", "https://example.com/my-post", vouch="not-a-url")
+
+        assert "Vouch URL must be a valid http:// or https:// URL" in str(exc.value)
+
+        with pytest.raises(CommandError) as exc:
+            call_command("send_webmentions", "https://example.com/my-post", vouch="http:///")
+
+        assert "Vouch URL must be a valid http:// or https:// URL" in str(exc.value)
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    def test_command_passes_vouch_url(self, mock_sender_class):
+        """Test command passes the optional Vouch URL to the sender."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+        mock_sender.extract_urls.return_value = ["https://target.com/post"]
+        mock_sender.send_webmentions.return_value = []
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content='<a href="https://target.com/post">Link</a>',
+            vouch="https://trusted.example/vouch-for-example",
+            stdout=out,
+        )
+
+        mock_sender.send_webmentions.assert_called_once_with(
+            "https://example.com/my-post",
+            '<a href="https://target.com/post">Link</a>',
+            vouch_url="https://trusted.example/vouch-for-example",
         )
 
     @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
