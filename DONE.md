@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-04-30
 
+### Add Webmention Vouch trust-policy setting
+
+- Added ``INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY`` for receiver-side Vouch trust decisions in ``WebmentionProcessor``. The configured callable receives keyword arguments for the ``Webmention`` row, submitted source/target, submitted Vouch URL, and optional final Vouch URL after redirects. It must accept both the submitted URL and final URL for verification to continue.
+- Kept ``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS`` as the default/simple policy when no callable is configured. When a callable is configured, it owns URL trust decisions; the built-in domain allowlist is not applied unless the callable chooses to read it.
+- Hardened receiver behavior so policy import failures, non-callable policy values, callable exceptions, and required Vouch mode without any trust policy or trusted domains all fail Vouch verification closed. Ordinary Webmentions and optional Vouch storage remain unchanged when Vouch is not required and no trust settings are configured.
+- Preserved the async receive boundary: the endpoint still validates and persists optional ``vouch`` metadata and queues the row without importing/calling the trust policy, instantiating ``WebmentionProcessor``, or fetching source/voucher URLs.
+- Documentation: updated ``docs/configuration.rst`` and ``docs/webmention.rst`` with the callable contract, precedence, fail-closed behavior, async boundary, and required-mode guidance. No ``docs/api.rst`` update was needed because endpoint/status response shapes did not change. No generated docs under ``docs/_build`` were updated.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased Vouch trust-policy entry.
+- Validation: ``uv run pytest tests/test_webmention_processor.py tests/test_webmention_endpoint.py -q``, ``uv run pytest tests/test_webmention_sender.py tests/test_send_webmentions_command.py -q``, ``uv run pytest``, ``uv run mypy``, ``uv run ruff check .``, ``uv run sphinx-build -W -b html docs docs/_build/html``, ``uv run prek run --all-files``, ``uv build``, ``git diff --check``, and ``git diff --cached --stat`` passed.
+
 ### Evaluate Webmention vouch support
 
 - Evaluated the IndieWeb Vouch living specification and current Webmention receive/send architecture, and implemented a conservative support slice rather than deferring. The receive endpoint accepts an optional ``vouch`` form parameter, validates it as an HTTP(S) URL, persists it on ``Webmention.vouch_url``, and includes stored Vouch metadata in the status endpoint.

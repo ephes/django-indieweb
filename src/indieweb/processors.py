@@ -7,8 +7,9 @@ Handles fetching, parsing, and verifying webmentions.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
@@ -38,6 +39,11 @@ WRAPPING_TEXT_URL_PUNCTUATION = {
     "}": "{",
     ">": "<",
 }
+
+
+def _reject_vouch_policy(**kwargs: Any) -> bool:
+    """Reject all vouchers when a configured trust policy cannot be used."""
+    return False
 
 
 def _canonical_netloc_for_match(parsed: ParseResult) -> str | None:
@@ -327,12 +333,12 @@ class WebmentionProcessor:
         if not self._vouch_verification_enabled():
             return True
 
-        if not self._vouch_domain_trusted(webmention.vouch_url):
+        if not self._vouch_url_trusted(webmention, source_url, webmention.vouch_url):
             return False
 
         fetched = self._fetch_vouch(webmention.vouch_url)
         response = fetched.response
-        if not self._vouch_domain_trusted(fetched.final_url):
+        if not self._vouch_url_trusted(webmention, source_url, webmention.vouch_url, fetched.final_url):
             return False
         if response.status_code != 200:
             return False
@@ -350,23 +356,62 @@ class WebmentionProcessor:
         """Return whether this deployment verifies submitted Vouch URLs."""
         return (
             getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_REQUIRED", False)
-            or getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS", None) is not None
+            or getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY", None) is not None
+            or bool(self._configured_vouch_trusted_domains())
         )
 
-    def _vouch_domain_trusted(self, url: str) -> bool:
-        """Return whether a Vouch URL is on this site or an explicitly trusted domain."""
-        domain = _canonical_domain_for_vouch(url)
-        if domain is None:
+    def _get_vouch_trust_policy(self) -> Callable[..., bool] | None:
+        """Load the optional configured Vouch trust-policy callable."""
+        policy_path = getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY", None)
+        if not policy_path:
+            return None
+        try:
+            policy = import_string(policy_path)
+        except Exception as exc:
+            logger.error(f"Failed to load INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY {policy_path}: {exc}")
+            return cast("Callable[..., bool]", _reject_vouch_policy)
+        if not callable(policy):
+            logger.error(f"INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY {policy_path!r} is not callable")
+            return _reject_vouch_policy
+        return cast("Callable[..., bool]", policy)
+
+    def _vouch_url_trusted(
+        self,
+        webmention: Webmention,
+        source_url: str,
+        vouch_url: str,
+        final_vouch_url: str | None = None,
+    ) -> bool:
+        """Return whether the configured Vouch receiver policy trusts a voucher URL."""
+        policy = self._get_vouch_trust_policy()
+        if policy is not None:
+            try:
+                return bool(
+                    policy(
+                        webmention=webmention,
+                        source_url=source_url,
+                        target_url=webmention.target_url,
+                        vouch_url=vouch_url,
+                        final_vouch_url=final_vouch_url,
+                    )
+                )
+            except Exception as exc:
+                logger.error(f"INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY raised for vouch_url={vouch_url!r}: {exc}")
+                return False
+
+        if not self._configured_vouch_trusted_domains():
+            if getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_REQUIRED", False):
+                logger.warning(
+                    "INDIEWEB_WEBMENTION_VOUCH_REQUIRED is enabled but no Vouch trust policy or trusted domains "
+                    "are configured"
+                )
             return False
 
-        trusted_domains: set[str] = set()
-        try:
-            current_domain = _canonical_domain_for_vouch(f"https://{Site.objects.get_current().domain}")
-            if current_domain:
-                trusted_domains.add(current_domain)
-        except Site.DoesNotExist:
-            pass
+        return self._vouch_domain_trusted(final_vouch_url or vouch_url)
 
+    def _configured_vouch_trusted_domains(self) -> set[str]:
+        """Return configured external domains that can be used by the default Vouch trust policy."""
+        trusted_domains: set[str] = set()
         configured_value = getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS", None) or ()
         configured_domains = (configured_value,) if isinstance(configured_value, str) else configured_value
         for configured_domain in configured_domains:
@@ -375,6 +420,24 @@ class WebmentionProcessor:
                 normalized = _canonical_domain_for_vouch(configured_url)
                 if normalized:
                     trusted_domains.add(normalized)
+        return trusted_domains
+
+    def _vouch_domain_trusted(self, url: str) -> bool:
+        """Return whether a Vouch URL is on this site or an explicitly trusted domain."""
+        domain = _canonical_domain_for_vouch(url)
+        if domain is None:
+            return False
+
+        trusted_domains = self._configured_vouch_trusted_domains()
+        if not trusted_domains:
+            return False
+
+        try:
+            current_domain = _canonical_domain_for_vouch(f"https://{Site.objects.get_current().domain}")
+            if current_domain:
+                trusted_domains.add(current_domain)
+        except Site.DoesNotExist:
+            pass
 
         return domain in trusted_domains
 

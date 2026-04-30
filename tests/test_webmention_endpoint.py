@@ -291,6 +291,35 @@ class TestWebmentionEndpoint:
         assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
         mock_processor_class.assert_not_called()
 
+    @override_settings(
+        INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id",
+        INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.trust_submitted_and_final",
+    )
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_async_webmention_with_vouch_policy_still_does_not_process(self, mock_processor_class, client, site):
+        """Test configured Vouch trust policies are not evaluated in the async receive request path."""
+        url = reverse("indieweb:webmention")
+        vouch = "https://trusted.example/vouch-for-example"
+
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": f"https://{site.domain}/post",
+                "vouch": vouch,
+            },
+        )
+
+        webmention = Webmention.objects.get(
+            source_url="https://other.com/reply",
+            target_url=f"https://{site.domain}/post",
+        )
+        assert response.status_code == 202
+        assert webmention.vouch_url == vouch
+        assert webmention.vouch_verified_at is None
+        assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
+        mock_processor_class.assert_not_called()
+
     @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
     @patch("indieweb.views.WebmentionProcessor")
     def test_async_webmention_reuses_existing_row_without_clearing_fields(self, mock_processor_class, client, site):

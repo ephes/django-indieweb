@@ -229,6 +229,117 @@ class TestWebmentionProcessor:
             assert mock_client.get.call_args_list[0].args[0] == source_url
             assert mock_client.get.call_args_list[1].args[0] == vouch_url
 
+    @override_settings(
+        INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.trust_submitted_and_final",
+        INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("other.example",),
+    )
+    def test_processor_verifies_vouch_with_trust_policy(self, processor):
+        """Test a configured trust policy decides submitted and final Vouch URL trust."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-for-example"
+        final_vouch_url = "https://trusted.example/final-vouch"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=302, headers={"Location": final_vouch_url}),
+                _source_response(status_code=200, text=vouch_html),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
+
+            assert webmention.status == "verified"
+            assert webmention.vouch_verified_at is not None
+            assert mock_client.get.call_args_list[0].args[0] == source_url
+            assert mock_client.get.call_args_list[1].args[0] == vouch_url
+            assert mock_client.get.call_args_list[2].args[0] == final_vouch_url
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.reject_submitted")
+    def test_processor_policy_rejects_submitted_vouch_without_fetching_it(self, processor):
+        """Test trust-policy rejection before fetch fails Vouch verification."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
+
+            webmention = processor.process_webmention(
+                source_url,
+                target_url,
+                vouch_url="https://trusted.example/vouch-for-example",
+            )
+
+            assert webmention.status == "failed"
+            assert webmention.vouch_verified_at is None
+            mock_client.get.assert_called_once_with(
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+            )
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.reject_final")
+    def test_processor_policy_rejects_final_vouch_after_redirect(self, processor):
+        """Test trust-policy rejection after redirects fails Vouch verification."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-for-example"
+        final_vouch_url = "https://untrusted.example/final-vouch"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=302, headers={"Location": final_vouch_url}),
+                _source_response(status_code=200, text=vouch_html),
+            ]
+
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
+
+            assert webmention.status == "failed"
+            assert webmention.vouch_verified_at is None
+            assert mock_client.get.call_args_list[2].args[0] == final_vouch_url
+
+    @pytest.mark.parametrize(
+        "policy_path",
+        [
+            "tests.vouch_policies.missing_policy",
+            "tests.vouch_policies.non_callable",
+            "tests.vouch_policies.raises",
+        ],
+    )
+    def test_processor_vouch_policy_misconfiguration_fails_closed(self, processor, settings, policy_path):
+        """Test bad policy imports, non-callables, and exceptions fail Vouch verification."""
+        settings.INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY = policy_path
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
+
+            webmention = processor.process_webmention(
+                source_url,
+                target_url,
+                vouch_url="https://trusted.example/vouch-for-example",
+            )
+
+            assert webmention.status == "failed"
+            assert webmention.vouch_verified_at is None
+            mock_client.get.assert_called_once_with(
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+            )
+
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
     def test_processor_preserves_parsed_fields_after_successful_vouch_verification(self, processor):
         """Test successful Vouch verification does not overwrite parsed microformats fields."""
@@ -331,6 +442,30 @@ class TestWebmentionProcessor:
 
             assert webmention.status == "failed"
             assert webmention.vouch_url == ""
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_REQUIRED=True)
+    def test_processor_required_vouch_without_trust_configuration_fails_closed(self, processor):
+        """Test required mode needs an explicit trust policy or domain allowlist."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
+
+            webmention = processor.process_webmention(
+                source_url,
+                target_url,
+                vouch_url="https://mysite.com/vouch-for-example",
+            )
+
+            assert webmention.status == "failed"
+            assert webmention.vouch_verified_at is None
+            mock_client.get.assert_called_once_with(
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+            )
 
     def test_process_queued_webmention_processes_existing_row(self):
         """Test the public worker helper dispatches processing for an existing row."""

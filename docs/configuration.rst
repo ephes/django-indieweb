@@ -237,14 +237,14 @@ INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Optional iterable of domains that django-indieweb may trust as Webmention
-Vouch voucher sites.
+Vouch voucher sites when no custom Vouch trust policy is configured.
 
 **Default:** ``None`` (submitted Vouch URLs are stored but not verified)
 
-When this setting is ``None``, incoming Webmentions may include the optional
+When this setting is ``None`` or empty, incoming Webmentions may include the optional
 ``vouch`` form parameter, and django-indieweb validates and stores that URL,
 but Vouch does not affect whether the processor marks the Webmention
-``verified``.
+``verified`` unless ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED`` is enabled.
 
 When set to an iterable of domain names, the processor verifies submitted
 Vouch URLs. A voucher URL must be on the configured Django ``Site`` domain or
@@ -264,6 +264,79 @@ source URL's domain. If any Vouch check fails, the Webmention is marked
 Domain matching is exact after lowercasing and treating a leading ``www.`` as
 equivalent to the bare hostname. Subdomains are not implicitly trusted.
 
+If ``INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY`` is configured, that callable
+owns the submitted and final voucher URL trust decisions. In that case,
+``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS`` is ignored by django-indieweb's
+built-in trust check, though your policy callable may read the setting itself.
+
+INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable that decides whether django-indieweb should
+trust a submitted Webmention Vouch URL.
+
+**Default:** ``None`` (use ``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS`` as
+the default/simple trust policy)
+
+When set, the processor imports the callable and invokes it during Vouch
+verification with keyword arguments:
+
+.. code-block:: python
+
+   def trust_vouch(
+       *,
+       webmention: Webmention,
+       source_url: str,
+       target_url: str,
+       vouch_url: str,
+       final_vouch_url: str | None = None,
+   ) -> bool:
+       ...
+
+The callable is evaluated twice for a submitted voucher:
+
+1. Before fetching the voucher, with ``final_vouch_url=None``. Returning
+   ``False`` rejects the voucher without a network request.
+2. After fetching and following allowed redirects, with ``final_vouch_url`` set
+   to the final voucher URL. Returning ``False`` rejects the voucher even if
+   the submitted URL was trusted.
+
+Both calls must return a truthy value. The policy controls only whether the
+submitted and final voucher URLs are trusted. The processor still requires the
+voucher response to be HTTP ``200`` with ``text/html`` content and to contain
+an HTTP(S) HTML ``href`` to the submitted source URL's domain.
+
+**Example:**
+
+.. code-block:: python
+
+   # myapp/webmentions.py
+   from urllib.parse import urlparse
+
+   TRUSTED_VOUCH_HOSTS = {"trusted.example", "events.example"}
+
+   def trust_vouch(
+       *,
+       webmention,
+       source_url: str,
+       target_url: str,
+       vouch_url: str,
+       final_vouch_url: str | None = None,
+   ) -> bool:
+       candidate = final_vouch_url or vouch_url
+       return urlparse(candidate).hostname in TRUSTED_VOUCH_HOSTS
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY = "myapp.webmentions.trust_vouch"
+
+If the configured path cannot be imported, resolves to a non-callable, or the
+callable raises, Vouch verification fails closed and the Webmention is marked
+``failed`` by the processor. When receiving asynchronously, the request path
+does not import or call the trust policy; workers evaluate it when they run
+``WebmentionProcessor``.
+
 INDIEWEB_WEBMENTION_VOUCH_REQUIRED
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -278,10 +351,11 @@ This requirement is enforced in ``WebmentionProcessor`` and queued worker
 paths, not in the receive request path.
 
 When ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED`` is ``True`` and
-``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS`` is unset or empty, only voucher
-URLs on the configured Django ``Site`` domain can pass the trust check. Most
-deployments that require Vouch should also configure at least one trusted
-external voucher domain.
+neither ``INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY`` nor
+``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS`` is configured, Vouch
+verification fails closed for submitted vouchers. Configure a trust policy or
+at least one trusted voucher domain before enabling required mode in
+production.
 
 URL Configuration
 -----------------
