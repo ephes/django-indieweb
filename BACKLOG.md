@@ -18,10 +18,6 @@ No current API Hardening items.
 
 ### Tooling and Maintainability
 
-- [ ] Convert admin legacy `TestCase` tests to pytest style.
-  - References: `tests/test_admin.py`.
-  - Outcome: replace `django.test.TestCase` classes with pytest fixtures/functions while preserving admin registration,
-    changelist, search, readonly, and add-permission coverage.
 - [ ] Convert Webmention sender and command legacy `TestCase` tests to pytest style.
   - References: `tests/test_webmention_sender.py`, `tests/test_send_webmentions_command.py`.
   - Outcome: replace `django.test.TestCase` setup/subtests with pytest fixtures and parametrization without changing

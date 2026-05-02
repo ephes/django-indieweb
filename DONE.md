@@ -4,6 +4,32 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-02
 
+### Convert admin legacy TestCase tests to pytest style
+
+- Converted ``tests/test_admin.py`` from ``django.test.TestCase`` classes to pytest fixtures and module-level test
+  functions with plain ``assert`` statements.
+- Preserved admin coverage for ``Webmention``, ``Token``, and ``Auth`` registration; Webmention changelist columns,
+  filters, search, and change view; Token changelist, readonly fields, and no-add permission; and Auth changelist,
+  readonly-all-fields behavior, and no-add permission. Explicit ``response.status_code == 200`` assertions now preserve
+  the status checks previously implied by ``assertContains``.
+- Remaining legacy ``TestCase`` files are ``tests/test_send_webmentions_command.py``,
+  ``tests/test_webmention_sender.py``, and ``tests/test_webmention_templatetags.py``. Focused backlog items remain for
+  those follow-up slices.
+- Backlog: removed the completed admin conversion item from ``BACKLOG.md``.
+- Documentation: no project documentation update was needed because this was a test-only maintenance refactor with no
+  behavior, workflow, public API, configuration, or user-facing usage change. No generated docs under ``docs/_build``
+  were edited or staged.
+- Changelog: no changelog update was needed because no behavior, bug fix, feature, configuration, workflow, or
+  user-facing change shipped in this slice.
+- Compatibility: no production code, dependencies, migrations, models, settings, templates, endpoint URLs, endpoint
+  semantics, or public APIs changed.
+- Validation: ``uv run pytest tests/test_admin.py tests/test_profile_admin.py tests/test_admin_json_widget.py -q``
+  (24 passed), ``uv run pytest tests/test_h_card_extra_classes.py tests/test_h_card_templatetags.py
+  tests/test_h_card_integration.py tests/test_profile_admin.py tests/test_admin_json_widget.py tests/test_admin.py -q``
+  (40 passed), ``uv run pytest`` (688 passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed),
+  ``uv run ruff format . --check`` (74 files already formatted), ``git diff --check`` (passed), and
+  ``git diff --cached --check`` (passed).
+
 ### Standardize test style on pytest
 
 - Documented pytest function/fixture style as the preferred style for new tests in ``AGENTS.md``, ``CLAUDE.md``, ``CONTRIBUTING.rst``, and ``docs/development.rst``. The guidance explicitly says not to mix ``pytest.mark.parametrize`` into legacy ``django.test.TestCase`` classes and to convert existing legacy files in focused maintenance slices.
