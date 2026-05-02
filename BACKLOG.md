@@ -14,11 +14,8 @@ No current Priority 1 items.
 
 ### Webmentions Reliability and Compliance
 
-- [ ] Record outbound target history from ordinary Webmention sends and add a Salmention resend sender API.
-  - References: `docs/webmention.rst` "Outbound Target Tracking" and "Outbound Resend Workflow Design", `src/indieweb/senders.py`, `tests/test_webmention_sender.py`.
-  - Outcome: extend `WebmentionSender.send_webmentions(source_url, html_content=None, vouch_url=None)` backwards-compatibly so ordinary sends refresh outbound target history while still delivering only current external links and returning the existing per-target result shape. Include an optional `record_history` escape hatch for callers that need the current no-write behavior. Add an explicit `resend_salmentions(source_url, html_content=None, vouch_url=None)` helper that sends to the union of current targets and recorded prior targets for that source, labels each result as current/history/both based on freshly extracted source links plus stored history, rediscovers endpoints before delivery, and updates history for attempted targets.
 - [ ] Add an explicit management-command workflow for outbound Salmention resends.
-  - References: `docs/webmention.rst` "Outbound Resend Workflow Design", `src/indieweb/management/commands/send_webmentions.py`, `tests/test_send_webmentions_command.py`.
+  - References: `docs/webmention.rst` "Outbound Resend Workflow", `src/indieweb/management/commands/send_webmentions.py`, `tests/test_send_webmentions_command.py`.
   - Outcome: add an optional resend flag such as `send_webmentions --salmention-resend` while preserving the default current-link-only command behavior. In resend mode, support existing `--content` including stdin via `--content -`, `--dry-run`, and `--vouch` options; dry-run output should show the union of current and historical targets and label each target's provenance. Document host-application and operator trigger examples after implementation.
 
 ### API Hardening

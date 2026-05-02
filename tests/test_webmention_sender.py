@@ -1,7 +1,10 @@
+from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from django.test import TestCase
+from django.utils import timezone
 
+from indieweb.models import WebmentionOutboundTarget
 from indieweb.senders import WebmentionSender
 
 
@@ -598,3 +601,326 @@ class TestWebmentionSender(TestCase):
         endpoint = self.sender.discover_endpoint("https://target.com/post?param=value#section")
 
         assert endpoint == "https://target.com/webmention"
+
+    def test_send_webmentions_records_outbound_target_history(self):
+        """Test ordinary sends record history for delivered current external targets."""
+        html_content = '<a href="https://target.com/post">Target</a>'
+        sent_at = timezone.now()
+
+        with patch("indieweb.senders.timezone.now", return_value=sent_at):
+            with patch.object(self.sender, "discover_endpoint", return_value="https://target.com/webmention"):
+                with patch.object(self.sender, "send_webmention", return_value={"success": True, "status_code": 202}):
+                    results = self.sender.send_webmentions(self.source_url, html_content)
+
+        assert len(results) == 1
+        target = WebmentionOutboundTarget.objects.get(source_url=self.source_url, target_url="https://target.com/post")
+        assert target.endpoint_url == "https://target.com/webmention"
+        assert target.endpoint_discovered_at == sent_at
+        assert target.first_sent_at == sent_at
+        assert target.last_sent_at == sent_at
+        assert target.last_status_code == 202
+        assert target.last_success is True
+        assert target.last_error == ""
+        assert target.last_seen_in_source_at == sent_at
+
+    def test_send_webmentions_repeated_send_updates_existing_history_row(self):
+        """Test repeated ordinary sends update one row while preserving first_sent_at."""
+        html_content = '<a href="https://target.com/post">Target</a>'
+        first_sent_at = timezone.now()
+        second_sent_at = first_sent_at + timedelta(minutes=5)
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://target.com/webmention"):
+            with patch.object(self.sender, "send_webmention", return_value={"success": True, "status_code": 202}):
+                with patch("indieweb.senders.timezone.now", return_value=first_sent_at):
+                    self.sender.send_webmentions(self.source_url, html_content)
+                with patch("indieweb.senders.timezone.now", return_value=second_sent_at):
+                    self.sender.send_webmentions(self.source_url, html_content)
+
+        assert WebmentionOutboundTarget.objects.count() == 1
+        target = WebmentionOutboundTarget.objects.get(source_url=self.source_url, target_url="https://target.com/post")
+        assert target.first_sent_at == first_sent_at
+        assert target.last_sent_at == second_sent_at
+        assert target.last_seen_in_source_at == second_sent_at
+
+    def test_send_webmentions_records_failed_delivery_history(self):
+        """Test ordinary failed deliveries record latest failure status and error."""
+        html_content = '<a href="https://target.com/post">Target</a>'
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://target.com/webmention"):
+            with patch.object(
+                self.sender,
+                "send_webmention",
+                return_value={"success": False, "status_code": 500, "error": "HTTP 500"},
+            ):
+                self.sender.send_webmentions(self.source_url, html_content)
+
+        target = WebmentionOutboundTarget.objects.get(source_url=self.source_url, target_url="https://target.com/post")
+        assert target.last_success is False
+        assert target.last_status_code == 500
+        assert target.last_error == "HTTP 500"
+
+    def test_send_webmentions_records_latest_vouch_url(self):
+        """Test ordinary sends record the latest Vouch URL used for delivery."""
+        html_content = '<a href="https://target.com/post">Target</a>'
+        vouch = "https://trusted.example/vouch-for-example"
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://target.com/webmention"):
+            with patch.object(self.sender, "send_webmention", return_value={"success": True, "status_code": 202}):
+                self.sender.send_webmentions(self.source_url, html_content, vouch_url=vouch)
+
+        target = WebmentionOutboundTarget.objects.get(source_url=self.source_url, target_url="https://target.com/post")
+        assert target.last_vouch_url == vouch
+
+    def test_send_webmentions_record_history_false_does_not_write_history(self):
+        """Test record_history=False keeps ordinary send delivery but avoids writes."""
+        html_content = '<a href="https://target.com/post">Target</a>'
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://target.com/webmention"):
+            with patch.object(self.sender, "send_webmention", return_value={"success": True, "status_code": 202}):
+                results = self.sender.send_webmentions(self.source_url, html_content, record_history=False)
+
+        assert len(results) == 1
+        assert WebmentionOutboundTarget.objects.count() == 0
+
+    def test_send_webmentions_skips_relative_and_same_domain_urls_without_history(self):
+        """Test skipped ordinary targets are neither sent nor recorded."""
+        html_content = """
+        <a href="/relative">Relative</a>
+        <a href="https://example.com/other">Same domain</a>
+        <a href="https://target.com/post">Target</a>
+        """
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://target.com/webmention") as discover:
+            with patch.object(self.sender, "send_webmention", return_value={"success": True, "status_code": 202}):
+                results = self.sender.send_webmentions(self.source_url, html_content)
+
+        assert len(results) == 1
+        discover.assert_called_once_with("https://target.com/post")
+        assert list(WebmentionOutboundTarget.objects.values_list("target_url", flat=True)) == [
+            "https://target.com/post"
+        ]
+
+    def test_send_webmentions_no_endpoint_preserves_no_result_and_no_history(self):
+        """Test ordinary sends without endpoint discovery do not create results or history."""
+        html_content = '<a href="https://target.com/post">Target</a>'
+
+        with patch.object(self.sender, "discover_endpoint", return_value=None):
+            with patch.object(self.sender, "send_webmention") as send:
+                results = self.sender.send_webmentions(self.source_url, html_content)
+
+        assert results == []
+        send.assert_not_called()
+        assert WebmentionOutboundTarget.objects.count() == 0
+
+    def test_send_webmentions_history_uses_exact_url_strings(self):
+        """Test ordinary history keys are not canonicalized."""
+        target_urls = [
+            "https://target.com/post?a=1&b=2",
+            "https://target.com/post?b=2&a=1",
+            "https://target.com/post#fragment",
+            "https://TARGET.com/post",
+            "https://target.com/post/",
+        ]
+        html_content = "".join(f'<a href="{target_url}">Target</a>' for target_url in target_urls)
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://target.com/webmention"):
+            with patch.object(self.sender, "send_webmention", return_value={"success": True, "status_code": 202}):
+                self.sender.send_webmentions(self.source_url, html_content)
+
+        assert set(WebmentionOutboundTarget.objects.values_list("target_url", flat=True)) == set(target_urls)
+
+    def test_resend_salmentions_sends_current_history_and_both_for_exact_source(self):
+        """Test resend_salmentions sends the exact-source union and labels provenance."""
+        html_content = """
+        <a href="https://current.example/post">Current</a>
+        <a href="https://both.example/post">Both</a>
+        """
+        WebmentionOutboundTarget.objects.create(
+            source_url=self.source_url,
+            target_url="https://history.example/post",
+            endpoint_url="https://history.example/old-webmention",
+        )
+        WebmentionOutboundTarget.objects.create(source_url=self.source_url, target_url="https://both.example/post")
+        WebmentionOutboundTarget.objects.create(
+            source_url="https://example.com/other-post",
+            target_url="https://other-history.example/post",
+        )
+
+        def discover(target_url):
+            return f"{target_url}/webmention"
+
+        with patch.object(self.sender, "discover_endpoint", side_effect=discover) as discover_mock:
+            with patch.object(
+                self.sender,
+                "send_webmention",
+                side_effect=lambda *args, **kwargs: {"success": True, "status_code": 202},
+            ) as send:
+                results = self.sender.resend_salmentions(self.source_url, html_content)
+
+        provenance = {result["target"]: result["provenance"] for result in results}
+        assert provenance == {
+            "https://both.example/post": "both",
+            "https://current.example/post": "current",
+            "https://history.example/post": "history",
+        }
+        assert {call.args[0] for call in discover_mock.call_args_list} == set(provenance)
+        assert {call.args[1] for call in send.call_args_list} == set(provenance)
+        assert "https://other-history.example/post" not in provenance
+
+    def test_resend_salmentions_rediscovers_historical_endpoint(self):
+        """Test resend delivery uses a freshly discovered endpoint, not stored diagnostics."""
+        WebmentionOutboundTarget.objects.create(
+            source_url=self.source_url,
+            target_url="https://history.example/post",
+            endpoint_url="https://history.example/old-webmention",
+        )
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://history.example/new-webmention"):
+            with patch.object(
+                self.sender,
+                "send_webmention",
+                return_value={"success": True, "status_code": 202},
+            ) as send:
+                self.sender.resend_salmentions(self.source_url, "<p>No current links</p>")
+
+        send.assert_called_once_with(
+            self.source_url,
+            "https://history.example/post",
+            "https://history.example/new-webmention",
+            vouch=None,
+        )
+        target = WebmentionOutboundTarget.objects.get(
+            source_url=self.source_url, target_url="https://history.example/post"
+        )
+        assert target.endpoint_url == "https://history.example/new-webmention"
+
+    def test_resend_salmentions_refreshes_history_for_current_and_historical_targets(self):
+        """Test resend refreshes history rows for both current-only and historical-only targets."""
+        html_content = '<a href="https://current.example/post">Current</a>'
+        old_seen_at = timezone.now() - timedelta(days=1)
+        resent_at = timezone.now()
+        WebmentionOutboundTarget.objects.create(
+            source_url=self.source_url,
+            target_url="https://history.example/post",
+            last_seen_in_source_at=old_seen_at,
+        )
+
+        with patch("indieweb.senders.timezone.now", return_value=resent_at):
+            with patch.object(self.sender, "discover_endpoint", return_value="https://endpoint.example/webmention"):
+                with patch.object(
+                    self.sender,
+                    "send_webmention",
+                    side_effect=lambda *args, **kwargs: {"success": True, "status_code": 202},
+                ):
+                    self.sender.resend_salmentions(self.source_url, html_content)
+
+        current = WebmentionOutboundTarget.objects.get(
+            source_url=self.source_url,
+            target_url="https://current.example/post",
+        )
+        historical = WebmentionOutboundTarget.objects.get(
+            source_url=self.source_url,
+            target_url="https://history.example/post",
+        )
+        assert current.first_sent_at == resent_at
+        assert current.last_seen_in_source_at == resent_at
+        assert historical.last_sent_at == resent_at
+        assert historical.last_seen_in_source_at == old_seen_at
+
+    def test_resend_salmentions_passes_vouch_to_each_delivery(self):
+        """Test resend passes Vouch through to all deliveries."""
+        html_content = '<a href="https://current.example/post">Current</a>'
+        WebmentionOutboundTarget.objects.create(source_url=self.source_url, target_url="https://history.example/post")
+        vouch = "https://trusted.example/vouch-for-example"
+
+        with patch.object(self.sender, "discover_endpoint", return_value="https://endpoint.example/webmention"):
+            with patch.object(
+                self.sender,
+                "send_webmention",
+                side_effect=lambda *args, **kwargs: {"success": True, "status_code": 202},
+            ) as send:
+                self.sender.resend_salmentions(self.source_url, html_content, vouch_url=vouch)
+
+        assert send.call_count == 2
+        for call in send.call_args_list:
+            assert call.kwargs["vouch"] == vouch
+        assert set(WebmentionOutboundTarget.objects.values_list("last_vouch_url", flat=True)) == {vouch}
+
+    def test_resend_salmentions_returns_no_endpoint_result_and_history(self):
+        """Test resend reports and records union targets whose endpoints cannot be discovered."""
+        discovered_at = timezone.now() - timedelta(hours=2)
+        sent_at = timezone.now() - timedelta(hours=1)
+        WebmentionOutboundTarget.objects.create(
+            source_url=self.source_url,
+            target_url="https://history.example/post",
+            endpoint_url="https://history.example/old-webmention",
+            endpoint_discovered_at=discovered_at,
+            first_sent_at=sent_at,
+            last_sent_at=sent_at,
+        )
+
+        with patch.object(self.sender, "discover_endpoint", return_value=None):
+            with patch.object(self.sender, "send_webmention") as send:
+                results = self.sender.resend_salmentions(self.source_url, "<p>No current links</p>")
+
+        assert results == [
+            {
+                "success": False,
+                "status_code": None,
+                "error": "No endpoint found",
+                "target": "https://history.example/post",
+                "endpoint": None,
+                "provenance": "history",
+            }
+        ]
+        send.assert_not_called()
+        target = WebmentionOutboundTarget.objects.get(
+            source_url=self.source_url, target_url="https://history.example/post"
+        )
+        assert target.last_success is False
+        assert target.last_status_code is None
+        assert target.last_error == "No endpoint found"
+        assert target.endpoint_url == "https://history.example/old-webmention"
+        assert target.endpoint_discovered_at == discovered_at
+        assert target.first_sent_at == sent_at
+        assert target.last_sent_at == sent_at
+
+    def test_resend_salmentions_current_no_endpoint_records_unsent_history(self):
+        """Test no-endpoint current resend history is not marked as sent."""
+        html_content = '<a href="https://current.example/post">Current</a>'
+        discovered_at = timezone.now()
+
+        with patch("indieweb.senders.timezone.now", return_value=discovered_at):
+            with patch.object(self.sender, "discover_endpoint", return_value=None):
+                with patch.object(self.sender, "send_webmention") as send:
+                    results = self.sender.resend_salmentions(self.source_url, html_content)
+
+        assert results == [
+            {
+                "success": False,
+                "status_code": None,
+                "error": "No endpoint found",
+                "target": "https://current.example/post",
+                "endpoint": None,
+                "provenance": "current",
+            }
+        ]
+        send.assert_not_called()
+        target = WebmentionOutboundTarget.objects.get(
+            source_url=self.source_url, target_url="https://current.example/post"
+        )
+        assert target.endpoint_url == ""
+        assert target.endpoint_discovered_at is None
+        assert target.first_sent_at is None
+        assert target.last_sent_at is None
+        assert target.last_success is False
+        assert target.last_status_code is None
+        assert target.last_error == "No endpoint found"
+        assert target.last_seen_in_source_at == discovered_at
+
+    def test_resend_salmentions_returns_empty_when_content_fetch_fails(self):
+        """Test resend mirrors ordinary fetch failure behavior."""
+        with patch.object(self.sender, "fetch_content", return_value=None):
+            results = self.sender.resend_salmentions(self.source_url)
+
+        assert results == []

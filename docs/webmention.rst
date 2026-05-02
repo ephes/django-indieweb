@@ -291,26 +291,27 @@ it, creates or updates child rows for stable nested ``h-entry`` responses, and
 marks children that disappeared from the latest verified source as missing.
 
 This does **not** mean full Salmention support is implemented. django-indieweb
-does not send nested-response notifications or implement outbound Salmention
-sending.
+does not automatically infer when a host application has incorporated a
+downstream response into an original permalink, and the management command does
+not yet expose an outbound Salmention resend mode.
 
-Outbound Salmention sending has a concrete design and now has a schema
-foundation for package-managed outbound target history. The protocol expects a
-site to resend Webmentions to everything the original post previously sent
-Webmentions to after a newly received response has been incorporated into that
-original post's permalink. The current ``WebmentionSender`` can explicitly send
-Webmentions for links found in a source page, and ``send_webmentions`` can be
-run again after a page changes, but ordinary sends do not yet record outbound
-target history and django-indieweb does not yet expose the explicit post-update
-resend API described below.
+Outbound Salmention sender support now has package-managed outbound target
+history and an explicit sender API. The protocol expects a site to resend
+Webmentions to everything the original post previously sent Webmentions to
+after a newly received response has been incorporated into that original post's
+permalink. Ordinary ``WebmentionSender.send_webmentions()`` calls record
+outbound target history by default while still sending only links found in the
+current source page. Host applications can call
+``WebmentionSender.resend_salmentions()`` after they update the rendered source
+permalink to notify the union of current links and previously recorded targets.
 
 No Salmention setting is available. Source snapshots and child response storage
 are always owned by verified processor/worker processing, bundled nested
 rendering is part of the default ``show_webmentions`` template path, and
-outbound target-history storage is available as a model rather than a setting
-toggle. Future sending support should record ordinary sends into that
-package-managed target history and use the explicit operator- or
-application-driven resend workflow described here rather than a global setting.
+outbound target-history storage plus sender resend support are package behavior
+rather than setting toggles. Host applications and operators still own the
+explicit signal that a source permalink changed and should use the sender API
+or a future management-command wrapper rather than a global setting.
 
 Outbound Target Tracking
 ------------------------
@@ -369,27 +370,37 @@ operator-provided historical lists. A future import or migration helper could
 explicitly record older targets for a source, but no such backfill tool is
 required for the first resend-capable implementation.
 
-Ordinary sends do not populate or refresh target history yet. A future sender
-slice should add that durable side effect. The default behavior of
-``WebmentionSender.send_webmentions(source_url, html_content=None,
-vouch_url=None)`` should keep returning per-target delivery dictionaries and
-should keep sending only current external links. Recording target history is an
-additional durable side effect in that future implementation, not a change to
-which ordinary targets are delivered. If a caller needs the existing no-write
-behavior for tests or unusual integrations, that future slice should add an
-optional backwards-compatible ``record_history`` parameter rather than changing
-the existing required arguments.
+Ordinary sends populate and refresh target history by default. The default
+behavior of ``WebmentionSender.send_webmentions(source_url, html_content=None,
+vouch_url=None, record_history=True)`` still returns per-target delivery
+dictionaries with the ordinary ``success``, ``status_code``, ``target``,
+``endpoint``, and optional ``error`` keys, and it still sends only current
+external absolute HTTP(S) links. Relative URLs, same-domain URLs, and targets
+without a discovered endpoint do not produce ordinary send results or outbound
+history rows. Recording target history is an additional durable side effect,
+not a change to which ordinary targets are delivered.
 
-Outbound Resend Workflow Design
--------------------------------
+Callers that need the earlier no-write behavior for tests or unusual
+integrations can pass ``record_history=False``:
 
-Future sending support should expose an explicit resend workflow instead of
-trying to infer Salmention timing from incoming Webmention processing. A host
-application knows whether a received response was accepted, moderated,
-rendered, and incorporated into an original post permalink; django-indieweb
-does not.
+.. code-block:: python
 
-The package API should add a helper with a shape like:
+    sender.send_webmentions(
+        "https://mysite.example/post/",
+        html_content=rendered_html,
+        record_history=False,
+    )
+
+Outbound Resend Workflow
+------------------------
+
+Sender support exposes an explicit resend workflow instead of trying to infer
+Salmention timing from incoming Webmention processing. A host application knows
+whether a received response was accepted, moderated, rendered, and incorporated
+into an original post permalink; django-indieweb does not.
+
+Use ``WebmentionSender.resend_salmentions()`` after the source permalink has
+been updated:
 
 .. code-block:: python
 
@@ -402,20 +413,33 @@ The package API should add a helper with a shape like:
         vouch_url=vouch_url,
     )
 
-``resend_salmentions()`` should require the source URL and either caller-
-provided HTML or fetchable source content, then:
+``resend_salmentions()`` requires the source URL and either caller-provided HTML
+or fetchable source content, then:
 
 1. Extract the source's current external links using the same rules as ordinary
    sending.
 2. Load previously recorded target history for exactly that ``source_url``.
-3. Send Webmentions to the union of current targets and historical targets.
+3. Attempts Webmentions for the union of current targets and historical
+   targets.
 4. Rediscover each target's endpoint before delivery.
-5. Mark each result with whether the target came from current content, prior
-   history, or both.
+5. Marks each result with ``provenance`` set to ``current``, ``history``, or
+   ``both``.
 6. Refresh outbound target history for each attempted target, including targets
    that are no longer linked from the current source.
 
-This helper should not be called automatically by ``WebmentionProcessor``.
+Every resend result includes at least ``target``, ``endpoint``, ``success``,
+``status_code``, and ``provenance``. When a union target has no discoverable
+endpoint, the result reports ``success=False``, ``status_code=None``, and an
+``error`` explaining that no endpoint was found so callers can see historical
+targets that could not be delivered. No-endpoint resend results refresh the
+latest outcome fields but do not overwrite previously discovered endpoint
+diagnostics or advance sent timestamps because no Webmention POST was made.
+Resend attempts refresh ``WebmentionOutboundTarget`` diagnostics for current
+and historical targets. For historical-only targets, ``last_seen_in_source_at``
+is not advanced because the target was not present in the latest source
+content.
+
+This helper is not called automatically by ``WebmentionProcessor``.
 Receive-side verification, source snapshots, nested response storage, Vouch
 verification, and async queue behavior must stay focused on receiving. A host
 application should call the helper only after it has accepted a downstream
@@ -434,7 +458,7 @@ The management command should keep its current behavior by default:
 
 That default remains an ordinary current-link send. A future optional flag, for
 example ``--salmention-resend``, should switch the command to the explicit
-resend workflow:
+resend workflow. That flag is not implemented yet:
 
 .. code-block:: bash
 
@@ -457,11 +481,8 @@ for this source``, not every URL that ever appeared in the database.
 Implementation Follow-ups
 -------------------------
 
-The outbound design should be implemented in focused slices:
+The remaining outbound design should be implemented in focused slices:
 
-* Extend ``WebmentionSender`` so ordinary sends record history without changing
-  current target delivery, and add ``resend_salmentions()`` for union-of-current
-  and historical target delivery.
 * Extend ``send_webmentions`` with an optional resend flag and dry-run output
   that labels target provenance.
 * Document the host-application trigger pattern with examples for direct calls

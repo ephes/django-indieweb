@@ -364,11 +364,14 @@ There is no Salmention-specific setting in django-indieweb today.
 django-indieweb persists verified Webmention source snapshots and stable nested
 child response rows as a foundation for receive-side Salmention support, but
 the bundled ``show_webmentions`` template tag renders verified children inline
-under verified parent replies. Outbound Salmention sending remains
-unimplemented; the package now provides an outbound target-history table, but
-ordinary sends do not yet record to it and no resend API or command flag exists
-yet. The documented design uses that package-managed history plus an explicit
-host-application or operator-triggered resend workflow, not a setting toggle.
+under verified parent replies. Outbound sender support records ordinary
+``WebmentionSender.send_webmentions()`` delivery attempts to the outbound
+target-history table by default and exposes
+``WebmentionSender.resend_salmentions()`` for application-triggered union-of-
+current-and-historical resends. The management-command resend workflow remains
+deferred. The documented design uses that package-managed history plus an
+explicit host-application or operator-triggered resend workflow, not a setting
+toggle.
 See :doc:`webmention` for the support-status details, target-history design,
 and current ordinary Webmention reprocessing behavior.
 
@@ -489,9 +492,11 @@ parent is deleted.
 
 ``WebmentionOutboundTarget`` is separate from incoming ``Webmention`` rows and
 uses no foreign key to them. Rows are unique by the exact source URL and target
-URL strings stored for outbound delivery history. Sender-side history recording
-and outbound Salmention resend APIs or command flags are still deferred, so the
-table is available as schema/storage foundation only in this release.
+URL strings stored for outbound delivery history. Ordinary sender calls now
+record and refresh these rows by default for delivered current external targets,
+and ``WebmentionSender.resend_salmentions()`` uses rows for exactly the same
+``source_url`` together with current source links. The management-command
+resend flag remains deferred.
 
 Migrations
 ~~~~~~~~~~

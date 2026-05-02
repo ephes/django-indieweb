@@ -5,8 +5,10 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from django.utils import timezone
 
 from .http_client import request_with_webmention_redirects
+from .models import WebmentionOutboundTarget
 
 
 class WebmentionSender:
@@ -187,7 +189,11 @@ class WebmentionSender:
             return None
 
     def send_webmentions(
-        self, source_url: str, html_content: str | None = None, vouch_url: str | None = None
+        self,
+        source_url: str,
+        html_content: str | None = None,
+        vouch_url: str | None = None,
+        record_history: bool = True,
     ) -> list[dict]:
         """Send webmentions to all URLs found in the content.
 
@@ -195,6 +201,7 @@ class WebmentionSender:
             source_url: The source URL (your post)
             html_content: Optional HTML content. If not provided, will be fetched.
             vouch_url: Optional Vouch URL to include with each sent Webmention
+            record_history: Whether to record attempted deliveries in outbound target history
 
         Returns:
             List of results for each webmention attempt
@@ -205,22 +212,13 @@ class WebmentionSender:
             if html_content is None:
                 return []
 
-        # Extract URLs from content
-        urls = self.extract_urls(html_content)
+        # Extract deliverable target URLs from content
+        target_urls = self._extract_external_target_urls(source_url, html_content)
 
         # Send webmentions to each URL
         results = []
-        source_domain = urlparse(source_url).netloc
 
-        for target_url in urls:
-            # Skip relative URLs and self-references
-            if not target_url.startswith(("http://", "https://")):
-                continue
-
-            target_domain = urlparse(target_url).netloc
-            if target_domain == source_domain:
-                continue
-
+        for target_url in target_urls:
             # Discover endpoint
             endpoint = self.discover_endpoint(target_url)
             if endpoint:
@@ -229,5 +227,129 @@ class WebmentionSender:
                 result["target"] = target_url
                 result["endpoint"] = endpoint
                 results.append(result)
+                if record_history:
+                    self._record_outbound_target(
+                        source_url=source_url,
+                        target_url=target_url,
+                        endpoint=endpoint,
+                        result=result,
+                        vouch_url=vouch_url,
+                        seen_in_source=True,
+                        sent=True,
+                    )
 
         return results
+
+    def resend_salmentions(
+        self,
+        source_url: str,
+        html_content: str | None = None,
+        vouch_url: str | None = None,
+    ) -> list[dict]:
+        """Resend Webmentions to current and historical targets for a source URL.
+
+        Args:
+            source_url: The source URL (your post)
+            html_content: Optional HTML content. If not provided, will be fetched.
+            vouch_url: Optional Vouch URL to include with each sent Webmention
+
+        Returns:
+            List of results for each current or historical target, including provenance
+        """
+        if html_content is None:
+            html_content = self.fetch_content(source_url)
+            if html_content is None:
+                return []
+
+        current_targets = set(self._extract_external_target_urls(source_url, html_content))
+        historical_targets = set(
+            WebmentionOutboundTarget.objects.filter(source_url=source_url).values_list("target_url", flat=True)
+        )
+
+        results = []
+        for target_url in sorted(current_targets | historical_targets):
+            provenance = self._target_provenance(target_url, current_targets, historical_targets)
+            endpoint = self.discover_endpoint(target_url)
+            if endpoint:
+                result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url)
+            else:
+                result = {
+                    "success": False,
+                    "status_code": None,
+                    "error": "No endpoint found",
+                }
+
+            result["target"] = target_url
+            result["endpoint"] = endpoint
+            result["provenance"] = provenance
+            results.append(result)
+            self._record_outbound_target(
+                source_url=source_url,
+                target_url=target_url,
+                endpoint=endpoint,
+                result=result,
+                vouch_url=vouch_url,
+                seen_in_source=target_url in current_targets,
+                sent=endpoint is not None,
+            )
+
+        return results
+
+    def _extract_external_target_urls(self, source_url: str, html_content: str) -> list[str]:
+        """Extract current absolute external HTTP(S) targets from HTML content."""
+        urls = self.extract_urls(html_content)
+        source_domain = urlparse(source_url).netloc
+        target_urls = []
+
+        for target_url in urls:
+            if not target_url.startswith(("http://", "https://")):
+                continue
+
+            target_domain = urlparse(target_url).netloc
+            if target_domain == source_domain:
+                continue
+
+            target_urls.append(target_url)
+
+        return target_urls
+
+    def _record_outbound_target(
+        self,
+        *,
+        source_url: str,
+        target_url: str,
+        endpoint: str | None,
+        result: dict,
+        vouch_url: str | None,
+        seen_in_source: bool,
+        sent: bool,
+    ) -> None:
+        """Create or refresh outbound Webmention target history for an attempt."""
+        now = timezone.now()
+        target, _ = WebmentionOutboundTarget.objects.get_or_create(
+            source_url=source_url,
+            target_url=target_url,
+        )
+
+        if endpoint:
+            target.endpoint_url = endpoint
+            target.endpoint_discovered_at = now
+        if sent:
+            if target.first_sent_at is None:
+                target.first_sent_at = now
+            target.last_sent_at = now
+            target.last_vouch_url = vouch_url or ""
+        target.last_status_code = result.get("status_code")
+        target.last_success = bool(result.get("success"))
+        target.last_error = result.get("error") or ""
+        if seen_in_source:
+            target.last_seen_in_source_at = now
+        target.save()
+
+    def _target_provenance(self, target_url: str, current_targets: set[str], historical_targets: set[str]) -> str:
+        """Return the resend provenance label for a target URL."""
+        if target_url in current_targets and target_url in historical_targets:
+            return "both"
+        if target_url in current_targets:
+            return "current"
+        return "history"
