@@ -237,6 +237,34 @@ class WebmentionNestedResponse(models.Model):
         return Webmention.objects.only("status").filter(pk=self.webmention_id, status="verified").exists()
 
 
+class WebmentionOutboundTarget(models.Model):
+    """Outbound Webmention target history for a source and target URL pair."""
+
+    source_url = models.URLField(max_length=500, db_index=True, validators=[URLValidator(schemes=["http", "https"])])
+    target_url = models.URLField(max_length=500, db_index=True, validators=[URLValidator(schemes=["http", "https"])])
+    endpoint_url = models.URLField(max_length=500, blank=True, validators=[URLValidator(schemes=["http", "https"])])
+    endpoint_discovered_at = models.DateTimeField(null=True, blank=True)
+
+    first_sent_at = models.DateTimeField(null=True, blank=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    last_status_code = models.PositiveIntegerField(null=True, blank=True)
+    last_success = models.BooleanField(default=False)
+    last_error = models.TextField(blank=True)
+    last_vouch_url = models.URLField(max_length=500, blank=True, validators=[URLValidator(schemes=["http", "https"])])
+    last_seen_in_source_at = models.DateTimeField(null=True, blank=True)
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["source_url", "target_url"], name="indieweb_outbound_target_uniq"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Outbound Webmention: {self.source_url} -> {self.target_url}"
+
+
 class Profile(models.Model):
     """User profile with h-card data stored as JSON."""
 

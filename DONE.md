@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-02
 
+### Add outbound Webmention target-history storage
+
+- Added ``WebmentionOutboundTarget`` as a django-indieweb-managed outbound Webmention target-history model, separate from incoming ``Webmention`` rows, receive-side source snapshots, and nested response rows.
+- The model stores exact HTTP(S) ``source_url``/``target_url`` strings with a named uniqueness constraint, endpoint diagnostics, first/latest send timestamps, latest status/result/error fields, latest Vouch URL, diagnostic ``last_seen_in_source_at``, and created/modified timestamps. URL variants are preserved as distinct strings; no receive-side canonicalization policy is applied to outbound history keys.
+- Added migration ``0015_webmention_outbound_target`` and focused model tests for creation, defaults, HTTP(S) URL validation, exact pair uniqueness, exact-string identity variants, result/timestamp persistence, and string representation.
+- Preserved implementation boundary: no ordinary-send history recording, no ``WebmentionSender.resend_salmentions()``, no ``record_history`` parameter, no ``send_webmentions --salmention-resend`` flag, and no sender, command, receive endpoint, processor, async receive, Vouch, template, or Salmention setting behavior changes.
+- Documentation: updated ``docs/configuration.rst`` to list seven models and describe the table as schema/storage foundation only; updated ``docs/webmention.rst`` so support status distinguishes available outbound target-history storage from still-deferred sender/command resend workflows. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased entry for the outbound target-history model/migration and explicitly scoped sender/command resend workflows as deferred.
+- Backlog: removed the completed target-history storage item from ``BACKLOG.md`` and kept the sender API/history recording and management-command resend workflow follow-ups open.
+- Validation: ``uv run pytest tests/test_webmention_models.py -q`` (28 passed), ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb --check --dry-run`` (no changes), ``uv run pytest`` (632 passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed), ``uv build`` (passed), and ``git diff --check`` (passed).
+
 ### Design outbound target tracking for sending Salmentions
 
 - Designed outbound Salmention sending as a hybrid responsibility: django-indieweb should own durable outbound target history for original source URL and target URL pairs, while host applications own the signal that an accepted downstream response has been incorporated into the rendered original permalink and should trigger a resend.

@@ -294,38 +294,41 @@ This does **not** mean full Salmention support is implemented. django-indieweb
 does not send nested-response notifications or implement outbound Salmention
 sending.
 
-Outbound Salmention sending has a concrete design, but that design is not
-implemented yet. The protocol expects a site to resend Webmentions to everything
-the original post previously sent Webmentions to after a newly received response
-has been incorporated into that original post's permalink. The current
-``WebmentionSender`` can explicitly send Webmentions for links found in a source
-page, and ``send_webmentions`` can be run again after a page changes, but
-django-indieweb does not yet record the prior outbound target set for each
-original post or expose the explicit post-update resend API described below.
+Outbound Salmention sending has a concrete design and now has a schema
+foundation for package-managed outbound target history. The protocol expects a
+site to resend Webmentions to everything the original post previously sent
+Webmentions to after a newly received response has been incorporated into that
+original post's permalink. The current ``WebmentionSender`` can explicitly send
+Webmentions for links found in a source page, and ``send_webmentions`` can be
+run again after a page changes, but ordinary sends do not yet record outbound
+target history and django-indieweb does not yet expose the explicit post-update
+resend API described below.
 
 No Salmention setting is available. Source snapshots and child response storage
-are always owned by verified processor/worker processing, and bundled nested
-rendering is part of the default ``show_webmentions`` template path. Future
-sending support should use the package-managed target history and explicit
-operator- or application-driven resend workflow described here rather than a
-global setting.
+are always owned by verified processor/worker processing, bundled nested
+rendering is part of the default ``show_webmentions`` template path, and
+outbound target-history storage is available as a model rather than a setting
+toggle. Future sending support should record ordinary sends into that
+package-managed target history and use the explicit operator- or
+application-driven resend workflow described here rather than a global setting.
 
-Outbound Target Tracking Design
--------------------------------
+Outbound Target Tracking
+------------------------
 
-Future outbound Salmention support should use a hybrid ownership model:
-django-indieweb should own durable outbound Webmention target history, while
-the host application should own source rendering and the signal that an
-accepted downstream response has actually changed an original permalink.
+Outbound Salmention support uses a hybrid ownership model: django-indieweb owns
+durable outbound Webmention target-history storage, while the host application
+owns source rendering and the signal that an accepted downstream response has
+actually changed an original permalink.
 
-Target history should live in a django-indieweb-managed model, for example
-``WebmentionOutboundTarget``. Each row should represent one original source URL
-and one target URL that django-indieweb attempted to notify from that source.
-The row is history for resend decisions, not a received Webmention and not a
-nested response. It should therefore be separate from ``Webmention``,
-``WebmentionSourceSnapshot``, and ``WebmentionNestedResponse``.
+Target history lives in the django-indieweb-managed
+``WebmentionOutboundTarget`` model. Each row represents one original source URL
+and one target URL that django-indieweb can use as outbound delivery history
+for that source. The row is history for resend decisions, not a received
+Webmention and not a nested response. It is therefore separate from
+``Webmention``, ``WebmentionSourceSnapshot``, and
+``WebmentionNestedResponse``.
 
-The minimum persisted fields are:
+The persisted fields are:
 
 * ``source_url``: the original post permalink whose outbound Webmentions were
   sent.
@@ -349,13 +352,13 @@ The minimum persisted fields are:
   historical provenance by extracting links from the latest source content at
   resend time.
 
-The first outbound history schema should store the exact absolute HTTP(S)
-``source_url`` and ``target_url`` strings used for delivery and uniqueness.
-It should not silently apply the receive-side target matching canonicalization
-policy to those keys, because outgoing Webmention updates are sent with the
-specific source and target URLs supplied by the host application. Host
-applications should pass stable canonical public permalinks for source URLs so
-one post's history is not fragmented across variants.
+The outbound history schema stores the exact absolute HTTP(S) ``source_url``
+and ``target_url`` strings used for delivery and uniqueness. It does not
+silently apply the receive-side target matching canonicalization policy to
+those keys, because outgoing Webmention updates are sent with the specific
+source and target URLs supplied by the host application. Host applications
+should pass stable canonical public permalinks for source URLs so one post's
+history is not fragmented across variants.
 
 An implementation may later add detailed attempt rows, final redirected
 endpoint URLs, or retry metadata, but those are not required for the first
@@ -366,16 +369,16 @@ operator-provided historical lists. A future import or migration helper could
 explicitly record older targets for a source, but no such backfill tool is
 required for the first resend-capable implementation.
 
-Ordinary sends should populate and refresh target history once the model
-exists. The default behavior of
+Ordinary sends do not populate or refresh target history yet. A future sender
+slice should add that durable side effect. The default behavior of
 ``WebmentionSender.send_webmentions(source_url, html_content=None,
 vouch_url=None)`` should keep returning per-target delivery dictionaries and
 should keep sending only current external links. Recording target history is an
 additional durable side effect in that future implementation, not a change to
 which ordinary targets are delivered. If a caller needs the existing no-write
-behavior for tests or unusual integrations, add an optional backwards-compatible
-``record_history`` parameter rather than changing the existing required
-arguments.
+behavior for tests or unusual integrations, that future slice should add an
+optional backwards-compatible ``record_history`` parameter rather than changing
+the existing required arguments.
 
 Outbound Resend Workflow Design
 -------------------------------
@@ -456,8 +459,6 @@ Implementation Follow-ups
 
 The outbound design should be implemented in focused slices:
 
-* Add the outbound target-history model and migration, plus model tests for the
-  uniqueness and timestamp/update contract.
 * Extend ``WebmentionSender`` so ordinary sends record history without changing
   current target delivery, and add ``resend_salmentions()`` for union-of-current
   and historical target delivery.

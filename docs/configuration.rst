@@ -365,11 +365,12 @@ django-indieweb persists verified Webmention source snapshots and stable nested
 child response rows as a foundation for receive-side Salmention support, but
 the bundled ``show_webmentions`` template tag renders verified children inline
 under verified parent replies. Outbound Salmention sending remains
-unimplemented; its documented design uses package-managed outbound target
-history plus an explicit host-application or operator-triggered resend
-workflow, not a setting toggle. See :doc:`webmention` for the support-status
-details, target-history design, and current ordinary Webmention reprocessing
-behavior.
+unimplemented; the package now provides an outbound target-history table, but
+ordinary sends do not yet record to it and no resend API or command flag exists
+yet. The documented design uses that package-managed history plus an explicit
+host-application or operator-triggered resend workflow, not a setting toggle.
+See :doc:`webmention` for the support-status details, target-history design,
+and current ordinary Webmention reprocessing behavior.
 
 URL Configuration
 -----------------
@@ -461,7 +462,7 @@ Database Configuration
 Models
 ~~~~~~
 
-django-indieweb currently creates six models:
+django-indieweb currently creates seven models:
 
 1. **Auth** - Stores authorization codes temporarily
 2. **Token** - Stores access tokens
@@ -473,7 +474,11 @@ django-indieweb currently creates six models:
 5. **WebmentionNestedResponse** - Stores stable nested ``h-entry`` responses
    discovered inside verified parent Webmention sources for receive-side
    Salmention rendering
-6. **Profile** - Stores user h-card data
+6. **WebmentionOutboundTarget** - Stores outbound Webmention target-history
+   rows keyed by the exact HTTP(S) ``source_url`` and ``target_url`` strings,
+   with endpoint diagnostics, first/latest send timestamps, latest result
+   fields, latest Vouch URL, and diagnostic current-content last-seen tracking
+7. **Profile** - Stores user h-card data
 
 ``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for their
 user relationships. ``WebmentionSourceSnapshot`` is tied one-to-one to a parent
@@ -482,9 +487,11 @@ user relationships. ``WebmentionSourceSnapshot`` is tied one-to-one to a parent
 is unique per parent and stable nested identity, and also cascades when the
 parent is deleted.
 
-Outbound Salmention target tracking is designed but not implemented yet. A
-future migration should add a separate outbound target-history model for source
-URL and target URL pairs; no such table exists in the current release.
+``WebmentionOutboundTarget`` is separate from incoming ``Webmention`` rows and
+uses no foreign key to them. Rows are unique by the exact source URL and target
+URL strings stored for outbound delivery history. Sender-side history recording
+and outbound Salmention resend APIs or command flags are still deferred, so the
+table is available as schema/storage foundation only in this release.
 
 Migrations
 ~~~~~~~~~~

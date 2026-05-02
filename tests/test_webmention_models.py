@@ -6,7 +6,12 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
-from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
+from indieweb.models import (
+    Webmention,
+    WebmentionNestedResponse,
+    WebmentionOutboundTarget,
+    WebmentionSourceSnapshot,
+)
 
 
 @pytest.mark.django_db
@@ -364,3 +369,190 @@ class TestWebmentionNestedResponseModel:
         webmention.delete()
 
         assert not WebmentionNestedResponse.objects.filter(pk=child.pk).exists()
+
+
+@pytest.mark.django_db
+class TestWebmentionOutboundTargetModel:
+    """Test cases for outbound Webmention target history."""
+
+    def test_create_outbound_target_with_documented_fields(self):
+        """Test creating a complete outbound target-history row."""
+        endpoint_discovered_at = datetime(2026, 5, 2, 10, 0, 0, tzinfo=timezone.utc)
+        first_sent_at = datetime(2026, 5, 2, 10, 1, 0, tzinfo=timezone.utc)
+        last_sent_at = datetime(2026, 5, 2, 10, 2, 0, tzinfo=timezone.utc)
+        last_seen_at = datetime(2026, 5, 2, 10, 3, 0, tzinfo=timezone.utc)
+
+        target = WebmentionOutboundTarget.objects.create(
+            source_url="https://source.example/posts/1",
+            target_url="https://target.example/articles/1",
+            endpoint_url="https://target.example/webmention",
+            endpoint_discovered_at=endpoint_discovered_at,
+            first_sent_at=first_sent_at,
+            last_sent_at=last_sent_at,
+            last_status_code=202,
+            last_success=True,
+            last_error="",
+            last_vouch_url="https://source.example/vouch",
+            last_seen_in_source_at=last_seen_at,
+        )
+
+        assert target.source_url == "https://source.example/posts/1"
+        assert target.target_url == "https://target.example/articles/1"
+        assert target.endpoint_url == "https://target.example/webmention"
+        assert target.endpoint_discovered_at == endpoint_discovered_at
+        assert target.first_sent_at == first_sent_at
+        assert target.last_sent_at == last_sent_at
+        assert target.last_status_code == 202
+        assert target.last_success is True
+        assert target.last_error == ""
+        assert target.last_vouch_url == "https://source.example/vouch"
+        assert target.last_seen_in_source_at == last_seen_at
+        assert target.created
+        assert target.modified
+
+    def test_outbound_target_defaults(self):
+        """Test nullable diagnostic and result fields default to an unsent state."""
+        target = WebmentionOutboundTarget.objects.create(
+            source_url="https://source.example/posts/defaults",
+            target_url="https://target.example/articles/defaults",
+        )
+
+        assert target.endpoint_url == ""
+        assert target.endpoint_discovered_at is None
+        assert target.first_sent_at is None
+        assert target.last_sent_at is None
+        assert target.last_status_code is None
+        assert target.last_success is False
+        assert target.last_error == ""
+        assert target.last_vouch_url == ""
+        assert target.last_seen_in_source_at is None
+
+    @pytest.mark.parametrize(
+        ("source_url", "target_url"),
+        [
+            ("not-a-url", "https://target.example/articles/1"),
+            ("https://source.example/posts/1", "not-a-url"),
+            ("ftp://source.example/posts/1", "https://target.example/articles/1"),
+            ("https://source.example/posts/1", "ftp://target.example/articles/1"),
+        ],
+    )
+    def test_outbound_target_url_validation(self, source_url, target_url):
+        """Test source and target URLs must be valid HTTP(S) URLs."""
+        target = WebmentionOutboundTarget(source_url=source_url, target_url=target_url)
+
+        with pytest.raises(ValidationError):
+            target.full_clean()
+
+    def test_outbound_target_unique_by_exact_source_and_target(self):
+        """Test source_url and target_url are unique as an exact pair."""
+        WebmentionOutboundTarget.objects.create(
+            source_url="https://source.example/posts/1",
+            target_url="https://target.example/articles/1",
+        )
+
+        with pytest.raises(IntegrityError), transaction.atomic():
+            WebmentionOutboundTarget.objects.create(
+                source_url="https://source.example/posts/1",
+                target_url="https://target.example/articles/1",
+            )
+
+    def test_outbound_target_preserves_exact_url_identity(self):
+        """Test URL variants are not silently canonicalized or collapsed."""
+        source_url = "https://source.example/posts/1"
+        target_urls = [
+            "https://target.example/articles/1",
+            "https://target.example/articles/1/",
+            "https://target.example/articles/1?a=1&b=2",
+            "https://target.example/articles/1?b=2&a=1",
+            "https://target.example/articles/1#comments",
+            "https://TARGET.example/articles/1",
+        ]
+
+        for target_url in target_urls:
+            WebmentionOutboundTarget.objects.create(source_url=source_url, target_url=target_url)
+
+        assert (
+            list(
+                WebmentionOutboundTarget.objects.filter(source_url=source_url)
+                .order_by("id")
+                .values_list(
+                    "target_url",
+                    flat=True,
+                )
+            )
+            == target_urls
+        )
+
+    def test_outbound_target_preserves_exact_source_identity(self):
+        """Test source URL variants are not silently canonicalized or collapsed."""
+        target_url = "https://target.example/articles/1"
+        source_urls = [
+            "https://source.example/posts/1",
+            "https://source.example/posts/1/",
+            "https://source.example/posts/1?a=1&b=2",
+            "https://source.example/posts/1?b=2&a=1",
+            "https://source.example/posts/1#comments",
+            "https://SOURCE.example/posts/1",
+        ]
+
+        for source_url in source_urls:
+            WebmentionOutboundTarget.objects.create(source_url=source_url, target_url=target_url)
+
+        assert (
+            list(
+                WebmentionOutboundTarget.objects.filter(target_url=target_url)
+                .order_by("id")
+                .values_list(
+                    "source_url",
+                    flat=True,
+                )
+            )
+            == source_urls
+        )
+
+    def test_outbound_target_result_fields_persist_updates(self):
+        """Test endpoint diagnostics, latest result, Vouch, and last-seen fields persist."""
+        target = WebmentionOutboundTarget.objects.create(
+            source_url="https://source.example/posts/2",
+            target_url="https://target.example/articles/2",
+        )
+        endpoint_discovered_at = datetime(2026, 5, 2, 11, 0, 0, tzinfo=timezone.utc)
+        first_sent_at = datetime(2026, 5, 2, 11, 1, 0, tzinfo=timezone.utc)
+        last_sent_at = datetime(2026, 5, 2, 11, 2, 0, tzinfo=timezone.utc)
+        last_seen_at = datetime(2026, 5, 2, 11, 3, 0, tzinfo=timezone.utc)
+
+        target.endpoint_url = "https://target.example/webmention"
+        target.endpoint_discovered_at = endpoint_discovered_at
+        target.first_sent_at = first_sent_at
+        target.last_sent_at = last_sent_at
+        target.last_status_code = 500
+        target.last_success = False
+        target.last_error = "HTTP 500"
+        target.last_vouch_url = "https://source.example/vouch"
+        target.last_seen_in_source_at = last_seen_at
+        target.save()
+
+        target.refresh_from_db()
+
+        assert target.endpoint_url == "https://target.example/webmention"
+        assert target.endpoint_discovered_at == endpoint_discovered_at
+        assert target.first_sent_at == first_sent_at
+        assert target.last_sent_at == last_sent_at
+        assert target.last_status_code == 500
+        assert target.last_success is False
+        assert target.last_error == "HTTP 500"
+        assert target.last_vouch_url == "https://source.example/vouch"
+        assert target.last_seen_in_source_at == last_seen_at
+
+    def test_outbound_target_string_representation(self):
+        """Test string representation includes source and target context."""
+        target = WebmentionOutboundTarget(
+            source_url="https://source.example/posts/1",
+            target_url="https://target.example/articles/1",
+        )
+
+        string_value = str(target)
+
+        assert "Outbound Webmention" in string_value
+        assert "https://source.example/posts/1" in string_value
+        assert "https://target.example/articles/1" in string_value
