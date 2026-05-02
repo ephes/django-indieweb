@@ -364,9 +364,12 @@ There is no Salmention-specific setting in django-indieweb today.
 django-indieweb persists verified Webmention source snapshots and stable nested
 child response rows as a foundation for receive-side Salmention support, but
 the bundled ``show_webmentions`` template tag renders verified children inline
-under verified parent replies. Sending Salmentions still needs outbound target
-tracking for each original post. See :doc:`webmention` for the support-status
-details and current ordinary Webmention reprocessing behavior.
+under verified parent replies. Outbound Salmention sending remains
+unimplemented; its documented design uses package-managed outbound target
+history plus an explicit host-application or operator-triggered resend
+workflow, not a setting toggle. See :doc:`webmention` for the support-status
+details, target-history design, and current ordinary Webmention reprocessing
+behavior.
 
 URL Configuration
 -----------------
@@ -458,17 +461,18 @@ Database Configuration
 Models
 ~~~~~~
 
-django-indieweb creates six models:
+django-indieweb currently creates six models:
 
 1. **Auth** - Stores authorization codes temporarily
 2. **Token** - Stores access tokens
 3. **Webmention** - Stores incoming webmention source/target pairs, parsed
    content, status, and spam-check results
 4. **WebmentionSourceSnapshot** - Stores the latest verified fetched source
-   snapshot related to a submitted Webmention for future Salmention comparison
+   snapshot related to a submitted Webmention for receive-side Salmention
+   comparison
 5. **WebmentionNestedResponse** - Stores stable nested ``h-entry`` responses
-   discovered inside verified parent Webmention sources for future Salmention
-   rendering
+   discovered inside verified parent Webmention sources for receive-side
+   Salmention rendering
 6. **Profile** - Stores user h-card data
 
 ``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for their
@@ -477,6 +481,10 @@ user relationships. ``WebmentionSourceSnapshot`` is tied one-to-one to a parent
 ``WebmentionNestedResponse`` is tied many-to-one to a parent ``Webmention``,
 is unique per parent and stable nested identity, and also cascades when the
 parent is deleted.
+
+Outbound Salmention target tracking is designed but not implemented yet. A
+future migration should add a separate outbound target-history model for source
+URL and target URL pairs; no such table exists in the current release.
 
 Migrations
 ~~~~~~~~~~

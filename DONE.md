@@ -2,6 +2,20 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-02
+
+### Design outbound target tracking for sending Salmentions
+
+- Designed outbound Salmention sending as a hybrid responsibility: django-indieweb should own durable outbound target history for original source URL and target URL pairs, while host applications own the signal that an accepted downstream response has been incorporated into the rendered original permalink and should trigger a resend.
+- Documented the future target-history contract: exact absolute HTTP(S) source URL and target URL strings used for delivery, endpoint diagnostics, first/last sent timestamps, latest status/result/error, latest Vouch URL, and diagnostic current-content last-seen tracking. Resend target sets are bounded to freshly extracted current links for the source plus recorded historical targets for that same source.
+- Documented the explicit future resend workflow: a `WebmentionSender.resend_salmentions(...)` helper and an optional `send_webmentions --salmention-resend` command mode should resend to the union of current and prior targets after the host app or operator confirms the source permalink was updated. Existing ordinary `WebmentionSender.send_webmentions(...)` and default `send_webmentions` command behavior remain unchanged in this design slice.
+- Added focused follow-up backlog items for the outbound target-history model/migration, sender API/history recording, and management-command resend workflow.
+- Review follow-up clarified that receive-side source snapshot and nested-response models now support receive-side Salmention comparison/rendering, that `last_seen_in_source_at` is diagnostic rather than the source of current-versus-historical resend provenance, that a future `record_history` sender escape hatch should be preserved, and that old-target import/backfill tooling is not required for the first resend-capable implementation.
+- Implementation deferred: no model, migration, sender, command, receive endpoint, processor, async receive, Vouch, or template code changed.
+- Documentation: updated `docs/webmention.rst` with the outbound target-tracking and resend-workflow design, and updated `docs/configuration.rst` so the no-setting/model guidance remains accurate. No generated docs under `docs/_build` were edited or staged.
+- Changelog: updated `docs/changelog.rst` with the outbound Salmention design/support-status entry.
+- Validation: `uv run sphinx-build -W -b html docs docs/_build/html` (passed), `uv run prek run --all-files` (passed), `uv run ruff check .` (passed), and `git diff --check` (passed). Code was not changed, so sender/command tests, full pytest, mypy, and build were not required.
+
 ## 2026-05-01
 
 ### Expose nested Salmention responses in template queries and rendering

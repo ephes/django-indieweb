@@ -294,21 +294,177 @@ This does **not** mean full Salmention support is implemented. django-indieweb
 does not send nested-response notifications or implement outbound Salmention
 sending.
 
-Sending Salmentions also needs application-level state that is not currently
-tracked here. The protocol expects a site to resend Webmentions to everything
-the original post previously sent Webmentions to after a newly received
-response has been incorporated into that original post's permalink. The current
+Outbound Salmention sending has a concrete design, but that design is not
+implemented yet. The protocol expects a site to resend Webmentions to everything
+the original post previously sent Webmentions to after a newly received response
+has been incorporated into that original post's permalink. The current
 ``WebmentionSender`` can explicitly send Webmentions for links found in a source
 page, and ``send_webmentions`` can be run again after a page changes, but
-django-indieweb does not record the prior outbound target set for each original
-post or know when an application has updated a rendered permalink with a newly
-accepted response.
+django-indieweb does not yet record the prior outbound target set for each
+original post or expose the explicit post-update resend API described below.
 
 No Salmention setting is available. Source snapshots and child response storage
 are always owned by verified processor/worker processing, and bundled nested
 rendering is part of the default ``show_webmentions`` template path. Future
-sending support still needs outbound target tracking and an operator- or
-application-driven resend workflow.
+sending support should use the package-managed target history and explicit
+operator- or application-driven resend workflow described here rather than a
+global setting.
+
+Outbound Target Tracking Design
+-------------------------------
+
+Future outbound Salmention support should use a hybrid ownership model:
+django-indieweb should own durable outbound Webmention target history, while
+the host application should own source rendering and the signal that an
+accepted downstream response has actually changed an original permalink.
+
+Target history should live in a django-indieweb-managed model, for example
+``WebmentionOutboundTarget``. Each row should represent one original source URL
+and one target URL that django-indieweb attempted to notify from that source.
+The row is history for resend decisions, not a received Webmention and not a
+nested response. It should therefore be separate from ``Webmention``,
+``WebmentionSourceSnapshot``, and ``WebmentionNestedResponse``.
+
+The minimum persisted fields are:
+
+* ``source_url``: the original post permalink whose outbound Webmentions were
+  sent.
+* ``target_url``: the exact target URL that was previously sent a Webmention.
+  Rows should be unique by ``source_url`` and ``target_url`` so repeated sends
+  update history instead of widening the resend set.
+* ``endpoint_url`` and ``endpoint_discovered_at``: the last endpoint discovered
+  for that target, retained for diagnostics only. Resend workflows must
+  rediscover the endpoint before delivery because Webmention update sends need
+  current endpoint discovery.
+* ``first_sent_at`` and ``last_sent_at``: timestamps for the first and latest
+  outbound attempt.
+* ``last_status_code``, ``last_success``, and ``last_error``: the latest
+  delivery outcome in the same spirit as ``WebmentionSender`` result
+  dictionaries.
+* ``last_vouch_url``: the voucher URL used on the latest attempt, blank when no
+  Vouch URL was sent.
+* ``last_seen_in_source_at``: the last time the target was discovered in the
+  current source content. This is diagnostic and may support future retention
+  or cleanup policy; resend workflows must still determine current versus
+  historical provenance by extracting links from the latest source content at
+  resend time.
+
+The first outbound history schema should store the exact absolute HTTP(S)
+``source_url`` and ``target_url`` strings used for delivery and uniqueness.
+It should not silently apply the receive-side target matching canonicalization
+policy to those keys, because outgoing Webmention updates are sent with the
+specific source and target URLs supplied by the host application. Host
+applications should pass stable canonical public permalinks for source URLs so
+one post's history is not fragmented across variants.
+
+An implementation may later add detailed attempt rows, final redirected
+endpoint URLs, or retry metadata, but those are not required for the first
+resend-capable slice. The history set used for Salmention resends should be
+bounded to rows for the same ``source_url`` plus current links extracted from
+that source. It should not send to unrelated URLs from other posts or arbitrary
+operator-provided historical lists. A future import or migration helper could
+explicitly record older targets for a source, but no such backfill tool is
+required for the first resend-capable implementation.
+
+Ordinary sends should populate and refresh target history once the model
+exists. The default behavior of
+``WebmentionSender.send_webmentions(source_url, html_content=None,
+vouch_url=None)`` should keep returning per-target delivery dictionaries and
+should keep sending only current external links. Recording target history is an
+additional durable side effect in that future implementation, not a change to
+which ordinary targets are delivered. If a caller needs the existing no-write
+behavior for tests or unusual integrations, add an optional backwards-compatible
+``record_history`` parameter rather than changing the existing required
+arguments.
+
+Outbound Resend Workflow Design
+-------------------------------
+
+Future sending support should expose an explicit resend workflow instead of
+trying to infer Salmention timing from incoming Webmention processing. A host
+application knows whether a received response was accepted, moderated,
+rendered, and incorporated into an original post permalink; django-indieweb
+does not.
+
+The package API should add a helper with a shape like:
+
+.. code-block:: python
+
+    from indieweb.senders import WebmentionSender
+
+    sender = WebmentionSender()
+    results = sender.resend_salmentions(
+        source_url,
+        html_content=rendered_source_html,
+        vouch_url=vouch_url,
+    )
+
+``resend_salmentions()`` should require the source URL and either caller-
+provided HTML or fetchable source content, then:
+
+1. Extract the source's current external links using the same rules as ordinary
+   sending.
+2. Load previously recorded target history for exactly that ``source_url``.
+3. Send Webmentions to the union of current targets and historical targets.
+4. Rediscover each target's endpoint before delivery.
+5. Mark each result with whether the target came from current content, prior
+   history, or both.
+6. Refresh outbound target history for each attempted target, including targets
+   that are no longer linked from the current source.
+
+This helper should not be called automatically by ``WebmentionProcessor``.
+Receive-side verification, source snapshots, nested response storage, Vouch
+verification, and async queue behavior must stay focused on receiving. A host
+application should call the helper only after it has accepted a downstream
+response and updated the rendered original permalink to include that response
+as nested ``h-entry`` content or otherwise changed the permalink output. Queue-
+based deployments can call the helper from an application task after the render
+or publish step; synchronous deployments can call it directly after saving the
+rendered page. Operators should also be able to trigger the same workflow
+manually through a management command.
+
+The management command should keep its current behavior by default:
+
+.. code-block:: bash
+
+    python manage.py send_webmentions https://mysite.example/post/
+
+That default remains an ordinary current-link send. A future optional flag, for
+example ``--salmention-resend``, should switch the command to the explicit
+resend workflow:
+
+.. code-block:: bash
+
+    python manage.py send_webmentions https://mysite.example/post/ --salmention-resend
+
+In resend mode, ``--dry-run`` should show the union of current and historical
+targets and label each target as current, historical, or both. Without resend
+mode, ``--dry-run`` should keep showing only current targets. The existing
+``--content`` option, including ``--content -`` for stdin, and ``--vouch``
+should continue to work in both modes.
+
+Deleted or removed links should follow ordinary Webmention update semantics.
+When a target was previously sent from ``source_url`` but no longer appears in
+the latest source HTML, it stays in outbound target history and is included in
+resend mode so the receiver can update or remove its display. New current links
+that are not in history are included and then recorded. The resend target set is
+therefore ``current links for this source`` plus ``recorded historical targets
+for this source``, not every URL that ever appeared in the database.
+
+Implementation Follow-ups
+-------------------------
+
+The outbound design should be implemented in focused slices:
+
+* Add the outbound target-history model and migration, plus model tests for the
+  uniqueness and timestamp/update contract.
+* Extend ``WebmentionSender`` so ordinary sends record history without changing
+  current target delivery, and add ``resend_salmentions()`` for union-of-current
+  and historical target delivery.
+* Extend ``send_webmentions`` with an optional resend flag and dry-run output
+  that labels target provenance.
+* Document the host-application trigger pattern with examples for direct calls
+  and queue-backed applications.
 
 Receiving Persistence
 ---------------------
