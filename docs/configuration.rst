@@ -694,35 +694,118 @@ Enable logging to debug issues:
 CORS Configuration
 ------------------
 
-For cross-origin requests, install and configure django-cors-headers:
+django-indieweb can add CORS headers to its public protocol endpoints without
+adding middleware or a third-party dependency. Built-in CORS support is
+disabled by default and applies only to:
 
-.. code-block:: bash
+- ``/indieweb/auth/``
+- ``/indieweb/token/``
+- ``/indieweb/micropub/``
+- ``/indieweb/media/``
+- ``/indieweb/webmention/``
+- ``/indieweb/webmention/<pk>/``
 
-   pip install django-cors-headers
+The browser token-management pages at ``/indieweb/tokens/`` and
+``/indieweb/tokens/<pk>/revoke/`` are intentionally excluded because they are
+authenticated Django UI views with CSRF-protected browser actions.
+
+INDIEWEB_CORS_ALLOWED_ORIGINS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Allowed browser origins for django-indieweb's public protocol endpoint CORS
+handling.
+
+**Default:** ``None`` (CORS disabled)
+
+Set this to ``None`` or an empty iterable to disable built-in CORS support.
+Set it to an iterable of exact origins to allow only those origins, or to the
+string ``"*"`` to explicitly allow every origin.
+
+**Example:**
 
 .. code-block:: python
 
    # settings.py
-   INSTALLED_APPS = [
-       ...
-       'corsheaders',
-   ]
-
-   MIDDLEWARE = [
-       ...
-       'corsheaders.middleware.CorsMiddleware',
-       'django.middleware.common.CommonMiddleware',
-       ...
-   ]
-
-   # Allow specific origins
-   CORS_ALLOWED_ORIGINS = [
+   INDIEWEB_CORS_ALLOWED_ORIGINS = (
        "https://app.example.com",
        "https://client.example.com",
-   ]
+   )
 
-   # Or allow all origins (not recommended for production)
-   CORS_ALLOW_ALL_ORIGINS = True
+Actual endpoint responses with an allowed ``Origin`` receive
+``Access-Control-Allow-Origin`` without changing the existing status code,
+body, content type, authentication behavior, scope checks, rate limiting, or
+protocol processing. Responses that echo a specific request origin also
+receive ``Vary: Origin``. Disallowed origins receive no CORS headers.
+
+For allow-all deployments:
+
+.. code-block:: python
+
+   INDIEWEB_CORS_ALLOWED_ORIGINS = "*"
+
+When allow-all is used without credentials, responses send
+``Access-Control-Allow-Origin: *`` and do not vary by origin. When allow-all is
+combined with ``INDIEWEB_CORS_ALLOW_CREDENTIALS = True``, django-indieweb
+echoes the request origin and sends ``Vary: Origin`` because browsers reject
+``Access-Control-Allow-Origin: *`` on credentialed CORS responses.
+
+INDIEWEB_CORS_ALLOW_CREDENTIALS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Whether to add ``Access-Control-Allow-Credentials: true`` on allowed CORS
+responses.
+
+**Default:** ``False``
+
+Enable this only when browser clients need credentialed CORS semantics. Bearer
+token authentication remains unchanged; CORS does not authorize requests and
+does not replace endpoint authentication, authorization, or scope checks.
+
+INDIEWEB_CORS_ALLOWED_HEADERS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Headers advertised on successful preflight responses.
+
+**Default:** ``("Authorization", "Content-Type", "Accept")``
+
+**Example:**
+
+.. code-block:: python
+
+   INDIEWEB_CORS_ALLOWED_HEADERS = (
+       "Authorization",
+       "Content-Type",
+       "Accept",
+       "Accept-Language",
+   )
+
+INDIEWEB_CORS_MAX_AGE
+~~~~~~~~~~~~~~~~~~~~~
+
+Value for ``Access-Control-Max-Age`` on successful preflight responses.
+
+**Default:** ``86400``
+
+Set this to ``None`` to omit ``Access-Control-Max-Age``.
+
+Preflight Behavior
+~~~~~~~~~~~~~~~~~~
+
+Configured preflight ``OPTIONS`` requests require an allowed ``Origin`` and an
+``Access-Control-Request-Method`` that matches the target endpoint. Successful
+preflights return ``204 No Content`` with ``Access-Control-Allow-Origin``,
+``Access-Control-Allow-Methods``, ``Access-Control-Allow-Headers``, and
+``Access-Control-Max-Age`` when configured.
+
+Preflights short-circuit before rate limiting, token authentication, Micropub
+handler calls, media storage, Webmention processing, and async Webmention
+enqueue hooks. Disallowed origins do not receive permissive preflight headers.
+Malformed CORS settings are ignored and logged so optional CORS hardening does
+not crash existing endpoints; production operators should monitor logs after
+changing CORS configuration.
+
+If you need site-wide CORS behavior for views outside django-indieweb's public
+protocol endpoints, configure deployment-level middleware separately.
 
 Testing Configuration
 ---------------------

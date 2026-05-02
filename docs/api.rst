@@ -910,8 +910,53 @@ rate-limit keys.
 CORS Support
 ------------
 
-CORS headers are not automatically added by django-indieweb. Configure your
-Django middleware if needed.
+django-indieweb includes opt-in, endpoint-scoped CORS support for its public
+IndieWeb protocol endpoints. CORS is disabled by default; set
+``INDIEWEB_CORS_ALLOWED_ORIGINS`` to a tuple/list of allowed origins, or to
+``"*"`` for an explicit allow-all policy. See :doc:`configuration` for the
+full setting shape.
+
+When CORS is configured and a request includes an allowed ``Origin`` header,
+actual endpoint responses keep their existing status, body, content type,
+authentication behavior, scope checks, rate limiting, and processing flow, and
+add:
+
+- ``Access-Control-Allow-Origin`` with the matching origin, or ``*`` for
+  allow-all without credentials
+- ``Access-Control-Allow-Credentials: true`` when
+  ``INDIEWEB_CORS_ALLOW_CREDENTIALS`` is enabled
+- ``Vary: Origin`` whenever the response echoes a specific request origin
+
+Configured preflight ``OPTIONS`` requests short-circuit before rate limiting,
+token authentication, Micropub handler work, media storage, Webmention
+processing, and async enqueue hooks. A valid preflight needs an allowed
+``Origin`` plus an ``Access-Control-Request-Method`` that is supported by the
+target endpoint. Successful preflights return:
+
+.. code-block:: http
+
+    HTTP/1.1 204 No Content
+    Access-Control-Allow-Origin: https://app.example.com
+    Access-Control-Allow-Methods: POST
+    Access-Control-Allow-Headers: Authorization, Content-Type, Accept
+    Access-Control-Max-Age: 86400
+    Vary: Origin
+
+Endpoint method coverage:
+
+- ``auth`` - ``GET`` and ``POST`` requests to ``/indieweb/auth/``
+- ``token`` - ``POST`` requests to ``/indieweb/token/``
+- ``micropub`` - ``GET`` and ``POST`` requests to ``/indieweb/micropub/``
+- ``media`` - ``POST`` requests to ``/indieweb/media/``
+- ``webmention`` - ``GET`` and ``POST`` requests to ``/indieweb/webmention/``
+- ``webmention_status`` - ``GET`` requests to
+  ``/indieweb/webmention/<pk>/``
+
+Disallowed origins receive no permissive CORS headers. The browser
+token-management pages at ``/indieweb/tokens/`` and
+``/indieweb/tokens/<pk>/revoke/`` are excluded because they are authenticated
+Django UI views with CSRF-protected browser actions, not public protocol
+endpoints.
 
 
 H-Card Support

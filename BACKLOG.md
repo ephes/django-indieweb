@@ -14,9 +14,7 @@ No current Priority 1 items.
 
 ### API Hardening
 
-- [ ] Add configurable CORS header support.
-  - Reference: `docs/api.rst`.
-  - Outcome: CORS behavior is documented and covered by tests.
+No current API Hardening items.
 
 ### Tooling and Maintainability
 

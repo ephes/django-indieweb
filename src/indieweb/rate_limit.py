@@ -69,8 +69,7 @@ def get_rate_limit_config(endpoint_key: str) -> RateLimitConfig | None:
     window = _positive_int(endpoint_config.get("window"))
     if limit is None or window is None:
         logger.warning(
-            f"Ignoring invalid rate-limit config for {endpoint_key!r}; "
-            "limit and window must be positive integers"
+            f"Ignoring invalid rate-limit config for {endpoint_key!r}; limit and window must be positive integers"
         )
         return None
     return RateLimitConfig(limit=limit, window=window)

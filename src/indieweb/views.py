@@ -30,6 +30,7 @@ from django.utils.module_loading import import_string
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
+from .cors import CorsMixin
 from .handlers import get_micropub_handler
 from .models import Auth, Token, Webmention
 from .processors import WebmentionProcessor
@@ -453,7 +454,7 @@ class TokenAuthMixin(View):
         return super().dispatch(request, *args, **kwargs)
 
 
-class AuthView(CSRFExemptMixin, RateLimitMixin, View):
+class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     """
     IndieAuth authorization endpoint.
 
@@ -464,6 +465,7 @@ class AuthView(CSRFExemptMixin, RateLimitMixin, View):
 
     required_params: list[str] = ["client_id", "redirect_uri", "state", "me"]
     rate_limit_key = "auth"
+    cors_allowed_methods = ("GET", "POST")
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
@@ -628,7 +630,7 @@ class AuthView(CSRFExemptMixin, RateLimitMixin, View):
         return HttpResponse(urlencode(response_values), status=200)
 
 
-class TokenView(CSRFExemptMixin, RateLimitMixin, View):
+class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     """
     IndieAuth token endpoint.
 
@@ -637,6 +639,7 @@ class TokenView(CSRFExemptMixin, RateLimitMixin, View):
     """
 
     rate_limit_key = "token"
+    cors_allowed_methods = ("POST",)
 
     def send_token(self, me: str, client_id: str, scope: str | None, owner: AbstractBaseUser) -> HttpResponse:
         lifetime = int(getattr(settings, "INDIEWEB_TOKEN_EXPIRES_IN", DEFAULT_TOKEN_EXPIRES_IN))
@@ -775,7 +778,7 @@ class TokenRevokeView(UserLoginRequiredMixin, View):
         return redirect("indieweb:tokens")
 
 
-class MicropubView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
+class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, View):
     """
     Micropub endpoint for creating posts.
 
@@ -787,6 +790,7 @@ class MicropubView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
 
     request: HttpRequest
     rate_limit_key = "micropub"
+    cors_allowed_methods = ("GET", "POST")
 
     def _parse_json_request(self, request: HttpRequest) -> dict[str, Any]:
         """Parse JSON formatted Micropub request."""
@@ -1186,7 +1190,7 @@ class MicropubView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
             return HttpResponse(urlencode(params), status=200)
 
 
-class MicropubMediaView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
+class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, View):
     """
     Micropub media endpoint for direct file uploads.
 
@@ -1196,6 +1200,7 @@ class MicropubMediaView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
     """
 
     rate_limit_key = "media"
+    cors_allowed_methods = ("POST",)
 
     def _scope_authorized(self) -> bool:
         """Require the conventional Micropub ``media`` scope for uploads."""
@@ -1222,7 +1227,7 @@ class MicropubMediaView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
         return response
 
 
-class WebmentionEndpoint(CSRFExemptMixin, RateLimitMixin, View):
+class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     """
     Webmention receiving endpoint.
 
@@ -1231,6 +1236,7 @@ class WebmentionEndpoint(CSRFExemptMixin, RateLimitMixin, View):
     """
 
     rate_limit_key = "webmention"
+    cors_allowed_methods = ("GET", "POST")
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Handle incoming webmentions."""
@@ -1310,7 +1316,7 @@ class WebmentionEndpoint(CSRFExemptMixin, RateLimitMixin, View):
         return response
 
 
-class WebmentionStatusView(RateLimitMixin, View):
+class WebmentionStatusView(CorsMixin, RateLimitMixin, View):
     """
     Webmention status endpoint.
 
@@ -1318,6 +1324,7 @@ class WebmentionStatusView(RateLimitMixin, View):
     """
 
     rate_limit_key = "webmention_status"
+    cors_allowed_methods = ("GET",)
 
     def get(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponse:
         """Return status of a webmention."""
