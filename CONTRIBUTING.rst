@@ -173,6 +173,8 @@ Testing
 
 * Write tests using pytest style (functions with fixtures, not TestCase classes)
 * Use ``@pytest.mark.django_db`` for tests that need database access
+* Do not mix ``pytest.mark.parametrize`` into existing ``django.test.TestCase`` classes
+* Convert legacy ``TestCase`` files in focused maintenance slices, not during unrelated feature work
 * Aim for high test coverage but focus on testing behavior, not implementation
 * Test files go in the ``tests/`` directory
 

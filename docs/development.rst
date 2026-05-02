@@ -21,6 +21,12 @@ Run the test suite using pytest::
 
     uv run pytest
 
+New tests should use pytest function style with fixtures and plain ``assert``.
+Use ``@pytest.mark.django_db`` or the ``db`` fixture for tests that need
+database access. A few older ``django.test.TestCase`` files remain; do not mix
+pytest parametrization into those classes. Convert them in focused maintenance
+slices rather than during unrelated feature work.
+
 To run tests with coverage::
 
     uv run pytest --cov=indieweb --cov-report=html

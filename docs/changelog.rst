@@ -48,6 +48,7 @@ Unreleased
 * Tightened wording around still-unsupported media endpoint/uploads, WebSub, rate limiting, and CORS work so current docs match shipped IndieAuth, Micropub, Webmention, and token-management behavior; no functional change.
 * Added optional cache-backed endpoint rate limiting through ``INDIEWEB_RATE_LIMITS``. The setting is disabled by default and supports per-endpoint ``limit``/``window`` entries for ``auth``, ``token``, ``micropub``, ``media``, ``webmention``, and ``webmention_status``. Counters are scoped by endpoint key, HTTP method, and ``REMOTE_ADDR``; exceeded limits return HTTP ``429`` with ``Retry-After`` when the window reset can be computed.
 * Added optional built-in CORS support for public protocol endpoints through ``INDIEWEB_CORS_ALLOWED_ORIGINS`` and related settings. CORS remains disabled by default, supports explicit origin allowlists or an explicit ``"*"`` allow-all policy, adds headers only for allowed origins, and handles configured preflight ``OPTIONS`` requests before rate limiting, token authentication, Micropub handler work, media storage, Webmention processing, or async enqueue hooks. Browser token-management UI views remain excluded.
+* Standardized developer test guidance around pytest function/fixture style for new tests, documented that pytest parametrization should not be mixed into legacy ``django.test.TestCase`` classes, and converted the h-card/profile-admin legacy tests to pytest style.
 
 0.5.3 (2025-10-28)
 ------------------

@@ -1,53 +1,65 @@
 """Test h_card template tag with extra_classes parameter."""
 
+import pytest
 from django.contrib.auth import get_user_model
 from django.template import Context, Template
-from django.test import TestCase
 
 from indieweb.models import Profile
 
 User = get_user_model()
+pytestmark = pytest.mark.django_db
 
 
-class HCardExtraClassesTest(TestCase):
-    """Test the h_card template tag with extra classes."""
+@pytest.fixture
+def user():
+    """Create a test user with profile data for h-card rendering."""
+    return User.objects.create_user(
+        username="testuser",
+        email="test@example.com",
+    )
 
-    def setUp(self):
-        """Set up test user and profile."""
-        self.user = User.objects.create_user(
-            username="testuser",
-            email="test@example.com",
-        )
-        self.profile = Profile.objects.create(
-            user=self.user,
-            name="Test User",
-            url="https://example.com/testuser",
-            photo_url="https://example.com/photo.jpg",
-        )
 
-    def test_h_card_without_extra_classes(self):
-        """Test h_card renders without extra classes."""
-        template = Template("{% load indieweb_tags %}{% h_card user %}")
-        html = template.render(Context({"user": self.user}))
-        self.assertIn('class="h-card"', html)
-        self.assertNotIn("p-author", html)
+@pytest.fixture
+def profile(user):
+    """Create profile data for h-card rendering."""
+    return Profile.objects.create(
+        user=user,
+        name="Test User",
+        url="https://example.com/testuser",
+        photo_url="https://example.com/photo.jpg",
+    )
 
-    def test_h_card_with_p_author_class(self):
-        """Test h_card renders with p-author class."""
-        template = Template('{% load indieweb_tags %}{% h_card user "p-author" %}')
-        html = template.render(Context({"user": self.user}))
-        self.assertIn('class="h-card p-author"', html)
 
-    def test_h_card_with_multiple_extra_classes(self):
-        """Test h_card renders with multiple extra classes."""
-        template = Template('{% load indieweb_tags %}{% h_card user "p-author custom-class" %}')
-        html = template.render(Context({"user": self.user}))
-        self.assertIn('class="h-card p-author custom-class"', html)
+def test_h_card_without_extra_classes(user, profile):
+    """Test h_card renders without extra classes."""
+    template = Template("{% load indieweb_tags %}{% h_card user %}")
+    html = template.render(Context({"user": user}))
 
-    def test_h_card_profile_with_extra_classes(self):
-        """Test h_card with profile object and extra classes."""
-        template = Template('{% load indieweb_tags %}{% h_card profile "p-author" %}')
-        html = template.render(Context({"profile": self.profile}))
-        self.assertIn('class="h-card p-author"', html)
-        self.assertIn("Test User", html)
-        self.assertIn("https://example.com/testuser", html)
+    assert 'class="h-card"' in html
+    assert "p-author" not in html
+
+
+def test_h_card_with_p_author_class(user, profile):
+    """Test h_card renders with p-author class."""
+    template = Template('{% load indieweb_tags %}{% h_card user "p-author" %}')
+    html = template.render(Context({"user": user}))
+
+    assert 'class="h-card p-author"' in html
+
+
+def test_h_card_with_multiple_extra_classes(user, profile):
+    """Test h_card renders with multiple extra classes."""
+    template = Template('{% load indieweb_tags %}{% h_card user "p-author custom-class" %}')
+    html = template.render(Context({"user": user}))
+
+    assert 'class="h-card p-author custom-class"' in html
+
+
+def test_h_card_profile_with_extra_classes(profile):
+    """Test h_card with profile object and extra classes."""
+    template = Template('{% load indieweb_tags %}{% h_card profile "p-author" %}')
+    html = template.render(Context({"profile": profile}))
+
+    assert 'class="h-card p-author"' in html
+    assert "Test User" in html
+    assert "https://example.com/testuser" in html

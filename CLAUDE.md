@@ -158,6 +158,11 @@ Keep this section aligned with `AGENTS.md`. If you change the workflow in one fi
 ## Testing Guidelines
 
 - **Framework**: Pytest with pytest-django
+- **Preferred style**: New tests should use pytest functions or plain pytest classes with fixtures and plain `assert`
+- **Database tests**: Use `@pytest.mark.django_db` or the `db` fixture for tests that need database access
+- **Legacy TestCase tests**: Do not mix `pytest.mark.parametrize` into `django.test.TestCase` classes. Convert existing
+  `TestCase` files to pytest in focused maintenance slices instead of opportunistically rewriting them during unrelated
+  feature work
 - **Test location**: New behaviors need coverage under `tests/` with `test_*.py`; mirror module paths for discoverability
 - **Coverage**: Tests run with coverage (`--cov-config=pyproject.toml`)
 - **Database**: Reuse enabled for faster tests; reset or mark transactional tests if you change schema

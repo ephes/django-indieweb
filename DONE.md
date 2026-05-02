@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-02
 
+### Standardize test style on pytest
+
+- Documented pytest function/fixture style as the preferred style for new tests in ``AGENTS.md``, ``CLAUDE.md``, ``CONTRIBUTING.rst``, and ``docs/development.rst``. The guidance explicitly says not to mix ``pytest.mark.parametrize`` into legacy ``django.test.TestCase`` classes and to convert existing legacy files in focused maintenance slices.
+- Audited the remaining legacy ``django.test.TestCase`` inventory. Converted the low-risk h-card/profile-admin group to pytest style: ``tests/test_h_card_extra_classes.py``, ``tests/test_h_card_templatetags.py``, ``tests/test_h_card_integration.py``, ``tests/test_profile_admin.py``, and ``tests/test_admin_json_widget.py``. The conversions replaced class ``setUp`` methods with fixtures and Django ``TestCase`` assertions with plain ``assert`` while preserving behavior.
+- Remaining legacy ``TestCase`` files are ``tests/test_admin.py``, ``tests/test_send_webmentions_command.py``, ``tests/test_webmention_sender.py``, and ``tests/test_webmention_templatetags.py``. ``tests/test_webmention_processor.py``, ``tests/test_webmention_endpoint.py``, ``tests/test_rate_limiting.py``, and ``tests/test_cors.py`` still import ``unittest.mock`` helpers only; they are not legacy ``TestCase`` files.
+- Backlog: removed the completed broad standardization item from ``BACKLOG.md`` and added focused follow-ups for admin tests, Webmention sender/command tests, and Webmention template tag tests.
+- Documentation: updated repository instructions, contributor docs, and development docs for pytest preferred style. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased developer-workflow note for the pytest style guidance and focused conversion.
+- Validation: ``uv run pytest tests/test_h_card_extra_classes.py tests/test_h_card_templatetags.py tests/test_h_card_integration.py tests/test_profile_admin.py tests/test_admin_json_widget.py -q`` (26 passed), ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py -q`` (34 passed), ``uv run pytest`` (688 passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (74 files already formatted), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``git diff --check`` (passed), and ``git diff --cached --check`` (passed).
+- Compatibility: no production code, dependencies, migrations, models, settings, templates, endpoint URLs, endpoint semantics, or public APIs changed.
+
 ### Add configurable CORS header support
 
 - Added optional built-in CORS support backed by a package-local ``CorsMixin`` and ``indieweb.cors`` helper. ``INDIEWEB_CORS_ALLOWED_ORIGINS`` is disabled by default, accepts exact origin allowlists or the explicit ``"*"`` allow-all value, and covers the public protocol endpoint keys/classes ``auth``, ``token``, ``micropub``, ``media``, ``webmention``, and ``webmention_status``.

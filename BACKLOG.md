@@ -18,9 +18,18 @@ No current API Hardening items.
 
 ### Tooling and Maintainability
 
-- [ ] Standardize test style on pytest.
-  - References: `tests/`, `AGENTS.md`, `CLAUDE.md`.
-  - Outcome: document pytest as the preferred style for new tests, identify legacy `django.test.TestCase`/unittest-style files, and convert or schedule conversions in focused slices without mixing pytest parametrization into `TestCase` classes.
+- [ ] Convert admin legacy `TestCase` tests to pytest style.
+  - References: `tests/test_admin.py`.
+  - Outcome: replace `django.test.TestCase` classes with pytest fixtures/functions while preserving admin registration,
+    changelist, search, readonly, and add-permission coverage.
+- [ ] Convert Webmention sender and command legacy `TestCase` tests to pytest style.
+  - References: `tests/test_webmention_sender.py`, `tests/test_send_webmentions_command.py`.
+  - Outcome: replace `django.test.TestCase` setup/subtests with pytest fixtures and parametrization without changing
+    sender or management-command behavior.
+- [ ] Convert Webmention template tag legacy `TestCase` tests to pytest style.
+  - References: `tests/test_webmention_templatetags.py`.
+  - Outcome: replace `django.test.TestCase` setup/assertions/query checks with pytest fixtures and helpers while
+    preserving nested-response rendering and count coverage.
 - [ ] Add a GitHub Actions workflow for pull requests and pushes to `develop`.
   - Outcome: CI runs the tox matrix, mypy, Ruff, prek hooks, and Sphinx with warnings as errors.
 - [ ] Pin Django to a supported version range and test supported Django versions.

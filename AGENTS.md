@@ -22,6 +22,10 @@
 
 ## Testing Guidelines
 - New behaviors need Pytest coverage under `tests/` with `test_*.py`; mirror module paths for discoverability.
+- Pytest function style with fixtures is the preferred style for new tests. Use `@pytest.mark.django_db` or the `db`
+  fixture for database access.
+- Do not mix `pytest.mark.parametrize` into `django.test.TestCase` classes. Convert existing `TestCase` files to pytest
+  in focused maintenance slices instead of opportunistically rewriting them during unrelated feature work.
 - Tests run with coverage (`--cov-config=pyproject.toml`) and reuse the DB; reset or mark transactional tests if you change schema.
 - For regression proofs, add focused tests near the bug; prefer fixtures over inline setup to avoid duplication.
 - Use `pytest -k "keyword"` or `just test-one path::node` for fast iteration.
