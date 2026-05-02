@@ -2,11 +2,13 @@
 
 import sys
 from typing import Any
+from urllib.parse import urlparse
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import URLValidator
 
+from indieweb.models import WebmentionOutboundTarget
 from indieweb.senders import WebmentionSender
 
 
@@ -27,6 +29,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--vouch", type=str, help="Optional Vouch URL to include with sent webmentions", default=None
         )
+        parser.add_argument(
+            "--salmention-resend",
+            action="store_true",
+            help="Resend to the union of current and historical targets for the source URL",
+            default=False,
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         """Handle the command."""
@@ -34,6 +42,7 @@ class Command(BaseCommand):
         html_content = options["content"]
         dry_run = options["dry_run"]
         vouch_url = options["vouch"]
+        salmention_resend = options["salmention_resend"]
 
         # Validate source URL
         if not source_url.startswith(("http://", "https://")):
@@ -54,7 +63,12 @@ class Command(BaseCommand):
         self.stdout.write(f"Found {len(urls)} URLs in content\n")
 
         if dry_run:
-            self._handle_dry_run(sender, source_url, urls)
+            if salmention_resend:
+                self._handle_salmention_dry_run(sender, source_url, urls)
+            else:
+                self._handle_dry_run(sender, source_url, urls)
+        elif salmention_resend:
+            self._handle_salmention_send(sender, source_url, html_content, vouch_url)
         else:
             self._handle_send(sender, source_url, html_content, vouch_url)
 
@@ -72,8 +86,6 @@ class Command(BaseCommand):
 
     def _handle_dry_run(self, sender: WebmentionSender, source_url: str, urls: list[str]) -> None:
         """Show what webmentions would be sent without actually sending."""
-        from urllib.parse import urlparse
-
         source_domain = urlparse(source_url).netloc
 
         for url in urls:
@@ -119,3 +131,82 @@ class Command(BaseCommand):
                         f"✗ {result['target']} -> {result['endpoint']} (Error: {result.get('error', 'Unknown error')})"
                     )
                 )
+
+    def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, urls: list[str]) -> None:
+        """Show the Salmention resend target union without sending or recording history."""
+        current_targets = set(self._extract_external_target_urls(source_url, urls))
+        historical_targets = set(
+            WebmentionOutboundTarget.objects.filter(source_url=source_url).values_list("target_url", flat=True)
+        )
+
+        for target_url in sorted(current_targets | historical_targets):
+            provenance = self._target_provenance(target_url, current_targets, historical_targets)
+            endpoint = sender.discover_endpoint(target_url)
+            if endpoint:
+                self.stdout.write(f"  - [{provenance}] {target_url} -> {endpoint}")
+            else:
+                self.stdout.write(f"  - [{provenance}] {target_url} (no endpoint found)")
+
+    def _handle_salmention_send(
+        self,
+        sender: WebmentionSender,
+        source_url: str,
+        html_content: str,
+        vouch_url: str | None,
+    ) -> None:
+        """Resend Salmentions and display provenance-aware results."""
+        results = sender.resend_salmentions(source_url, html_content, vouch_url=vouch_url)
+
+        if not results:
+            self.stdout.write("No Salmention resends were sent (no current or historical targets found)")
+            return
+
+        success_count = sum(1 for r in results if r["success"])
+        self.stdout.write(f"\nResent {success_count}/{len(results)} Salmention webmentions successfully\n")
+
+        for result in results:
+            line = self._format_salmention_result(result)
+            if result["success"]:
+                self.stdout.write(self.style.SUCCESS(line))
+            else:
+                self.stdout.write(self.style.ERROR(line))
+
+    def _extract_external_target_urls(self, source_url: str, urls: list[str]) -> list[str]:
+        """Filter extracted URLs to absolute external HTTP(S) targets."""
+        # Keep this aligned with WebmentionSender._extract_external_target_urls for dry-run previews.
+        source_domain = urlparse(source_url).netloc
+        target_urls = []
+        for target_url in urls:
+            if not target_url.startswith(("http://", "https://")):
+                continue
+
+            target_domain = urlparse(target_url).netloc
+            if target_domain == source_domain:
+                continue
+
+            target_urls.append(target_url)
+
+        return target_urls
+
+    def _target_provenance(self, target_url: str, current_targets: set[str], historical_targets: set[str]) -> str:
+        """Return the resend provenance label for a target URL."""
+        # Keep this aligned with WebmentionSender._target_provenance for dry-run previews.
+        if target_url in current_targets and target_url in historical_targets:
+            return "both"
+        if target_url in current_targets:
+            return "current"
+        return "history"
+
+    def _format_salmention_result(self, result: dict[str, Any]) -> str:
+        """Format one provenance-aware resend result."""
+        target = result["target"]
+        endpoint = result["endpoint"]
+        provenance = result.get("provenance", "unknown")
+
+        if result["success"]:
+            return f"✓ [{provenance}] {target} -> {endpoint} (HTTP {result['status_code']})"
+
+        error = result.get("error", "Unknown error")
+        if endpoint:
+            return f"✗ [{provenance}] {target} -> {endpoint} (Error: {error})"
+        return f"✗ [{provenance}] {target} (Error: {error})"

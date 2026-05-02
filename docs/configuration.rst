@@ -368,10 +368,11 @@ under verified parent replies. Outbound sender support records ordinary
 ``WebmentionSender.send_webmentions()`` delivery attempts to the outbound
 target-history table by default and exposes
 ``WebmentionSender.resend_salmentions()`` for application-triggered union-of-
-current-and-historical resends. The management-command resend workflow remains
-deferred. The documented design uses that package-managed history plus an
-explicit host-application or operator-triggered resend workflow, not a setting
-toggle.
+current-and-historical resends. The ``send_webmentions`` management command
+also exposes this workflow with ``--salmention-resend`` for operator-triggered
+resends and ``--dry-run --salmention-resend`` previews. The documented design
+uses package-managed history plus an explicit host-application or
+operator-triggered resend workflow, not a setting toggle.
 See :doc:`webmention` for the support-status details, target-history design,
 and current ordinary Webmention reprocessing behavior.
 
@@ -496,7 +497,8 @@ URL strings stored for outbound delivery history. Ordinary sender calls now
 record and refresh these rows by default for delivered current external targets,
 and ``WebmentionSender.resend_salmentions()`` uses rows for exactly the same
 ``source_url`` together with current source links. The management-command
-resend flag remains deferred.
+``--salmention-resend`` flag wraps the same sender workflow without adding a
+new setting or schema requirement.
 
 Migrations
 ~~~~~~~~~~

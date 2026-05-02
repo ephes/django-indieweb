@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-02
 
+### Add an explicit management-command workflow for outbound Salmention resends
+
+- Added ``send_webmentions --salmention-resend`` as an opt-in management-command wrapper around ``WebmentionSender.resend_salmentions()``. The default command path remains the ordinary current-link-only ``send_webmentions()`` workflow and still preserves the existing dry-run current-link preview behavior.
+- Resend mode resolves content through the existing command path, including caller-provided ``--content`` and stdin via ``--content -``, validates and passes ``--vouch`` through, prints provenance labels for ``current``, ``history``, and ``both`` targets, and displays no-endpoint union targets as visible failures without changing sender semantics.
+- Added resend dry-run preview logic that loads ``WebmentionOutboundTarget`` rows for exactly the provided ``source_url``, unions them with current external targets from the latest source content, rediscovers endpoints for display, labels provenance, and does not send Webmentions or write outbound target history.
+- Preserved implementation boundary: no sender semantics change, no model schema or migration change, no Salmention setting, and no receive endpoint, processor, async receive, Vouch receive, template, source snapshot, nested response, spam, or ordinary incoming Webmention behavior changes. No follow-up remains for the outbound Salmention management-command workflow itself.
+- Documentation: updated ``docs/webmention.rst`` with the implemented command workflow, resend dry-run provenance output, stdin/content/Vouch behavior, and host/operator trigger examples; updated ``docs/configuration.rst`` so Salmention/model notes no longer describe the command wrapper as deferred. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased entry for ``send_webmentions --salmention-resend`` and noted that default command behavior remains unchanged.
+- Backlog: removed the completed management-command workflow item from ``BACKLOG.md``.
+- Validation: ``uv run pytest tests/test_send_webmentions_command.py -q`` (16 passed), ``uv run ruff check src/indieweb/management/commands/send_webmentions.py tests/test_send_webmentions_command.py`` (passed), ``uv run pytest tests/test_send_webmentions_command.py tests/test_webmention_sender.py tests/test_webmention_models.py -q`` (90 passed, 5 subtests passed), ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb --check --dry-run`` (no changes), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run pytest`` (654 passed), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv build`` (passed), ``uv run prek run --all-files`` (passed), and ``git diff --check`` (passed).
+
 ### Record outbound target history from ordinary Webmention sends and add a Salmention resend sender API
 
 - Updated ``WebmentionSender.send_webmentions()`` with a backwards-compatible ``record_history=True`` parameter. Ordinary sends still select only current external absolute HTTP(S) links, skip relative and same-domain URLs, return the existing per-target delivery shape, and omit ordinary results/history rows when no endpoint is discovered.

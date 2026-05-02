@@ -290,10 +290,11 @@ response identities with the previous stored source snapshot before overwriting
 it, creates or updates child rows for stable nested ``h-entry`` responses, and
 marks children that disappeared from the latest verified source as missing.
 
-This does **not** mean full Salmention support is implemented. django-indieweb
-does not automatically infer when a host application has incorporated a
-downstream response into an original permalink, and the management command does
-not yet expose an outbound Salmention resend mode.
+This does **not** mean fully automatic Salmention support is implemented.
+django-indieweb does not automatically infer when a host application has
+incorporated a downstream response into an original permalink. Host
+applications and operators still trigger outbound Salmention resends
+explicitly.
 
 Outbound Salmention sender support now has package-managed outbound target
 history and an explicit sender API. The protocol expects a site to resend
@@ -304,14 +305,17 @@ outbound target history by default while still sending only links found in the
 current source page. Host applications can call
 ``WebmentionSender.resend_salmentions()`` after they update the rendered source
 permalink to notify the union of current links and previously recorded targets.
+Operators can trigger the same sender workflow with
+``python manage.py send_webmentions SOURCE --salmention-resend``.
 
 No Salmention setting is available. Source snapshots and child response storage
 are always owned by verified processor/worker processing, bundled nested
 rendering is part of the default ``show_webmentions`` template path, and
-outbound target-history storage plus sender resend support are package behavior
-rather than setting toggles. Host applications and operators still own the
-explicit signal that a source permalink changed and should use the sender API
-or a future management-command wrapper rather than a global setting.
+outbound target-history storage plus sender and management-command resend
+support are package behavior rather than setting toggles. Host applications
+and operators still own the explicit signal that a source permalink changed
+and should use the sender API or the management command rather than a global
+setting.
 
 Outbound Target Tracking
 ------------------------
@@ -450,25 +454,61 @@ or publish step; synchronous deployments can call it directly after saving the
 rendered page. Operators should also be able to trigger the same workflow
 manually through a management command.
 
-The management command should keep its current behavior by default:
+The management command keeps its current behavior by default:
 
 .. code-block:: bash
 
     python manage.py send_webmentions https://mysite.example/post/
 
-That default remains an ordinary current-link send. A future optional flag, for
-example ``--salmention-resend``, should switch the command to the explicit
-resend workflow. That flag is not implemented yet:
+That default remains an ordinary current-link send. It extracts links from the
+current source content, skips relative and same-domain URLs, discovers current
+endpoints, and sends only ordinary current outbound Webmentions.
+
+Use ``--salmention-resend`` to switch the command to the explicit resend
+workflow:
 
 .. code-block:: bash
 
     python manage.py send_webmentions https://mysite.example/post/ --salmention-resend
 
-In resend mode, ``--dry-run`` should show the union of current and historical
-targets and label each target as current, historical, or both. Without resend
-mode, ``--dry-run`` should keep showing only current targets. The existing
-``--content`` option, including ``--content -`` for stdin, and ``--vouch``
-should continue to work in both modes.
+In resend mode, the command calls
+``WebmentionSender.resend_salmentions(source_url, html_content,
+vouch_url=vouch_url)``. Output includes each target, discovered endpoint when
+available, success or error, and a provenance label:
+
+* ``current`` means the target is linked from the latest source content only.
+* ``history`` means the target is recorded in outbound history for exactly
+  that source URL but is no longer linked from the latest source content.
+* ``both`` means the target is both currently linked and present in outbound
+  history.
+
+No-endpoint union targets remain visible in resend output as failures with an
+``Error: No endpoint found`` message.
+
+In resend mode, ``--dry-run`` shows the union of current and historical targets
+for exactly the provided source URL, labels each target with the same
+``current``/``history``/``both`` provenance, and rediscovers endpoints for
+display without sending Webmentions or writing outbound target history.
+Without resend mode, ``--dry-run`` keeps showing only current targets and
+preserves the ordinary same-domain skip and endpoint-discovery preview. The
+existing ``--content`` option, including ``--content -`` for stdin, and
+``--vouch`` work in both modes.
+
+Examples:
+
+.. code-block:: bash
+
+    # Preview ordinary current-link sends only
+    python manage.py send_webmentions https://mysite.example/post/ --dry-run
+
+    # Preview a Salmention resend to current plus exact-source historical targets
+    python manage.py send_webmentions https://mysite.example/post/ \
+        --salmention-resend --dry-run
+
+    # Pipe rendered source HTML after a publish task updates the permalink
+    render-post https://mysite.example/post/ | \
+        python manage.py send_webmentions https://mysite.example/post/ \
+            --salmention-resend --content -
 
 Deleted or removed links should follow ordinary Webmention update semantics.
 When a target was previously sent from ``source_url`` but no longer appears in
@@ -477,16 +517,6 @@ resend mode so the receiver can update or remove its display. New current links
 that are not in history are included and then recorded. The resend target set is
 therefore ``current links for this source`` plus ``recorded historical targets
 for this source``, not every URL that ever appeared in the database.
-
-Implementation Follow-ups
--------------------------
-
-The remaining outbound design should be implemented in focused slices:
-
-* Extend ``send_webmentions`` with an optional resend flag and dry-run output
-  that labels target provenance.
-* Document the host-application trigger pattern with examples for direct calls
-  and queue-backed applications.
 
 Receiving Persistence
 ---------------------
@@ -846,6 +876,14 @@ Send webmentions for all links in a post:
 
     # Dry run to see what would be sent
     python manage.py send_webmentions https://mysite.com/new-post/ --dry-run
+
+    # Resend Salmentions to current and exact-source historical targets
+    python manage.py send_webmentions https://mysite.com/new-post/ \
+        --salmention-resend
+
+    # Preview the Salmention resend target union with provenance labels
+    python manage.py send_webmentions https://mysite.com/new-post/ \
+        --salmention-resend --dry-run
 
 Signals
 =======

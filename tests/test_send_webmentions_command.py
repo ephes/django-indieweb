@@ -6,6 +6,8 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase
 
+from indieweb.models import WebmentionOutboundTarget
+
 
 class TestSendWebmentionsCommand(TestCase):
     """Test cases for send_webmentions management command."""
@@ -56,6 +58,7 @@ class TestSendWebmentionsCommand(TestCase):
         mock_sender.send_webmentions.assert_called_once_with(
             "https://example.com/my-post", '<a href="https://target1.com/post">Link</a>', vouch_url=None
         )
+        mock_sender.resend_salmentions.assert_not_called()
 
     def test_command_with_invalid_vouch_url(self):
         """Test command rejects malformed Vouch URLs."""
@@ -147,6 +150,10 @@ class TestSendWebmentionsCommand(TestCase):
             "https://target.com/webmention",
             None,  # Second call would be for a different URL
         ]
+        WebmentionOutboundTarget.objects.create(
+            source_url="https://example.com/my-post",
+            target_url="https://history.example/post",
+        )
 
         out = StringIO()
         call_command(
@@ -162,9 +169,11 @@ class TestSendWebmentionsCommand(TestCase):
         assert "Found 3 URLs in content" in output
         assert "https://target.com/post -> https://target.com/webmention" in output
         assert "https://example.com/other-post (skipped: same domain)" in output
+        assert "https://history.example/post" not in output
 
         # Should not actually send webmentions in dry run
         mock_sender.send_webmentions.assert_not_called()
+        mock_sender.resend_salmentions.assert_not_called()
 
     @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
     @patch("sys.stdin", StringIO('<a href="https://target.com">Link from stdin</a>'))
@@ -198,3 +207,239 @@ class TestSendWebmentionsCommand(TestCase):
 
         output = out.getvalue()
         assert "No webmentions were sent (no valid targets found)" in output
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    def test_salmention_resend_calls_resend_sender_api(self, mock_sender_class):
+        """Test Salmention resend mode calls the sender resend API instead of ordinary send."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+
+        html_content = '<a href="https://target.com/post">Link</a>'
+        mock_sender.extract_urls.return_value = ["https://target.com/post"]
+        mock_sender.resend_salmentions.return_value = [
+            {
+                "target": "https://target.com/post",
+                "endpoint": "https://target.com/webmention",
+                "success": True,
+                "status_code": 202,
+                "provenance": "current",
+            }
+        ]
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content=html_content,
+            salmention_resend=True,
+            stdout=out,
+        )
+
+        mock_sender.resend_salmentions.assert_called_once_with(
+            "https://example.com/my-post", html_content, vouch_url=None
+        )
+        mock_sender.send_webmentions.assert_not_called()
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    def test_salmention_resend_passes_vouch_url(self, mock_sender_class):
+        """Test Salmention resend mode validates and passes Vouch through."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+        mock_sender.extract_urls.return_value = ["https://target.com/post"]
+        mock_sender.resend_salmentions.return_value = []
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content='<a href="https://target.com/post">Link</a>',
+            salmention_resend=True,
+            vouch="https://trusted.example/vouch-for-example",
+            stdout=out,
+        )
+
+        mock_sender.resend_salmentions.assert_called_once_with(
+            "https://example.com/my-post",
+            '<a href="https://target.com/post">Link</a>',
+            vouch_url="https://trusted.example/vouch-for-example",
+        )
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    @patch("sys.stdin", StringIO('<a href="https://target.com">Link from stdin</a>'))
+    def test_salmention_resend_stdin_input(self, mock_sender_class):
+        """Test Salmention resend mode reads content from stdin."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+        mock_sender.extract_urls.return_value = ["https://target.com"]
+        mock_sender.resend_salmentions.return_value = []
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content="-",
+            salmention_resend=True,
+            stdout=out,
+        )
+
+        mock_sender.resend_salmentions.assert_called_once_with(
+            "https://example.com/my-post",
+            '<a href="https://target.com">Link from stdin</a>',
+            vouch_url=None,
+        )
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    def test_salmention_resend_output_includes_provenance_and_no_endpoint(self, mock_sender_class):
+        """Test Salmention resend output labels success, failure, and no-endpoint results."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+        mock_sender.extract_urls.return_value = [
+            "https://current.example/post",
+            "https://both.example/post",
+            "https://history.example/post",
+        ]
+        mock_sender.resend_salmentions.return_value = [
+            {
+                "target": "https://current.example/post",
+                "endpoint": "https://current.example/webmention",
+                "success": True,
+                "status_code": 202,
+                "provenance": "current",
+            },
+            {
+                "target": "https://both.example/post",
+                "endpoint": "https://both.example/webmention",
+                "success": False,
+                "status_code": 500,
+                "error": "HTTP 500",
+                "provenance": "both",
+            },
+            {
+                "target": "https://history.example/post",
+                "endpoint": None,
+                "success": False,
+                "status_code": None,
+                "error": "No endpoint found",
+                "provenance": "history",
+            },
+        ]
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content='<a href="https://current.example/post">Current</a>',
+            salmention_resend=True,
+            stdout=out,
+        )
+
+        output = out.getvalue()
+        assert "Resent 1/3 Salmention webmentions successfully" in output
+        assert "✓ [current] https://current.example/post -> https://current.example/webmention (HTTP 202)" in output
+        assert "✗ [both] https://both.example/post -> https://both.example/webmention (Error: HTTP 500)" in output
+        assert "✗ [history] https://history.example/post (Error: No endpoint found)" in output
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    def test_salmention_resend_no_results_message(self, mock_sender_class):
+        """Test Salmention resend mode reports an accurate no-target message."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+        mock_sender.extract_urls.return_value = []
+        mock_sender.resend_salmentions.return_value = []
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content="<p>No links here</p>",
+            salmention_resend=True,
+            stdout=out,
+        )
+
+        assert "No Salmention resends were sent (no current or historical targets found)" in out.getvalue()
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    def test_salmention_resend_dry_run_includes_current_history_and_both(self, mock_sender_class):
+        """Test resend dry-run previews exact-source current and historical union targets."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+        mock_sender.extract_urls.return_value = [
+            "https://current.example/post",
+            "https://both.example/post",
+            "https://example.com/same-domain",
+            "/relative",
+        ]
+        WebmentionOutboundTarget.objects.create(
+            source_url="https://example.com/my-post",
+            target_url="https://history.example/post",
+        )
+        WebmentionOutboundTarget.objects.create(
+            source_url="https://example.com/my-post",
+            target_url="https://both.example/post",
+        )
+        WebmentionOutboundTarget.objects.create(
+            source_url="https://example.com/other-post",
+            target_url="https://other-history.example/post",
+        )
+
+        def discover(target_url):
+            return f"{target_url}/webmention"
+
+        mock_sender.discover_endpoint.side_effect = discover
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content='<a href="https://current.example/post">Current</a>',
+            dry_run=True,
+            salmention_resend=True,
+            stdout=out,
+        )
+
+        output = out.getvalue()
+        assert "[current] https://current.example/post -> https://current.example/post/webmention" in output
+        assert "[history] https://history.example/post -> https://history.example/post/webmention" in output
+        assert "[both] https://both.example/post -> https://both.example/post/webmention" in output
+        assert "https://other-history.example/post" not in output
+        assert "https://example.com/same-domain" not in output
+        assert "/relative" not in output
+        assert {call.args[0] for call in mock_sender.discover_endpoint.call_args_list} == {
+            "https://current.example/post",
+            "https://both.example/post",
+            "https://history.example/post",
+        }
+        mock_sender.send_webmentions.assert_not_called()
+        mock_sender.resend_salmentions.assert_not_called()
+
+    @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+    def test_salmention_resend_dry_run_reports_no_endpoint_without_history_write(self, mock_sender_class):
+        """Test resend dry-run shows no-endpoint targets without updating history."""
+        mock_sender = Mock()
+        mock_sender_class.return_value = mock_sender
+        mock_sender.extract_urls.return_value = ["https://current.example/post"]
+        mock_sender.discover_endpoint.return_value = None
+        existing = WebmentionOutboundTarget.objects.create(
+            source_url="https://example.com/my-post",
+            target_url="https://history.example/post",
+            endpoint_url="https://history.example/old-webmention",
+        )
+
+        out = StringIO()
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content='<a href="https://current.example/post">Current</a>',
+            dry_run=True,
+            salmention_resend=True,
+            stdout=out,
+        )
+
+        output = out.getvalue()
+        assert "[current] https://current.example/post (no endpoint found)" in output
+        assert "[history] https://history.example/post (no endpoint found)" in output
+        assert WebmentionOutboundTarget.objects.count() == 1
+        existing.refresh_from_db()
+        assert existing.endpoint_url == "https://history.example/old-webmention"
+        mock_sender.send_webmentions.assert_not_called()
+        mock_sender.resend_salmentions.assert_not_called()

@@ -12,12 +12,6 @@ No current Priority 1 items.
 
 ## Priority 3
 
-### Webmentions Reliability and Compliance
-
-- [ ] Add an explicit management-command workflow for outbound Salmention resends.
-  - References: `docs/webmention.rst` "Outbound Resend Workflow", `src/indieweb/management/commands/send_webmentions.py`, `tests/test_send_webmentions_command.py`.
-  - Outcome: add an optional resend flag such as `send_webmentions --salmention-resend` while preserving the default current-link-only command behavior. In resend mode, support existing `--content` including stdin via `--content -`, `--dry-run`, and `--vouch` options; dry-run output should show the union of current and historical targets and label each target's provenance. Document host-application and operator trigger examples after implementation.
-
 ### API Hardening
 
 - [ ] Add configurable rate limiting for IndieWeb endpoints.
