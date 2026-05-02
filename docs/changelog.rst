@@ -46,6 +46,7 @@ Unreleased
 * Audited and corrected current documentation for development commands, ``prek`` hook usage, ``just docs``/Sphinx validation, backlog workflow guidance, Micropub editing/source-query behavior, IndieAuth token fields, Webmention author h-card matching, and h-card support status.
 * Added a browser token management UI at ``/indieweb/tokens/`` where authenticated users can view metadata for their own IndieAuth/Micropub access tokens and revoke an owned token through a CSRF-protected ``POST``. Revocation deletes the ``Token`` row, immediately invalidating the bearer credential for Micropub and other token-protected requests. The UI does not display full bearer token keys and does not change the token endpoint wire protocol.
 * Tightened wording around still-unsupported media endpoint/uploads, WebSub, rate limiting, and CORS work so current docs match shipped IndieAuth, Micropub, Webmention, and token-management behavior; no functional change.
+* Added optional cache-backed endpoint rate limiting through ``INDIEWEB_RATE_LIMITS``. The setting is disabled by default and supports per-endpoint ``limit``/``window`` entries for ``auth``, ``token``, ``micropub``, ``media``, ``webmention``, and ``webmention_status``. Counters are scoped by endpoint key, HTTP method, and ``REMOTE_ADDR``; exceeded limits return HTTP ``429`` with ``Retry-After`` when the window reset can be computed.
 
 0.5.3 (2025-10-28)
 ------------------

@@ -4,6 +4,17 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-02
 
+### Add configurable rate limiting for IndieWeb endpoints
+
+- Added optional ``INDIEWEB_RATE_LIMITS`` support backed by Django's cache framework. The setting is disabled by default, accepts per-endpoint ``limit``/``window`` mappings, and covers the public protocol endpoint keys ``auth``, ``token``, ``micropub``, ``media``, ``webmention``, and ``webmention_status``.
+- Counters are scoped by endpoint key, HTTP method, and the request ``REMOTE_ADDR`` client identity, with the identity hashed before use in cache keys. ``X-Forwarded-For`` is not trusted directly; proxy deployments must arrange a trusted ``REMOTE_ADDR`` before enabling IP-based limits.
+- Exceeded configured limits return HTTP ``429`` with plain-text body ``rate limit exceeded`` and include ``Retry-After`` when the cache-backed window reset can be computed. Requests below the limit continue through the existing response paths unchanged.
+- Preserved implementation boundary: rate limiting is opt-in, browser token-management UI views are not included, no dependency was added, no model/schema/migration change was added, endpoint URLs are unchanged, and authentication, authorization, scope, token expiration, Micropub handler, media upload, Webmention processing, async enqueueing, Salmention, template, sender, CORS, and global abuse-scoring semantics are unchanged except for configured ``429`` responses.
+- Documentation: updated ``docs/api.rst`` with built-in rate-limit behavior and endpoint keys, updated ``docs/configuration.rst`` with ``INDIEWEB_RATE_LIMITS`` configuration, cache/client-identity notes, and removed the stale custom ``TokenView`` rate-limit workaround. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased entry for optional cache-backed endpoint rate limiting.
+- Backlog: removed the completed configurable endpoint rate-limiting item from ``BACKLOG.md``. No follow-up remains for this slice; configurable CORS remains a separate API hardening backlog item.
+- Validation: ``uv run pytest tests/test_rate_limiting.py -q`` (10 passed), ``uv run pytest tests/test_token_endpoint.py tests/test_micropub_endpoint.py tests/test_micropub_media.py tests/test_webmention_endpoint.py tests/test_rate_limiting.py -q`` (213 passed), ``uv run ruff check src/indieweb/rate_limit.py src/indieweb/views.py tests/test_rate_limiting.py`` (passed), ``uv run mypy`` (no issues), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run pytest`` (664 passed), ``uv run ruff check .`` (passed), ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb --check --dry-run`` (no changes), ``uv build`` (passed), ``uv run prek run --all-files`` (passed), and ``git diff --check`` (passed).
+
 ### Add an explicit management-command workflow for outbound Salmention resends
 
 - Added ``send_webmentions --salmention-resend`` as an opt-in management-command wrapper around ``WebmentionSender.resend_salmentions()``. The default command path remains the ordinary current-link-only ``send_webmentions()`` workflow and still preserves the existing dry-run current-link preview behavior.

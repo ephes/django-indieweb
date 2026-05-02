@@ -19,6 +19,7 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
 - ``/indieweb/media/`` - Micropub media endpoint for direct media uploads
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
+- ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
 
 IndieAuth Flow
 --------------
@@ -868,9 +869,43 @@ Multiple scopes can be requested by separating with spaces: ``scope=create updat
 Rate Limiting
 -------------
 
-Currently, no rate limiting is implemented.
-Configure rate limiting in your Django deployment until built-in endpoint
-rate limiting is added.
+django-indieweb can rate-limit its public protocol endpoints with Django's
+cache framework. Rate limiting is disabled by default; set
+``INDIEWEB_RATE_LIMITS`` to opt in. See :doc:`configuration` for the setting
+shape and deployment notes.
+
+Endpoint keys:
+
+- ``auth`` - ``GET`` and ``POST`` requests to ``/indieweb/auth/``
+- ``token`` - ``POST`` requests to ``/indieweb/token/``
+- ``micropub`` - ``GET`` and ``POST`` requests to ``/indieweb/micropub/``
+- ``media`` - ``POST`` requests to ``/indieweb/media/``
+- ``webmention`` - ``GET`` and ``POST`` requests to ``/indieweb/webmention/``
+- ``webmention_status`` - ``GET`` requests to
+  ``/indieweb/webmention/<pk>/``
+
+Counters are scoped by endpoint key, HTTP method, and the client identity from
+``REMOTE_ADDR``. ``GET`` and ``POST`` requests to the same endpoint use
+independent counters, so set each endpoint limit as a per-method budget.
+django-indieweb does not trust ``X-Forwarded-For`` directly. Deployments
+behind a proxy should configure trusted upstream middleware or infrastructure
+so Django receives the intended client address in ``REMOTE_ADDR``.
+
+When a configured limit is exceeded, the endpoint returns:
+
+.. code-block:: http
+
+    HTTP/1.1 429 Too Many Requests
+    Content-Type: text/plain
+    Retry-After: 60
+
+    rate limit exceeded
+
+``Retry-After`` is included when the cache-backed window reset time is
+available. Requests below the limit keep the same response bodies, status
+codes, authentication behavior, scope checks, and processing flow as before.
+The browser token-management pages are not covered by these protocol endpoint
+rate-limit keys.
 
 CORS Support
 ------------

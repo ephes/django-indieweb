@@ -33,6 +33,7 @@ from django.views.generic import View
 from .handlers import get_micropub_handler
 from .models import Auth, Token, Webmention
 from .processors import WebmentionProcessor
+from .rate_limit import RateLimitMixin
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
@@ -452,7 +453,7 @@ class TokenAuthMixin(View):
         return super().dispatch(request, *args, **kwargs)
 
 
-class AuthView(CSRFExemptMixin, View):
+class AuthView(CSRFExemptMixin, RateLimitMixin, View):
     """
     IndieAuth authorization endpoint.
 
@@ -462,6 +463,7 @@ class AuthView(CSRFExemptMixin, View):
     """
 
     required_params: list[str] = ["client_id", "redirect_uri", "state", "me"]
+    rate_limit_key = "auth"
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
@@ -626,13 +628,15 @@ class AuthView(CSRFExemptMixin, View):
         return HttpResponse(urlencode(response_values), status=200)
 
 
-class TokenView(CSRFExemptMixin, View):
+class TokenView(CSRFExemptMixin, RateLimitMixin, View):
     """
     IndieAuth token endpoint.
 
     Exchanges valid authorization codes for access tokens that can be used
     to authenticate API requests.
     """
+
+    rate_limit_key = "token"
 
     def send_token(self, me: str, client_id: str, scope: str | None, owner: AbstractBaseUser) -> HttpResponse:
         lifetime = int(getattr(settings, "INDIEWEB_TOKEN_EXPIRES_IN", DEFAULT_TOKEN_EXPIRES_IN))
@@ -771,7 +775,7 @@ class TokenRevokeView(UserLoginRequiredMixin, View):
         return redirect("indieweb:tokens")
 
 
-class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
+class MicropubView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
     """
     Micropub endpoint for creating posts.
 
@@ -782,6 +786,7 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
     """
 
     request: HttpRequest
+    rate_limit_key = "micropub"
 
     def _parse_json_request(self, request: HttpRequest) -> dict[str, Any]:
         """Parse JSON formatted Micropub request."""
@@ -1181,7 +1186,7 @@ class MicropubView(CSRFExemptMixin, TokenAuthMixin, View):
             return HttpResponse(urlencode(params), status=200)
 
 
-class MicropubMediaView(CSRFExemptMixin, TokenAuthMixin, View):
+class MicropubMediaView(CSRFExemptMixin, RateLimitMixin, TokenAuthMixin, View):
     """
     Micropub media endpoint for direct file uploads.
 
@@ -1189,6 +1194,8 @@ class MicropubMediaView(CSRFExemptMixin, TokenAuthMixin, View):
     the file through Django's configured storage backend, and returns the
     stored media URL in the Location header.
     """
+
+    rate_limit_key = "media"
 
     def _scope_authorized(self) -> bool:
         """Require the conventional Micropub ``media`` scope for uploads."""
@@ -1215,13 +1222,15 @@ class MicropubMediaView(CSRFExemptMixin, TokenAuthMixin, View):
         return response
 
 
-class WebmentionEndpoint(CSRFExemptMixin, View):
+class WebmentionEndpoint(CSRFExemptMixin, RateLimitMixin, View):
     """
     Webmention receiving endpoint.
 
     Implements the W3C Webmention protocol for receiving notifications
     when other sites mention content on this site.
     """
+
+    rate_limit_key = "webmention"
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Handle incoming webmentions."""
@@ -1301,12 +1310,14 @@ class WebmentionEndpoint(CSRFExemptMixin, View):
         return response
 
 
-class WebmentionStatusView(View):
+class WebmentionStatusView(RateLimitMixin, View):
     """
     Webmention status endpoint.
 
     Returns the status of a specific webmention by ID.
     """
+
+    rate_limit_key = "webmention_status"
 
     def get(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponse:
         """Return status of a webmention."""

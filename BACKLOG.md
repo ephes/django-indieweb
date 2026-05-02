@@ -14,9 +14,6 @@ No current Priority 1 items.
 
 ### API Hardening
 
-- [ ] Add configurable rate limiting for IndieWeb endpoints.
-  - Reference: `docs/api.rst`.
-  - Outcome: rate limits are documented, configurable, and covered by tests.
 - [ ] Add configurable CORS header support.
   - Reference: `docs/api.rst`.
   - Outcome: CORS behavior is documented and covered by tests.

@@ -100,6 +100,79 @@ which case existing tokens for that client must stop working immediately.
    working as long as it satisfies the configured validator (or the
    validator is unset).
 
+INDIEWEB_RATE_LIMITS
+~~~~~~~~~~~~~~~~~~~~
+
+Optional per-endpoint request limits for django-indieweb's public protocol
+endpoints. The setting uses Django's configured cache backend for counters and
+does not add any model, migration, or runtime dependency.
+
+**Default:** ``None`` (rate limiting disabled)
+
+Set this to ``None`` or an empty dictionary to disable built-in rate limiting.
+Each configured endpoint key accepts a mapping with:
+
+- ``limit`` - Maximum number of requests allowed during the window.
+- ``window`` - Window length in seconds.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_RATE_LIMITS = {
+       "auth": {"limit": 30, "window": 300},
+       "token": {"limit": 10, "window": 300},
+       "micropub": {"limit": 120, "window": 60},
+       "media": {"limit": 30, "window": 300},
+       "webmention": {"limit": 60, "window": 300},
+       "webmention_status": {"limit": 120, "window": 60},
+   }
+
+Supported endpoint keys:
+
+- ``auth`` - ``/indieweb/auth/``
+- ``token`` - ``/indieweb/token/``
+- ``micropub`` - ``/indieweb/micropub/``
+- ``media`` - ``/indieweb/media/``
+- ``webmention`` - ``/indieweb/webmention/``
+- ``webmention_status`` - ``/indieweb/webmention/<pk>/``
+
+Counters are isolated by endpoint key, HTTP method, and client identity, so
+``GET`` and ``POST`` requests to the same endpoint use independent counters.
+Set each endpoint limit as a per-method budget. The client identity is
+``request.META["REMOTE_ADDR"]`` by default, and the value is hashed before it
+is used in cache keys. django-indieweb does not read or trust
+``X-Forwarded-For`` directly. If your site runs behind a reverse proxy, load
+balancer, CDN, or platform router, configure that trusted infrastructure so
+Django receives the correct client address in ``REMOTE_ADDR`` before enabling
+IP-based limits.
+
+Cache backend choice affects the strength of the limit. Django's default
+``LocMemCache`` is local to one process, so multi-worker deployments can allow
+roughly ``limit`` requests per worker during each window. Use a shared cache
+backend such as Redis or Memcached when you need deployment-wide counters.
+``DummyCache`` does not persist counters and effectively disables built-in
+rate limiting.
+
+When a limit is exceeded, the endpoint returns HTTP ``429`` with a plain-text
+``rate limit exceeded`` body. A ``Retry-After`` header is included when the
+cache-backed window reset time is available. Requests under the limit continue
+through the existing view code unchanged, including authentication,
+authorization, Micropub handler calls, media storage, Webmention processing,
+and async Webmention enqueueing.
+
+Malformed endpoint entries, non-mapping values, or non-positive ``limit`` /
+``window`` values are ignored and logged, leaving that endpoint unlimited.
+This keeps the optional hardening setting from breaking existing deployments
+because of a typo, but production operators should monitor logs after changing
+rate-limit configuration.
+
+The browser token-management pages at ``/indieweb/tokens/`` and
+``/indieweb/tokens/<pk>/revoke/`` are not covered by this setting because they
+are authenticated Django UI views rather than public IndieWeb protocol
+endpoints.
+
 INDIEWEB_MEDIA_MAX_UPLOAD_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -579,26 +652,16 @@ in a separate model related to ``Token``:
 Custom Views
 ~~~~~~~~~~~~
 
-Extend views to add functionality:
+Extend views to add application-specific behavior:
 
 .. code-block:: python
 
    # myapp/views.py
    from indieweb.views import TokenView as BaseTokenView
-   from django.core.cache import cache
 
    class TokenView(BaseTokenView):
        def post(self, request, *args, **kwargs):
-           # Add rate limiting
-           ip = request.META.get('REMOTE_ADDR')
-           cache_key = f'token_attempt_{ip}'
-           attempts = cache.get(cache_key, 0)
-
-           if attempts > 5:
-               return HttpResponse('Too many attempts', status=429)
-
-           cache.set(cache_key, attempts + 1, 300)  # 5 minutes
-
+           # Add deployment-specific auditing, metrics, or policy checks here.
            return super().post(request, *args, **kwargs)
 
 Logging Configuration
