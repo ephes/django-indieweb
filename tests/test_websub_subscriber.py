@@ -3,18 +3,23 @@ from __future__ import annotations
 import hashlib
 import hmac
 from datetime import timedelta
+from io import StringIO
 from urllib.parse import parse_qs
 
 import httpx
 import pytest
+from django.core.management import call_command
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
-from indieweb.models import WebSubSubscription
+from indieweb.models import WebSubDeliveryAttempt, WebSubSubscription
 from indieweb.websub import (
     build_websub_callback_url,
+    get_websub_expired_subscriptions,
+    get_websub_renewal_candidates,
     request_websub_subscription,
+    summarize_websub_leases,
     validate_websub_delivery_signature,
 )
 from tests import websub_hooks
@@ -439,6 +444,146 @@ def test_callback_verification_rejects_mismatched_topic_without_state_change(cli
 
 
 @pytest.mark.django_db
+def test_callback_denial_records_pending_subscribe_reason(client):
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+        requested_lease_seconds=3600,
+        pending_secret="new-secret",
+        pending_secret_set=True,
+        last_request_error="previous outbound diagnostic",
+    )
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "denied",
+            "hub.topic": subscription.topic_url,
+            "hub.reason": "topic no longer available",
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 204
+    assert subscription.state == WebSubSubscription.STATE_DENIED
+    assert subscription.pending_mode == ""
+    assert subscription.pending_secret == ""
+    assert subscription.pending_secret_set is False
+    assert subscription.confirmed_lease_seconds is None
+    assert subscription.lease_expires_at is None
+    assert subscription.last_denied_at is not None
+    assert subscription.last_denied_mode == WebSubSubscription.MODE_SUBSCRIBE
+    assert subscription.last_denial_reason == "topic no longer available"
+    assert subscription.last_request_error == "previous outbound diagnostic"
+
+
+@pytest.mark.django_db
+def test_callback_denial_rejects_mismatched_topic_without_state_change(client):
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "denied",
+            "hub.topic": "https://attacker.example/feed",
+            "hub.reason": "nope",
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 400
+    assert subscription.state == WebSubSubscription.STATE_PENDING_SUBSCRIBE
+    assert subscription.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
+    assert subscription.last_denied_at is None
+    assert subscription.last_denial_reason == ""
+
+
+@pytest.mark.django_db
+def test_callback_denial_for_active_renewal_preserves_current_subscription(client, subscription):
+    lease_expires_at = timezone.now() + timedelta(seconds=3600)
+    subscription.state = WebSubSubscription.STATE_ACTIVE
+    subscription.pending_mode = WebSubSubscription.MODE_SUBSCRIBE
+    subscription.secret = "active-secret"
+    subscription.pending_secret = "new-secret"
+    subscription.pending_secret_set = True
+    subscription.confirmed_lease_seconds = 3600
+    subscription.lease_expires_at = lease_expires_at
+    subscription.save()
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "denied",
+            "hub.topic": subscription.topic_url,
+            "hub.reason": "renewal refused",
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 204
+    assert subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert subscription.secret == "active-secret"
+    assert subscription.pending_secret == ""
+    assert subscription.pending_secret_set is False
+    assert subscription.confirmed_lease_seconds == 3600
+    assert subscription.lease_expires_at == lease_expires_at
+    assert subscription.last_denied_mode == WebSubSubscription.MODE_SUBSCRIBE
+    assert subscription.last_denial_reason == "renewal refused"
+
+
+@pytest.mark.django_db
+def test_callback_denial_for_pending_unsubscribe_restores_active_subscription(client, subscription):
+    lease_expires_at = timezone.now() + timedelta(seconds=3600)
+    subscription.state = WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
+    subscription.pending_mode = WebSubSubscription.MODE_UNSUBSCRIBE
+    subscription.confirmed_lease_seconds = 3600
+    subscription.lease_expires_at = lease_expires_at
+    subscription.save()
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "denied",
+            "hub.topic": subscription.topic_url,
+            "hub.reason": "unsubscribe not recognized",
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 204
+    assert subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert subscription.pending_mode == ""
+    assert subscription.confirmed_lease_seconds == 3600
+    assert subscription.lease_expires_at == lease_expires_at
+    assert subscription.last_denied_mode == WebSubSubscription.MODE_UNSUBSCRIBE
+    assert subscription.last_denial_reason == "unsubscribe not recognized"
+
+
+@pytest.mark.django_db
+def test_callback_denial_requires_pending_request(client, subscription):
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "denied",
+            "hub.topic": subscription.topic_url,
+            "hub.reason": "late denial",
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 400
+    assert subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert subscription.last_denied_at is None
+
+
+@pytest.mark.django_db
 def test_callback_verification_confirms_unsubscribe(client, subscription):
     subscription.state = WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
     subscription.pending_mode = WebSubSubscription.MODE_UNSUBSCRIBE
@@ -478,6 +623,12 @@ def test_callback_post_records_delivery_and_calls_hook(client, settings, subscri
     assert subscription.last_delivery_content_type == "application/atom+xml"
     assert subscription.last_delivery_size == len(body)
     assert subscription.last_delivery_digest == hashlib.sha256(body).hexdigest()
+    attempt = WebSubDeliveryAttempt.objects.get(subscription=subscription)
+    assert attempt.content_type == "application/atom+xml"
+    assert attempt.size == len(body)
+    assert attempt.digest == subscription.last_delivery_digest
+    assert attempt.status_code == 204
+    assert attempt.error == ""
     assert websub_hooks.DELIVERIES[0]["subscription_id"] == subscription.pk
     assert websub_hooks.DELIVERIES[0]["topic_url"] == subscription.topic_url
     assert websub_hooks.DELIVERIES[0]["body"] == body
@@ -533,6 +684,11 @@ def test_callback_post_rejects_missing_or_bad_signature(client, subscription, si
     assert response.status_code == 403
     assert subscription.last_delivery_status_code == 403
     assert subscription.last_delivery_error == "invalid signature"
+    assert WebSubDeliveryAttempt.objects.filter(
+        subscription=subscription,
+        status_code=403,
+        error="invalid signature",
+    ).exists()
 
 
 @pytest.mark.django_db
@@ -600,3 +756,82 @@ def test_callback_post_reports_delivery_hook_failure(client, settings, subscript
     assert response.status_code == 500
     assert subscription.last_delivery_status_code == 500
     assert subscription.last_delivery_error == "delivery hook failed"
+
+
+@pytest.mark.django_db
+def test_websub_lease_helpers_list_expired_and_renewal_candidates():
+    now = timezone.now()
+    expired = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/expired",
+        topic_url="https://source.example/expired",
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at=now - timedelta(minutes=1),
+    )
+    due = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/due",
+        topic_url="https://source.example/due",
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at=now + timedelta(hours=12),
+    )
+    later = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/later",
+        topic_url="https://source.example/later",
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at=now + timedelta(days=3),
+    )
+    WebSubSubscription.objects.create(
+        hub_url="https://hub.example/pending",
+        topic_url="https://source.example/pending",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        lease_expires_at=now - timedelta(minutes=1),
+    )
+
+    assert list(get_websub_expired_subscriptions(now=now)) == [expired]
+    assert list(get_websub_renewal_candidates(within=timedelta(days=1), now=now)) == [expired, due]
+    summaries = summarize_websub_leases(within=timedelta(days=1), now=now)
+    assert [summary.subscription_id for summary in summaries] == [expired.pk, due.pk]
+    assert summaries[0].expired is True
+    assert summaries[1].expired is False
+    assert later not in get_websub_renewal_candidates(within=timedelta(days=1), now=now)
+
+
+@pytest.mark.django_db
+def test_websub_lease_helpers_reject_negative_window():
+    with pytest.raises(ValueError, match="non-negative"):
+        get_websub_renewal_candidates(within=timedelta(seconds=-1))
+
+    with pytest.raises(ValueError, match="non-negative"):
+        summarize_websub_leases(within=timedelta(seconds=-1))
+
+
+@pytest.mark.django_db
+def test_websub_subscriptions_command_lists_lease_attention():
+    now = timezone.now()
+    WebSubSubscription.objects.create(
+        hub_url="https://hub.example/expired",
+        topic_url="https://source.example/expired",
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at=now - timedelta(minutes=1),
+    )
+    WebSubSubscription.objects.create(
+        hub_url="https://hub.example/due",
+        topic_url="https://source.example/due",
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at=now + timedelta(hours=2),
+    )
+    WebSubSubscription.objects.create(
+        hub_url="https://hub.example/later",
+        topic_url="https://source.example/later",
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at=now + timedelta(days=2),
+    )
+    stdout = StringIO()
+
+    call_command("websub_subscriptions", "--renewal-window-hours", "6", stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "expired: #" in output
+    assert "renewal_due: #" in output
+    assert "https://source.example/expired" in output
+    assert "https://source.example/due" in output
+    assert "https://source.example/later" not in output

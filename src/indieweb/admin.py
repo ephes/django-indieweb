@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.forms import CharField, ModelForm
 from django.http import HttpRequest
 
-from .models import Auth, Profile, Token, Webmention, WebSubSubscription
+from .models import Auth, Profile, Token, Webmention, WebSubDeliveryAttempt, WebSubSubscription
 
 
 @admin.register(Webmention)
@@ -55,8 +55,16 @@ class WebmentionAdmin(admin.ModelAdmin):
 
 @admin.register(WebSubSubscription)
 class WebSubSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("topic_url", "hub_url", "state", "lease_expires_at", "last_delivery_at", "created")
-    list_filter = ("state", "created", "last_delivery_at")
+    list_display = (
+        "topic_url",
+        "hub_url",
+        "state",
+        "lease_expires_at",
+        "last_denied_at",
+        "last_delivery_at",
+        "created",
+    )
+    list_filter = ("state", "created", "last_denied_at", "last_delivery_at")
     search_fields = ("topic_url", "hub_url")
     readonly_fields = (
         "callback_token",
@@ -66,6 +74,9 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
         "last_request_mode",
         "last_request_status_code",
         "last_request_error",
+        "last_denied_at",
+        "last_denied_mode",
+        "last_denial_reason",
         "last_delivery_at",
         "last_delivery_content_type",
         "last_delivery_size",
@@ -93,6 +104,9 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
                     "last_request_mode",
                     "last_request_status_code",
                     "last_request_error",
+                    "last_denied_at",
+                    "last_denied_mode",
+                    "last_denial_reason",
                     "last_challenge",
                     "last_verified_at",
                 ),
@@ -114,6 +128,32 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
         ),
         ("Timestamps", {"fields": ("created", "modified")}),
     )
+
+
+@admin.register(WebSubDeliveryAttempt)
+class WebSubDeliveryAttemptAdmin(admin.ModelAdmin):
+    list_display = ("subscription", "received_at", "status_code", "content_type", "size", "signature_algorithm")
+    list_filter = ("status_code", "received_at", "signature_algorithm")
+    search_fields = ("subscription__topic_url", "subscription__hub_url", "digest", "error")
+    readonly_fields = (
+        "subscription",
+        "received_at",
+        "content_type",
+        "size",
+        "digest",
+        "signature_algorithm",
+        "status_code",
+        "error",
+        "created",
+        "modified",
+    )
+    ordering = ("-received_at", "-pk")
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
 
 
 @admin.register(Token)

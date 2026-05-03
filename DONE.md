@@ -4,6 +4,43 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Harden WebSub subscriber denial, lease maintenance, and delivery diagnostics
+
+- Added ``hub.mode=denied`` callback handling for tokenized WebSub subscriber verification ``GET`` requests. Denials
+  validate the exact topic URL, record bounded ``hub.reason`` diagnostics, clear pending state, and return
+  ``204 No Content`` when accepted. Initial subscribe denials move rows to ``denied``; active renewal denials preserve
+  the current active lease and secret while dropping staged renewal state; unsubscribe denials restore the row to
+  ``active`` so deliveries can continue.
+- Added denial diagnostics on ``WebSubSubscription`` plus metadata-only ``WebSubDeliveryAttempt`` history rows for
+  recorded delivery attempts. The delivery history stores received time, content type, byte size, SHA-256 digest,
+  signature algorithm, status code, and bounded error text, but never raw hub delivery bodies or parsed feed content.
+- Added read-only lease/operator workflows: ``get_websub_expired_subscriptions()``,
+  ``get_websub_renewal_candidates()``, ``summarize_websub_leases()``, and
+  ``python manage.py websub_subscriptions``. These list expired subscriptions and renewal candidates without background
+  jobs or hidden hub network calls.
+- Review follow-up: kept inbound denial reasons separate from outbound request diagnostics, tightened lease-helper
+  typing and reuse, removed tautological summary fields, documented delivery-attempt retention expectations, documented
+  that renewal candidates include expired subscriptions, and made delivery-attempt admin rows non-editable while still
+  allowing operator deletion for retention.
+- Backlog: added the bundled WebSub follow-up item to ``BACKLOG.md`` before implementation, then removed it after
+  completion.
+- Documentation: updated WebSub, API, configuration, and concepts docs. No generated docs under ``docs/_build`` were
+  edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased notes for denial handling, delivery-attempt history,
+  lease-inspection helpers, and the read-only management command.
+- Compatibility: publisher-side WebSub helpers and ``notify_websub`` semantics remain backward-compatible. Subscriber
+  callback URLs, CSRF exemption, CORS exclusion, rate-limit key behavior, signed delivery validation, and staged-secret
+  renewal semantics are preserved. Intentional additions are one migration, denial fields on ``WebSubSubscription``,
+  the ``WebSubDeliveryAttempt`` model/admin, lease helper APIs, and the ``websub_subscriptions`` command.
+- Follow-up risks: lease renewal remains intentionally host/operator-owned; django-indieweb still does not provide a
+  hub service, automatic discovery, background scheduler, feed parser, content persistence, or raw delivery archive.
+- Validation: ``uv run pytest tests/test_websub_subscriber.py -q --no-cov`` (35 passed),
+  ``uv run pytest tests/test_websub.py tests/test_websub_templatetags.py tests/test_notify_websub_command.py -q
+  --no-cov`` (22 passed), ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (36 passed),
+  ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb --check --dry-run`` (no
+  changes), ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (87 files already formatted), and
+  ``uv run mypy`` (no issues). Full final gate results are recorded in the implementer report.
+
 ### Add WebSub subscriber callback support
 
 - Added ``WebSubSubscription`` persistence for host-level subscriber state keyed by hub URL, topic URL, and an

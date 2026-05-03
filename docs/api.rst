@@ -91,13 +91,18 @@ Verification GET
 
 The callback accepts verification ``GET`` requests with:
 
-- ``hub.mode`` - ``subscribe`` or ``unsubscribe``
+- ``hub.mode`` - ``subscribe``, ``unsubscribe``, or ``denied``
 - ``hub.topic`` - the exact topic URL stored on the subscription
 - ``hub.challenge`` - echoed verbatim for accepted verification requests
 - ``hub.lease_seconds`` - optional lease duration on subscribe verification
+- ``hub.reason`` - optional denial diagnostic when ``hub.mode=denied``
 
 Accepted ``subscribe`` verification marks the subscription active and records
 lease metadata. Accepted ``unsubscribe`` verification marks it unsubscribed.
+Accepted ``denied`` callbacks record bounded denial diagnostics, clear pending
+state, return HTTP ``204``, and either mark pending subscribes denied or
+keep the current active subscription in place when a renewal or unsubscribe
+request is denied.
 Missing, mismatched, or out-of-state verification requests return a client
 error and do not mutate the row.
 
@@ -108,7 +113,8 @@ The callback accepts content distribution ``POST`` requests for active
 subscriptions. It records delivery metadata and then calls the optional
 ``INDIEWEB_WEBSUB_DELIVERY_HOOK``. Successful accepted deliveries return
 ``204 No Content``. The package does not parse feeds or persist delivered
-content.
+content. Metadata for each recorded attempt is also available in
+``WebSubDeliveryAttempt`` rows linked to the subscription.
 
 If the subscription has a stored ``hub.secret``, delivery must include a valid
 ``X-Hub-Signature-256`` or ``X-Hub-Signature`` HMAC header. Invalid signatures

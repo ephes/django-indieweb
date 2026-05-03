@@ -387,6 +387,46 @@ verifies the renewal; failed renewal requests keep the previous secret. Passing
 ``secret=""`` stages removal of the stored secret, so a verified renewal can
 switch the subscription back to unsigned deliveries.
 
+WebSub Subscriber Models and Commands
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``WebSubSubscription`` stores host-level subscriber state for a hub/topic pair,
+including tokenized callback identity, pending verification mode, lease
+metadata, staged ``hub.secret`` values, latest request diagnostics, latest
+denial diagnostics, and latest delivery diagnostics.
+
+``WebSubDeliveryAttempt`` stores metadata-only delivery history linked to a
+subscription. It records received time, content type, byte size, SHA-256
+digest, signature algorithm, HTTP status code, and bounded error text. It does
+not store raw hub delivery bodies or parsed feed content. The table is
+append-only from the callback path, so high-volume subscribers should choose a
+retention policy that matches their operational needs. Operators can delete
+old attempts from Django admin or from a host-owned maintenance command, for
+example:
+
+.. code-block:: python
+
+   from datetime import timedelta
+
+   from django.utils import timezone
+   from indieweb.models import WebSubDeliveryAttempt
+
+   cutoff = timezone.now() - timedelta(days=90)
+   WebSubDeliveryAttempt.objects.filter(received_at__lt=cutoff).delete()
+
+Use the read-only ``websub_subscriptions`` management command to inspect
+active subscriptions whose leases have expired or expire within a configured
+window:
+
+.. code-block:: bash
+
+   python manage.py websub_subscriptions --renewal-window-hours 24
+
+The command makes no hub network calls. Operators that want to renew a listed
+subscription should explicitly call ``request_websub_subscription()`` from
+their application workflow or a separate, host-owned management task.
+Set ``--renewal-window-hours 0`` when you only want expired subscriptions.
+
 INDIEWEB_WEBMENTION_ENQUEUE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

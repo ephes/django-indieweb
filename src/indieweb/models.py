@@ -315,6 +315,9 @@ class WebSubSubscription(models.Model):
     last_request_mode = models.CharField(max_length=16, choices=MODE_CHOICES, blank=True)
     last_request_status_code = models.PositiveIntegerField(null=True, blank=True)
     last_request_error = models.TextField(blank=True)
+    last_denied_at = models.DateTimeField(null=True, blank=True)
+    last_denied_mode = models.CharField(max_length=16, choices=MODE_CHOICES, blank=True)
+    last_denial_reason = models.CharField(max_length=500, blank=True)
 
     last_delivery_at = models.DateTimeField(null=True, blank=True)
     last_delivery_content_type = models.CharField(max_length=200, blank=True)
@@ -338,6 +341,36 @@ class WebSubSubscription(models.Model):
 
     def __str__(self) -> str:
         return f"WebSub {self.state}: {self.topic_url} via {self.hub_url}"
+
+
+class WebSubDeliveryAttempt(models.Model):
+    """Metadata-only history for one WebSub content distribution attempt."""
+
+    subscription = models.ForeignKey(
+        WebSubSubscription,
+        related_name="delivery_attempts",
+        on_delete=models.CASCADE,
+    )
+    received_at = models.DateTimeField(db_index=True)
+    content_type = models.CharField(max_length=200, blank=True)
+    size = models.PositiveIntegerField(null=True, blank=True)
+    digest = models.CharField(max_length=64, blank=True)
+    signature_algorithm = models.CharField(max_length=32, blank=True)
+    status_code = models.PositiveIntegerField()
+    error = models.CharField(max_length=500, blank=True)
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["subscription", "received_at"]),
+            models.Index(fields=["status_code", "received_at"]),
+        ]
+        ordering = ("-received_at", "-pk")
+
+    def __str__(self) -> str:
+        return f"WebSub delivery {self.status_code}: {self.subscription_id} at {self.received_at}"
 
 
 class Profile(models.Model):

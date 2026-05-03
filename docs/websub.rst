@@ -126,6 +126,33 @@ The command exits with a Django ``CommandError`` for invalid URLs or when no
 hub is configured. Individual hub failures are printed but do not abort
 notification of later hubs.
 
+Subscriber Lease Inspection
+---------------------------
+
+Subscriber lease maintenance is explicit and operator-driven. django-indieweb
+does not run background renewal jobs and does not contact hubs unless your
+application calls ``request_websub_subscription()`` itself.
+
+Use ``websub_subscriptions`` to list active subscriptions whose confirmed
+lease has expired or expires within a configurable renewal window:
+
+.. code-block:: bash
+
+   python manage.py websub_subscriptions
+   python manage.py websub_subscriptions --renewal-window-hours 6
+
+The command prints metadata only: subscription id, topic URL, hub URL, status,
+and ``lease_expires_at``. It does not send renewal or unsubscribe requests.
+Applications that want to renew a listed subscription should make an explicit
+call to ``request_websub_subscription()`` from their own operator workflow.
+Use ``--renewal-window-hours 0`` to list expired subscriptions only.
+
+The same lease-inspection behavior is available through
+``get_websub_expired_subscriptions()``, ``get_websub_renewal_candidates()``,
+and ``summarize_websub_leases()`` in ``indieweb.websub``. Renewal candidates
+include already-expired active subscriptions, so callers do not need to union
+the candidate set with ``get_websub_expired_subscriptions()``.
+
 Subscriber Flow
 ---------------
 
@@ -194,13 +221,28 @@ records ``hub.lease_seconds`` when supplied by the hub, and computes
 ``unsubscribed`` and clears active lease fields. Missing, mismatched, or
 out-of-state verification requests are rejected and do not mutate the row.
 
+The callback also accepts WebSub denial callbacks with ``hub.mode=denied``
+and a matching ``hub.topic``. ``hub.challenge`` is not required for denial.
+The optional ``hub.reason`` value is stored in bounded denial diagnostics on
+``WebSubSubscription`` and the callback returns ``204 No Content``. A denied
+initial subscribe request moves the row to ``denied`` and clears pending
+lease/secret staging. A denied renewal for an already-active subscription
+keeps the row ``active``, preserves the current lease and secret, and clears
+only the staged renewal state. A denied pending unsubscribe request restores
+the row to ``active`` and clears only the pending unsubscribe state,
+preserving the current lease metadata so deliveries can continue. Denials
+without a matching pending request return a client error and do not mutate the
+row.
+
 Content Distribution
 --------------------
 
 The callback ``POST`` accepts deliveries for active subscriptions only. It
 records latest-delivery metadata including content type, byte size, SHA-256
-digest, status code, delivery time, and signature algorithm. It deliberately
-does not parse feeds or persist delivered content; host applications own those
+digest, status code, delivery time, and signature algorithm. Each recorded
+delivery attempt also creates a ``WebSubDeliveryAttempt`` row with the same
+bounded metadata for operator diagnostics. django-indieweb deliberately does
+not parse feeds or persist delivered content; host applications own those
 semantics.
 
 Configure ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` to receive accepted deliveries:

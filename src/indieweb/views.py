@@ -42,6 +42,7 @@ from .websub import (
     delivery_content_type_allowed,
     process_websub_delivery,
     record_websub_delivery,
+    record_websub_denial,
     validate_websub_delivery_signature,
 )
 
@@ -1267,15 +1268,30 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             return None
 
     def get(self, request: HttpRequest, token: str, *args: object, **kwargs: object) -> HttpResponse:
-        """Echo ``hub.challenge`` for a valid pending subscribe/unsubscribe verification."""
+        """Handle WebSub subscribe/unsubscribe verification or denial callbacks."""
         subscription = self._get_subscription(token)
         if subscription is None:
             return HttpResponse(status=404)
 
         mode = request.GET.get("hub.mode")
         topic = request.GET.get("hub.topic")
+        if not mode or not topic:
+            return HttpResponse(status=400)
+
+        if mode == "denied":
+            try:
+                record_websub_denial(
+                    subscription,
+                    topic_url=topic,
+                    reason=request.GET.get("hub.reason", ""),
+                )
+            except ValueError as exc:
+                logger.warning(f"Rejected WebSub denial for subscription {subscription.pk}: {exc}")
+                return HttpResponse(status=400)
+            return HttpResponse(status=204)
+
         challenge = request.GET.get("hub.challenge")
-        if not mode or not topic or not challenge:
+        if not challenge:
             return HttpResponse(status=400)
 
         try:

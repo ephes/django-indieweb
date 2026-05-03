@@ -265,17 +265,18 @@ Current implementation limitations are tracked in ``BACKLOG.md``. Built-in
 rate limiting, built-in CORS support, Webmention vouch support, Salmentions,
 publisher-side WebSub support, minimal WebSub subscriber callbacks, common
 Micropub h-entry post-type advertisement, and Micropub event/RSVP property
-forwarding are available. A bundled WebSub hub, automatic subscriber discovery,
-background lease renewal, and host-owned event/RSVP storage semantics remain
-outside django-indieweb.
+forwarding are available. WebSub subscriber denial handling, lease-inspection
+helpers, and metadata-only delivery history are also available. A bundled
+WebSub hub, automatic subscriber discovery, automatic background lease renewal,
+and host-owned event/RSVP storage semantics remain outside django-indieweb.
 
 Future Enhancements
 -------------------
 
 Potential improvements for full IndieWeb support are tracked in ``BACKLOG.md``:
 
-1. **WebSub subscriber operations** - Add optional cleanup/renewal workflows, richer diagnostics, and host-owned worker examples around the minimal callback foundation
-2. **Micropub post-type integrations** - Add examples for host applications that map event/RSVP properties into their own content, calendar, or response models
+1. **Micropub post-type integrations** - Add examples for host applications that map event/RSVP properties into their own content, calendar, or response models
+2. **WebSub host workflows** - Add host-owned worker examples for delivery processing and explicit renewal jobs without making django-indieweb own feed parsing or background scheduling
 
 Resources
 ---------

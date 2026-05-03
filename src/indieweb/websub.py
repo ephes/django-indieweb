@@ -7,18 +7,19 @@ import hmac
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
+from django.db.models import QuerySet
 from django.http import HttpResponseBase
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from .models import WebSubSubscription
+from .models import WebSubDeliveryAttempt, WebSubSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,18 @@ class WebSubSubscriptionRequestResult:
     success: bool
     status_code: int | None = None
     error: str = ""
+
+
+@dataclass(frozen=True)
+class WebSubLeaseSummary:
+    """Operator-facing summary of one WebSub subscription lease."""
+
+    subscription_id: int
+    hub_url: str
+    topic_url: str
+    state: str
+    lease_expires_at: datetime | None
+    expired: bool
 
 
 class WebSubDeliveryHookError(Exception):
@@ -480,6 +493,120 @@ def confirm_websub_verification(
     )
 
 
+def record_websub_denial(
+    subscription: WebSubSubscription,
+    *,
+    topic_url: str,
+    reason: str,
+) -> None:
+    """Record a WebSub ``hub.mode=denied`` verification callback.
+
+    A denial is accepted only for the tokenized subscription and exact topic
+    URL. If the denied callback corresponds to a pending subscribe request,
+    the subscription moves to ``denied``. If it corresponds to a pending
+    unsubscribe request, the existing subscription remains ``active`` because
+    the hub rejected cancellation. In both cases pending request/secret staging
+    is cleared so operators can inspect and retry explicitly.
+    """
+    if topic_url != subscription.topic_url:
+        raise ValueError("WebSub denial topic does not match subscription")
+    if subscription.pending_mode not in WEBSUB_SUBSCRIPTION_MODES:
+        raise ValueError("WebSub denial does not match a pending subscription request")
+
+    now = timezone.now()
+    denied_mode = subscription.pending_mode
+    if denied_mode == WebSubSubscription.MODE_SUBSCRIBE:
+        if subscription.state not in {
+            WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+            WebSubSubscription.STATE_ACTIVE,
+        }:
+            raise ValueError("WebSub denial does not match pending subscribe verification")
+        was_active_renewal = subscription.state == WebSubSubscription.STATE_ACTIVE
+        if not was_active_renewal:
+            subscription.state = WebSubSubscription.STATE_DENIED
+            subscription.confirmed_lease_seconds = None
+            subscription.lease_expires_at = None
+    else:
+        if subscription.state != WebSubSubscription.STATE_PENDING_UNSUBSCRIBE:
+            raise ValueError("WebSub denial does not match pending unsubscribe verification")
+        subscription.state = WebSubSubscription.STATE_ACTIVE
+
+    subscription.last_denied_at = now
+    subscription.last_denied_mode = denied_mode
+    subscription.last_denial_reason = reason[:500]
+    subscription.pending_mode = ""
+    subscription.pending_secret = ""
+    subscription.pending_secret_set = False
+    subscription.save(
+        update_fields=[
+            "state",
+            "pending_mode",
+            "pending_secret",
+            "pending_secret_set",
+            "confirmed_lease_seconds",
+            "lease_expires_at",
+            "last_denied_at",
+            "last_denied_mode",
+            "last_denial_reason",
+            "modified",
+        ]
+    )
+
+
+def get_websub_expired_subscriptions(*, now: datetime | None = None) -> QuerySet[WebSubSubscription]:
+    """Return active subscriptions whose confirmed lease has expired."""
+    reference_time = now or timezone.now()
+    return WebSubSubscription.objects.filter(
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at__isnull=False,
+        lease_expires_at__lte=reference_time,
+    ).order_by("lease_expires_at", "pk")
+
+
+def get_websub_renewal_candidates(
+    *,
+    within: timedelta = timedelta(days=1),
+    now: datetime | None = None,
+) -> QuerySet[WebSubSubscription]:
+    """Return active subscriptions whose lease expires within ``within``.
+
+    Already-expired active subscriptions are included in the candidate set.
+    """
+    if within < timedelta(0):
+        raise ValueError("renewal candidate window must be non-negative")
+    reference_time = now or timezone.now()
+    return WebSubSubscription.objects.filter(
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at__isnull=False,
+        lease_expires_at__lte=reference_time + within,
+    ).order_by("lease_expires_at", "pk")
+
+
+def summarize_websub_leases(
+    *,
+    within: timedelta = timedelta(days=1),
+    now: datetime | None = None,
+) -> list[WebSubLeaseSummary]:
+    """Return metadata-only lease status summaries for operator inspection."""
+    reference_time = now or timezone.now()
+    subscriptions = get_websub_renewal_candidates(within=within, now=reference_time)
+    summaries: list[WebSubLeaseSummary] = []
+    for subscription in subscriptions:
+        lease_expires_at = subscription.lease_expires_at
+        expired = lease_expires_at is not None and lease_expires_at <= reference_time
+        summaries.append(
+            WebSubLeaseSummary(
+                subscription_id=subscription.pk,
+                hub_url=subscription.hub_url,
+                topic_url=subscription.topic_url,
+                state=subscription.state,
+                lease_expires_at=lease_expires_at,
+                expired=expired,
+            )
+        )
+    return summaries
+
+
 def delivery_body_too_large(body: bytes) -> bool:
     """Return whether a WebSub delivery body exceeds the configured size limit."""
     max_bytes = _delivery_max_bytes()
@@ -536,13 +663,18 @@ def record_websub_delivery(
     signature_algorithm: str | None = None,
 ) -> None:
     """Record metadata for the latest WebSub delivery attempt."""
-    subscription.last_delivery_at = timezone.now()
-    subscription.last_delivery_content_type = content_type[:200]
-    subscription.last_delivery_size = len(body)
-    subscription.last_delivery_digest = hashlib.sha256(body).hexdigest()
+    received_at = timezone.now()
+    clipped_content_type = content_type[:200]
+    delivery_size = len(body)
+    delivery_digest = hashlib.sha256(body).hexdigest()
+    clipped_error = error[:500]
+    subscription.last_delivery_at = received_at
+    subscription.last_delivery_content_type = clipped_content_type
+    subscription.last_delivery_size = delivery_size
+    subscription.last_delivery_digest = delivery_digest
     subscription.last_delivery_signature_algorithm = signature_algorithm or ""
     subscription.last_delivery_status_code = status_code
-    subscription.last_delivery_error = error[:500]
+    subscription.last_delivery_error = clipped_error
     subscription.save(
         update_fields=[
             "last_delivery_at",
@@ -554,6 +686,16 @@ def record_websub_delivery(
             "last_delivery_error",
             "modified",
         ]
+    )
+    WebSubDeliveryAttempt.objects.create(
+        subscription=subscription,
+        received_at=received_at,
+        content_type=clipped_content_type,
+        size=delivery_size,
+        digest=delivery_digest,
+        signature_algorithm=signature_algorithm or "",
+        status_code=status_code,
+        error=clipped_error,
     )
 
 
