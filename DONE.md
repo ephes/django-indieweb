@@ -2,6 +2,40 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-03
+
+### Convert Webmention template tag legacy TestCase tests to pytest style
+
+- Converted ``tests/test_webmention_templatetags.py`` from a ``django.test.TestCase`` class to pytest fixtures and
+  module-level test functions with plain ``assert`` statements.
+- Preserved Webmention template-tag coverage for endpoint link tags, ``show_webmentions`` rendering and type filtering,
+  nested response display rules, duplicate suppression, nested ordering, top-level-only counts, count ``as`` variables,
+  template-specific markup, DEBUG error handling, integer/count template behavior, and the prefetch query-count
+  assertion. The former ``subTest`` status loop now uses pytest parametrization.
+- This completes the remaining legacy ``TestCase`` cleanup thread from the pytest-standardization work; no legacy
+  ``django.test.TestCase`` test files remain after verification.
+- Backlog: removed the completed Webmention template-tag conversion item from ``BACKLOG.md``.
+- Documentation: no project documentation update was needed because this was a test-only maintenance refactor with no
+  behavior, workflow, public API, configuration, or user-facing usage change. No generated docs under ``docs/_build``
+  were edited or staged.
+- Changelog: no changelog update was needed because no behavior, bug fix, feature, configuration, workflow, or
+  user-facing change shipped in this slice.
+- Compatibility: no production code, dependencies, migrations, models, settings, templates, endpoint URLs, endpoint
+  semantics, template tag behavior, or public APIs changed.
+- Follow-up: no remaining test-style cleanup is known for legacy ``django.test.TestCase`` files; the next open tooling
+  slices remain the CI, Django support matrix, Ruff target-version, coverage gate, ``just loc``, and dependency cleanup
+  items in ``BACKLOG.md``.
+- Validation: ``uv run pytest tests/test_webmention_templatetags.py -q`` (28 passed),
+  ``uv run pytest tests/test_webmention_templatetags.py tests/test_webmention_models.py -q`` (56 passed),
+  ``uv run pytest tests/test_h_card_templatetags.py tests/test_h_card_integration.py
+  tests/test_webmention_templatetags.py -q`` (40 passed), ``uv run pytest tests/test_admin.py
+  tests/test_profile_admin.py tests/test_admin_json_widget.py tests/test_webmention_sender.py
+  tests/test_send_webmentions_command.py tests/test_webmention_templatetags.py -q`` (120 passed),
+  ``uv run pytest`` (696 passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed),
+  ``uv run ruff format . --check`` (74 files already formatted),
+  ``rg "django\.test import TestCase|TestCase\(" tests`` (no matches), ``git diff --check`` (passed), and
+  ``git diff --cached --check`` (passed).
+
 ## 2026-05-02
 
 ### Convert Webmention sender and command legacy TestCase tests to pytest style

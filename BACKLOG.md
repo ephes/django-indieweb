@@ -18,10 +18,6 @@ No current API Hardening items.
 
 ### Tooling and Maintainability
 
-- [ ] Convert Webmention template tag legacy `TestCase` tests to pytest style.
-  - References: `tests/test_webmention_templatetags.py`.
-  - Outcome: replace `django.test.TestCase` setup/assertions/query checks with pytest fixtures and helpers while
-    preserving nested-response rendering and count coverage.
 - [ ] Add a GitHub Actions workflow for pull requests and pushes to `develop`.
   - Outcome: CI runs the tox matrix, mypy, Ruff, prek hooks, and Sphinx with warnings as errors.
 - [ ] Pin Django to a supported version range and test supported Django versions.
