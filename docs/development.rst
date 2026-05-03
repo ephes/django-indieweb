@@ -38,15 +38,25 @@ To generate an HTML coverage report::
 Running Tox
 -----------
 
-Tox is used to test against multiple Python versions (3.10, 3.11, 3.12, 3.13).
+Tox is used to test the supported Python and Django version matrix:
 
-To run tests for all Python versions::
+- Django 5.2 LTS on Python 3.10, 3.11, 3.12, 3.13, and 3.14
+- Django 6.0 on Python 3.12, 3.13, and 3.14
+
+The runtime dependency is pinned to Django ``>=5.2.13,<6.1`` so supported
+stable Django series are explicit. Django 4.2 is no longer included because its
+extended support has ended.
+
+To run tests for the full supported matrix::
 
     tox
 
-To run tests for a specific Python version::
+The full matrix requires the corresponding Python interpreters to be available
+locally. GitHub Actions provides them in CI.
 
-    tox -e py313
+To run tests for a specific Python/Django combination::
+
+    tox -e py313-django60
 
 To run configured hooks::
 
@@ -55,9 +65,9 @@ To run configured hooks::
 Continuous Integration
 ----------------------
 
-GitHub Actions runs the tox matrix, mypy, Ruff lint and formatting checks,
-configured prek hooks, and Sphinx with warnings treated as errors for pull
-requests and pushes to ``develop``.
+GitHub Actions runs every tox Python/Django matrix environment, mypy, Ruff lint
+and formatting checks, configured prek hooks, and Sphinx with warnings treated
+as errors for pull requests and pushes to ``develop``.
 
 Code Quality
 ------------
@@ -166,7 +176,7 @@ Development Commands Summary
     # Run type checking
     uv run mypy
 
-    # Run tox for all Python versions
+    # Run tox for the supported Python/Django matrix
     tox
 
     # Format code

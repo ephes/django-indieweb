@@ -18,9 +18,6 @@ No current API Hardening items.
 
 ### Tooling and Maintainability
 
-- [ ] Pin Django to a supported version range and test supported Django versions.
-  - References: `pyproject.toml`, `tox.ini`.
-  - Outcome: supported Django/Python combinations are explicit and exercised in tox.
 - [ ] Add a `just loc` line-counting workflow.
   - References: `justfile`, `pyproject.toml`, `../kptncook/justfile`.
   - Outcome: running `just loc` produces repository line-count summaries using the same `uv run count-lines-of-code` workflow used in `../kptncook`, with any required dependency or tool configuration documented.

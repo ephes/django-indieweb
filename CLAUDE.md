@@ -30,7 +30,7 @@ This is a Django application that implements IndieWeb protocols including IndieA
 ## Development Setup
 
 This project uses:
-- Python 3.10+ (supports 3.10, 3.11, 3.12, 3.13)
+- Python 3.10+ (supports 3.10, 3.11, 3.12, 3.13, 3.14)
 - Django
 - uv for packaging and dependency management
 - Ruff for linting and formatting (line length: 119)
@@ -71,7 +71,7 @@ uv run pytest
 uv run pytest --cov-report=html
 open htmlcov/index.html
 
-# Run full test matrix with tox
+# Run the supported Python/Django matrix with tox
 tox
 ```
 

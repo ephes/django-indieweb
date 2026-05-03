@@ -119,9 +119,12 @@ Generate an HTML coverage report::
     uv run pytest --cov-report=html
     open htmlcov/index.html
 
-Run tests for all Python versions using tox::
+Run tests for the supported Python/Django matrix using tox::
 
     tox
+
+The supported tox matrix covers Django 5.2 LTS on Python 3.10 through 3.14 and
+Django 6.0 on Python 3.12 through 3.14.
 
 Contributing
 ------------

@@ -4,6 +4,45 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Pin Django to a supported version range and test supported Django versions
+
+- Pinned the runtime Django dependency to ``Django>=5.2.13,<6.1`` and added Django 5.2/6.0 framework classifiers so
+  the package policy names the currently supported stable Django series instead of allowing future untested major/minor
+  releases.
+- Verified the policy against official Django documentation on 2026-05-03: Django 5.2 LTS supports Python 3.10, 3.11,
+  3.12, 3.13, and 3.14; Django 6.0 supports Python 3.12, 3.13, and 3.14; Django 4.2 is listed as an unsupported
+  previous release after extended support ended on April 7, 2026.
+- Replaced the broad tox Python-only envlist with explicit ``py310-django52``, ``py311-django52``,
+  ``py312-django52``, ``py313-django52``, ``py314-django52``, ``py312-django60``, ``py313-django60``, and
+  ``py314-django60`` environments. Each tox env constrains Django to the intended series and prints the active Python
+  and Django versions before running ``pytest`` inside tox's own virtualenv, preserving the configured pytest-cov
+  coverage gate from ``pyproject.toml``.
+- Review follow-up: tightened the Django 6.0 tox floor to ``Django>=6.0.4,<6.1`` to mirror the explicit Django 5.2
+  patch floor, simplified the shared tox description, and documented that tox's explicit test dependencies must stay
+  aligned with the ``pyproject.toml`` dev group.
+- Updated GitHub Actions to run each supported tox environment with the matching ``actions/setup-python`` version,
+  including Python 3.14 rows for both supported Django series.
+- Backlog: removed the completed Django support-matrix item from ``BACKLOG.md``.
+- Documentation: updated ``docs/development.rst``, ``CONTRIBUTING.rst``, ``README.rst``, and ``CLAUDE.md`` with the
+  supported Python/Django matrix and tox guidance. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased support-policy/tooling note.
+- Compatibility: no production behavior, migrations, models, settings, templates, endpoint URLs, endpoint semantics,
+  runtime features, or public APIs changed. Dependency changes were limited to the Django support-policy range and
+  lockfile metadata.
+- Follow-up: full Python 3.10, 3.11, and 3.12 matrix coverage is expected to run on GitHub Actions because those
+  interpreters were not installed locally. Local tox validation covered Python 3.13 and Python 3.14 across both
+  supported Django series.
+- Validation: ``uv lock`` (resolved 75 packages), ``uv run tox -e py313-django52,py313-django60`` (both passed; each
+  printed Python 3.13.12 with Django 5.2.13 or 6.0.4; 696 passed; required 88.0%, total 89.34%),
+  ``uv run tox -e py314-django52,py314-django60`` (both passed; each printed Python 3.14.4 with Django 5.2.13 or
+  6.0.4; 696 passed; required 88.0%, total 89.34%), ``uv run ruff check .`` (passed),
+  ``uv run ruff format . --check`` (74 files already formatted), ``uv run mypy`` (no issues), ``uv run pytest``
+  (696 passed; required 88.0%, total 89.34%), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``uv run prek run --all-files`` (passed, including YAML/TOML validation), ``git ls-files docs/_build --modified
+  --others --exclude-standard`` (no output), ``git diff --check`` (passed), review follow-up
+  ``uv run tox list`` (listed all eight supported envs), ``uv run tox -e py313-django60,py314-django60`` (both passed;
+  printed Django 6.0.4), ``uv run prek run --all-files`` (passed), and ``git diff --check`` (passed).
+
 ### Add a GitHub Actions workflow for pull requests and pushes to develop
 
 - Added ``.github/workflows/ci.yml`` with pull request and push triggers scoped to ``develop`` plus concurrency

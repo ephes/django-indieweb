@@ -90,7 +90,7 @@ Ready to contribute? Here's how to set up ``django-indieweb`` for local developm
     $ uv run prek run --all-files      # All configured hooks
     $ uv run sphinx-build -W -b html docs docs/_build/html
 
-6. To test against multiple Python versions (3.10, 3.11, 3.12, 3.13), use tox::
+6. To test against the supported Python and Django version matrix, use tox::
 
     $ tox
 
@@ -111,14 +111,16 @@ Before you submit a pull request, check that it meets these guidelines:
 2. If the pull request adds functionality, the docs should be updated. Put
    your new functionality into a function with a docstring, and add the
    feature to the list in README.rst.
-3. The pull request should work for Python 3.10, 3.11, 3.12, and 3.13. Run
-   ``tox`` locally for the supported Python matrix.
+3. The pull request should work for Django 5.2 LTS on Python 3.10, 3.11, 3.12,
+   3.13, and 3.14, and Django 6.0 on Python 3.12, 3.13, and 3.14. Run ``tox``
+   locally for the supported matrix when you have the matching Python
+   interpreters installed.
 4. Add type annotations to new code. Run ``uv run mypy`` to check types.
 5. Follow the existing code style. Run ``uv run ruff format .`` to format code.
 
-GitHub Actions reruns the tox matrix, mypy, Ruff lint and formatting checks,
-configured prek hooks, and Sphinx with warnings treated as errors for pull
-requests and pushes to ``develop``.
+GitHub Actions reruns the supported Python/Django tox matrix, mypy, Ruff lint
+and formatting checks, configured prek hooks, and Sphinx with warnings treated
+as errors for pull requests and pushes to ``develop``.
 
 Development Commands
 --------------------
@@ -158,7 +160,7 @@ Here's a quick reference of development commands::
     # Validate documentation without opening a browser
     uv run sphinx-build -W -b html docs docs/_build/html
 
-    # Run tox for all Python versions
+    # Run tox for the supported Python/Django matrix
     tox
 
 Tips
