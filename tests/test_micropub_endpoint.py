@@ -7,6 +7,7 @@ test_django-indieweb
 Tests for `django-indieweb` micropub endpoint.
 """
 
+import json
 from datetime import timedelta
 from urllib.parse import unquote
 
@@ -389,6 +390,37 @@ def test_get_config_query_has_no_scope_gate(client, user, micropub_endpoint_url,
     auth_header = f"Bearer {token.key}"
     response = client.get(f"{micropub_endpoint_url}?q=config", Authorization=auth_header)
     assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_get_config_query_advertises_event_and_rsvp_post_types(client, token, micropub_endpoint_url):
+    auth_header = f"Bearer {token.key}"
+
+    response = client.get(f"{micropub_endpoint_url}?q=config", Authorization=auth_header)
+
+    assert response.status_code == 200
+    config = json.loads(response.content)
+    post_types = {post_type["type"]: post_type for post_type in config["post-types"]}
+    assert post_types["event"] == {
+        "type": "event",
+        "name": "Event",
+        "properties": [
+            "name",
+            "summary",
+            "description",
+            "start",
+            "end",
+            "location",
+            "category",
+            "url",
+            "published",
+        ],
+    }
+    assert post_types["rsvp"] == {
+        "type": "rsvp",
+        "name": "RSVP",
+        "properties": ["rsvp", "in-reply-to", "name", "content"],
+    }
 
 
 @pytest.mark.django_db

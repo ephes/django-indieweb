@@ -32,9 +32,18 @@ from django.views.generic import View
 
 from .cors import CorsMixin
 from .handlers import get_micropub_handler
-from .models import Auth, Token, Webmention
+from .models import Auth, Token, Webmention, WebSubSubscription
 from .processors import WebmentionProcessor
 from .rate_limit import RateLimitMixin
+from .websub import (
+    WebSubDeliveryHookError,
+    confirm_websub_verification,
+    delivery_body_too_large,
+    delivery_content_type_allowed,
+    process_websub_delivery,
+    record_websub_delivery,
+    validate_websub_delivery_signature,
+)
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
@@ -835,12 +844,18 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         for prop in [
             "content",
             "name",
+            "summary",
+            "description",
             "category",
             "location",
+            "start",
+            "end",
             "in-reply-to",
             "bookmark-of",
             "like-of",
             "repost-of",
+            "rsvp",
+            "url",
             "published",
             "photo",
             "audio",
@@ -1238,6 +1253,100 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         response = HttpResponse(status=201)
         response["Location"] = location
         return response
+
+
+class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
+    """WebSub subscriber callback for verification and content distribution."""
+
+    rate_limit_key = "websub_callback"
+
+    def _get_subscription(self, token: str) -> WebSubSubscription | None:
+        try:
+            return WebSubSubscription.objects.get(callback_token=token)
+        except WebSubSubscription.DoesNotExist:
+            return None
+
+    def get(self, request: HttpRequest, token: str, *args: object, **kwargs: object) -> HttpResponse:
+        """Echo ``hub.challenge`` for a valid pending subscribe/unsubscribe verification."""
+        subscription = self._get_subscription(token)
+        if subscription is None:
+            return HttpResponse(status=404)
+
+        mode = request.GET.get("hub.mode")
+        topic = request.GET.get("hub.topic")
+        challenge = request.GET.get("hub.challenge")
+        if not mode or not topic or not challenge:
+            return HttpResponse(status=400)
+
+        try:
+            confirm_websub_verification(
+                subscription,
+                mode=mode,
+                topic_url=topic,
+                challenge=challenge,
+                lease_seconds=request.GET.get("hub.lease_seconds"),
+            )
+        except ValueError as exc:
+            logger.warning(f"Rejected WebSub verification for subscription {subscription.pk}: {exc}")
+            return HttpResponse(status=400)
+
+        return HttpResponse(challenge, status=200, content_type="text/plain")
+
+    def post(self, request: HttpRequest, token: str, *args: object, **kwargs: object) -> HttpResponse:
+        """Acknowledge a content distribution POST and hand it to an optional host hook."""
+        subscription = self._get_subscription(token)
+        if subscription is None or subscription.state != WebSubSubscription.STATE_ACTIVE:
+            return HttpResponse(status=404)
+
+        body = request.body
+        content_type = request.headers.get("Content-Type", "")
+        if delivery_body_too_large(body):
+            record_websub_delivery(subscription, body, content_type=content_type, status_code=413, error="too large")
+            return HttpResponse(status=413)
+        if not delivery_content_type_allowed(content_type):
+            record_websub_delivery(
+                subscription,
+                body,
+                content_type=content_type,
+                status_code=415,
+                error="unsupported content type",
+            )
+            return HttpResponse(status=415)
+
+        try:
+            signature_algorithm = validate_websub_delivery_signature(subscription, body, request.headers)
+        except ValueError as exc:
+            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {exc}")
+            record_websub_delivery(
+                subscription,
+                body,
+                content_type=content_type,
+                status_code=403,
+                error="invalid signature",
+            )
+            return HttpResponse(status=403)
+
+        try:
+            process_websub_delivery(subscription, body, request.headers)
+        except WebSubDeliveryHookError:
+            record_websub_delivery(
+                subscription,
+                body,
+                content_type=content_type,
+                status_code=500,
+                error="delivery hook failed",
+                signature_algorithm=signature_algorithm,
+            )
+            return HttpResponse(status=500)
+
+        record_websub_delivery(
+            subscription,
+            body,
+            content_type=content_type,
+            status_code=204,
+            signature_algorithm=signature_algorithm,
+        )
+        return HttpResponse(status=204)
 
 
 class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):

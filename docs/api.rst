@@ -9,9 +9,9 @@ This document describes the IndieWeb endpoints provided by django-indieweb.
    :doc:`micropub` documentation for implementation details.
 
 .. note::
-   WebSub support is publisher-side helper functionality, not a bundled public
-   endpoint. Host applications advertise WebSub on their own topic responses
-   and explicitly notify hubs when those topics change. See :doc:`websub`.
+   WebSub support includes publisher helpers plus a tokenized subscriber
+   callback endpoint for host-owned subscriptions. It does not include a hub
+   service. See :doc:`websub`.
 
 Endpoints Overview
 ------------------
@@ -23,14 +23,15 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/tokens/`` - Browser UI for authenticated users to view and revoke their own tokens
 - ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
 - ``/indieweb/media/`` - Micropub media endpoint for direct media uploads
+- ``/indieweb/websub/<token>/`` - WebSub subscriber callback for one subscription token
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
 
 WebSub Publisher Helpers
 ------------------------
 
-django-indieweb does not add a WebSub endpoint URL. Instead, it exposes
-publisher helpers in ``indieweb.websub`` for host-owned feeds and topic pages.
+django-indieweb exposes publisher helpers in ``indieweb.websub`` for
+host-owned feeds and topic pages.
 
 Discovery
 ~~~~~~~~~
@@ -66,6 +67,52 @@ The ``notify_websub`` management command wraps the same helper:
 
 Use repeated ``--hub`` options to override ``INDIEWEB_WEBSUB_HUBS`` for one
 command invocation.
+
+WebSub Subscriber Callback
+--------------------------
+
+**URL:** ``/indieweb/websub/<token>/``
+
+The subscriber callback is a server-to-server endpoint for rows in
+``WebSubSubscription``. The ``<token>`` path component is generated per
+subscription and is intentionally unguessable.
+
+Subscription Request Helper
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``request_websub_subscription(topic_url, hub_url, ...)`` explicitly asks a hub
+to subscribe or unsubscribe a callback. It sends the WebSub form fields
+``hub.mode``, ``hub.callback``, ``hub.topic``, and optional
+``hub.lease_seconds``/``hub.secret``. A successful hub response leaves the row
+pending until callback verification succeeds.
+
+Verification GET
+~~~~~~~~~~~~~~~~
+
+The callback accepts verification ``GET`` requests with:
+
+- ``hub.mode`` - ``subscribe`` or ``unsubscribe``
+- ``hub.topic`` - the exact topic URL stored on the subscription
+- ``hub.challenge`` - echoed verbatim for accepted verification requests
+- ``hub.lease_seconds`` - optional lease duration on subscribe verification
+
+Accepted ``subscribe`` verification marks the subscription active and records
+lease metadata. Accepted ``unsubscribe`` verification marks it unsubscribed.
+Missing, mismatched, or out-of-state verification requests return a client
+error and do not mutate the row.
+
+Delivery POST
+~~~~~~~~~~~~~
+
+The callback accepts content distribution ``POST`` requests for active
+subscriptions. It records delivery metadata and then calls the optional
+``INDIEWEB_WEBSUB_DELIVERY_HOOK``. Successful accepted deliveries return
+``204 No Content``. The package does not parse feeds or persist delivered
+content.
+
+If the subscription has a stored ``hub.secret``, delivery must include a valid
+``X-Hub-Signature-256`` or ``X-Hub-Signature`` HMAC header. Invalid signatures
+return HTTP ``403`` and do not call the host hook.
 
 IndieAuth Flow
 --------------
@@ -323,7 +370,13 @@ Creates a new post using the configured content handler.
 - ``bookmark-of`` - URL this post bookmarks
 - ``like-of`` - URL this post likes
 - ``repost-of`` - URL this post reposts
+- ``rsvp`` - RSVP value such as ``yes``, ``no``, ``maybe``, or ``interested``
 - ``location`` - Geographic location in geo URI format
+- ``summary`` - Event summary for h-event-style creates
+- ``description`` - Event description for h-event-style creates
+- ``start`` - Event start value forwarded unchanged to the handler
+- ``end`` - Event end value forwarded unchanged to the handler
+- ``url`` - Event URL forwarded unchanged to the handler
 - ``photo`` - Photo URL(s), or uploaded photo files on multipart create requests
 - ``audio`` - Audio URL(s)
 - ``video`` - Video URL(s)
@@ -556,6 +609,9 @@ The default in-memory handler advertises these post types:
 - ``bookmark`` - ``bookmark-of``, ``name``, ``content``
 - ``like`` - ``like-of``
 - ``repost`` - ``repost-of``
+- ``event`` - ``name``, ``summary``, ``description``, ``start``, ``end``,
+  ``location``, ``category``, ``url``, ``published``
+- ``rsvp`` - ``rsvp``, ``in-reply-to``, ``name``, ``content``
 
 **Source Query:**
 
@@ -941,6 +997,8 @@ Endpoint keys:
 - ``token`` - ``POST`` requests to ``/indieweb/token/``
 - ``micropub`` - ``GET`` and ``POST`` requests to ``/indieweb/micropub/``
 - ``media`` - ``POST`` requests to ``/indieweb/media/``
+- ``websub_callback`` - ``GET`` and ``POST`` requests to
+  ``/indieweb/websub/<token>/``
 - ``webmention`` - ``GET`` and ``POST`` requests to ``/indieweb/webmention/``
 - ``webmention_status`` - ``GET`` requests to
   ``/indieweb/webmention/<pk>/``
@@ -990,7 +1048,8 @@ add:
 
 Configured preflight ``OPTIONS`` requests short-circuit before rate limiting,
 token authentication, Micropub handler work, media storage, Webmention
-processing, and async enqueue hooks. A valid preflight needs an allowed
+processing, and async enqueue hooks. WebSub subscriber callbacks are excluded
+from built-in CORS because they are server-to-server hub callbacks. A valid preflight needs an allowed
 ``Origin`` plus an ``Access-Control-Request-Method`` that is supported by the
 target endpoint. Successful preflights return:
 

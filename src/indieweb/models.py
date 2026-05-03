@@ -265,6 +265,81 @@ class WebmentionOutboundTarget(models.Model):
         return f"Outbound Webmention: {self.source_url} -> {self.target_url}"
 
 
+def generate_websub_callback_token() -> str:
+    """Return an unguessable token for a WebSub subscriber callback URL."""
+    return get_random_string(length=64)
+
+
+class WebSubSubscription(models.Model):
+    """Host-level WebSub subscriber state for one hub/topic pair."""
+
+    STATE_PENDING_SUBSCRIBE = "pending_subscribe"
+    STATE_ACTIVE = "active"
+    STATE_PENDING_UNSUBSCRIBE = "pending_unsubscribe"
+    STATE_UNSUBSCRIBED = "unsubscribed"
+    STATE_DENIED = "denied"
+
+    STATE_CHOICES = [
+        (STATE_PENDING_SUBSCRIBE, "Pending subscribe"),
+        (STATE_ACTIVE, "Active"),
+        (STATE_PENDING_UNSUBSCRIBE, "Pending unsubscribe"),
+        (STATE_UNSUBSCRIBED, "Unsubscribed"),
+        (STATE_DENIED, "Denied"),
+    ]
+
+    MODE_SUBSCRIBE = "subscribe"
+    MODE_UNSUBSCRIBE = "unsubscribe"
+    MODE_CHOICES = [
+        (MODE_SUBSCRIBE, "Subscribe"),
+        (MODE_UNSUBSCRIBE, "Unsubscribe"),
+    ]
+
+    hub_url = models.URLField(max_length=500, validators=[URLValidator(schemes=["http", "https"])])
+    topic_url = models.URLField(max_length=500, validators=[URLValidator(schemes=["http", "https"])])
+    callback_token = models.CharField(
+        max_length=64, unique=True, db_index=True, default=generate_websub_callback_token
+    )
+    state = models.CharField(max_length=32, choices=STATE_CHOICES, default=STATE_PENDING_SUBSCRIBE)
+
+    pending_mode = models.CharField(max_length=16, choices=MODE_CHOICES, blank=True)
+    requested_lease_seconds = models.PositiveIntegerField(null=True, blank=True)
+    confirmed_lease_seconds = models.PositiveIntegerField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    secret = models.CharField(max_length=200, blank=True)
+    pending_secret = models.CharField(max_length=200, blank=True)
+    pending_secret_set = models.BooleanField(default=False)
+
+    last_challenge = models.CharField(max_length=200, blank=True)
+    last_verified_at = models.DateTimeField(null=True, blank=True)
+    last_request_at = models.DateTimeField(null=True, blank=True)
+    last_request_mode = models.CharField(max_length=16, choices=MODE_CHOICES, blank=True)
+    last_request_status_code = models.PositiveIntegerField(null=True, blank=True)
+    last_request_error = models.TextField(blank=True)
+
+    last_delivery_at = models.DateTimeField(null=True, blank=True)
+    last_delivery_content_type = models.CharField(max_length=200, blank=True)
+    last_delivery_size = models.PositiveIntegerField(null=True, blank=True)
+    last_delivery_digest = models.CharField(max_length=64, blank=True)
+    last_delivery_signature_algorithm = models.CharField(max_length=32, blank=True)
+    last_delivery_status_code = models.PositiveIntegerField(null=True, blank=True)
+    last_delivery_error = models.TextField(blank=True)
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["hub_url", "topic_url"], name="indieweb_websub_hub_topic_uniq"),
+        ]
+        indexes = [
+            models.Index(fields=["topic_url", "state"]),
+            models.Index(fields=["lease_expires_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"WebSub {self.state}: {self.topic_url} via {self.hub_url}"
+
+
 class Profile(models.Model):
     """User profile with h-card data stored as JSON."""
 

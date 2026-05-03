@@ -133,6 +133,22 @@ class MicropubContentHandler(ABC):
                 {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
                 {"type": "like", "name": "Like", "properties": ["like-of"]},
                 {"type": "repost", "name": "Repost", "properties": ["repost-of"]},
+                {
+                    "type": "event",
+                    "name": "Event",
+                    "properties": [
+                        "name",
+                        "summary",
+                        "description",
+                        "start",
+                        "end",
+                        "location",
+                        "category",
+                        "url",
+                        "published",
+                    ],
+                },
+                {"type": "rsvp", "name": "RSVP", "properties": ["rsvp", "in-reply-to", "name", "content"]},
             ],
         }
 

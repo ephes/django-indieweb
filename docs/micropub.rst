@@ -170,10 +170,27 @@ Common h-entry properties are supported:
 - ``bookmark-of`` - URL this post bookmarks
 - ``like-of`` - URL this post likes
 - ``repost-of`` - URL this post reposts
+- ``rsvp`` - RSVP value for RSVP posts
 - ``photo`` - Photo URL(s), or uploaded photo files on multipart create requests
 - ``audio`` - Audio URL(s)
 - ``video`` - Video URL(s)
 - ``published`` - Publication date
+- ``summary`` - Event summary
+- ``description`` - Event description
+- ``start`` - Event start value
+- ``end`` - Event end value
+- ``url`` - Event URL
+
+For h-event-style form requests, django-indieweb forwards event properties
+such as ``name``, ``summary``, ``description``, ``start``, ``end``,
+``location``, ``category``, ``url``, and ``published`` unchanged as normalized
+arrays. If a client also sends h-entry-style ``content`` for an event-like
+post, that property is forwarded as ``content`` rather than remapped.
+
+For RSVP posts, the form parser forwards ``rsvp``, ``in-reply-to``, ``name``,
+``content``, ``category``, and ``published``. django-indieweb does not infer
+attendance, event date, time-zone, calendar-feed, or persistence behavior.
+Your configured handler owns those choices.
 
 Media Endpoint
 ~~~~~~~~~~~~~~
@@ -350,14 +367,23 @@ Example response excerpt:
        {"type": "reply", "name": "Reply", "properties": ["in-reply-to", "content"]},
        {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
        {"type": "like", "name": "Like", "properties": ["like-of"]},
-       {"type": "repost", "name": "Repost", "properties": ["repost-of"]}
+       {"type": "repost", "name": "Repost", "properties": ["repost-of"]},
+       {
+         "type": "event",
+         "name": "Event",
+         "properties": ["name", "summary", "description", "start", "end", "location", "category", "url", "published"]
+       },
+       {"type": "rsvp", "name": "RSVP", "properties": ["rsvp", "in-reply-to", "name", "content"]}
      ]
    }
 
 The built-in handler advertises common h-entry shapes and forwards normalized
-properties to ``create_entry()``. django-indieweb does not infer storage
-semantics from those post-type names; your configured handler decides how to
-persist bookmarks, likes, reposts, replies, articles, notes, and photo posts.
+properties to ``create_entry()``. RSVP is advertised as a distinct post type
+because clients commonly expose RSVP as a creation mode, even though the
+wire-format remains an ``h-entry`` with ``rsvp`` and ``in-reply-to``
+properties. django-indieweb does not infer storage semantics from post-type
+names; your configured handler decides how to persist bookmarks, likes,
+reposts, replies, articles, notes, photo posts, events, and RSVPs.
 
 **Syndication Targets:**
 
@@ -425,6 +451,10 @@ Handling Different Post Types
            post_type = 'article'
        elif properties.get('photo'):
            post_type = 'photo'
+       elif properties.get('start'):
+           post_type = 'event'
+       elif properties.get('rsvp'):
+           post_type = 'rsvp'
        elif properties.get('in-reply-to'):
            post_type = 'reply'
 
@@ -433,6 +463,10 @@ Handling Different Post Types
            return self._create_article(properties, user)
        elif post_type == 'photo':
            return self._create_photo_post(properties, user)
+       elif post_type == 'event':
+           return self._create_event(properties, user)
+       elif post_type == 'rsvp':
+           return self._create_rsvp(properties, user)
        else:
            return self._create_note(properties, user)
 
@@ -557,4 +591,4 @@ Next Steps
 ----------
 
 - Use the existing :doc:`websub` publisher helpers to advertise feeds and notify hubs after host-owned topic changes
-- Future Micropub post-type work is scoped to events and RSVPs: advertise event/RSVP-capable shapes and forward properties such as ``start``, ``end``, ``location``, ``rsvp``, and ``in-reply-to`` to the configured handler without adding django-indieweb storage semantics
+- Use the WebSub subscriber callback support if your host application explicitly subscribes to external topics and has a worker/hook policy for delivered content

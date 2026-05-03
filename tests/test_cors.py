@@ -53,6 +53,15 @@ def webmention(db):
     )
 
 
+@pytest.fixture
+def websub_subscription(db):
+    return models.WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=models.WebSubSubscription.STATE_ACTIVE,
+    )
+
+
 def _preflight(client, url: str, method: str = "POST", origin: str = ALLOWED_ORIGIN):
     return client.options(
         url,
@@ -273,6 +282,25 @@ def test_media_preflight_short_circuits_before_auth_and_storage(client, settings
     assert response.status_code == 204
     authenticated.assert_not_called()
     storage_save.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_websub_callback_is_excluded_from_cors_even_when_cors_is_configured(client, settings, websub_subscription):
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
+    url = reverse("indieweb:websub-callback", args=[websub_subscription.callback_token])
+
+    post_response = client.post(
+        url,
+        data=b"<feed/>",
+        content_type="application/atom+xml",
+        HTTP_ORIGIN=ALLOWED_ORIGIN,
+    )
+    options_response = _preflight(client, url, method="POST")
+
+    assert post_response.status_code == 204
+    assert "Access-Control-Allow-Origin" not in post_response
+    assert options_response.status_code == 200
+    assert "Access-Control-Allow-Origin" not in options_response
 
 
 @pytest.mark.django_db

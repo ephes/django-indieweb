@@ -1,10 +1,13 @@
-"""Publisher-side WebSub helpers."""
+"""WebSub publisher and subscriber helpers."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -12,11 +15,23 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.http import HttpResponseBase
+from django.utils import timezone
+from django.utils.module_loading import import_string
+
+from .models import WebSubSubscription
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEBSUB_TIMEOUT = 10.0
+DEFAULT_WEBSUB_DELIVERY_MAX_BYTES = 1024 * 1024
 WEBSUB_ALLOWED_SCHEMES = ("http", "https")
+WEBSUB_SUBSCRIPTION_MODES = (WebSubSubscription.MODE_SUBSCRIBE, WebSubSubscription.MODE_UNSUBSCRIBE)
+WEBSUB_SIGNATURE_ALGORITHMS = {
+    "sha1": hashlib.sha1,
+    "sha256": hashlib.sha256,
+    "sha384": hashlib.sha384,
+    "sha512": hashlib.sha512,
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +51,21 @@ class WebSubNotificationResult:
     success: bool
     status_code: int | None = None
     error: str = ""
+
+
+@dataclass(frozen=True)
+class WebSubSubscriptionRequestResult:
+    """Result from asking a hub to subscribe or unsubscribe a callback."""
+
+    subscription: WebSubSubscription
+    mode: str
+    success: bool
+    status_code: int | None = None
+    error: str = ""
+
+
+class WebSubDeliveryHookError(Exception):
+    """Configured WebSub delivery hook failed to load or run."""
 
 
 def _as_string_tuple(value: Any, *, setting_name: str) -> tuple[str, ...]:
@@ -111,6 +141,458 @@ def _websub_timeout(timeout: float | None) -> float:
     if parsed <= 0:
         raise ValueError("WebSub timeout must be a positive number")
     return parsed
+
+
+def _positive_int(value: int | str | None, *, label: str) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{label} must be a positive integer")
+    return parsed
+
+
+def _validate_subscription_mode(mode: str) -> str:
+    if mode not in WEBSUB_SUBSCRIPTION_MODES:
+        raise ValueError("WebSub subscription mode must be 'subscribe' or 'unsubscribe'")
+    return mode
+
+
+def _delivery_max_bytes() -> int | None:
+    configured = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES", DEFAULT_WEBSUB_DELIVERY_MAX_BYTES)
+    if configured is None:
+        return None
+    try:
+        return _positive_int(configured, label="WebSub delivery max bytes")
+    except ValueError:
+        logger.warning("Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES value; using the default limit")
+        return DEFAULT_WEBSUB_DELIVERY_MAX_BYTES
+
+
+def _delivery_content_type_allowed(content_type: str) -> bool:
+    configured = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES", None)
+    if configured is None:
+        return True
+    try:
+        allowed_types = _as_string_tuple(configured, setting_name="INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES")
+    except ValueError:
+        logger.warning("Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES value; allowing all delivery types")
+        return True
+    if not allowed_types:
+        return True
+    base_content_type = content_type.split(";", 1)[0].strip().lower()
+    return base_content_type in {allowed.lower() for allowed in allowed_types}
+
+
+def build_websub_callback_url(
+    subscription: WebSubSubscription,
+    callback_base_url: str | None = None,
+) -> str:
+    """Return the absolute subscriber callback URL for ``subscription``.
+
+    ``callback_base_url`` defaults to ``INDIEWEB_WEBSUB_CALLBACK_BASE_URL`` and
+    must be an absolute URL for the callback route prefix, without the token.
+    The subscription token is appended as a path component.
+    """
+    configured_base = callback_base_url or getattr(settings, "INDIEWEB_WEBSUB_CALLBACK_BASE_URL", None)
+    if not configured_base:
+        raise ValueError("INDIEWEB_WEBSUB_CALLBACK_BASE_URL is required for subscriber requests")
+    base = _validate_url(str(configured_base), label="WebSub callback base URL")
+    callback_url = f"{base.rstrip('/')}/{subscription.callback_token}/"
+    return _validate_url(callback_url, label="WebSub callback URL")
+
+
+def _save_subscription_request_success(
+    subscription: WebSubSubscription,
+    *,
+    mode: str,
+    status_code: int,
+) -> None:
+    subscription.last_request_at = timezone.now()
+    subscription.last_request_mode = mode
+    subscription.last_request_status_code = status_code
+    subscription.last_request_error = ""
+    subscription.save(
+        update_fields=[
+            "last_request_at",
+            "last_request_mode",
+            "last_request_status_code",
+            "last_request_error",
+            "modified",
+        ]
+    )
+
+
+def _save_subscription_request_failure(
+    subscription: WebSubSubscription,
+    *,
+    mode: str,
+    previous_state: str,
+    previous_pending_secret: str,
+    previous_pending_secret_set: bool,
+    status_code: int | None,
+    error: str,
+) -> None:
+    subscription.last_request_at = timezone.now()
+    subscription.last_request_mode = mode
+    subscription.last_request_status_code = status_code
+    subscription.last_request_error = error[:500]
+    subscription.pending_mode = ""
+    subscription.pending_secret = previous_pending_secret
+    subscription.pending_secret_set = previous_pending_secret_set
+    if mode == WebSubSubscription.MODE_SUBSCRIBE and previous_state != WebSubSubscription.STATE_ACTIVE:
+        subscription.state = WebSubSubscription.STATE_DENIED
+    else:
+        subscription.state = previous_state
+    subscription.save(
+        update_fields=[
+            "state",
+            "pending_mode",
+            "pending_secret",
+            "pending_secret_set",
+            "last_request_at",
+            "last_request_mode",
+            "last_request_status_code",
+            "last_request_error",
+            "modified",
+        ]
+    )
+
+
+def _prepare_subscription_request(
+    topic_url: str,
+    hub_url: str,
+    *,
+    mode: str,
+    lease_seconds: int | None,
+    secret: str | None,
+) -> tuple[WebSubSubscription, str, str, str, bool]:
+    validated_topic_url = _validate_url(topic_url, label="topic URL")
+    validated_hub_url = _validate_url(hub_url, label="hub URL")
+    validated_mode = _validate_subscription_mode(mode)
+    validated_lease_seconds = _positive_int(lease_seconds, label="lease seconds")
+    secret_max_length = WebSubSubscription._meta.get_field("secret").max_length or 0
+    if secret is not None and len(secret) > secret_max_length:
+        raise ValueError("WebSub secret must be at most 200 characters")
+
+    if validated_mode == WebSubSubscription.MODE_UNSUBSCRIBE:
+        try:
+            subscription = WebSubSubscription.objects.get(hub_url=validated_hub_url, topic_url=validated_topic_url)
+        except WebSubSubscription.DoesNotExist as exc:
+            raise ValueError("cannot unsubscribe an unknown WebSub subscription") from exc
+    else:
+        subscription, _created = WebSubSubscription.objects.get_or_create(
+            hub_url=validated_hub_url,
+            topic_url=validated_topic_url,
+        )
+
+    previous_state = subscription.state
+    previous_pending_secret = subscription.pending_secret
+    previous_pending_secret_set = subscription.pending_secret_set
+    if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
+        if previous_state != WebSubSubscription.STATE_ACTIVE:
+            subscription.state = WebSubSubscription.STATE_PENDING_SUBSCRIBE
+            subscription.confirmed_lease_seconds = None
+            subscription.lease_expires_at = None
+    else:
+        subscription.state = WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
+    subscription.pending_mode = validated_mode
+    subscription.requested_lease_seconds = validated_lease_seconds
+    if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
+        subscription.pending_secret = secret or ""
+        subscription.pending_secret_set = secret is not None
+    subscription.save(
+        update_fields=[
+            "state",
+            "pending_mode",
+            "requested_lease_seconds",
+            "confirmed_lease_seconds",
+            "lease_expires_at",
+            "pending_secret",
+            "pending_secret_set",
+            "modified",
+        ]
+    )
+    return subscription, validated_mode, previous_state, previous_pending_secret, previous_pending_secret_set
+
+
+def request_websub_subscription(
+    topic_url: str,
+    hub_url: str,
+    *,
+    mode: str = WebSubSubscription.MODE_SUBSCRIBE,
+    callback_base_url: str | None = None,
+    lease_seconds: int | None = None,
+    secret: str | None = None,
+    timeout: float | None = None,
+    client: httpx.Client | None = None,
+) -> WebSubSubscriptionRequestResult:
+    """Ask a hub to subscribe or unsubscribe django-indieweb's callback.
+
+    The request uses WebSub's form fields: ``hub.mode``, ``hub.callback``,
+    ``hub.topic``, optional ``hub.lease_seconds``, and optional ``hub.secret``
+    for subscribe requests. A successful HTTP response means the hub accepted
+    the request and should later verify the callback; verification state is
+    confirmed by the callback view.
+    """
+    (
+        subscription,
+        validated_mode,
+        previous_state,
+        previous_pending_secret,
+        previous_pending_secret_set,
+    ) = _prepare_subscription_request(
+        topic_url,
+        hub_url,
+        mode=mode,
+        lease_seconds=lease_seconds,
+        secret=secret,
+    )
+    callback_url = build_websub_callback_url(subscription, callback_base_url)
+    configured_timeout = timeout if timeout is not None else getattr(settings, "INDIEWEB_WEBSUB_TIMEOUT", None)
+    request_timeout = _websub_timeout(configured_timeout)
+
+    data: dict[str, str | int] = {
+        "hub.mode": validated_mode,
+        "hub.callback": callback_url,
+        "hub.topic": subscription.topic_url,
+    }
+    if lease_seconds is not None:
+        data["hub.lease_seconds"] = lease_seconds
+    if secret and validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
+        data["hub.secret"] = secret
+
+    close_client = client is None
+    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False)
+    try:
+        try:
+            response = http_client.post(subscription.hub_url, data=data)
+        except httpx.RequestError as exc:
+            logger.warning(f"WebSub subscription request failed for hub={subscription.hub_url!r}: {exc}")
+            _save_subscription_request_failure(
+                subscription,
+                mode=validated_mode,
+                previous_state=previous_state,
+                previous_pending_secret=previous_pending_secret,
+                previous_pending_secret_set=previous_pending_secret_set,
+                status_code=None,
+                error=str(exc),
+            )
+            return WebSubSubscriptionRequestResult(
+                subscription=subscription,
+                mode=validated_mode,
+                success=False,
+                error=str(exc),
+            )
+
+        if response.is_success:
+            _save_subscription_request_success(subscription, mode=validated_mode, status_code=response.status_code)
+            return WebSubSubscriptionRequestResult(
+                subscription=subscription,
+                mode=validated_mode,
+                success=True,
+                status_code=response.status_code,
+            )
+
+        error = response.text[:500]
+        _save_subscription_request_failure(
+            subscription,
+            mode=validated_mode,
+            previous_state=previous_state,
+            previous_pending_secret=previous_pending_secret,
+            previous_pending_secret_set=previous_pending_secret_set,
+            status_code=response.status_code,
+            error=error,
+        )
+        return WebSubSubscriptionRequestResult(
+            subscription=subscription,
+            mode=validated_mode,
+            success=False,
+            status_code=response.status_code,
+            error=error,
+        )
+    finally:
+        if close_client:
+            http_client.close()
+
+
+def confirm_websub_verification(
+    subscription: WebSubSubscription,
+    *,
+    mode: str,
+    topic_url: str,
+    challenge: str,
+    lease_seconds: str | int | None,
+) -> None:
+    """Confirm a WebSub callback verification request or raise ``ValueError``."""
+    validated_mode = _validate_subscription_mode(mode)
+    if not challenge:
+        raise ValueError("WebSub verification challenge is required")
+    if topic_url != subscription.topic_url:
+        raise ValueError("WebSub verification topic does not match subscription")
+    if subscription.pending_mode != validated_mode:
+        raise ValueError("WebSub verification mode does not match pending subscription mode")
+
+    if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
+        if subscription.state not in {
+            WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+            WebSubSubscription.STATE_ACTIVE,
+        }:
+            raise ValueError("WebSub subscription is not pending subscribe verification")
+        confirmed_lease = _positive_int(lease_seconds, label="lease seconds")
+        if confirmed_lease is None:
+            confirmed_lease = subscription.requested_lease_seconds
+        subscription.state = WebSubSubscription.STATE_ACTIVE
+        subscription.confirmed_lease_seconds = confirmed_lease
+        subscription.lease_expires_at = (
+            timezone.now() + timedelta(seconds=confirmed_lease) if confirmed_lease is not None else None
+        )
+        if subscription.pending_secret_set:
+            subscription.secret = subscription.pending_secret
+    else:
+        if subscription.state != WebSubSubscription.STATE_PENDING_UNSUBSCRIBE:
+            raise ValueError("WebSub subscription is not pending unsubscribe verification")
+        subscription.state = WebSubSubscription.STATE_UNSUBSCRIBED
+        subscription.confirmed_lease_seconds = None
+        subscription.lease_expires_at = None
+
+    subscription.last_challenge = challenge
+    subscription.last_verified_at = timezone.now()
+    subscription.pending_mode = ""
+    subscription.pending_secret = ""
+    subscription.pending_secret_set = False
+    subscription.save(
+        update_fields=[
+            "state",
+            "pending_mode",
+            "secret",
+            "pending_secret",
+            "pending_secret_set",
+            "confirmed_lease_seconds",
+            "lease_expires_at",
+            "last_challenge",
+            "last_verified_at",
+            "modified",
+        ]
+    )
+
+
+def delivery_body_too_large(body: bytes) -> bool:
+    """Return whether a WebSub delivery body exceeds the configured size limit."""
+    max_bytes = _delivery_max_bytes()
+    return max_bytes is not None and len(body) > max_bytes
+
+
+def delivery_content_type_allowed(content_type: str) -> bool:
+    """Return whether a WebSub delivery content type is accepted by configuration."""
+    return _delivery_content_type_allowed(content_type)
+
+
+def _signature_headers(headers: Mapping[str, str]) -> list[str]:
+    values: list[str] = []
+    for header_name in ("X-Hub-Signature-256", "X-Hub-Signature"):
+        value = headers.get(header_name)
+        if value:
+            values.extend(part.strip() for part in value.split(",") if part.strip())
+    return values
+
+
+def validate_websub_delivery_signature(
+    subscription: WebSubSubscription,
+    body: bytes,
+    headers: Mapping[str, str],
+) -> str | None:
+    """Validate a signed WebSub delivery.
+
+    Returns the accepted algorithm name, or ``None`` when the subscription has
+    no secret and no validation is required. Raises ``ValueError`` for missing,
+    malformed, unsupported, or mismatched signatures.
+    """
+    if not subscription.secret:
+        return None
+
+    for signature in _signature_headers(headers):
+        algorithm, separator, received_digest = signature.partition("=")
+        algorithm = algorithm.lower()
+        if separator != "=" or algorithm not in WEBSUB_SIGNATURE_ALGORITHMS or not received_digest:
+            continue
+        digestmod = WEBSUB_SIGNATURE_ALGORITHMS[algorithm]
+        expected = hmac.new(subscription.secret.encode("utf-8"), body, digestmod).hexdigest()
+        if hmac.compare_digest(expected, received_digest):
+            return algorithm
+    raise ValueError("WebSub delivery signature did not validate")
+
+
+def record_websub_delivery(
+    subscription: WebSubSubscription,
+    body: bytes,
+    *,
+    content_type: str,
+    status_code: int,
+    error: str = "",
+    signature_algorithm: str | None = None,
+) -> None:
+    """Record metadata for the latest WebSub delivery attempt."""
+    subscription.last_delivery_at = timezone.now()
+    subscription.last_delivery_content_type = content_type[:200]
+    subscription.last_delivery_size = len(body)
+    subscription.last_delivery_digest = hashlib.sha256(body).hexdigest()
+    subscription.last_delivery_signature_algorithm = signature_algorithm or ""
+    subscription.last_delivery_status_code = status_code
+    subscription.last_delivery_error = error[:500]
+    subscription.save(
+        update_fields=[
+            "last_delivery_at",
+            "last_delivery_content_type",
+            "last_delivery_size",
+            "last_delivery_digest",
+            "last_delivery_signature_algorithm",
+            "last_delivery_status_code",
+            "last_delivery_error",
+            "modified",
+        ]
+    )
+
+
+def get_websub_delivery_hook() -> Any | None:
+    """Load the optional WebSub delivery hook callable."""
+    hook_path = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_HOOK", None)
+    if not hook_path:
+        return None
+    try:
+        hook = import_string(hook_path)
+    except Exception as exc:
+        logger.exception(f"Failed to load INDIEWEB_WEBSUB_DELIVERY_HOOK {hook_path!r}")
+        raise WebSubDeliveryHookError from exc
+    if not callable(hook):
+        logger.error(f"INDIEWEB_WEBSUB_DELIVERY_HOOK {hook_path!r} is not callable")
+        raise WebSubDeliveryHookError
+    return hook
+
+
+def process_websub_delivery(
+    subscription: WebSubSubscription,
+    body: bytes,
+    headers: Mapping[str, str],
+) -> None:
+    """Call the optional host hook for an accepted WebSub delivery."""
+    hook = get_websub_delivery_hook()
+    if hook is None:
+        return
+    try:
+        hook(
+            subscription_id=subscription.pk,
+            hub_url=subscription.hub_url,
+            topic_url=subscription.topic_url,
+            body=body,
+            headers=dict(headers),
+        )
+    except Exception as exc:
+        logger.exception(f"WebSub delivery hook failed for subscription {subscription.pk}")
+        raise WebSubDeliveryHookError from exc
 
 
 def notify_hubs(

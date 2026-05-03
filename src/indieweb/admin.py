@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.forms import CharField, ModelForm
 from django.http import HttpRequest
 
-from .models import Auth, Profile, Token, Webmention
+from .models import Auth, Profile, Token, Webmention, WebSubSubscription
 
 
 @admin.register(Webmention)
@@ -50,6 +50,69 @@ class WebmentionAdmin(admin.ModelAdmin):
                 "fields": ("spam_check_result", "created", "modified"),
             },
         ),
+    )
+
+
+@admin.register(WebSubSubscription)
+class WebSubSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ("topic_url", "hub_url", "state", "lease_expires_at", "last_delivery_at", "created")
+    list_filter = ("state", "created", "last_delivery_at")
+    search_fields = ("topic_url", "hub_url")
+    readonly_fields = (
+        "callback_token",
+        "last_challenge",
+        "last_verified_at",
+        "last_request_at",
+        "last_request_mode",
+        "last_request_status_code",
+        "last_request_error",
+        "last_delivery_at",
+        "last_delivery_content_type",
+        "last_delivery_size",
+        "last_delivery_digest",
+        "last_delivery_signature_algorithm",
+        "last_delivery_status_code",
+        "last_delivery_error",
+        "created",
+        "modified",
+    )
+    ordering = ("-modified",)
+
+    fieldsets = (
+        ("Subscription", {"fields": ("hub_url", "topic_url", "callback_token", "state", "pending_mode")}),
+        (
+            "Lease",
+            {"fields": ("requested_lease_seconds", "confirmed_lease_seconds", "lease_expires_at")},
+        ),
+        ("Secret", {"fields": ("secret", "pending_secret", "pending_secret_set")}),
+        (
+            "Latest Request",
+            {
+                "fields": (
+                    "last_request_at",
+                    "last_request_mode",
+                    "last_request_status_code",
+                    "last_request_error",
+                    "last_challenge",
+                    "last_verified_at",
+                ),
+            },
+        ),
+        (
+            "Latest Delivery",
+            {
+                "fields": (
+                    "last_delivery_at",
+                    "last_delivery_content_type",
+                    "last_delivery_size",
+                    "last_delivery_digest",
+                    "last_delivery_signature_algorithm",
+                    "last_delivery_status_code",
+                    "last_delivery_error",
+                ),
+            },
+        ),
+        ("Timestamps", {"fields": ("created", "modified")}),
     )
 
 

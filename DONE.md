@@ -4,6 +4,69 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Add WebSub subscriber callback support
+
+- Added ``WebSubSubscription`` persistence for host-level subscriber state keyed by hub URL, topic URL, and an
+  unguessable callback token. The model tracks pending verification mode, requested/confirmed lease seconds, lease
+  expiration, optional ``hub.secret`` material, request diagnostics, latest delivery metadata, and timestamps.
+- Added ``request_websub_subscription()`` for explicit subscribe/unsubscribe requests using WebSub form fields
+  ``hub.mode``, ``hub.callback``, ``hub.topic``, optional ``hub.lease_seconds``, and optional ``hub.secret``. Hub
+  network failures and non-2xx responses are captured in the result and on the subscription row.
+- Review follow-up: active subscription renewals now remain ``active`` while verification is pending, preserve existing
+  lease metadata on renewal request failure, and keep the active ``hub.secret`` in place until a renewal with a new
+  secret is verified. Rejected or failed renewal requests restore the previous pending-secret state. Renewals that omit
+  ``secret`` clear any stale staged secret, and ``secret=""`` can stage removal of the active secret after verification.
+  Overlong secrets are rejected before a subscription row or hub request is created.
+- Review follow-up: malformed WebSub delivery size/content-type settings are logged and fall back to the documented
+  defaults instead of raising from the callback path; docs now call out that hub/topic URL validation is syntactic and
+  host applications should apply their own allowlist for user-influenced hub URLs.
+- Added the CSRF-exempt ``/indieweb/websub/<token>/`` subscriber callback. Verification ``GET`` requests echo
+  ``hub.challenge`` only for matching pending subscribe/unsubscribe rows, record hub lease metadata for confirmed
+  subscribes, and mark confirmed unsubscribes as unsubscribed. Delivery ``POST`` requests require active subscriptions,
+  enforce delivery size/content-type settings, validate HMAC signatures when a secret is stored, record delivery
+  metadata, and optionally call ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` without parsing or storing feed content.
+- Backlog: removed the completed WebSub subscriber callback item from ``BACKLOG.md``.
+- Documentation: updated WebSub, API, configuration, concepts, README, and index docs. No generated docs under
+  ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased notes for the new model/migration, callback endpoint,
+  settings, helper API, signed delivery validation, CSRF/CORS/rate-limit behavior, and host-hook contract.
+- Compatibility: existing publisher-side WebSub helpers and ``notify_websub`` command semantics remain
+  backward-compatible. Intentional additions are one model/migration, one tokenized callback URL, subscriber helper
+  APIs, subscriber settings, and the optional ``websub_callback`` rate-limit key. No WebSub hub service, automatic
+  discovery, background lease renewal, or host content-storage semantics were added.
+- Follow-up risks: lease renewal/cleanup workflows and richer delivery processing remain host-owned or future slices;
+  the first callback slice records only latest delivery diagnostics rather than keeping a delivery history table.
+- Validation: ``uv run pytest tests/test_websub.py tests/test_websub_templatetags.py tests/test_notify_websub_command.py
+  -q --no-cov`` (22 passed), ``uv run pytest tests/test_websub_subscriber.py -q --no-cov`` (16 passed),
+  ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (36 passed),
+  ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb --check --dry-run`` (no
+  changes), ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (85 files already formatted),
+  ``uv run mypy`` (no issues), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), plus the full final
+  gate results recorded in the implementer report.
+
+### Support Micropub event and RSVP post types
+
+- Expanded the default ``MicropubContentHandler.get_config()`` ``post-types`` advertisement with ``event`` and
+  ``rsvp`` shapes. RSVP is advertised as a separate post type because clients commonly expose RSVP as its own create
+  mode, while the wire format remains handler-owned h-entry properties.
+- Expanded form-encoded create parsing to forward event properties ``summary``, ``description``, ``start``, ``end``,
+  and ``url`` plus RSVP ``rsvp`` as normalized property arrays. Existing common h-entry properties still pass through,
+  including h-entry-style ``content`` on event-like posts.
+- Preserved JSON create pass-through, including ``type: ["h-event"]`` payloads and nested Microformats2 objects, and
+  did not add event/RSVP models, templates, calendar feeds, timezone normalization, Webmention RSVP display, or host
+  storage semantics.
+- Backlog: removed the completed Micropub event/RSVP item from ``BACKLOG.md``.
+- Documentation: updated Micropub, API, concepts, README/index feature language, and changelog docs. No generated docs
+  under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased Micropub event/RSVP note.
+- Compatibility: existing note/article/photo/reply/bookmark/like/repost behavior, JSON create behavior, media uploads,
+  source query, update/delete/undelete, token scopes, CORS, rate limiting, models, and endpoint URLs remain unchanged.
+- Follow-up risks: host applications still need explicit storage/rendering policies for event and RSVP semantics.
+- Validation: ``uv run pytest tests/test_micropub_create.py tests/test_micropub_endpoint.py -q --no-cov`` (113 passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (85 files already formatted), ``uv run mypy`` (no
+  issues), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), plus the full final gate results recorded
+  in the implementer report.
+
 ### Refresh product backlog planning
 
 - Refilled the now-empty Priority 4 product/protocol backlog with two concrete next slices: WebSub subscriber callback

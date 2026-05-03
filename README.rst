@@ -12,7 +12,7 @@ django-indieweb
    :target: https://github.com/j178/prek
    :alt: prek
 
-A Django application that provides IndieAuth, Micropub, Webmention, and WebSub publisher support for IndieWeb integration
+A Django application that provides IndieAuth, Micropub, Webmention, and WebSub support for IndieWeb integration
 
 Documentation
 -------------
@@ -27,6 +27,7 @@ Features
 * Micropub endpoint with content creation, source query, update, delete, undelete, and media upload support
 * Webmention sending and receiving
 * WebSub publisher helpers for topic discovery links and hub notifications
+* Minimal WebSub subscriber callback support with lease tracking and delivery hooks
 * Pluggable content handler system for Micropub
 * Pluggable interfaces for Webmention URL resolution and spam checking
 * Support for both form-encoded and JSON Micropub requests

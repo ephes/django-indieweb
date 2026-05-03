@@ -234,3 +234,17 @@ def test_auth_media_and_webmention_status_endpoint_keys_are_limited(client, sett
 
     assert client.get(status_url).status_code == 200
     assert client.get(status_url).status_code == 429
+
+
+@pytest.mark.django_db
+def test_websub_callback_endpoint_key_is_limited(client, settings):
+    subscription = models.WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=models.WebSubSubscription.STATE_ACTIVE,
+    )
+    settings.INDIEWEB_RATE_LIMITS = {"websub_callback": {"limit": 1, "window": 60}}
+    url = reverse("indieweb:websub-callback", args=[subscription.callback_token])
+
+    assert client.post(url, data=b"<feed/>", content_type="application/atom+xml").status_code == 204
+    assert client.post(url, data=b"<feed/>", content_type="application/atom+xml").status_code == 429

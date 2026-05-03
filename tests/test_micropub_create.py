@@ -228,6 +228,22 @@ class TestMicropubCreate:
             {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
             {"type": "like", "name": "Like", "properties": ["like-of"]},
             {"type": "repost", "name": "Repost", "properties": ["repost-of"]},
+            {
+                "type": "event",
+                "name": "Event",
+                "properties": [
+                    "name",
+                    "summary",
+                    "description",
+                    "start",
+                    "end",
+                    "location",
+                    "category",
+                    "url",
+                    "published",
+                ],
+            },
+            {"type": "rsvp", "name": "RSVP", "properties": ["rsvp", "in-reply-to", "name", "content"]},
         ]
 
     @pytest.mark.django_db
@@ -380,6 +396,119 @@ class TestMicropubCreate:
                 "bookmark-of": ["https://example.com/bookmarked"],
                 "like-of": ["https://example.com/liked"],
                 "repost-of": ["https://example.com/reposted"],
+            },
+        }
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == payload["properties"]
+
+    @pytest.mark.django_db
+    def test_form_create_forwards_event_properties(self, client, token, micropub_url, monkeypatch):
+        """Test that form-encoded h-event fields are forwarded as property arrays."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={
+                "h": "event",
+                "name": "IndieWeb Meetup",
+                "summary": "Monthly meetup",
+                "description": "Talks and demos",
+                "start": "2026-06-01T18:00:00+02:00",
+                "end": "2026-06-01T20:00:00+02:00",
+                "location": "https://example.org/venue",
+                "category": "indieweb,events",
+                "url": "https://example.org/events/meetup",
+                "published": "2026-05-03T12:00:00+02:00",
+                "content": "Bring questions.",
+            },
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == {
+            "content": ["Bring questions."],
+            "name": ["IndieWeb Meetup"],
+            "summary": ["Monthly meetup"],
+            "description": ["Talks and demos"],
+            "category": ["indieweb", "events"],
+            "location": ["https://example.org/venue"],
+            "start": ["2026-06-01T18:00:00+02:00"],
+            "end": ["2026-06-01T20:00:00+02:00"],
+            "url": ["https://example.org/events/meetup"],
+            "published": ["2026-05-03T12:00:00+02:00"],
+        }
+
+    @pytest.mark.django_db
+    def test_form_create_forwards_rsvp_properties(self, client, token, micropub_url, monkeypatch):
+        """Test that form-encoded RSVP fields are forwarded as property arrays."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={
+                "h": "entry",
+                "rsvp": "yes",
+                "in-reply-to": "https://events.example.org/meetup",
+                "name": "RSVP to IndieWeb Meetup",
+                "content": "I will be there.",
+                "category": "events,indieweb",
+                "published": "2026-05-03T12:00:00+02:00",
+            },
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == {
+            "content": ["I will be there."],
+            "name": ["RSVP to IndieWeb Meetup"],
+            "category": ["events", "indieweb"],
+            "in-reply-to": ["https://events.example.org/meetup"],
+            "rsvp": ["yes"],
+            "published": ["2026-05-03T12:00:00+02:00"],
+        }
+
+    @pytest.mark.django_db
+    def test_json_create_preserves_h_event_payload(self, client, token, micropub_url, monkeypatch):
+        """Test that JSON h-event create keeps properties untouched for the handler."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {
+            "type": ["h-event"],
+            "properties": {
+                "name": ["IndieWeb Meetup"],
+                "start": ["2026-06-01T18:00:00+02:00"],
+                "location": [{"type": ["h-card"], "properties": {"name": ["Venue"]}}],
             },
         }
 

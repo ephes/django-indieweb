@@ -125,6 +125,7 @@ Each configured endpoint key accepts a mapping with:
        "token": {"limit": 10, "window": 300},
        "micropub": {"limit": 120, "window": 60},
        "media": {"limit": 30, "window": 300},
+       "websub_callback": {"limit": 120, "window": 60},
        "webmention": {"limit": 60, "window": 300},
        "webmention_status": {"limit": 120, "window": 60},
    }
@@ -135,6 +136,7 @@ Supported endpoint keys:
 - ``token`` - ``/indieweb/token/``
 - ``micropub`` - ``/indieweb/micropub/``
 - ``media`` - ``/indieweb/media/``
+- ``websub_callback`` - ``/indieweb/websub/<token>/``
 - ``webmention`` - ``/indieweb/webmention/``
 - ``webmention_status`` - ``/indieweb/webmention/<pk>/``
 
@@ -277,7 +279,9 @@ INDIEWEB_WEBSUB_TIMEOUT
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Per-request timeout, in seconds, used by ``notify_hubs()`` and the
-``notify_websub`` management command when no explicit timeout is passed.
+``notify_websub`` management command when no explicit timeout is passed. The
+same timeout is used by ``request_websub_subscription()`` when it sends
+subscriber subscribe/unsubscribe requests to a hub.
 
 **Default:** ``10.0``
 
@@ -294,6 +298,94 @@ of being raised. Malformed topic URLs and malformed hub URLs raise
 ``ValueError`` before any network request is made. Invalid timeout values raise
 ``ValueError`` only when at least one hub would be notified; the empty-hubs
 path short-circuits before timeout validation.
+
+INDIEWEB_WEBSUB_CALLBACK_BASE_URL
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Absolute URL prefix used by ``request_websub_subscription()`` to construct
+tokenized subscriber callback URLs.
+
+**Default:** unset
+
+**Example:**
+
+.. code-block:: python
+
+   INDIEWEB_WEBSUB_CALLBACK_BASE_URL = "https://example.com/indieweb/websub"
+
+The generated callback URL appends the subscription's unguessable token as one
+path component, for example
+``https://example.com/indieweb/websub/<token>/``. Set this to the public HTTPS
+URL where hubs can reach django-indieweb's ``websub-callback`` route. The value
+is required only for subscriber request helpers; publisher helpers do not read
+it.
+
+INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum raw body size accepted by the WebSub subscriber callback ``POST``.
+
+**Default:** ``1048576`` (1 MiB)
+
+Requests above this limit return HTTP ``413`` and update the subscription's
+latest-delivery diagnostics without invoking the host delivery hook. Set this
+to ``None`` to disable django-indieweb's built-in size check only when your
+server, proxy, or worker queue enforces an equivalent limit.
+Malformed values are ignored and logged; the callback falls back to the
+default 1 MiB limit instead of failing every delivery.
+
+INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional iterable of content types accepted by the WebSub subscriber callback.
+
+**Default:** ``None`` (no content-type allowlist)
+
+When configured, the callback compares the base ``Content-Type`` value without
+parameters. Requests outside the allowlist return HTTP ``415`` and do not
+invoke the host delivery hook.
+Malformed allowlist values are ignored and logged, leaving the callback with no
+content-type allowlist.
+
+**Example:**
+
+.. code-block:: python
+
+   INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES = (
+       "application/atom+xml",
+       "application/rss+xml",
+       "application/json",
+   )
+
+INDIEWEB_WEBSUB_DELIVERY_HOOK
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable that receives accepted WebSub deliveries.
+
+**Default:** ``None`` (record metadata only)
+
+The callable is invoked with keyword arguments:
+
+.. code-block:: python
+
+   def process_delivery(*, subscription_id, hub_url, topic_url, body, headers):
+       ...
+
+``body`` is the raw request body as bytes. ``headers`` is a dictionary copy of
+the request headers. The callback view validates the token, active
+subscription state, size/content-type limits, and any stored ``hub.secret``
+signature before loading or calling this hook. Hook import failures,
+non-callables, and raised exceptions are logged, recorded on the subscription
+row, and returned as HTTP ``500`` so the hub can retry.
+
+``hub.secret`` values stored on ``WebSubSubscription`` are limited to 200
+characters. Renewal requests preserve the existing stored secret when
+``request_websub_subscription()`` is called with ``secret=None`` and clear any
+earlier unverified staged secret. When a renewal request provides a new secret,
+that value is staged and only becomes the active delivery secret after the hub
+verifies the renewal; failed renewal requests keep the previous secret. Passing
+``secret=""`` stages removal of the stored secret, so a verified renewal can
+switch the subscription back to unsigned deliveries.
 
 INDIEWEB_WEBMENTION_ENQUEUE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -521,6 +613,7 @@ This creates the following endpoints:
 - ``/indieweb/tokens/<pk>/revoke/`` - CSRF-protected POST action for revoking one owned token
 - ``/indieweb/micropub/`` - Micropub endpoint
 - ``/indieweb/media/`` - Micropub media endpoint
+- ``/indieweb/websub/<token>/`` - WebSub subscriber callback endpoint
 - ``/indieweb/webmention/`` - Webmention receive endpoint
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
 
@@ -541,6 +634,7 @@ You can customize the URL paths:
        path('tokens/<int:pk>/revoke/', views.TokenRevokeView.as_view(), name='token-revoke'),
        path('api/micropub/', views.MicropubView.as_view(), name='micropub'),
        path('api/media/', views.MicropubMediaView.as_view(), name='media'),
+       path('websub/<str:token>/', views.WebSubCallbackView.as_view(), name='websub-callback'),
        path('webmention/', views.WebmentionEndpoint.as_view(), name='webmention'),
        path('webmention/<int:pk>/', views.WebmentionStatusView.as_view(), name='webmention-status'),
    ]
@@ -551,8 +645,10 @@ Middleware Configuration
 CSRF Exemption
 ~~~~~~~~~~~~~~
 
-The IndieWeb views are automatically exempt from CSRF protection. This is necessary
-for the token and micropub endpoints to accept POST requests from external clients.
+The IndieWeb protocol views are automatically exempt from CSRF protection.
+This is necessary for token and Micropub endpoints to accept POST requests
+from external clients, and for the WebSub subscriber callback to accept
+server-to-server hub deliveries.
 
 If you need CSRF protection, you'll need to implement your own views:
 
@@ -586,7 +682,7 @@ Database Configuration
 Models
 ~~~~~~
 
-django-indieweb currently creates seven models:
+django-indieweb currently creates eight models:
 
 1. **Auth** - Stores authorization codes temporarily
 2. **Token** - Stores access tokens
@@ -602,7 +698,11 @@ django-indieweb currently creates seven models:
    rows keyed by the exact HTTP(S) ``source_url`` and ``target_url`` strings,
    with endpoint diagnostics, first/latest send timestamps, latest result
    fields, latest Vouch URL, and diagnostic current-content last-seen tracking
-7. **Profile** - Stores user h-card data
+7. **WebSubSubscription** - Stores host-level subscriber state for a hub/topic
+   pair, including an unguessable callback token, pending verification mode,
+   lease metadata, optional delivery secret, latest request diagnostics, and
+   latest delivery metadata
+8. **Profile** - Stores user h-card data
 
 ``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for their
 user relationships. ``WebmentionSourceSnapshot`` is tied one-to-one to a parent
@@ -619,6 +719,11 @@ and ``WebmentionSender.resend_salmentions()`` uses rows for exactly the same
 ``source_url`` together with current source links. The management-command
 ``--salmention-resend`` flag wraps the same sender workflow without adding a
 new setting or schema requirement.
+
+``WebSubSubscription`` rows are host-level, not user-owned. django-indieweb
+does not infer which Django user should own external feed subscriptions; host
+applications decide when to call the subscription helper and how to process
+accepted deliveries.
 
 Migrations
 ~~~~~~~~~~
@@ -846,10 +951,11 @@ preflights return ``204 No Content`` with ``Access-Control-Allow-Origin``,
 
 Preflights short-circuit before rate limiting, token authentication, Micropub
 handler calls, media storage, Webmention processing, and async Webmention
-enqueue hooks. Disallowed origins do not receive permissive preflight headers.
-Malformed CORS settings are ignored and logged so optional CORS hardening does
-not crash existing endpoints; production operators should monitor logs after
-changing CORS configuration.
+enqueue hooks. WebSub subscriber callbacks are server-to-server hub endpoints
+and are excluded from built-in CORS handling. Disallowed origins do not receive
+permissive preflight headers. Malformed CORS settings are ignored and logged so
+optional CORS hardening does not crash existing endpoints; production operators
+should monitor logs after changing CORS configuration.
 
 If you need site-wide CORS behavior for views outside django-indieweb's public
 protocol endpoints, configure deployment-level middleware separately.

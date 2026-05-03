@@ -3,7 +3,7 @@
 Welcome to django-indieweb's documentation!
 ============================================
 
-**django-indieweb** provides IndieAuth, Micropub, Webmention, WebSub publisher, and h-card support for Django applications.
+**django-indieweb** provides IndieAuth, Micropub, Webmention, WebSub, and h-card support for Django applications.
 
 .. toctree::
    :maxdepth: 2
@@ -31,7 +31,7 @@ Features
 * **IndieAuth token endpoint** - For exchanging auth codes for access tokens
 * **Micropub endpoint with content creation, source query, update, delete, undelete, and media upload support**
 * **Webmention support** - Send and receive cross-site conversations
-* **WebSub publisher support** - Advertise topic/hub discovery links and notify hubs when topics change
+* **WebSub support** - Advertise topic/hub discovery links, notify hubs, and receive tokenized subscriber callbacks
 * **H-card profiles** - Store and display user profiles with microformats2
 * Pluggable content handler system for Micropub integration
 * Pluggable interfaces for Webmention URL resolution and spam checking
