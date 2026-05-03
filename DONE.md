@@ -4,6 +4,34 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-02
 
+### Convert Webmention sender and command legacy TestCase tests to pytest style
+
+- Converted ``tests/test_webmention_sender.py`` and ``tests/test_send_webmentions_command.py`` from
+  ``django.test.TestCase`` classes to pytest fixtures and module-level test functions with plain ``assert`` statements.
+- Preserved Webmention sender coverage for URL extraction, duplicate handling, endpoint discovery from headers and HTML,
+  redirect handling, send success/failure/network errors, bulk send flow, outbound target history writes/updates,
+  Vouch propagation, ``record_history=False``, no-endpoint behavior, and Salmention resend current/history/both union
+  behavior. The endpoint redirect subtest and success-code loop now use pytest parametrization.
+- Preserved ``send_webmentions`` command coverage for invalid source/Vouch URLs, provided/fetched/stdin content,
+  fetch failures, dry-run output and no-send behavior, ordinary send summaries, Salmention resend sender calls, Vouch
+  pass-through, provenance/no-endpoint output, no-results output, and dry-run union/no-history-write behavior.
+- Remaining legacy ``TestCase`` file is ``tests/test_webmention_templatetags.py``; the focused backlog item for that
+  follow-up remains in ``BACKLOG.md``.
+- Backlog: removed the completed sender/command conversion item from ``BACKLOG.md``.
+- Documentation: no project documentation update was needed because this was a test-only maintenance refactor with no
+  behavior, workflow, public API, configuration, or user-facing usage change. No generated docs under ``docs/_build``
+  were edited or staged.
+- Changelog: no changelog update was needed because no behavior, bug fix, feature, configuration, workflow, or
+  user-facing change shipped in this slice.
+- Compatibility: no production code, dependencies, migrations, models, settings, templates, endpoint URLs, endpoint
+  semantics, management-command behavior, sender behavior, or public APIs changed.
+- Validation: ``uv run pytest tests/test_webmention_sender.py tests/test_send_webmentions_command.py -q`` (68 passed),
+  ``uv run pytest tests/test_webmention_models.py tests/test_webmention_sender.py tests/test_send_webmentions_command.py
+  -q`` (96 passed), ``uv run pytest tests/test_admin.py tests/test_profile_admin.py tests/test_admin_json_widget.py
+  tests/test_webmention_sender.py tests/test_send_webmentions_command.py -q`` (92 passed), ``uv run pytest`` (694
+  passed), ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (74 files
+  already formatted), ``git diff --check`` (passed), and ``git diff --cached --check`` (passed).
+
 ### Convert admin legacy TestCase tests to pytest style
 
 - Converted ``tests/test_admin.py`` from ``django.test.TestCase`` classes to pytest fixtures and module-level test

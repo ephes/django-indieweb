@@ -18,10 +18,6 @@ No current API Hardening items.
 
 ### Tooling and Maintainability
 
-- [ ] Convert Webmention sender and command legacy `TestCase` tests to pytest style.
-  - References: `tests/test_webmention_sender.py`, `tests/test_send_webmentions_command.py`.
-  - Outcome: replace `django.test.TestCase` setup/subtests with pytest fixtures and parametrization without changing
-    sender or management-command behavior.
 - [ ] Convert Webmention template tag legacy `TestCase` tests to pytest style.
   - References: `tests/test_webmention_templatetags.py`.
   - Outcome: replace `django.test.TestCase` setup/assertions/query checks with pytest fixtures and helpers while
