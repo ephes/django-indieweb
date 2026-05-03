@@ -83,7 +83,7 @@ Ready to contribute? Here's how to set up ``django-indieweb`` for local developm
 
 5. When you're done making changes, check that your changes pass the tests and quality checks::
 
-    $ uv run pytest                    # Run tests
+    $ uv run pytest                    # Run tests with coverage gate
     $ uv run mypy                      # Type checking
     $ uv run ruff check .              # Linting
     $ uv run ruff format .             # Code formatting
@@ -124,14 +124,14 @@ Here's a quick reference of development commands::
     # Install development environment
     uv sync
 
-    # Run tests
+    # Run tests with coverage gate
     uv run pytest
 
     # Run specific test file
     uv run pytest tests/test_models.py
 
-    # Run tests with coverage
-    uv run pytest --cov=indieweb --cov-report=html
+    # Generate an HTML coverage report
+    uv run pytest --cov-report=html
 
     # Type checking
     uv run mypy
@@ -175,6 +175,7 @@ Testing
 * Use ``@pytest.mark.django_db`` for tests that need database access
 * Do not mix ``pytest.mark.parametrize`` into existing ``django.test.TestCase`` classes
 * Convert legacy ``TestCase`` files in focused maintenance slices, not during unrelated feature work
+* The default ``uv run pytest`` command measures package coverage and enforces the ``pyproject.toml`` coverage gate
 * Aim for high test coverage but focus on testing behavior, not implementation
 * Test files go in the ``tests/`` directory
 

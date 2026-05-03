@@ -4,6 +4,29 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Add a coverage gate
+
+- Added pytest-cov coverage collection to the default ``uv run pytest`` workflow with ``--cov=indieweb`` and
+  ``--cov-report=term-missing`` while keeping the existing coverage source, omit, and exclude configuration.
+- Measured the current full-suite baseline with ``uv run pytest --cov=indieweb --cov-report=term-missing``: 696 tests
+  passed with 89% total coverage over ``src/indieweb``. Configured ``fail_under = 88`` as a conservative floor based on
+  that baseline so harmless local rounding/noise should not fail the suite.
+- Backlog: removed the completed coverage-gate item from ``BACKLOG.md``.
+- Documentation: updated ``AGENTS.md``, ``CLAUDE.md``, ``docs/development.rst``, ``CONTRIBUTING.rst``, and
+  ``README.rst`` so the standard test workflow and HTML coverage-report command match the enforced gate. No generated
+  docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased developer-tooling note because the default test workflow
+  now enforces coverage.
+- Compatibility: no production behavior, dependencies, migrations, models, settings, templates, endpoint URLs, endpoint
+  semantics, runtime feature behavior, or public APIs changed.
+- Follow-up: local coverage enforcement is complete; the remaining Priority 3 tooling slices are the CI workflow,
+  Django support matrix, ``just loc`` workflow, and safe ``django-model-utils`` dependency cleanup. CI wiring for the
+  coverage gate remains part of the separate GitHub Actions backlog item.
+- Validation: ``uv run pytest --cov=indieweb --cov-report=term-missing`` measured the baseline (696 passed, 89%
+  total coverage), ``uv run pytest`` enforced the configured gate (696 passed; required 88.0%, total 89.34%),
+  ``uv run mypy`` (no issues), ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (74 files already
+  formatted), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), and ``git diff --check`` (passed).
+
 ### Update Ruff target version to Python 3.10
 
 - Updated ``tool.ruff.target-version`` in ``pyproject.toml`` from ``py39`` to ``py310`` so Ruff's lint and formatting

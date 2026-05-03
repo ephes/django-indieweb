@@ -64,8 +64,12 @@ uv run pytest -k "keyword"
 # Or using justfile for single test
 just test-one tests/test_file.py::TestClass::test_case
 
-# Run tests with coverage
-coverage run -m pytest tests && coverage html && open htmlcov/index.html
+# Run tests with coverage and the configured coverage gate
+uv run pytest
+
+# Generate and open an HTML coverage report
+uv run pytest --cov-report=html
+open htmlcov/index.html
 
 # Run full test matrix with tox
 tox
@@ -164,7 +168,8 @@ Keep this section aligned with `AGENTS.md`. If you change the workflow in one fi
   `TestCase` files to pytest in focused maintenance slices instead of opportunistically rewriting them during unrelated
   feature work
 - **Test location**: New behaviors need coverage under `tests/` with `test_*.py`; mirror module paths for discoverability
-- **Coverage**: Tests run with coverage (`--cov-config=pyproject.toml`)
+- **Coverage**: Tests run with coverage for the `indieweb` package and enforce the documented `fail_under` gate in
+  `pyproject.toml`
 - **Database**: Reuse enabled for faster tests; reset or mark transactional tests if you change schema
 - **Migrations**: Disabled during tests
 - **Django settings**: `tests.settings`

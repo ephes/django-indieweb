@@ -26,7 +26,8 @@
   fixture for database access.
 - Do not mix `pytest.mark.parametrize` into `django.test.TestCase` classes. Convert existing `TestCase` files to pytest
   in focused maintenance slices instead of opportunistically rewriting them during unrelated feature work.
-- Tests run with coverage (`--cov-config=pyproject.toml`) and reuse the DB; reset or mark transactional tests if you change schema.
+- Tests run with coverage for the `indieweb` package and enforce the documented `fail_under` gate in
+  `pyproject.toml`; reset or mark transactional tests if you change schema.
 - For regression proofs, add focused tests near the bug; prefer fixtures over inline setup to avoid duplication.
 - Use `pytest -k "keyword"` or `just test-one path::node` for fast iteration.
 

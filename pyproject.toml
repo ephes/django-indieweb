@@ -103,7 +103,9 @@ filterwarnings = [
 addopts = [
     "--reuse-db",
     "--no-migrations",
+    "--cov=indieweb",
     "--cov-config=pyproject.toml",
+    "--cov-report=term-missing",
 ]
 norecursedirs = [
     ".git",
@@ -122,6 +124,10 @@ omit = [
 ]
 
 [tool.coverage.report]
+# Baseline measured with `uv run pytest --cov=indieweb --cov-report=term-missing`
+# on 2026-05-03: 89% total coverage. Keep the gate conservative to avoid
+# insignificant local rounding/noise failures.
+fail_under = 88
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

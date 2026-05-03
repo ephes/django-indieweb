@@ -21,15 +21,18 @@ Run the test suite using pytest::
 
     uv run pytest
 
+The default pytest command measures coverage for the ``indieweb`` package and
+enforces the configured coverage gate in ``pyproject.toml``.
+
 New tests should use pytest function style with fixtures and plain ``assert``.
 Use ``@pytest.mark.django_db`` or the ``db`` fixture for tests that need
 database access. A few older ``django.test.TestCase`` files remain; do not mix
 pytest parametrization into those classes. Convert them in focused maintenance
 slices rather than during unrelated feature work.
 
-To run tests with coverage::
+To generate an HTML coverage report::
 
-    uv run pytest --cov=indieweb --cov-report=html
+    uv run pytest --cov-report=html
     open htmlcov/index.html
 
 Running Tox
@@ -147,11 +150,11 @@ Development Commands Summary
     # Install development environment
     uv sync
 
-    # Run tests
+    # Run tests with coverage and the configured coverage gate
     uv run pytest
 
-    # Run tests with coverage
-    uv run pytest --cov=indieweb
+    # Generate an HTML coverage report
+    uv run pytest --cov-report=html
 
     # Run type checking
     uv run mypy

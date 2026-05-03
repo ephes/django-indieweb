@@ -50,6 +50,7 @@ Unreleased
 * Added optional built-in CORS support for public protocol endpoints through ``INDIEWEB_CORS_ALLOWED_ORIGINS`` and related settings. CORS remains disabled by default, supports explicit origin allowlists or an explicit ``"*"`` allow-all policy, adds headers only for allowed origins, and handles configured preflight ``OPTIONS`` requests before rate limiting, token authentication, Micropub handler work, media storage, Webmention processing, or async enqueue hooks. Browser token-management UI views remain excluded.
 * Standardized developer test guidance around pytest function/fixture style for new tests, documented that pytest parametrization should not be mixed into legacy ``django.test.TestCase`` classes, and converted the h-card/profile-admin legacy tests to pytest style.
 * Aligned Ruff's configured target version with the package's Python 3.10 minimum support floor so lint and formatting rewrites stay compatible with all supported Python versions.
+* Added a local coverage gate to the default pytest workflow. ``uv run pytest`` now measures the ``indieweb`` package and enforces a conservative ``fail_under = 88`` threshold based on the current 89% baseline.
 
 0.5.3 (2025-10-28)
 ------------------

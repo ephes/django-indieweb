@@ -110,13 +110,13 @@ Handy Just commands (install `just` first) ::
 Running Tests
 ~~~~~~~~~~~~~
 
-Run the test suite::
+Run the test suite with coverage and the configured coverage gate::
 
     uv run pytest
 
-Run tests with coverage::
+Generate an HTML coverage report::
 
-    uv run pytest --cov=indieweb --cov-report=html
+    uv run pytest --cov-report=html
     open htmlcov/index.html
 
 Run tests for all Python versions using tox::
