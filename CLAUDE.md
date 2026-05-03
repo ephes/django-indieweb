@@ -151,6 +151,13 @@ When finishing a backlog item:
 
 Keep this section aligned with `AGENTS.md`. If you change the workflow in one file, update the other.
 
+## Agent Session Materials
+
+- Keep raw agent transcripts, prompts, command output, and local session summaries private and untracked.
+- If a local summary is useful, write it under `.agent-summaries/` or use a `codex-session-*.md`/`claude-session-*.md` file; these paths are gitignored.
+- Do not add hooks or scripts that scrape agent or terminal transcripts into tracked files by default.
+- Promote only concise, reviewed, repo-specific guidance into tracked documentation; use the curated learnings backlog item for that work.
+
 ## Key Dependencies
 
 - Django

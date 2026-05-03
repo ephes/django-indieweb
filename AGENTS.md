@@ -39,6 +39,12 @@
 - Update project documentation when implementation behavior, configuration, public APIs, workflows, examples, or user-facing usage changes.
 - Work is not complete until code, tests, documentation, and changelog entries are consistent. If docs or changelog updates are not needed, say so in the `DONE.md` entry.
 
+## Agent Session Materials
+- Keep raw agent transcripts, prompts, command output, and local session summaries private and untracked.
+- If a local summary is useful, write it under `.agent-summaries/` or use a `codex-session-*.md`/`claude-session-*.md` file; these paths are gitignored.
+- Do not add hooks or scripts that scrape agent or terminal transcripts into tracked files by default.
+- Promote only concise, reviewed, repo-specific guidance into tracked documentation; use the curated learnings backlog item for that work.
+
 ## Commit & Pull Request Guidelines
 - Commit messages: short, imperative subjects (e.g., “Add Micropub handler validation”, “Document justfile workflows”); keep each commit scoped.
 - Before opening a PR, run `uv run pytest`, `uv run mypy`, and `uv run ruff check .`; include notable outputs in the PR description.

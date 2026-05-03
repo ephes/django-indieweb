@@ -18,9 +18,7 @@ No current API Hardening items.
 
 ### Tooling and Maintainability
 
-- [ ] Add a `just loc` line-counting workflow.
-  - References: `justfile`, `pyproject.toml`, `../kptncook/justfile`.
-  - Outcome: running `just loc` produces repository line-count summaries using the same `uv run count-lines-of-code` workflow used in `../kptncook`, with any required dependency or tool configuration documented.
+No current Tooling and Maintainability items.
 
 ## Priority 4
 
@@ -31,8 +29,5 @@ No current API Hardening items.
 
 ## Agent Workflow Improvements
 
-- [ ] Evaluate local, gitignored agent session summaries.
-  - Outcome: decide whether to add a private session-summary hook or script for Codex and Claude Code.
-  - Constraint: do not commit raw transcripts by default because they may contain secrets, prompts, command output, or unrelated private context.
 - [ ] Add a curated agent learnings file if repeated repo-specific mistakes emerge.
   - Outcome: future agents get concise, reviewed guidance rather than raw transcript dumps.

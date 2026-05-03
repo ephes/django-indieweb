@@ -4,6 +4,63 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Add a `just loc` line-counting workflow
+
+- Added ``src/indieweb/loc.py`` and exposed it through the ``count-lines-of-code`` project script, so
+  ``uv run count-lines-of-code`` works from this package without importing from the sibling ``kptncook`` checkout.
+  The command prefers ``cloc`` when it is installed and otherwise falls back to a package-local Python counter over
+  tracked text files. Both paths print language, repository-area, and directory summaries.
+- Added the ``just loc`` recipe as the stable developer workflow entry point.
+- Added focused tests for the package-local fallback, ``cloc`` CSV aggregation, path bucketing, and subprocess error
+  handling.
+- Review follow-up: tightened generated-directory exclusion matching for nested single-name directories, made equal
+  line/file-count sorting deterministic by name, and documented that the ``cloc`` summary parser intentionally keeps
+  the ``SUM`` row supplied by ``cloc``.
+- Backlog: removed the completed ``just loc`` Priority 3 tooling item from ``BACKLOG.md``.
+- Documentation: documented ``just loc`` in ``docs/development.rst`` and the development command summary. No generated
+  docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased developer-tooling note for the new line-count workflow.
+- Compatibility: no production runtime behavior, dependencies, migrations, models, settings, templates, endpoint URLs,
+  endpoint semantics, or public APIs changed. The new module is only exposed as a developer console script.
+- Follow-up: no follow-up remains for the line-count workflow. ``uv lock`` confirmed the project metadata remained
+  resolvable; adding the script did not require a lockfile content change.
+- Validation: ``uv lock`` (resolved 74 packages), ``uv run ruff format src/indieweb/loc.py tests/test_loc.py`` (2 files
+  reformatted), ``just loc`` (passed; used the installed ``cloc`` path and printed language, area, and directory
+  tables), ``uv run count-lines-of-code`` (passed with the same output shape),
+  ``uv run pytest tests/test_loc.py -q --no-cov`` (7 passed), ``uv run ruff check .`` (passed),
+  ``uv run ruff format . --check`` (76 files already formatted), ``uv run mypy`` (no issues),
+  ``uv run pytest`` (703 passed; required 88.0%, total 89.52%),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no output), and ``git diff --check`` (passed).
+
+### Evaluate local, gitignored agent session summaries
+
+- Decided not to add an automated hook or committed script for Codex or Claude Code session summaries. Raw transcripts,
+  prompts, command output, and generated summaries can contain secrets or unrelated private context, so scraping or
+  storing them automatically from a tracked workflow would be too risky by default.
+- Reserved private local paths in ``.gitignore`` for optional user-authored summaries or transcript exports:
+  ``.agent-summaries/``, ``.agent-transcripts/``, ``codex-session-*.md``, and ``claude-session-*.md``.
+- Documented the policy in ``AGENTS.md`` and ``CLAUDE.md``: local session material stays untracked, hooks must not
+  scrape transcripts into tracked files by default, and only concise reviewed repo-specific guidance should be promoted
+  into tracked documentation.
+- Backlog: removed the completed evaluation item from ``BACKLOG.md``. The separate ``Add a curated agent learnings
+  file if repeated repo-specific mistakes emerge`` item remains open because this evaluation did not identify reviewed
+  repo-specific learnings that should be committed now.
+- Documentation: updated repository agent guidance only. No raw transcripts, prompts, command output, generated
+  summaries, or private session material were added.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note because this changes the documented developer-agent
+  workflow and gitignore policy.
+- Compatibility: no production runtime behavior, dependencies, migrations, models, settings, templates, endpoint URLs,
+  endpoint semantics, public APIs, or package metadata changed for this slice.
+- Follow-up: keep the curated learnings backlog item open and use it only for concise, reviewed guidance if repeated
+  repo-specific mistakes appear.
+- Validation: ``rg -n "agent|summary|session|codex|claude|transcript|learnings" .gitignore AGENTS.md CLAUDE.md
+  BACKLOG.md DONE.md docs README.rst CONTRIBUTING.rst`` (confirmed the prior state and final policy locations),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (76 files already formatted),
+  ``uv run mypy`` (no issues), ``uv run pytest`` (703 passed; required 88.0%, total 89.52%),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no output), and ``git diff --check`` (passed).
+
 ### Remove the django-model-utils runtime dependency safely
 
 - Replaced the historical ``model_utils.fields.AutoCreatedField`` and ``AutoLastModifiedField`` usages in

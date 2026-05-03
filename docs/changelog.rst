@@ -54,6 +54,8 @@ Unreleased
 * Added a GitHub Actions CI workflow for pull requests and pushes to ``develop``. CI runs the existing tox Python matrix, mypy, Ruff lint and formatting checks, configured prek hooks, and Sphinx documentation with warnings treated as errors.
 * Pinned Django support to the current stable supported range, ``Django>=5.2.13,<6.1``, and expanded tox/GitHub Actions to exercise Django 5.2 LTS on Python 3.10-3.14 plus Django 6.0 on Python 3.12-3.14.
 * Removed ``django-model-utils`` from runtime dependencies after replacing the historical initial migration timestamp fields with Django-native fields, so fresh installs no longer need ``model_utils`` to apply migrations.
+* Added ``just loc`` and the ``uv run count-lines-of-code`` console script for repository line-count summaries by language, area, and directory, with a ``cloc`` fast path and package-local Python fallback.
+* Reserved gitignored local paths for private agent session summaries and documented that raw transcripts, prompts, and command output must stay out of tracked files by default.
 
 0.5.3 (2025-10-28)
 ------------------

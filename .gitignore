@@ -60,3 +60,9 @@ issue.md
 plan.md
 task.md
 current_task.md
+
+# local/private agent session materials
+.agent-summaries/
+.agent-transcripts/
+codex-session-*.md
+claude-session-*.md

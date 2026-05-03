@@ -35,6 +35,10 @@ typecheck:
 hooks:
     uv run prek run --all-files
 
+# Count repository lines with language, area, and directory summaries
+loc:
+    @uv run count-lines-of-code
+
 # Remove build artifacts
 clean-build:
     rm -fr build/

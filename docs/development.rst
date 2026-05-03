@@ -90,6 +90,17 @@ Run all configured hooks::
 
     uv run prek run --all-files
 
+Line Counts
+-----------
+
+To print repository line-count summaries by language, area, and directory::
+
+    just loc
+
+The ``just loc`` recipe runs ``uv run count-lines-of-code``. The command uses
+``cloc`` when it is available and otherwise falls back to a package-local
+Python counter over tracked text files.
+
 Type Checking
 -------------
 
@@ -187,6 +198,9 @@ Development Commands Summary
 
     # Run configured hooks
     uv run prek run --all-files
+
+    # Count repository lines by language, area, and directory
+    just loc
 
     # Build documentation
     uv run sphinx-build -W -b html docs docs/_build/html
