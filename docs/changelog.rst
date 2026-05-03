@@ -56,6 +56,8 @@ Unreleased
 * Removed ``django-model-utils`` from runtime dependencies after replacing the historical initial migration timestamp fields with Django-native fields, so fresh installs no longer need ``model_utils`` to apply migrations.
 * Added ``just loc`` and the ``uv run count-lines-of-code`` console script for repository line-count summaries by language, area, and directory, with a ``cloc`` fast path and package-local Python fallback.
 * Reserved gitignored local paths for private agent session summaries and documented that raw transcripts, prompts, and command output must stay out of tracked files by default.
+* Added publisher-side WebSub support. Host applications can configure ``INDIEWEB_WEBSUB_HUBS``, render WebSub ``rel=hub``/``rel=self`` discovery with ``websub_link_tags`` or HTTP ``Link`` header helpers, and explicitly notify hubs with ``notify_hubs()`` or ``python manage.py notify_websub TOPIC``. Hub notifications use the WebSub publisher form ``hub.mode=publish`` and ``hub.url=<topic>`` and return per-hub results instead of raising on network or non-2xx hub failures. No WebSub hub service, subscriber callback endpoint, model, migration, or automatic network call was added.
+* Expanded the default Micropub ``q=config`` ``post-types`` advertisement to include note, article, photo, reply, bookmark, like, and repost shapes. Form-encoded create parsing now forwards ``bookmark-of``, ``like-of``, ``repost-of``, URL-valued ``audio``, and URL-valued ``video`` properties to the configured handler while preserving existing JSON create, source query, update/delete/undelete, media endpoint, and multipart ``photo`` upload behavior.
 
 0.5.3 (2025-10-28)
 ------------------

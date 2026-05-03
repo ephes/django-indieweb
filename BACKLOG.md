@@ -24,9 +24,6 @@ No current Tooling and Maintainability items.
 
 ### Micropub Enhancements and Extensions
 
-- [ ] Add WebSub support.
-- [ ] Support additional Micropub post types.
-
 ## Agent Workflow Improvements
 
 - [ ] Add a curated agent learnings file if repeated repo-specific mistakes emerge.

@@ -832,11 +832,24 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         properties = {}
 
         # Simple properties (including category which can be comma-separated)
-        for prop in ["content", "name", "category", "location", "in-reply-to", "published", "photo"]:
+        for prop in [
+            "content",
+            "name",
+            "category",
+            "location",
+            "in-reply-to",
+            "bookmark-of",
+            "like-of",
+            "repost-of",
+            "published",
+            "photo",
+            "audio",
+            "video",
+        ]:
             properties.update(self._parse_form_property(request, prop))
 
         # List properties (override if array format is used)
-        for prop in ["content", "photo", "category"]:
+        for prop in ["content", "photo", "audio", "video", "category"]:
             list_props = self._parse_form_property(request, prop, is_list=True)
             if list_props:
                 properties.update(list_props)

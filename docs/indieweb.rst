@@ -30,6 +30,14 @@ indieweb.urls module
    :show-inheritance:
    :undoc-members:
 
+indieweb.websub module
+----------------------
+
+.. automodule:: indieweb.websub
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 indieweb.views module
 ---------------------
 

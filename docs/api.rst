@@ -8,6 +8,11 @@ This document describes the IndieWeb endpoints provided by django-indieweb.
    delete, and undelete through a pluggable content handler system. See the
    :doc:`micropub` documentation for implementation details.
 
+.. note::
+   WebSub support is publisher-side helper functionality, not a bundled public
+   endpoint. Host applications advertise WebSub on their own topic responses
+   and explicitly notify hubs when those topics change. See :doc:`websub`.
+
 Endpoints Overview
 ------------------
 
@@ -20,6 +25,47 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/media/`` - Micropub media endpoint for direct media uploads
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
+
+WebSub Publisher Helpers
+------------------------
+
+django-indieweb does not add a WebSub endpoint URL. Instead, it exposes
+publisher helpers in ``indieweb.websub`` for host-owned feeds and topic pages.
+
+Discovery
+~~~~~~~~~
+
+``build_websub_links(topic_url, hubs=None)`` returns one ``rel="hub"`` link per
+hub and exactly one ``rel="self"`` link for the topic URL. When ``hubs`` is
+omitted, hub URLs are read from ``INDIEWEB_WEBSUB_HUBS``.
+
+``websub_link_header(topic_url, hubs=None)`` returns a combined HTTP ``Link``
+header value, and ``add_websub_link_header(response, topic_url, hubs=None)``
+adds or appends that header to a Django response.
+
+For HTML templates, load ``websub_tags`` and render:
+
+.. code-block:: django
+
+    {% load websub_tags %}
+    {% websub_link_tags "https://example.com/feed/" %}
+
+Notification
+~~~~~~~~~~~~
+
+``notify_hubs(topic_url, hubs=None, timeout=None)`` sends a form-encoded POST
+to each hub with ``hub.mode=publish`` and ``hub.url=<topic_url>``. It returns a
+list of result objects containing the hub URL, topic URL, success flag, status
+code when available, and error text for failed attempts.
+
+The ``notify_websub`` management command wraps the same helper:
+
+.. code-block:: bash
+
+    python manage.py notify_websub https://example.com/feed/
+
+Use repeated ``--hub`` options to override ``INDIEWEB_WEBSUB_HUBS`` for one
+command invocation.
 
 IndieAuth Flow
 --------------
@@ -274,8 +320,13 @@ Creates a new post using the configured content handler.
 - ``name`` - The post title/name
 - ``category`` - Categories (comma-separated in form data, array in JSON)
 - ``in-reply-to`` - URL this post is replying to
+- ``bookmark-of`` - URL this post bookmarks
+- ``like-of`` - URL this post likes
+- ``repost-of`` - URL this post reposts
 - ``location`` - Geographic location in geo URI format
 - ``photo`` - Photo URL(s), or uploaded photo files on multipart create requests
+- ``audio`` - Audio URL(s)
+- ``video`` - Video URL(s)
 - ``published`` - Publication date
 
 **Form-Encoded Example:**
@@ -495,6 +546,16 @@ The Micropub endpoint supports several query parameters:
     Authorization: Bearer xyz789
 
 Returns supported post types and features.
+
+The default in-memory handler advertises these post types:
+
+- ``note`` - ``content``
+- ``article`` - ``name``, ``content``
+- ``photo`` - ``photo``, optional ``content`` and ``category``
+- ``reply`` - ``in-reply-to``, ``content``
+- ``bookmark`` - ``bookmark-of``, ``name``, ``content``
+- ``like`` - ``like-of``
+- ``repost`` - ``repost-of``
 
 **Source Query:**
 

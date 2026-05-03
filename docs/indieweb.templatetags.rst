@@ -20,6 +20,14 @@ indieweb.templatetags.webmention\_tags module
    :show-inheritance:
    :undoc-members:
 
+indieweb.templatetags.websub\_tags module
+-----------------------------------------
+
+.. automodule:: indieweb.templatetags.websub_tags
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 

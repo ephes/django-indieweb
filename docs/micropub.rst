@@ -167,7 +167,12 @@ Common h-entry properties are supported:
 - ``category`` - Tags/categories (comma-separated or array)
 - ``location`` - Geographic location (geo URI format)
 - ``in-reply-to`` - URL this post is replying to
+- ``bookmark-of`` - URL this post bookmarks
+- ``like-of`` - URL this post likes
+- ``repost-of`` - URL this post reposts
 - ``photo`` - Photo URL(s), or uploaded photo files on multipart create requests
+- ``audio`` - Audio URL(s)
+- ``video`` - Video URL(s)
 - ``published`` - Publication date
 
 Media Endpoint
@@ -339,9 +344,20 @@ Example response excerpt:
      "media-endpoint": "https://example.com/indieweb/media/",
      "syndicate-to": [],
      "post-types": [
-       {"type": "note", "name": "Note", "properties": ["content"]}
+       {"type": "note", "name": "Note", "properties": ["content"]},
+       {"type": "article", "name": "Article", "properties": ["name", "content"]},
+       {"type": "photo", "name": "Photo", "properties": ["photo", "content", "category"]},
+       {"type": "reply", "name": "Reply", "properties": ["in-reply-to", "content"]},
+       {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
+       {"type": "like", "name": "Like", "properties": ["like-of"]},
+       {"type": "repost", "name": "Repost", "properties": ["repost-of"]}
      ]
    }
+
+The built-in handler advertises common h-entry shapes and forwards normalized
+properties to ``create_entry()``. django-indieweb does not infer storage
+semantics from those post-type names; your configured handler decides how to
+persist bookmarks, likes, reposts, replies, articles, notes, and photo posts.
 
 **Syndication Targets:**
 
@@ -540,5 +556,5 @@ Then in settings:
 Next Steps
 ----------
 
-- Implement WebSub for real-time updates
+- Use :doc:`websub` publisher helpers to advertise feeds and notify hubs
 - Add support for more post types (events, RSVPs, etc.)

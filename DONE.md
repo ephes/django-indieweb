@@ -4,6 +4,55 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Add WebSub support
+
+- Added publisher-side WebSub support, which is the WebSub role appropriate for this reusable Django app because host
+  projects own the topic resources and feeds. The package now exposes typed helpers in ``indieweb.websub`` for validated
+  hub configuration, ``rel=hub``/``rel=self`` discovery links, HTTP ``Link`` headers, and explicit hub notifications.
+- Added ``websub_link_tags`` so templates can render WebSub discovery links for host-owned topic pages or feeds.
+- Added ``notify_websub`` as an operator/deployment command for explicit topic-change notifications. Notifications use
+  the WebSub publisher form fields ``hub.mode=publish`` and ``hub.url=<topic>`` and return/report per-hub results
+  without raising for network failures or non-2xx hub responses.
+- Review follow-up: added a direct empty-hub regression test, short-circuited ``notify_hubs()`` before opening an HTTP
+  client when no hubs are configured, and documented that injected clients are trusted to control their own redirect
+  policy.
+- Backlog: removed the completed ``Add WebSub support`` Priority 4 item from ``BACKLOG.md``. This slice intentionally
+  does not add a WebSub hub service, subscriber callback endpoint, models, migrations, lease tracking, signature
+  validation, or automatic network calls.
+- Documentation: added ``docs/websub.rst`` and updated API, configuration, module, index, README, concepts, Micropub,
+  and management/template-tag documentation. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased WebSub publisher-support note.
+- Compatibility: no existing IndieAuth, Micropub, media, Webmention, token, CORS, rate-limit, template, model,
+  migration, endpoint URL, or endpoint semantic behavior changed. Network calls happen only when a host explicitly
+  calls ``notify_hubs()`` or runs ``notify_websub``.
+- Validation: ``uv run pytest tests/test_websub.py tests/test_websub_templatetags.py tests/test_notify_websub_command.py
+  -q --no-cov`` (22 passed), ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb
+  --check --dry-run`` (no changes), ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (82 files
+  already formatted), ``uv run mypy`` (no issues), ``uv run pytest`` (730 passed; required 88.0%, total 89.80%),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no output), and ``git diff --check`` (passed).
+
+### Support additional Micropub post types
+
+- Expanded the default ``MicropubContentHandler.get_config()`` ``post-types`` list to advertise note, article, photo,
+  reply, bookmark, like, and repost shapes while keeping the existing handler contract intact.
+- Expanded form-encoded create parsing so ``bookmark-of``, ``like-of``, ``repost-of``, URL-valued ``audio``, and
+  URL-valued ``video`` properties are forwarded as normalized property arrays to the configured handler. JSON create,
+  source query, update/delete/undelete actions, direct media upload, and multipart ``photo`` upload behavior are
+  preserved.
+- Backlog: removed the completed ``Support additional Micropub post types`` Priority 4 item from ``BACKLOG.md``.
+- Documentation: updated Micropub and API docs with the advertised post types and forwarded h-entry properties. No
+  generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased Micropub post-type note.
+- Compatibility: no host storage semantics were added for these post types; host applications continue to decide how
+  their configured handler persists the forwarded properties. No models, migrations, endpoint URLs, token scopes, media
+  storage rules, CORS behavior, or rate-limit behavior changed.
+- Validation: ``uv run pytest tests/test_micropub_create.py tests/test_micropub_endpoint.py tests/test_micropub_media.py
+  tests/test_micropub_source.py -q --no-cov`` (157 passed), ``uv run ruff check .`` (passed),
+  ``uv run ruff format . --check`` (82 files already formatted), ``uv run mypy`` (no issues), ``uv run pytest`` (730
+  passed; required 88.0%, total 89.80%), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``uv run prek run --all-files`` (passed), and ``git diff --check`` (passed).
+
 ### Add a `just loc` line-counting workflow
 
 - Added ``src/indieweb/loc.py`` and exposed it through the ``count-lines-of-code`` project script, so

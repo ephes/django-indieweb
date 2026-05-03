@@ -4,6 +4,14 @@ indieweb.management.commands package
 Submodules
 ----------
 
+indieweb.management.commands.notify\_websub module
+--------------------------------------------------
+
+.. automodule:: indieweb.management.commands.notify_websub
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 indieweb.management.commands.send\_webmentions module
 -----------------------------------------------------
 

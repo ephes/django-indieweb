@@ -128,6 +128,11 @@ class MicropubContentHandler(ABC):
             "post-types": [
                 {"type": "note", "name": "Note", "properties": ["content"]},
                 {"type": "article", "name": "Article", "properties": ["name", "content"]},
+                {"type": "photo", "name": "Photo", "properties": ["photo", "content", "category"]},
+                {"type": "reply", "name": "Reply", "properties": ["in-reply-to", "content"]},
+                {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
+                {"type": "like", "name": "Like", "properties": ["like-of"]},
+                {"type": "repost", "name": "Repost", "properties": ["repost-of"]},
             ],
         }
 

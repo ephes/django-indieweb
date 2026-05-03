@@ -262,15 +262,17 @@ Limitations
 -----------
 
 Current implementation limitations are tracked in ``BACKLOG.md``. Built-in
-rate limiting, built-in CORS support, WebSub, Webmention vouch support,
-Salmentions, and additional Micropub post types remain future work.
+rate limiting, built-in CORS support, Webmention vouch support, Salmentions,
+and publisher-side WebSub support are available. A bundled WebSub hub,
+WebSub subscriber callbacks, and additional Micropub post types remain future
+work.
 
 Future Enhancements
 -------------------
 
 Potential improvements for full IndieWeb support:
 
-1. **WebSub** - Real-time updates
+1. **Micropub post types** - Advertise and parse more common h-entry shapes
 
 Resources
 ---------

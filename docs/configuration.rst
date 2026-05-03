@@ -248,6 +248,53 @@ Set this to ``None`` to disable django-indieweb's content-type check. If you
 allow broad uploads, serve media from a separate origin or with defensive
 headers such as ``Content-Disposition: attachment`` for risky types.
 
+INDIEWEB_WEBSUB_HUBS
+~~~~~~~~~~~~~~~~~~~~
+
+Hub URLs used by the WebSub publisher helpers when a caller does not pass hubs
+explicitly.
+
+**Default:** ``()`` (no hubs configured)
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBSUB_HUBS = (
+       "https://hub.example/",
+       "https://backup.example/websub",
+   )
+
+The values must be non-empty ``http`` or ``https`` URLs. Discovery helpers such
+as ``websub_link_header()`` and the ``websub_link_tags`` template tag require at
+least one hub so they cannot silently render an invalid WebSub publisher
+advertisement. ``notify_hubs()`` with no configured hubs returns an empty
+result list; the ``notify_websub`` management command treats that as a
+configuration error.
+
+INDIEWEB_WEBSUB_TIMEOUT
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Per-request timeout, in seconds, used by ``notify_hubs()`` and the
+``notify_websub`` management command when no explicit timeout is passed.
+
+**Default:** ``10.0``
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBSUB_TIMEOUT = 3.0
+
+The timeout must be a positive number. Hub notification failures, including
+timeouts and connection errors, are captured in per-hub result objects instead
+of being raised. Malformed topic URLs and malformed hub URLs raise
+``ValueError`` before any network request is made. Invalid timeout values raise
+``ValueError`` only when at least one hub would be notified; the empty-hubs
+path short-circuits before timeout validation.
+
 INDIEWEB_WEBMENTION_ENQUEUE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

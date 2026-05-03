@@ -220,7 +220,15 @@ class TestMicropubCreate:
         config = json.loads(response.content)
         assert "post-types" in config
         assert isinstance(config["post-types"], list)
-        assert len(config["post-types"]) > 0
+        assert config["post-types"] == [
+            {"type": "note", "name": "Note", "properties": ["content"]},
+            {"type": "article", "name": "Article", "properties": ["name", "content"]},
+            {"type": "photo", "name": "Photo", "properties": ["photo", "content", "category"]},
+            {"type": "reply", "name": "Reply", "properties": ["in-reply-to", "content"]},
+            {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
+            {"type": "like", "name": "Like", "properties": ["like-of"]},
+            {"type": "repost", "name": "Repost", "properties": ["repost-of"]},
+        ]
 
     @pytest.mark.django_db
     def test_query_syndicate_to(self, client, token, micropub_url):
@@ -285,6 +293,105 @@ class TestMicropubCreate:
         assert "category" in received_properties
         assert isinstance(received_properties["category"], list)
         assert received_properties["category"] == ["test", "micropub"]
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        ("payload", "expected_properties"),
+        [
+            (
+                {"h": "entry", "bookmark-of": "https://example.com/bookmarked", "name": "Worth reading"},
+                {"bookmark-of": ["https://example.com/bookmarked"], "name": ["Worth reading"]},
+            ),
+            ({"h": "entry", "like-of": "https://example.com/liked"}, {"like-of": ["https://example.com/liked"]}),
+            (
+                {"h": "entry", "repost-of": "https://example.com/reposted"},
+                {"repost-of": ["https://example.com/reposted"]},
+            ),
+            (
+                {"h": "entry", "audio": "https://example.com/audio.mp3", "video": "https://example.com/video.mp4"},
+                {"audio": ["https://example.com/audio.mp3"], "video": ["https://example.com/video.mp4"]},
+            ),
+        ],
+    )
+    def test_form_create_forwards_additional_post_type_properties(
+        self, client, token, micropub_url, monkeypatch, payload, expected_properties
+    ):
+        """Test that form-encoded create forwards advertised post-type properties."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(micropub_url, data=payload, Authorization=f"Bearer {token.key}")
+
+        assert response.status_code == 201
+        assert received_properties is not None
+        for property_name, values in expected_properties.items():
+            assert received_properties[property_name] == values
+
+    @pytest.mark.django_db
+    def test_form_create_forwards_array_media_properties(self, client, token, micropub_url, monkeypatch):
+        """Test that array notation works for URL-valued media properties."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={
+                "h": "entry",
+                "audio[]": ["https://example.com/one.mp3", "https://example.com/two.mp3"],
+                "video[]": ["https://example.com/one.mp4", "https://example.com/two.mp4"],
+            },
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties is not None
+        assert received_properties["audio"] == ["https://example.com/one.mp3", "https://example.com/two.mp3"]
+        assert received_properties["video"] == ["https://example.com/one.mp4", "https://example.com/two.mp4"]
+
+    @pytest.mark.django_db
+    def test_json_create_preserves_additional_post_type_properties(self, client, token, micropub_url, monkeypatch):
+        """Test that JSON create keeps the additional h-entry properties unchanged."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {
+            "type": ["h-entry"],
+            "properties": {
+                "bookmark-of": ["https://example.com/bookmarked"],
+                "like-of": ["https://example.com/liked"],
+                "repost-of": ["https://example.com/reposted"],
+            },
+        }
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == payload["properties"]
 
 
 class TestInMemoryHandler:
