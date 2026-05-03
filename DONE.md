@@ -4,6 +4,36 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Fill Indiekit comparison backlog
+
+- Completed the four Indiekit comparison tracks against the local Indiekit checkout at ``1ee20d06`` and the example
+  config checkout at ``b11b749``. The comparison covered IndieAuth/token metadata and wire behavior, Micropub/media
+  extension queries and command properties, storage/preset/syndication architecture, and Webmention/WebSub/reader-side
+  boundaries.
+- Replaced the temporary ``BACKLOG.md`` comparison scaffold with concrete django-indieweb follow-up items under API
+  Hardening, Micropub Enhancements and Extensions, WebSub Enhancements, Syndication and Storage Examples, and
+  Webmention and Reader Boundaries.
+- Backlog: added implementable slices for IndieAuth metadata/discovery, IndieAuth token wire compatibility, token
+  introspection boundaries, Micropub category/channel/query discovery, source-list pagination/filtering, direct config
+  subqueries, ``mp-*``/draft semantics, media source/delete hooks, audio/video post-type advertisement, handler-backed
+  syndication targets, static-site/storage examples, WebSub host workflow examples, Webmention.io guidance, and
+  Microsub/reader-side non-goal documentation.
+- Review follow-up: tightened the broad IndieAuth wire-compatibility item to make ``iss`` sequencing depend on server
+  metadata work, clarified that the WebSub renewal/delivery slice is documentation/example work, and noted that
+  audio/video post-type advertisement should follow the direct ``q=post-types`` query decision.
+- Documentation: no Sphinx docs were changed in this slice. ``BACKLOG.md`` and ``DONE.md`` are the project-planning
+  records updated for the completed comparison.
+- Changelog: no ``docs/changelog.rst`` update was needed because this slice changed backlog/planning bookkeeping only;
+  it did not change runtime behavior, public APIs, settings, endpoint semantics, examples, or user-facing Sphinx docs.
+- Compatibility: no protocol behavior, models, migrations, endpoint URLs, settings, templates, tests, or generated docs
+  were changed. The new backlog items distinguish real gaps from intentional non-goals so future implementation slices
+  can preserve django-indieweb's host-owned storage and rendering boundaries.
+- Follow-up risks: the backlog intentionally does not propose copying Indiekit's all-in-one content-store, publication
+  preset, syndicator, password-auth, Webmention.io dashboard, WebSub hub, or Microsub reader architecture into core.
+  Future implementation slices still need to choose exact URL names and compatibility modes for IndieAuth metadata,
+  token introspection, Micropub extension queries, and media listing/deletion hooks.
+- Validation: ``git diff --check`` (passed). Final staging/status checks are recorded in the implementer report.
+
 ### Harden WebSub subscriber denial, lease maintenance, and delivery diagnostics
 
 - Added ``hub.mode=denied`` callback handling for tokenized WebSub subscriber verification ``GET`` requests. Denials
