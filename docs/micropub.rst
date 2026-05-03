@@ -556,5 +556,5 @@ Then in settings:
 Next Steps
 ----------
 
-- Use :doc:`websub` publisher helpers to advertise feeds and notify hubs
-- Add support for more post types (events, RSVPs, etc.)
+- Use the existing :doc:`websub` publisher helpers to advertise feeds and notify hubs after host-owned topic changes
+- Future Micropub post-type work is scoped to events and RSVPs: advertise event/RSVP-capable shapes and forward properties such as ``start``, ``end``, ``location``, ``rsvp``, and ``in-reply-to`` to the configured handler without adding django-indieweb storage semantics

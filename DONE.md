@@ -4,6 +4,27 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Refresh product backlog planning
+
+- Refilled the now-empty Priority 4 product/protocol backlog with two concrete next slices: WebSub subscriber callback
+  support and Micropub event/RSVP post types. The WebSub item is explicitly a staged subscriber design and
+  implementation slice, not a publisher helper change or hub-service implementation.
+- Review follow-up: split the WebSub subscriber item under its own WebSub backlog subheading and tightened event
+  vocabulary wording around ``h-event`` ``summary``/``description`` versus h-entry ``content`` forwarding.
+- Tightened docs so completed publisher-side WebSub support and common Micropub post-type advertisement are described as
+  available, while subscriber callbacks, hub roles, and event/RSVP Micropub support remain future backlog work.
+- Backlog: added future items only. No completed product implementation item was removed from ``BACKLOG.md`` in this
+  slice; this ``DONE.md`` entry records the completed roadmap/backlog reset task itself.
+- Documentation: updated Concepts, Micropub, and WebSub docs. No generated docs under ``docs/_build`` were edited or
+  staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased documentation/planning note.
+- Compatibility: no runtime code, models, migrations, endpoint URLs, settings, templates, public APIs, endpoint
+  semantics, or protocol behavior changed.
+- Validation: ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (82 files already formatted),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``git ls-files docs/_build --modified --others
+  --exclude-standard`` (no output), ``git diff --check`` (passed), and final staged checks are recorded in the
+  implementer report for this slice.
+
 ### Add WebSub support
 
 - Added publisher-side WebSub support, which is the WebSub role appropriate for this reusable Django app because host

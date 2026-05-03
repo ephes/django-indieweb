@@ -138,3 +138,11 @@ lease tracking, authenticated content-distribution signature validation, or a
 hub service. Those roles require application-specific callback URLs,
 persistence, worker, and content-distribution policies that django-indieweb
 does not assume for host projects.
+
+Future Work
+-----------
+
+Subscriber callback support, covering verification, lease tracking, and
+optional signed delivery, is tracked as a separate backlog item. That future
+slice should define persistence, settings, security/rate-limit/CORS behavior,
+docs, and tests without changing the existing publisher helper API.

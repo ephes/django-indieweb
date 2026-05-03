@@ -58,6 +58,7 @@ Unreleased
 * Reserved gitignored local paths for private agent session summaries and documented that raw transcripts, prompts, and command output must stay out of tracked files by default.
 * Added publisher-side WebSub support. Host applications can configure ``INDIEWEB_WEBSUB_HUBS``, render WebSub ``rel=hub``/``rel=self`` discovery with ``websub_link_tags`` or HTTP ``Link`` header helpers, and explicitly notify hubs with ``notify_hubs()`` or ``python manage.py notify_websub TOPIC``. Hub notifications use the WebSub publisher form ``hub.mode=publish`` and ``hub.url=<topic>`` and return per-hub results instead of raising on network or non-2xx hub failures. No WebSub hub service, subscriber callback endpoint, model, migration, or automatic network call was added.
 * Expanded the default Micropub ``q=config`` ``post-types`` advertisement to include note, article, photo, reply, bookmark, like, and repost shapes. Form-encoded create parsing now forwards ``bookmark-of``, ``like-of``, ``repost-of``, URL-valued ``audio``, and URL-valued ``video`` properties to the configured handler while preserving existing JSON create, source query, update/delete/undelete, media endpoint, and multipart ``photo`` upload behavior.
+* Refreshed the product backlog after the WebSub publisher and common Micropub post-type slices: future protocol work is now scoped to WebSub subscriber callback support and Micropub event/RSVP post types, and documentation no longer describes the completed common post-type work as future work.
 
 0.5.3 (2025-10-28)
 ------------------

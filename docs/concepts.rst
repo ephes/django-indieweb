@@ -263,16 +263,17 @@ Limitations
 
 Current implementation limitations are tracked in ``BACKLOG.md``. Built-in
 rate limiting, built-in CORS support, Webmention vouch support, Salmentions,
-and publisher-side WebSub support are available. A bundled WebSub hub,
-WebSub subscriber callbacks, and additional Micropub post types remain future
-work.
+publisher-side WebSub support, and common Micropub h-entry post-type
+advertisement are available. A bundled WebSub hub, WebSub subscriber
+callbacks, and Micropub event/RSVP post types remain future work.
 
 Future Enhancements
 -------------------
 
-Potential improvements for full IndieWeb support:
+Potential improvements for full IndieWeb support are tracked in ``BACKLOG.md``:
 
-1. **Micropub post types** - Advertise and parse more common h-entry shapes
+1. **WebSub subscriber callbacks** - Add a staged subscriber implementation with subscription initiation, callback verification, lease tracking, optional signed delivery, and host-owned delivery processing
+2. **Micropub events and RSVPs** - Advertise and parse event/RSVP properties while leaving storage semantics in the configured host handler
 
 Resources
 ---------
