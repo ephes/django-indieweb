@@ -4,6 +4,30 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Update Ruff target version to Python 3.10
+
+- Updated ``tool.ruff.target-version`` in ``pyproject.toml`` from ``py39`` to ``py310`` so Ruff's lint and formatting
+  rules match the package's declared ``requires-python = ">=3.10"`` compatibility floor.
+- Added the explicit ``strict=True`` argument to the fixed-length auth-view ``zip()`` that Ruff now requires under the
+  corrected target version.
+- Backlog: removed the completed Ruff target-version item from ``BACKLOG.md``.
+- Documentation: no project documentation page update was needed because contributor/development docs describe the Ruff
+  commands and Python support range without naming the internal Ruff target-version setting. No generated docs under
+  ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased developer-tooling note because this changes project
+  tooling configuration.
+- Compatibility: no dependencies, migrations, models, settings, templates, endpoint URLs, endpoint semantics, runtime
+  behavior, or public APIs changed. The single production-code edit is a lint-required explicit ``zip(strict=True)``
+  on same-length internal auth-view parameter lists, preserving existing behavior while staying Python 3.10-compatible.
+  The change keeps Ruff rewrites compatible with the existing Python 3.10 minimum rather than raising the package
+  support floor.
+- Follow-up: the remaining Priority 3 tooling slices are the CI workflow, Django support matrix, coverage gate,
+  ``just loc`` workflow, and safe ``django-model-utils`` dependency cleanup.
+- Validation: ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (74 files already formatted),
+  ``uv run pytest tests/test_auth_endpoint.py -q`` (71 passed), ``uv run mypy`` (no issues), ``uv run pytest`` (696
+  passed), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``git diff --check`` (passed), and
+  ``git diff --cached --check`` (passed).
+
 ### Convert Webmention template tag legacy TestCase tests to pytest style
 
 - Converted ``tests/test_webmention_templatetags.py`` from a ``django.test.TestCase`` class to pytest fixtures and

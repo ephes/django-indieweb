@@ -71,7 +71,7 @@ module-name = "indieweb"
 
 [tool.ruff]
 line-length = 119
-target-version = "py39"
+target-version = "py310"
 src = ["src"]
 
 [tool.ruff.lint]

@@ -478,7 +478,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         logger.info(f"auth view get: {client_id}, {redirect_uri}, {state}, {me}")
         required = [client_id, redirect_uri, state, me]
 
-        for name, val in zip(self.required_params, required):
+        for name, val in zip(self.required_params, required, strict=True):
             if val is None:
                 err_msg = f"missing parameter {name}"
                 logger.info(f"missing parameter: {name}")

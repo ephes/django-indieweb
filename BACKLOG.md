@@ -23,9 +23,6 @@ No current API Hardening items.
 - [ ] Pin Django to a supported version range and test supported Django versions.
   - References: `pyproject.toml`, `tox.ini`.
   - Outcome: supported Django/Python combinations are explicit and exercised in tox.
-- [ ] Update Ruff target version to Python 3.10.
-  - Reference: `pyproject.toml`.
-  - Outcome: `tool.ruff.target-version` matches `requires-python = ">=3.10"`.
 - [ ] Add a coverage gate.
   - Reference: `pyproject.toml`.
   - Outcome: coverage has a documented `fail_under` threshold based on the current baseline.
