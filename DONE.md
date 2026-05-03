@@ -4,6 +4,41 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Remove the django-model-utils runtime dependency safely
+
+- Replaced the historical ``model_utils.fields.AutoCreatedField`` and ``AutoLastModifiedField`` usages in
+  ``src/indieweb/migrations/0001_initial.py`` with Django-native ``models.DateTimeField`` definitions using the same
+  ``default=django.utils.timezone.now``, ``editable=False``, and verbose-name arguments those fields deconstructed to.
+  The existing ``0005`` migration still transitions ``Auth`` and ``Token`` timestamp state to
+  ``auto_now_add=True``/``auto_now=True``, matching the current models.
+- Removed ``django-model-utils`` from ``pyproject.toml`` runtime dependencies and refreshed ``uv.lock`` so the package
+  entry and ``django-indieweb`` dependency metadata no longer include it. ``uv sync`` removed
+  ``django-model-utils==5.0.0`` from the local environment.
+- Backlog: removed the completed dependency-cleanup item from ``BACKLOG.md``.
+- Documentation: removed the stale ``model_utils`` autodoc mock from ``docs/conf.py`` and removed
+  ``django-model-utils`` from the ``CLAUDE.md`` key-dependencies list. No generated docs under ``docs/_build`` were
+  edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased dependency note for removing
+  ``django-model-utils`` after replacing the historical migration field references with Django-native fields.
+- Compatibility: no production runtime behavior, models, endpoint URLs, templates, settings, public APIs, endpoint
+  semantics, or current migration behavior changed. The migration edit preserves the historical initial schema shape
+  while removing the import-time dependency on ``model_utils`` for fresh installs.
+- Follow-up: no follow-up remains for this dependency-removal slice. The unrelated ``just loc`` backlog item remains
+  open.
+- Validation: ``uv lock`` (resolved 74 packages; removed ``django-model-utils v5.0.0``), ``uv sync`` (removed
+  ``django-model-utils==5.0.0`` from the local environment),
+  ``uv run python - <<'PY' ... importlib.util.find_spec('model_utils') ... PY`` (printed ``None``), the
+  ``DJANGO_SETTINGS_MODULE=tests.settings`` migration import proof with ``django.setup()`` and
+  ``import_module('indieweb.migrations.0001_initial')`` (printed ``Migration``),
+  ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django makemigrations indieweb --check --dry-run`` (no
+  changes), ``DJANGO_SETTINGS_MODULE=tests.settings uv run python -m django migrate --database default --run-syncdb
+  --noinput --verbosity 1`` (fresh in-memory SQLite migration application passed through
+  ``indieweb.0015_webmention_outbound_target``), ``uv run ruff check .`` (passed),
+  ``uv run ruff format . --check`` (74 files already formatted), ``uv run mypy`` (no issues),
+  ``uv run pytest`` (696 passed; required 88.0%, total 89.34%),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no output), and ``git diff --check`` (passed).
+
 ### Pin Django to a supported version range and test supported Django versions
 
 - Pinned the runtime Django dependency to ``Django>=5.2.13,<6.1`` and added Django 5.2/6.0 framework classifiers so

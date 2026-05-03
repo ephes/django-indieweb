@@ -53,8 +53,5 @@ html_js_files = [
 
 # -- Extension configuration -------------------------------------------------
 
-# Autodoc settings
-autodoc_mock_imports = ["model_utils"]
-
 # Mermaid configuration
 mermaid_version = "11.2.0"

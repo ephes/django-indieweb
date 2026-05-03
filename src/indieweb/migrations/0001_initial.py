@@ -2,7 +2,6 @@
 
 import django.db.models.deletion
 import django.utils.timezone
-import model_utils.fields
 from django.conf import settings
 from django.db import migrations, models
 
@@ -29,7 +28,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "created",
-                    model_utils.fields.AutoCreatedField(
+                    models.DateTimeField(
                         default=django.utils.timezone.now,
                         editable=False,
                         verbose_name="created",
@@ -37,7 +36,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "modified",
-                    model_utils.fields.AutoLastModifiedField(
+                    models.DateTimeField(
                         default=django.utils.timezone.now,
                         editable=False,
                         verbose_name="modified",
@@ -73,7 +72,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "created",
-                    model_utils.fields.AutoCreatedField(
+                    models.DateTimeField(
                         default=django.utils.timezone.now,
                         editable=False,
                         verbose_name="created",
@@ -81,7 +80,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "modified",
-                    model_utils.fields.AutoLastModifiedField(
+                    models.DateTimeField(
                         default=django.utils.timezone.now,
                         editable=False,
                         verbose_name="modified",

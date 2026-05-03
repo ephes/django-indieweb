@@ -154,7 +154,6 @@ Keep this section aligned with `AGENTS.md`. If you change the workflow in one fi
 ## Key Dependencies
 
 - Django
-- django-model-utils
 - django-braces
 - pytz
 - setuptools
