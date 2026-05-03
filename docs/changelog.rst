@@ -51,6 +51,7 @@ Unreleased
 * Standardized developer test guidance around pytest function/fixture style for new tests, documented that pytest parametrization should not be mixed into legacy ``django.test.TestCase`` classes, and converted the h-card/profile-admin legacy tests to pytest style.
 * Aligned Ruff's configured target version with the package's Python 3.10 minimum support floor so lint and formatting rewrites stay compatible with all supported Python versions.
 * Added a local coverage gate to the default pytest workflow. ``uv run pytest`` now measures the ``indieweb`` package and enforces a conservative ``fail_under = 88`` threshold based on the current 89% baseline.
+* Added a GitHub Actions CI workflow for pull requests and pushes to ``develop``. CI runs the existing tox Python matrix, mypy, Ruff lint and formatting checks, configured prek hooks, and Sphinx documentation with warnings treated as errors.
 
 0.5.3 (2025-10-28)
 ------------------

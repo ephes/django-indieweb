@@ -52,6 +52,13 @@ To run configured hooks::
 
     tox -e hooks
 
+Continuous Integration
+----------------------
+
+GitHub Actions runs the tox matrix, mypy, Ruff lint and formatting checks,
+configured prek hooks, and Sphinx with warnings treated as errors for pull
+requests and pushes to ``develop``.
+
 Code Quality
 ------------
 

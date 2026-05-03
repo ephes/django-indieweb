@@ -116,6 +116,10 @@ Before you submit a pull request, check that it meets these guidelines:
 4. Add type annotations to new code. Run ``uv run mypy`` to check types.
 5. Follow the existing code style. Run ``uv run ruff format .`` to format code.
 
+GitHub Actions reruns the tox matrix, mypy, Ruff lint and formatting checks,
+configured prek hooks, and Sphinx with warnings treated as errors for pull
+requests and pushes to ``develop``.
+
 Development Commands
 --------------------
 

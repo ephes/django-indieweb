@@ -18,8 +18,6 @@ No current API Hardening items.
 
 ### Tooling and Maintainability
 
-- [ ] Add a GitHub Actions workflow for pull requests and pushes to `develop`.
-  - Outcome: CI runs the tox matrix, mypy, Ruff, prek hooks, and Sphinx with warnings as errors.
 - [ ] Pin Django to a supported version range and test supported Django versions.
   - References: `pyproject.toml`, `tox.ini`.
   - Outcome: supported Django/Python combinations are explicit and exercised in tox.

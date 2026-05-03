@@ -4,6 +4,34 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Add a GitHub Actions workflow for pull requests and pushes to develop
+
+- Added ``.github/workflows/ci.yml`` with pull request and push triggers scoped to ``develop`` plus concurrency
+  cancellation for superseded runs on the same ref.
+- CI now has a tox matrix job for the existing ``py310``, ``py311``, ``py312``, and ``py313`` tox environments using
+  matching ``actions/setup-python`` versions and ``uv run tox -e <env>``. The tox command delegates to the existing
+  ``uv run pytest`` path, so the configured pytest-cov coverage gate remains enforced in CI.
+- Added a Python 3.13 quality/docs job for ``uv run mypy``, ``uv run ruff check .``,
+  ``uv run ruff format . --check``, ``uv run prek run --all-files``, and
+  ``uv run sphinx-build -W -b html docs docs/_build/html``.
+- Backlog: removed the completed GitHub Actions workflow item from ``BACKLOG.md``.
+- Documentation: updated ``docs/development.rst`` and ``CONTRIBUTING.rst`` with a concise CI note for the PR/develop
+  workflow. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased developer-tooling note because CI changes the project
+  workflow.
+- Compatibility: no production behavior, dependencies, migrations, models, settings, templates, endpoint URLs, endpoint
+  semantics, runtime feature behavior, or public APIs changed.
+- Follow-up: full Python 3.10-3.13 tox coverage is expected to run on GitHub Actions. Locally, only Python 3.13 was
+  available on PATH, so the local tox validation covered ``py313`` and did not run ``py310``, ``py311``, or ``py312``.
+  The remaining Priority 3 tooling slices are the Django support matrix, ``just loc`` workflow, and safe
+  ``django-model-utils`` dependency cleanup.
+- Validation: ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (74 files already formatted),
+  ``uv run mypy`` (no issues), ``uv run pytest`` (696 passed; required 88.0%, total 89.34%),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``uv run prek run --all-files`` (passed,
+  including YAML validation), ``uv run tox -e py313`` (passed; 696 passed; required 88.0%, total 89.34%),
+  ``git diff --check`` (passed), and ``git ls-files docs/_build --modified --others --exclude-standard``
+  (no output).
+
 ### Add a coverage gate
 
 - Added pytest-cov coverage collection to the default ``uv run pytest`` workflow with ``--cov=indieweb`` and
