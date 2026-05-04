@@ -4,6 +4,45 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-03
 
+### Add IndieAuth server metadata and discovery endpoints
+
+- Added the public ``/indieweb/auth/metadata/`` IndieAuth authorization-server metadata endpoint. The response is JSON
+  with absolute issuer, authorization endpoint, token endpoint, ``code`` response type, ``authorization_code`` grant
+  type, current PKCE methods (``plain`` and ``S256``), built-in Micropub scopes (``create``, ``update``, ``delete``,
+  ``undelete``, and ``media``), and service documentation.
+- Added the reusable ``IndieAuthMetadataView`` so host projects can route the same view at
+  ``/.well-known/oauth-authorization-server`` without django-indieweb assuming root URL ownership. The mounted
+  endpoint derives the issuer from the common app mount prefix; the well-known route derives it from the site root.
+- Backlog: removed the completed Priority 3 API Hardening item from ``BACKLOG.md``. The follow-up IndieAuth wire
+  compatibility item still owns authorization-response ``iss`` work, and the introspection item still owns adding and
+  advertising ``introspection_endpoint``.
+- Review follow-up: added ``grant_types_supported`` to match the token endpoint's authorization-code exchange behavior,
+  pointed ``service_documentation`` at the human-readable IndieAuth docs, cleaned up the bearer-header public-access
+  regression test, documented canonical metadata URL selection before future ``iss`` work, and clarified that
+  script-prefix well-known deployments are handled by the common-prefix issuer branch. Re-review follow-up renamed the
+  new configuration section to avoid duplicating the existing ``URL Configuration`` heading.
+- Documentation: updated IndieAuth, API, and configuration docs with metadata response fields, profile-page discovery
+  guidance, host URLconf guidance for well-known publication, and canonical metadata URL guidance. No generated docs
+  under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the new public metadata endpoint and its
+  intentional exclusions.
+- Compatibility: existing IndieAuth authorization, token exchange, token management, Micropub, Webmention, WebSub,
+  CORS, and rate-limit behavior remains unchanged. The metadata endpoint is public and does not require login or a
+  bearer token. This slice intentionally did not add token introspection, protocol revocation, refresh tokens,
+  user-info/profile claims, Indiekit password setup, Pushed Authorization Requests, or Indiekit's signed-JWT auth-code
+  model.
+- Follow-up risks: future ``iss`` redirect behavior should remain sequenced after this issuer work; future token
+  introspection should update metadata only when a real endpoint exists. The metadata advertises preferred built-in
+  scopes and does not advertise legacy ``post`` or unsupported reader-side scopes such as ``read``, ``follow``,
+  ``mute``, ``block``, or ``channels``.
+- Validation: ``uv run pytest`` (776 passed, coverage gate passed at 90.30%),
+  ``uv run pytest tests/test_auth_endpoint.py tests/test_token_endpoint.py -q --no-cov`` (122 passed),
+  ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (36 passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (87 files already formatted), ``uv run mypy``
+  (no issues), ``uv run prek run --all-files`` (passed),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no output), and ``git diff --check`` (passed).
+
 ### Fill Indiekit comparison backlog
 
 - Completed the four Indiekit comparison tracks against the local Indiekit checkout at ``1ee20d06`` and the example

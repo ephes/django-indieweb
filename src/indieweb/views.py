@@ -20,7 +20,7 @@ from django.contrib.sites.models import Site
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
-from django.http import HttpRequest, HttpResponse, HttpResponseBase
+from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
@@ -57,6 +57,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOKEN_EXPIRES_IN = 86400
 ALLOWED_REDIRECT_URI_SCHEMES = ("http", "https")
 ALLOWED_PKCE_METHODS = ("plain", "S256")
+INDIEAUTH_METADATA_SCOPES_SUPPORTED = ("create", "update", "delete", "undelete", "media")
+INDIEAUTH_SERVICE_DOCUMENTATION_URL = "https://django-indieweb.readthedocs.io/en/latest/indieauth.html"
+INDIEAUTH_WELL_KNOWN_METADATA_PATH = "/.well-known/oauth-authorization-server"
 PKCE_UNRESERVED_RE = re.compile(r"^[A-Za-z0-9._~\-]+$")
 PKCE_CHALLENGE_MIN = 43
 PKCE_CHALLENGE_MAX = 128
@@ -391,12 +394,52 @@ def _reverse_request_namespace(request: HttpRequest, name: str) -> str:
         return reverse(f"indieweb:{name}")
 
 
+def _common_path_prefix(*paths: str) -> str:
+    """Return a slash-terminated path prefix common to all paths."""
+    split_paths = [path.strip("/").split("/") for path in paths]
+    common: list[str] = []
+    for parts in zip(*split_paths, strict=False):
+        if len(set(parts)) != 1:
+            break
+        common.append(parts[0])
+    return f"/{'/'.join(common)}/" if common else "/"
+
+
+def _indieauth_issuer(request: HttpRequest, authorization_path: str, token_path: str) -> str:
+    """Build an issuer URL that is a prefix of the current metadata URL."""
+    # The common-prefix branch handles script-prefix deployments such as /myapp/.well-known/...
+    if request.path == INDIEAUTH_WELL_KNOWN_METADATA_PATH or request.path.startswith(
+        f"{INDIEAUTH_WELL_KNOWN_METADATA_PATH}/"
+    ):
+        return request.build_absolute_uri("/")
+    return request.build_absolute_uri(_common_path_prefix(request.path, authorization_path, token_path))
+
+
 class CSRFExemptMixin(View):
     """Mixin to exempt views from CSRF protection."""
 
     @method_decorator(csrf_exempt)
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         return super().dispatch(request, *args, **kwargs)
+
+
+class IndieAuthMetadataView(View):
+    """Public IndieAuth authorization server metadata endpoint."""
+
+    def get(self, request: HttpRequest, *args: object, **kwargs: object) -> JsonResponse:
+        authorization_path = _reverse_request_namespace(request, "auth")
+        token_path = _reverse_request_namespace(request, "token")
+        metadata = {
+            "issuer": _indieauth_issuer(request, authorization_path, token_path),
+            "authorization_endpoint": request.build_absolute_uri(authorization_path),
+            "token_endpoint": request.build_absolute_uri(token_path),
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code"],
+            "code_challenge_methods_supported": list(ALLOWED_PKCE_METHODS),
+            "scopes_supported": list(INDIEAUTH_METADATA_SCOPES_SUPPORTED),
+            "service_documentation": INDIEAUTH_SERVICE_DOCUMENTATION_URL,
+        }
+        return JsonResponse(metadata)
 
 
 class TokenAuthMixin(View):

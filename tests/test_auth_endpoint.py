@@ -7,6 +7,7 @@ test_django-indieweb
 Tests for `django-indieweb` auth endpoint.
 """
 
+import json
 from datetime import datetime, timedelta, timezone  # noqa: E501
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -18,6 +19,7 @@ from django.urls import reverse
 from django.utils.http import urlencode
 
 from indieweb.models import Auth
+from indieweb.views import IndieAuthMetadataView
 
 
 @pytest.fixture
@@ -36,6 +38,56 @@ def auth_endpoint_url():
         "scope": "post",
     }
     return f"{base_url}?{urlencode(url_params)}"
+
+
+def test_indieauth_metadata_endpoint_returns_public_json(client):
+    """The reusable metadata endpoint is public and describes shipped capabilities only."""
+    response = client.get(reverse("indieweb:auth-metadata"))
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    data = response.json()
+    assert data == {
+        "issuer": "http://testserver/indieweb/",
+        "authorization_endpoint": "http://testserver/indieweb/auth/",
+        "token_endpoint": "http://testserver/indieweb/token/",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["plain", "S256"],
+        "scopes_supported": ["create", "update", "delete", "undelete", "media"],
+        "service_documentation": "https://django-indieweb.readthedocs.io/en/latest/indieauth.html",
+    }
+
+
+def test_indieauth_metadata_omits_unimplemented_endpoints(client):
+    """Discovery must not advertise endpoints django-indieweb does not implement yet."""
+    response = client.get(reverse("indieweb:auth-metadata"))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "introspection_endpoint" not in data
+    assert "revocation_endpoint" not in data
+    assert "userinfo_endpoint" not in data
+
+
+def test_indieauth_metadata_does_not_require_login_or_bearer_token(client):
+    """Metadata discovery stays public even when the caller is not logged in."""
+    response = client.get(reverse("indieweb:auth-metadata"), HTTP_AUTHORIZATION="Bearer wrong")
+
+    assert response.status_code == 200
+    assert response.json()["authorization_endpoint"] == "http://testserver/indieweb/auth/"
+
+
+def test_indieauth_metadata_view_supports_host_well_known_route(rf):
+    """Host projects can route the same reusable view at the root well-known path."""
+    request = rf.get("/.well-known/oauth-authorization-server")
+    response = IndieAuthMetadataView.as_view()(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["issuer"] == "http://testserver/"
+    assert data["authorization_endpoint"] == "http://testserver/indieweb/auth/"
+    assert data["token_endpoint"] == "http://testserver/indieweb/token/"
 
 
 @pytest.mark.django_db

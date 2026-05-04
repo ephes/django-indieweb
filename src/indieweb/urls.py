@@ -18,6 +18,7 @@ from . import views
 app_name = "indieweb"
 urlpatterns = [
     path("auth/", views.AuthView.as_view(), name="auth"),
+    path("auth/metadata/", views.IndieAuthMetadataView.as_view(), name="auth-metadata"),
     path("token/", views.TokenView.as_view(), name="token"),
     path("tokens/", views.TokenManagementView.as_view(), name="tokens"),
     path("tokens/<int:pk>/revoke/", views.TokenRevokeView.as_view(), name="token-revoke"),

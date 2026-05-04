@@ -6,11 +6,12 @@ Django-IndieWeb provides a complete IndieAuth implementation that supports both 
 Overview
 --------
 
-IndieAuth is a federated login protocol that enables users to sign in to websites using their own domain name. Django-IndieWeb implements all three IndieAuth endpoints:
+IndieAuth is a federated login protocol that enables users to sign in to websites using their own domain name. Django-IndieWeb implements the core IndieAuth endpoints plus public server metadata:
 
 1. **Authorization Endpoint** (``/indieweb/auth/``) - Handles user consent and generates auth codes
 2. **Token Endpoint** (``/indieweb/token/``) - Exchanges auth codes for access tokens
 3. **Authentication** - Verifies auth codes for login-only flows
+4. **Server Metadata** (``/indieweb/auth/metadata/``) - Public JSON discovery for authorization-server capabilities
 
 Authorization Flow with Consent Screen
 --------------------------------------
@@ -38,6 +39,50 @@ Example consent screen::
     • delete
 
     [Approve] [Deny]
+
+Server Metadata and Discovery
+-----------------------------
+
+The reusable metadata endpoint is available at ``/indieweb/auth/metadata/``
+when the bundled URLconf is included under ``/indieweb/``. It returns an
+IndieAuth/OAuth authorization-server metadata JSON document with absolute URLs
+built from the current request:
+
+.. code-block:: json
+
+   {
+       "issuer": "https://example.com/indieweb/",
+       "authorization_endpoint": "https://example.com/indieweb/auth/",
+       "token_endpoint": "https://example.com/indieweb/token/",
+       "response_types_supported": ["code"],
+       "grant_types_supported": ["authorization_code"],
+       "code_challenge_methods_supported": ["plain", "S256"],
+       "scopes_supported": ["create", "update", "delete", "undelete", "media"],
+       "service_documentation": "https://django-indieweb.readthedocs.io/en/latest/indieauth.html"
+   }
+
+The endpoint is public: it does not require a logged-in Django user or a bearer
+token. The advertised capabilities match django-indieweb's current built-in
+behavior. The authorization-code grant and ``code`` response type are listed
+because the token endpoint exchanges authorization codes. ``plain`` and
+``S256`` are both listed because both PKCE challenge methods are accepted
+today. The scope list advertises the built-in Micropub resource-server scopes;
+the legacy ``post`` alias is still accepted for create requests but is not
+advertised as a preferred scope. ``service_documentation`` points to the
+human-readable django-indieweb IndieAuth documentation.
+
+django-indieweb does not assume it owns the host project's root URLconf. Host
+projects that want OAuth-compatible discovery at
+``/.well-known/oauth-authorization-server`` can route that root path to the
+same view; see :doc:`configuration`. You should also advertise the metadata
+URL from your profile page with ``rel="indieauth-metadata"``. The older
+``rel="authorization_endpoint"`` and ``rel="token_endpoint"`` links remain
+useful for legacy clients.
+
+This metadata slice does not add token introspection, protocol token
+revocation, refresh tokens, user-info/profile claims, or the IndieAuth
+authorization-response ``iss`` parameter. Those capabilities should only be
+advertised after their endpoints or redirect behavior are implemented.
 
 Managing Access Tokens
 ----------------------
@@ -299,6 +344,7 @@ Example: Using IndieAuth with a Micropub Client
 
    .. code-block:: html
 
+      <link rel="indieauth-metadata" href="https://mysite.com/indieweb/auth/metadata/">
       <link rel="authorization_endpoint" href="https://mysite.com/indieweb/auth/">
       <link rel="token_endpoint" href="https://mysite.com/indieweb/token/">
       <link rel="micropub" href="https://mysite.com/indieweb/micropub/">

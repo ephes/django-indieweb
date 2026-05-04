@@ -19,6 +19,7 @@ Endpoints Overview
 django-indieweb provides these endpoints and browser views:
 
 - ``/indieweb/auth/`` - IndieAuth authorization endpoint
+- ``/indieweb/auth/metadata/`` - Public IndieAuth authorization-server metadata endpoint
 - ``/indieweb/token/`` - Token endpoint for exchanging auth codes
 - ``/indieweb/tokens/`` - Browser UI for authenticated users to view and revoke their own tokens
 - ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
@@ -119,6 +120,73 @@ content. Metadata for each recorded attempt is also available in
 If the subscription has a stored ``hub.secret``, delivery must include a valid
 ``X-Hub-Signature-256`` or ``X-Hub-Signature`` HMAC header. Invalid signatures
 return HTTP ``403`` and do not call the host hook.
+
+IndieAuth Server Metadata
+-------------------------
+
+**URL:** ``/indieweb/auth/metadata/``
+
+Returns public IndieAuth/OAuth authorization-server metadata as JSON. The view
+does not require a logged-in user, an authorization code, or a bearer token.
+It is intended for clients that discover the server through
+``rel="indieauth-metadata"`` or through a host-project route such as
+``/.well-known/oauth-authorization-server``.
+
+**Example Request:**
+
+.. code-block:: http
+
+    GET /indieweb/auth/metadata/ HTTP/1.1
+    Host: yoursite.com
+
+**Example Response:**
+
+.. code-block:: http
+
+    HTTP/1.1 200 OK
+    Content-Type: application/json
+
+    {
+        "issuer": "https://yoursite.com/indieweb/",
+        "authorization_endpoint": "https://yoursite.com/indieweb/auth/",
+        "token_endpoint": "https://yoursite.com/indieweb/token/",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["plain", "S256"],
+        "scopes_supported": ["create", "update", "delete", "undelete", "media"],
+        "service_documentation": "https://django-indieweb.readthedocs.io/en/latest/indieauth.html"
+    }
+
+Response fields:
+
+- ``issuer`` - Absolute issuer URL built from the request. For the bundled
+  mounted endpoint this is the common mount prefix, such as
+  ``https://yoursite.com/indieweb/``. For a host-level well-known route to the
+  same view this is the site root, such as ``https://yoursite.com/``.
+- ``authorization_endpoint`` - Absolute URL for ``/indieweb/auth/`` or the
+  equivalent namespaced mount path.
+- ``token_endpoint`` - Absolute URL for ``/indieweb/token/`` or the equivalent
+  namespaced mount path.
+- ``response_types_supported`` - ``["code"]``.
+- ``grant_types_supported`` - ``["authorization_code"]``, matching the token
+  endpoint's authorization-code exchange behavior.
+- ``code_challenge_methods_supported`` - ``["plain", "S256"]``, matching the
+  PKCE methods accepted by the authorization and token endpoints.
+- ``scopes_supported`` - Built-in Micropub resource-server scopes advertised by
+  django-indieweb: ``create``, ``update``, ``delete``, ``undelete``, and
+  ``media``. Unknown extension scopes can still be requested and stored, and
+  the legacy ``post`` alias is still accepted for create requests, but those
+  values are not advertised as built-in capabilities.
+- ``service_documentation`` - Human-facing documentation URL for
+  django-indieweb's IndieAuth behavior.
+
+The response intentionally omits ``introspection_endpoint``,
+``revocation_endpoint``, and ``userinfo_endpoint`` because django-indieweb does
+not implement those protocol endpoints in this slice. The browser token
+management UI at ``/indieweb/tokens/`` is not a protocol revocation endpoint.
+The metadata also does not advertise ``authorization_response_iss_parameter_supported``
+yet; adding the ``iss`` redirect parameter remains a future IndieAuth wire
+compatibility item.
 
 IndieAuth Flow
 --------------

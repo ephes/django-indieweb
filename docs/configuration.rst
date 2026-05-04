@@ -3,6 +3,68 @@ Configuration
 
 This document describes how to configure django-indieweb in your Django project.
 
+Metadata Discovery URLs
+-----------------------
+
+Include the reusable app URLconf wherever your host project wants the bundled
+endpoints to live. The common mount path is ``/indieweb/``:
+
+.. code-block:: python
+
+   # urls.py
+   from django.urls import include, path
+
+   urlpatterns = [
+       path("indieweb/", include("indieweb.urls")),
+   ]
+
+With that configuration, the IndieAuth metadata endpoint is available at
+``/indieweb/auth/metadata/``. Because django-indieweb is a reusable app, it
+does not add root-level well-known routes by default. Host projects that want
+OAuth-compatible discovery can publish the same reusable metadata view at
+``/.well-known/oauth-authorization-server`` from the project URLconf:
+
+.. code-block:: python
+
+   # urls.py
+   from django.urls import include, path
+   from indieweb.views import IndieAuthMetadataView
+
+   urlpatterns = [
+       path("indieweb/", include("indieweb.urls")),
+       path(
+           ".well-known/oauth-authorization-server",
+           IndieAuthMetadataView.as_view(),
+           name="oauth-authorization-server",
+       ),
+   ]
+
+The metadata view builds absolute authorization and token endpoint URLs from
+the request and the active URL namespace where possible. If you route the view
+directly at the well-known path, keep the bundled URLconf included with its
+default ``indieweb`` namespace so the view can reverse ``indieweb:auth`` and
+``indieweb:token``.
+
+Advertise metadata discovery from your profile page with a Link header or HTML
+``link`` element:
+
+.. code-block:: html
+
+   <link rel="indieauth-metadata" href="https://example.com/indieweb/auth/metadata/">
+
+If you also route the well-known path, the value can be
+``https://example.com/.well-known/oauth-authorization-server`` instead. The
+older ``authorization_endpoint`` and ``token_endpoint`` link relations can
+remain in place for legacy IndieAuth clients.
+
+Choose one metadata URL as your canonical discovery URL in profile links and
+client documentation. The bundled mounted endpoint and the host-level
+well-known route both describe the same django-indieweb endpoints, but their
+``issuer`` values differ by design: the mounted endpoint uses the app mount
+prefix, while the well-known route uses the site root as required for root
+well-known publication. Future authorization-response ``iss`` support should
+use the same canonical issuer you publish for discovery.
+
 Django Settings
 ---------------
 
