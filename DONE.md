@@ -4,6 +4,70 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Add Micropub source-list pagination and filtering
+
+- Added ``GET /indieweb/micropub/?q=source`` list mode when no ``url`` parameter
+  is supplied. The endpoint now calls the optional
+  ``MicropubContentHandler.list_entries(user, limit=..., offset=..., filter=...)``
+  hook and returns JSON shaped as ``{"items": [...], "paging": {...}}``. Items
+  are Microformats-style source objects with ``type`` and ``properties``; list
+  mode adds a ``url`` property from ``MicropubEntry.url`` when the handler did
+  not already include one so clients can submit that URL to source-by-URL,
+  update, delete, or undelete requests.
+- Added ``MicropubEntryList`` as the list hook result. Existing custom handlers
+  are not forced into a new abstract method: the base ``list_entries()`` method
+  returns ``None``, and the view maps that unsupported capability to
+  ``501 not_implemented``. Handler ``ValueError`` in list mode maps to
+  ``400 invalid_request``; unexpected exceptions still map to ``500`` and are
+  logged.
+- Pagination/filtering policy: ``limit`` and ``offset`` are non-negative
+  integers; malformed values return ``400 invalid_request``. Omitted ``limit``
+  defaults to ``20`` to avoid unbounded source-list responses, and omitted
+  ``offset`` defaults to ``0``. ``filter`` is passed through to the handler as a
+  free-form string. The bundled in-memory handler supports accurate ``total``
+  after filtering and before pagination, plus case-insensitive substring
+  matching against a stable JSON serialization of each source item.
+- Preserved existing ``GET ?q=source&url=...`` behavior: the endpoint still
+  requires ``update`` scope, returns full source content as
+  ``{"type": [...], "properties": {...}}``, returns selective
+  ``properties[]`` responses as ``{"properties": {...}}``, returns
+  ``400 invalid_request`` for empty or unknown submitted URLs and handler
+  ``ValueError``, and returns ``500`` for unexpected handler exceptions.
+- Backlog: removed the completed Priority 4 Micropub item from ``BACKLOG.md``.
+  No migrations were needed.
+- Documentation: updated ``docs/micropub.rst`` with source-list examples,
+  response shape, default limit, filter/limit/offset policy, unsupported-handler
+  behavior, and boundaries; updated ``docs/api.rst`` with endpoint reference
+  details and error cases. No generated docs under ``docs/_build`` were edited
+  or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the
+  source-list hook, response shape, pagination/filtering policy,
+  unsupported-handler behavior, compatibility guarantees, and explicit
+  exclusions.
+- Compatibility: existing Micropub create, update, delete, undelete,
+  source-by-URL, ``properties[]`` filtering, ``q=config``, ``q=category``,
+  ``q=channel``, ``q=syndicate-to``, default ``GET``, media upload, scope
+  gating, token authentication, CORS, and rate-limit behavior remains unchanged
+  apart from the additive list-mode branch for ``GET ?q=source`` without
+  ``url``.
+- Follow-up risks: cursor ``after``/``before`` pagination, bundled post
+  storage/search, direct configuration subqueries (``q=media-endpoint``,
+  ``q=post-types``, supported vocabulary), media source/delete hooks,
+  ``mp-*`` command properties, draft-scope semantics, and syndication routing
+  remain explicitly out of scope and are owned by separate backlog items.
+- Validation: ``uv run pytest tests/test_micropub_source.py
+  tests/test_micropub_endpoint.py tests/test_micropub_queries.py -q --no-cov``
+  (149 passed), ``uv run pytest tests/test_micropub_create.py
+  tests/test_micropub_actions.py tests/test_micropub_media.py -q --no-cov``
+  (100 passed), ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py
+  -q --no-cov`` (40 passed), ``uv run ruff check .`` (passed),
+  ``uv run ruff format . --check`` (88 files already formatted),
+  ``uv run mypy`` (no issues), ``uv run sphinx-build -W -b html docs
+  docs/_build/html`` (passed), ``git ls-files docs/_build --modified --others
+  --exclude-standard`` (no output), ``git diff --check`` (passed),
+  ``uv run pytest`` (857 passed, coverage gate passed at 90.51%), and
+  ``uv run prek run --all-files`` (passed).
+
 ### Add Micropub category, channel, and query-discovery support
 
 - Added ``GET /indieweb/micropub/?q=category`` and ``?q=channel`` using the configured

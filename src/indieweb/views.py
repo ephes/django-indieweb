@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
     from django.core.files.uploadedfile import UploadedFile
 
-    from .handlers import MicropubEntry
+    from .handlers import MicropubContentHandler, MicropubEntry
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ PKCE_VERIFIER_MIN = 43
 PKCE_VERIFIER_MAX = 128
 MICROPUB_MEDIA_SCOPE = "media"
 SUPPORTED_MICROPUB_QUERIES = ("config", "source", "syndicate-to", "category", "channel")
+DEFAULT_MICROPUB_SOURCE_LIST_LIMIT = 20
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES = (
@@ -1388,11 +1389,15 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         return HttpResponse(json.dumps({config_key: filtered}), content_type="application/json")
 
     def _handle_source_query(self, request: HttpRequest) -> HttpResponse:
-        """Dispatch ``GET ?q=source`` using the handler's existing ``get_entry`` hook."""
+        """Dispatch ``GET ?q=source`` using the configured content handler."""
+        handler = get_micropub_handler()
+        if "url" not in request.GET:
+            return self._handle_source_list_query(request, handler)
+
         url = request.GET.get("url")
         if not url:
             return self._invalid_request()
-        handler = get_micropub_handler()
+
         try:
             entry = handler.get_entry(url, self.token.owner)
         except ValueError as exc:
@@ -1416,6 +1421,58 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             body: dict[str, Any] = {"properties": properties}
         else:
             body = {"type": entry.type, "properties": entry.properties}
+        return HttpResponse(json.dumps(body), content_type="application/json")
+
+    @staticmethod
+    def _source_list_item(entry: MicropubEntry) -> dict[str, Any]:
+        """Return the Microformats-style source-list item for a handler entry."""
+        properties = dict(entry.properties)
+        properties.setdefault("url", [entry.url])
+        return {"type": entry.type, "properties": properties}
+
+    def _handle_source_list_query(self, request: HttpRequest, handler: MicropubContentHandler) -> HttpResponse:
+        """Dispatch ``GET ?q=source`` without ``url`` into the optional list hook."""
+        try:
+            limit = self._parse_optional_non_negative_int(request.GET.get("limit"))
+            offset = self._parse_optional_non_negative_int(request.GET.get("offset"))
+        except ValueError:
+            return self._invalid_request()
+
+        effective_limit = DEFAULT_MICROPUB_SOURCE_LIST_LIMIT if limit is None else limit
+        effective_offset = 0 if offset is None else offset
+
+        try:
+            result = handler.list_entries(
+                self.token.owner,
+                limit=effective_limit,
+                offset=effective_offset,
+                filter=request.GET.get("filter") or None,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "list_entries rejected source list query "
+                f"limit={effective_limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}: {exc}"
+            )
+            return self._invalid_request()
+        except Exception:
+            logger.exception(
+                "Unexpected error in list_entries for source list query "
+                f"limit={effective_limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}"
+            )
+            return HttpResponse(status=500)
+
+        if result is None:
+            return HttpResponse("not_implemented", status=501)
+
+        body: dict[str, Any] = {
+            "items": [self._source_list_item(entry) for entry in result.entries],
+            "paging": {
+                "limit": effective_limit,
+                "offset": effective_offset,
+            },
+        }
+        if result.total is not None:
+            body["paging"]["total"] = result.total
         return HttpResponse(json.dumps(body), content_type="application/json")
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:

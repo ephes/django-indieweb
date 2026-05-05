@@ -5,6 +5,7 @@ This module provides the interface for handling Micropub content operations
 and includes basic implementations for testing and development.
 """
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,14 @@ class MicropubEntry:
     def get_properties(self, key: str) -> list[Any]:
         """Get all values of a property."""
         return self.properties.get(key, [])
+
+
+@dataclass
+class MicropubEntryList:
+    """Represents a page of Micropub entries returned by a content handler."""
+
+    entries: list[MicropubEntry]
+    total: int | None = None
 
 
 class MicropubContentHandler(ABC):
@@ -115,6 +124,26 @@ class MicropubContentHandler(ABC):
             MicropubEntry if found and user has permission, None otherwise
         """
         pass
+
+    def list_entries(
+        self,
+        user: "AbstractBaseUser",
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        filter: str | None = None,
+    ) -> MicropubEntryList | None:
+        """
+        Return a page of editable/source entries for ``GET ?q=source`` list mode.
+
+        The default ``None`` return means this optional capability is unsupported by
+        the handler. Implementations that can enumerate host-owned content should
+        honor ``limit``, ``offset``, and ``filter`` and return a ``MicropubEntryList``.
+        ``filter`` is ``None`` when the client omitted it or submitted an empty value.
+        ``total`` should only be set when it is known accurately after filtering and
+        before pagination.
+        """
+        return None
 
     def get_config(self, user: "AbstractBaseUser") -> dict[str, Any]:
         """
@@ -255,6 +284,36 @@ class InMemoryMicropubHandler(MicropubContentHandler):
 
     def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
         return self.entries.get(url)
+
+    @staticmethod
+    def _entry_filter_matches(entry: MicropubEntry, needle: str) -> bool:
+        item = {
+            "type": entry.type,
+            "properties": {
+                **entry.properties,
+                "url": entry.properties.get("url", [entry.url]),
+            },
+        }
+        return needle in json.dumps(item, sort_keys=True).lower()
+
+    def list_entries(
+        self,
+        user: "AbstractBaseUser",
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        filter: str | None = None,
+    ) -> MicropubEntryList:
+        entries = list(self.entries.values())
+        if filter:
+            needle = filter.lower()
+            entries = [entry for entry in entries if self._entry_filter_matches(entry, needle)]
+        total = len(entries)
+        if offset:
+            entries = entries[offset:]
+        if limit is not None:
+            entries = entries[:limit]
+        return MicropubEntryList(entries=entries, total=total)
 
 
 def get_micropub_handler() -> MicropubContentHandler:

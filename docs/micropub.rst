@@ -473,6 +473,57 @@ raising.
    curl https://example.com/indieweb/micropub/?q=syndicate-to \
      -H "Authorization: Bearer YOUR_TOKEN"
 
+**Source List:**
+
+.. code:: bash
+
+   curl "https://example.com/indieweb/micropub/?q=source&limit=10&offset=0&filter=django" \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Accept: application/json"
+
+When no ``url`` parameter is supplied, ``GET ?q=source`` uses the optional
+``MicropubContentHandler.list_entries(user, limit=..., offset=..., filter=...)``
+hook to return editable/source posts from your host application. Existing
+custom handlers that do not implement this optional hook continue to load; list
+mode returns ``501 not_implemented`` for them.
+
+The response contains Microformats-style source items and paging metadata:
+
+.. code:: json
+
+   {
+     "items": [
+       {
+         "type": ["h-entry"],
+         "properties": {
+           "content": ["Hello source list"],
+           "url": ["https://example.com/posts/123/"]
+         }
+       }
+     ],
+     "paging": {
+       "limit": 10,
+       "offset": 0,
+       "total": 1
+     }
+   }
+
+The bundled in-memory handler supports list mode for development and tests. It
+adds a ``url`` property to list items when the stored entry properties do not
+already include one, so clients have a value they can submit to update/delete or
+``q=source&url=...``. Custom handlers remain authoritative for content
+enumeration, ordering, permissions, filtering, and whether ``total`` can be
+reported accurately.
+
+``limit`` and ``offset`` must be non-negative integers. If ``limit`` is omitted,
+django-indieweb passes a default limit of ``20`` to avoid unbounded source-list
+responses; omitted ``offset`` defaults to ``0``. ``filter`` is optional and is
+passed to the handler as a free-form string. The in-memory handler matches it
+case-insensitively as a substring against a stable JSON serialization of each
+source item. Cursor-style ``after``/``before`` paging, bundled post storage or
+search, direct configuration subqueries, media source/delete hooks, command
+properties, and syndication routing remain out of scope for this slice.
+
 **Source Content:**
 
 .. code:: bash
@@ -589,10 +640,11 @@ The Micropub endpoint returns the following HTTP status codes:
   JSON body, or — for ``action=update`` — a non-JSON body, an empty update
   payload (no ``replace``/``add``/``delete``), a non-array operation value,
   or an otherwise spec-non-conformant operation shape; a ``GET ?q=source``
-  request had a missing ``url`` or a ``url`` unknown to the handler; or a
-  media endpoint upload was not ``multipart/form-data`` or lacked the ``file``
-  part. Action, source-query, and media-upload client failures use the
-  plain-text body ``invalid_request``.
+  by-URL request had an empty ``url`` or a ``url`` unknown to the handler; a
+  source-list request had malformed ``limit``/``offset`` or the handler raised
+  ``ValueError``; or a media endpoint upload was not ``multipart/form-data`` or
+  lacked the ``file`` part. Action, source-query, and media-upload client
+  failures use the plain-text body ``invalid_request``.
 - ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
   token's owner is inactive
 - ``413 Payload Too Large`` - Media endpoint or multipart create upload exceeded
@@ -604,6 +656,9 @@ The Micropub endpoint returns the following HTTP status codes:
   scope required for the requested operation; body ``invalid_client`` when
   the token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR``
+- ``501 Not Implemented`` - ``GET ?q=source`` without ``url`` reached a
+  configured handler that does not support the optional ``list_entries()`` hook;
+  body ``not_implemented``
 - ``500 Internal Server Error`` - The configured handler raised an unexpected
   exception (e.g. database failure) during ``update``/``delete``/``undelete``
   or ``GET ?q=source``, or the configured storage backend raised while saving

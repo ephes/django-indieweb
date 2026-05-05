@@ -446,21 +446,15 @@ def test_get_no_query_has_no_scope_gate(client, user, micropub_endpoint_url, sco
 @pytest.mark.django_db
 @pytest.mark.parametrize("scope", ["update", "create update", "update delete"])
 def test_get_source_query_accepts_update_scope(client, user, micropub_endpoint_url, scope):
-    """``GET ?q=source`` requires ``update`` scope and reaches the source handler.
-
-    The fresh in-memory handler has no entry at the submitted URL, so the
-    source-query handler returns ``400 invalid_request``. The point of this
-    test is that the scope gate accepts the scope (no 403); the body assertion
-    is proof we reached the source handler rather than the 403 path.
-    """
+    """``GET ?q=source`` requires ``update`` scope and reaches the source-list handler."""
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     response = client.get(
-        f"{micropub_endpoint_url}?q=source&url=https://example.org/post/1",
+        f"{micropub_endpoint_url}?q=source",
         Authorization=auth_header,
     )
-    assert response.status_code == 400
-    assert response.content.decode("utf-8") == "invalid_request"
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "paging": {"limit": 20, "offset": 0, "total": 0}}
 
 
 @pytest.mark.django_db

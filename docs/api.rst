@@ -808,6 +808,55 @@ The default in-memory handler advertises these post types:
 
 .. code-block:: http
 
+    GET /indieweb/micropub/?q=source&limit=20&offset=0&filter=django HTTP/1.1
+    Authorization: Bearer xyz789
+    Accept: application/json
+
+When no ``url`` parameter is supplied, returns a list of editable/source posts
+through the optional
+``MicropubContentHandler.list_entries(user, limit=..., offset=..., filter=...)``
+hook. Existing custom handlers are not required to implement this hook; if the
+hook returns ``None`` (the default implementation), django-indieweb returns
+``501 Not Implemented`` with body ``not_implemented``.
+
+List-mode responses contain ``items`` and ``paging``:
+
+.. code-block:: json
+
+    {
+        "items": [
+            {
+                "type": ["h-entry"],
+                "properties": {
+                    "content": ["Hello World"],
+                    "url": ["https://yoursite.com/posts/123/"]
+                }
+            }
+        ],
+        "paging": {
+            "limit": 20,
+            "offset": 0,
+            "total": 1
+        }
+    }
+
+Each item uses the same Microformats-style ``type``/``properties`` shape as a
+full source-by-URL response. List mode adds a ``url`` property when the handler's
+entry properties do not already include one, using the ``MicropubEntry.url``
+value, so clients have a URL for later source/update/delete requests. ``total``
+is included only when the handler reports an accurate filtered total.
+
+``limit`` and ``offset`` must be non-negative integers. If omitted, ``limit``
+defaults to ``20`` and ``offset`` defaults to ``0``. Malformed values return
+``400 invalid_request``. ``filter`` is optional and passed to the handler as a
+free-form string; the bundled in-memory handler applies it as a
+case-insensitive substring match against a stable JSON serialization of each
+source item. Host handlers remain authoritative for content enumeration,
+ordering, permissions, filtering, and pagination. Cursor-style ``after`` and
+``before`` paging are not implemented yet.
+
+.. code-block:: http
+
     GET /indieweb/micropub/?q=source&url=https://yoursite.com/posts/123/ HTTP/1.1
     Authorization: Bearer xyz789
     Accept: application/json
@@ -828,9 +877,9 @@ includes both the Microformats type and all entry properties:
     }
 
 Clients can request a subset of properties using the array form
-``properties[]=NAME``. When a filter is present, the response contains only
-the requested properties that exist on the entry, and omits ``type`` to match
-the Micropub source-query examples:
+``properties[]=NAME``. When properties are requested, the response contains
+only the requested properties that exist on the entry, and omits ``type`` to
+match the Micropub source-query examples:
 
 .. code-block:: http
 
@@ -847,10 +896,13 @@ the Micropub source-query examples:
         }
     }
 
-``GET ?q=source`` returns ``400 invalid_request`` when ``url`` is missing or
-unknown to the handler, and ``500 Internal Server Error`` when the handler
-raises an unexpected exception. Scope failures still return ``403`` with
-body ``authorization error`` before source-query dispatch.
+``GET ?q=source`` returns ``400 invalid_request`` when a submitted ``url`` is
+empty or unknown to the handler in source-by-URL mode, when list-mode ``limit``
+or ``offset`` is malformed, or when the handler rejects a list query with
+``ValueError``. It returns ``501 not_implemented`` when list mode is unsupported
+by the configured handler, and ``500 Internal Server Error`` when the handler
+raises an unexpected exception. Scope failures still return ``403`` with body
+``authorization error`` before source-query dispatch.
 
 **Category Query:**
 
@@ -1116,9 +1168,12 @@ All endpoints may return these error responses:
   ``400 invalid_request`` for all three so client errors look consistent
   with the IndieAuth/token-endpoint behavior, rather than guessing
   handler-specific permission semantics with a ``404`` or ``403``.
-- Micropub ``GET ?q=source`` with a missing ``url`` parameter or a ``url``
-  unknown to the configured handler. Missing requested ``properties[]`` names
-  are omitted from successful filtered responses instead of causing an error.
+- Micropub ``GET ?q=source&url=...`` with an empty ``url`` or a ``url`` unknown
+  to the configured handler. Missing requested ``properties[]`` names are
+  omitted from successful filtered responses instead of causing an error.
+- Micropub ``GET ?q=source`` without ``url`` when ``limit`` or ``offset`` is
+  malformed (non-integer, negative, or float), or when the configured handler's
+  ``list_entries()`` hook rejects the query by raising ``ValueError``.
 - Micropub ``GET ?q=category`` or ``GET ?q=channel`` with a malformed
   ``limit`` or ``offset`` parameter (non-integer, negative, or float). A
   missing ``categories``/``channels`` key in the configured handler's config
@@ -1191,13 +1246,18 @@ All endpoints may return these error responses:
 
 - Missing required parameters on the authorization endpoint
 
+**501 Not Implemented — ``not_implemented``**
+
+- Micropub ``GET ?q=source`` without ``url`` when the configured handler does
+  not support the optional ``MicropubContentHandler.list_entries()`` hook.
+
 **500 Internal Server Error**
 
 - A configured Micropub handler raised an exception other than
   ``ValueError`` while servicing ``POST action=update``/``delete``/``undelete``,
-  or raised any exception while servicing ``GET ?q=source``. The exception is
-  logged via ``logger.exception`` so the stack trace stays in the server log
-  rather than the response body.
+  or raised any unexpected exception while servicing ``GET ?q=source`` by URL
+  or list mode. The exception is logged via ``logger.exception`` so the stack
+  trace stays in the server log rather than the response body.
 - The configured Django storage backend raised unexpectedly while saving a
   Micropub media endpoint upload or multipart create ``photo`` upload.
 
