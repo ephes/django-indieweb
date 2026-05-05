@@ -62,8 +62,11 @@ client documentation. The bundled mounted endpoint and the host-level
 well-known route both describe the same django-indieweb endpoints, but their
 ``issuer`` values differ by design: the mounted endpoint uses the app mount
 prefix, while the well-known route uses the site root as required for root
-well-known publication. Future authorization-response ``iss`` support should
-use the same canonical issuer you publish for discovery.
+well-known publication. Successful bundled authorization redirects now include
+``iss`` using the mounted endpoint issuer, such as
+``https://example.com/indieweb/``. If you publish a host-level well-known
+metadata URL as canonical, keep client-facing discovery and issuer validation
+guidance aligned with that canonical URL.
 
 Django Settings
 ---------------
@@ -953,6 +956,7 @@ adding middleware or a third-party dependency. Built-in CORS support is
 disabled by default and applies only to:
 
 - ``/indieweb/auth/``
+- ``/indieweb/auth/metadata/``
 - ``/indieweb/token/``
 - ``/indieweb/micropub/``
 - ``/indieweb/media/``
@@ -1053,11 +1057,13 @@ preflights return ``204 No Content`` with ``Access-Control-Allow-Origin``,
 
 Preflights short-circuit before rate limiting, token authentication, Micropub
 handler calls, media storage, Webmention processing, and async Webmention
-enqueue hooks. WebSub subscriber callbacks are server-to-server hub endpoints
-and are excluded from built-in CORS handling. Disallowed origins do not receive
-permissive preflight headers. Malformed CORS settings are ignored and logged so
-optional CORS hardening does not crash existing endpoints; production operators
-should monitor logs after changing CORS configuration.
+enqueue hooks. The IndieAuth metadata endpoint is public/read-only and is
+included for metadata discovery, but it is not covered by
+``INDIEWEB_RATE_LIMITS``. WebSub subscriber callbacks are server-to-server hub
+endpoints and are excluded from built-in CORS handling. Disallowed origins do
+not receive permissive preflight headers. Malformed CORS settings are ignored
+and logged so optional CORS hardening does not crash existing endpoints;
+production operators should monitor logs after changing CORS configuration.
 
 If you need site-wide CORS behavior for views outside django-indieweb's public
 protocol endpoints, configure deployment-level middleware separately.

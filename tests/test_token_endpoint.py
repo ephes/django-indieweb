@@ -69,6 +69,38 @@ def test_correct_auth_code(client, token_endpoint_url, token_payload):
     assert response.status_code == 201
     data = parse_qs(unquote(response.content.decode("utf-8")))
     assert "access_token" in data
+    assert data["token_type"] == ["Bearer"]
+
+
+@pytest.mark.django_db
+def test_token_exchange_accepts_grant_type_authorization_code(client, token_endpoint_url, token_payload):
+    """Token POST accepts the current IndieAuth authorization_code grant_type."""
+    token_payload["grant_type"] = "authorization_code"
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert data["token_type"] == ["Bearer"]
+
+
+@pytest.mark.django_db
+def test_token_exchange_accepts_omitted_grant_type_for_legacy_clients(client, token_endpoint_url, token_payload):
+    """Token POST keeps accepting legacy requests that omit grant_type."""
+    token_payload.pop("grant_type", None)
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_exchange_rejects_invalid_grant_type_without_token(client, token_endpoint_url, token_payload):
+    """Token POST rejects present grant_type values other than authorization_code."""
+    token_payload["grant_type"] = "client_credentials"
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert response.content == b"invalid_request"
+    assert models.Token.objects.count() == 0
 
 
 @pytest.mark.django_db
@@ -88,6 +120,67 @@ def test_token_exchange_without_scope_uses_stored_auth_scope(client, auth, token
     assert data["scope"] == ["create update"]
     token = models.Token.objects.get(key=data["access_token"][0])
     assert token.scope == "create update"
+
+
+@pytest.mark.django_db
+def test_token_exchange_returns_json_when_requested(client, auth, token_endpoint_url):
+    """Token POST returns JSON when the client explicitly prefers JSON."""
+    auth.scope = "create update"
+    auth.save()
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": auth.key,
+            "client_id": auth.client_id,
+        },
+        HTTP_ACCEPT="application/json",
+    )
+    assert response.status_code == 201
+    assert response["Content-Type"] == "application/json"
+    data = response.json()
+    assert data["access_token"]
+    assert data["token_type"] == "Bearer"
+    assert data["expires_in"] >= 0
+    assert data["scope"] == "create update"
+    assert data["me"] == auth.me
+
+
+@pytest.mark.django_db
+def test_token_exchange_keeps_default_form_response_for_wildcard_accept(client, auth, token_endpoint_url):
+    """Wildcard Accept headers do not switch legacy token responses to JSON."""
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+        },
+        HTTP_ACCEPT="*/*",
+    )
+    assert response.status_code == 201
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
+    assert data["token_type"] == ["Bearer"]
+
+
+@pytest.mark.django_db
+def test_token_reissue_json_response_keeps_status_and_token_type(
+    client, settings, token_endpoint_url, token_payload, user
+):
+    """Reissued token JSON responses keep the existing 200 status semantics."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    existing = models.Token.objects.create(
+        owner=user,
+        client_id=token_payload["client_id"],
+        me=token_payload["me"],
+        scope=token_payload["scope"],
+        expires_at=timezone.now() + timedelta(seconds=5),
+    )
+    response = client.post(token_endpoint_url, data=token_payload, HTTP_ACCEPT="application/json")
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    assert response.json()["access_token"] == existing.key
+    assert response.json()["token_type"] == "Bearer"
 
 
 @pytest.mark.django_db

@@ -259,6 +259,14 @@ def _token_client_id_error(client_id: str) -> HttpResponse | None:
     return None
 
 
+def _token_grant_type_error(grant_type: str | None) -> HttpResponse | None:
+    """Return ``invalid_request`` when a present token grant type is unsupported."""
+    if grant_type is None or grant_type == "authorization_code":
+        return None
+    logger.info(f"rejected invalid grant_type on token exchange: {grant_type!r}")
+    return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
+
+
 def _client_id_allowed(client_id: str) -> bool:
     """Return whether ``client_id`` passes the optional operator policy hook.
 
@@ -415,6 +423,48 @@ def _indieauth_issuer(request: HttpRequest, authorization_path: str, token_path:
     return request.build_absolute_uri(_common_path_prefix(request.path, authorization_path, token_path))
 
 
+def _accept_media_ranges(request: HttpRequest) -> list[tuple[str, float, int]]:
+    """Parse an Accept header into ``(media_range, q, order)`` tuples."""
+    accept = request.headers.get("Accept", "")
+    parsed: list[tuple[str, float, int]] = []
+    for order, part in enumerate(accept.split(",")):
+        item = part.strip()
+        if not item:
+            continue
+        media_range, *parameters = (segment.strip() for segment in item.split(";"))
+        q = 1.0
+        for parameter in parameters:
+            if parameter.startswith("q="):
+                try:
+                    q = float(parameter[2:])
+                except ValueError:
+                    q = 0.0
+                break
+        parsed.append((media_range.lower(), q, order))
+    return parsed
+
+
+def _best_explicit_accept(request: HttpRequest, media_type: str) -> tuple[float, int] | None:
+    """Return the best explicit Accept quality/order for ``media_type``."""
+    matches = [(q, order) for accepted, q, order in _accept_media_ranges(request) if accepted == media_type and q > 0]
+    if not matches:
+        return None
+    return max(matches, key=lambda match: (match[0], -match[1]))
+
+
+def _prefers_json_response(request: HttpRequest) -> bool:
+    """Return True only when JSON is explicitly requested over form encoding."""
+    json_accept = _best_explicit_accept(request, "application/json")
+    if json_accept is None:
+        return False
+    form_accept = _best_explicit_accept(request, "application/x-www-form-urlencoded")
+    if form_accept is None:
+        return True
+    json_q, json_order = json_accept
+    form_q, form_order = form_accept
+    return json_q > form_q or (json_q == form_q and json_order < form_order)
+
+
 class CSRFExemptMixin(View):
     """Mixin to exempt views from CSRF protection."""
 
@@ -423,8 +473,10 @@ class CSRFExemptMixin(View):
         return super().dispatch(request, *args, **kwargs)
 
 
-class IndieAuthMetadataView(View):
+class IndieAuthMetadataView(CorsMixin, View):
     """Public IndieAuth authorization server metadata endpoint."""
+
+    cors_allowed_methods = ("GET",)
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> JsonResponse:
         authorization_path = _reverse_request_namespace(request, "auth")
@@ -545,6 +597,11 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         assert state is not None
         assert me is not None
 
+        response_type = request.GET.get("response_type")
+        if response_type is not None and response_type != "code":
+            logger.info(f"rejected invalid response_type on auth get: {response_type!r}")
+            return HttpResponse("invalid response_type", status=400)
+
         if _validate_redirect_uri(redirect_uri) is None:
             logger.info("rejected invalid redirect_uri on auth get")
             return HttpResponse("invalid redirect_uri", status=400)
@@ -654,7 +711,14 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             code_challenge=stored_challenge,
             code_challenge_method=stored_method,
         )
-        url_params: dict[str, str] = {"code": auth.key, "state": state, "me": me}
+        authorization_path = _reverse_request_namespace(request, "auth")
+        token_path = _reverse_request_namespace(request, "token")
+        url_params: dict[str, str] = {
+            "code": auth.key,
+            "state": state,
+            "me": me,
+            "iss": _indieauth_issuer(request, authorization_path, token_path),
+        }
         target = _append_redirect_params(redirect_uri, url_params)
         logger.info("auth view consent approved")
         return redirect(target)
@@ -680,7 +744,9 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         except Auth.DoesNotExist:
             return HttpResponse("Invalid authorization code", status=400)
         response_values = {"me": auth.me}
-        return HttpResponse(urlencode(response_values), status=200)
+        if _prefers_json_response(request):
+            return JsonResponse(response_values, status=200)
+        return HttpResponse(urlencode(response_values), status=200, content_type="application/x-www-form-urlencoded")
 
 
 class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
@@ -694,7 +760,14 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     rate_limit_key = "token"
     cors_allowed_methods = ("POST",)
 
-    def send_token(self, me: str, client_id: str, scope: str | None, owner: AbstractBaseUser) -> HttpResponse:
+    def send_token(
+        self,
+        request: HttpRequest,
+        me: str,
+        client_id: str,
+        scope: str | None,
+        owner: AbstractBaseUser,
+    ) -> HttpResponse:
         lifetime = int(getattr(settings, "INDIEWEB_TOKEN_EXPIRES_IN", DEFAULT_TOKEN_EXPIRES_IN))
         expires_at = timezone.now() + timedelta(seconds=lifetime)
         token, created = Token.objects.get_or_create(
@@ -710,12 +783,15 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         remaining = max(0, math.floor((expires_at - timezone.now()).total_seconds()))
         response_values: dict[str, str | int] = {
             "access_token": token.key,
+            "token_type": "Bearer",
             "expires_in": remaining,
             "scope": token.scope or "",
             "me": token.me,
         }
-        response = urlencode(response_values)
         status_code = 201 if created else 200
+        if _prefers_json_response(request):
+            return JsonResponse(response_values, status=status_code)
+        response = urlencode(response_values)
         return HttpResponse(response, status=status_code, content_type="application/x-www-form-urlencoded")
 
     def _check_pkce(self, auth: Auth, code_verifier: str | None) -> HttpResponse | None:
@@ -739,6 +815,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         client_id = request.POST.get("client_id")
         redirect_uri = request.POST.get("redirect_uri")
         code_verifier = request.POST.get("code_verifier")
+        grant_type = request.POST.get("grant_type")
 
         # These are sometimes sent but not required by spec
         me = request.POST.get("me")
@@ -749,9 +826,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.error(f"Missing required parameters: code={code}, client_id={client_id}")
             return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
 
-        client_id_error = _token_client_id_error(client_id)
-        if client_id_error is not None:
-            return client_id_error
+        parameter_error = _token_grant_type_error(grant_type) or _token_client_id_error(client_id)
+        if parameter_error is not None:
+            return parameter_error
 
         if redirect_uri and _validate_redirect_uri(redirect_uri) is None:
             logger.error("Rejected invalid redirect_uri on token exchange")
@@ -797,7 +874,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             auth.delete()
 
             # Create and return token
-            return self.send_token(me, client_id, scope, auth.owner)
+            return self.send_token(request, me, client_id, scope, auth.owner)
 
         except Auth.DoesNotExist:
             logger.error(f"Auth not found for code={code}, client_id={client_id}")

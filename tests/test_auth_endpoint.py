@@ -134,6 +134,51 @@ def test_authenticated_shows_consent_screen(client, user, auth_endpoint_url):
 
 
 @pytest.mark.django_db
+def test_get_accepts_response_type_code(client, user):
+    """Authorization GET accepts the current IndieAuth response_type value."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "response_type": "code",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 200
+    assert response.context["client_id"] == "https://webapp.example.org"
+
+
+@pytest.mark.django_db
+def test_get_rejects_invalid_response_type(client, user):
+    """Authorization GET rejects present response_type values other than code."""
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "response_type": "token",
+    }
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+    assert response.status_code == 400
+    assert response.content == b"invalid response_type"
+    assert "indieweb/consent.html" not in [template.name for template in response.templates]
+
+
+@pytest.mark.django_db
+def test_get_accepts_omitted_response_type_for_legacy_clients(client, user, auth_endpoint_url):
+    """Authorization GET keeps accepting legacy requests that omit response_type."""
+    client.login(username=user.username, password="password")
+    response = client.get(auth_endpoint_url)
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
 def test_authenticated_normalizes_repeated_scope_tokens(client, user):
     """Authorization GET normalizes whitespace and repeated scopes for display."""
     client.login(username=user.username, password="password")
@@ -188,9 +233,11 @@ def test_consent_approval(client, user):
 
     # Should redirect with auth code
     assert response.status_code == 302
-    assert "code" in response.url
-    assert "state=1234567890" in response.url
-    assert "me=http%3A%2F%2Fexample.org" in response.url
+    data = parse_qs(urlparse(response.url).query)
+    assert "code" in data
+    assert data["state"] == ["1234567890"]
+    assert data["me"] == ["http://example.org"]
+    assert data["iss"] == ["http://testserver/indieweb/"]
 
     # Auth object should be created
     auth = Auth.objects.get(client_id="https://webapp.example.org", me="http://example.org")
@@ -393,6 +440,7 @@ def test_consent_approval_merges_existing_query(client, user):
     assert "code" in qs
     assert qs["state"] == ["1234567890"]
     assert qs["me"] == ["http://example.org"]
+    assert qs["iss"] == ["http://testserver/indieweb/"]
 
 
 @pytest.mark.django_db
@@ -416,6 +464,7 @@ def test_consent_denial_merges_existing_query(client, user):
     assert qs["next"] == ["/x"]
     assert qs["error"] == ["access_denied"]
     assert qs["state"] == ["1234567890"]
+    assert "iss" not in qs
 
 
 PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
@@ -835,4 +884,47 @@ def test_post_verify_auth_code(client, user):
     response = client.post(base_url, data=verify_data)
 
     assert response.status_code == 200
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
     assert "me=http%3A%2F%2Fexample.org" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_post_verify_auth_code_returns_json_when_requested(client, user):
+    """Code verification returns JSON only when the client explicitly prefers it."""
+    auth = Auth.objects.create(
+        owner=user,
+        client_id="https://webapp.example.org",
+        redirect_uri="https://webapp.example.org/auth/callback",
+        state="1234567890",
+        scope="post",
+        me="http://example.org",
+    )
+    response = client.post(
+        reverse("indieweb:auth"),
+        data={"code": auth.key, "client_id": auth.client_id},
+        HTTP_ACCEPT="application/json",
+    )
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    assert response.json() == {"me": "http://example.org"}
+
+
+@pytest.mark.django_db
+def test_post_verify_auth_code_keeps_default_form_response_for_wildcard_accept(client, user):
+    """Wildcard Accept headers do not switch legacy code verification responses to JSON."""
+    auth = Auth.objects.create(
+        owner=user,
+        client_id="https://webapp.example.org",
+        redirect_uri="https://webapp.example.org/auth/callback",
+        state="1234567890",
+        scope="post",
+        me="http://example.org",
+    )
+    response = client.post(
+        reverse("indieweb:auth"),
+        data={"code": auth.key, "client_id": auth.client_id},
+        HTTP_ACCEPT="*/*",
+    )
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert parse_qs(response.content.decode("utf-8")) == {"me": ["http://example.org"]}

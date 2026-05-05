@@ -80,9 +80,13 @@ URL from your profile page with ``rel="indieauth-metadata"``. The older
 useful for legacy clients.
 
 This metadata slice does not add token introspection, protocol token
-revocation, refresh tokens, user-info/profile claims, or the IndieAuth
-authorization-response ``iss`` parameter. Those capabilities should only be
-advertised after their endpoints or redirect behavior are implemented.
+revocation, refresh tokens, or user-info/profile claims. Those capabilities
+should only be advertised after their endpoints or response behavior are
+implemented.
+
+When built-in CORS is configured with ``INDIEWEB_CORS_ALLOWED_ORIGINS``, the
+metadata endpoint participates as a public read-only ``GET`` endpoint. It is
+not rate limited by django-indieweb's optional protocol rate limiter.
 
 Managing Access Tokens
 ----------------------
@@ -106,12 +110,12 @@ Django-IndieWeb supports two different IndieAuth flows:
 **Authentication Only (No Scopes)**
    Used when logging into websites with your domain. No consent screen is required since no permissions are granted::
 
-      GET /indieweb/auth/?me=https://example.com&client_id=https://site.com&redirect_uri=...&state=...
+      GET /indieweb/auth/?response_type=code&me=https://example.com&client_id=https://site.com&redirect_uri=...&state=...
 
 **Authorization with Scopes**
    Used when granting permissions to apps (like Micropub clients). Shows consent screen::
 
-      GET /indieweb/auth/?me=https://example.com&client_id=https://app.com&redirect_uri=...&state=...&scope=create+update
+      GET /indieweb/auth/?response_type=code&me=https://example.com&client_id=https://app.com&redirect_uri=...&state=...&scope=create+update
 
 Common scopes include:
 
@@ -128,6 +132,34 @@ extension-defined, and clients may request values such as ``profile``,
 ``media``, or site-specific scopes. django-indieweb enforces ``media`` for
 direct uploads to the Micropub media endpoint; other unknown scopes are stored
 but have no built-in resource-server behavior unless your application adds it.
+
+Wire Compatibility Policy
+-------------------------
+
+Current IndieAuth clients send ``response_type=code`` on the authorization
+request and ``grant_type=authorization_code`` when redeeming the code.
+django-indieweb accepts those values and rejects any other present value with
+HTTP 400. For backwards compatibility with older deployments and clients, both
+parameters remain optional: authorization requests that omit ``response_type``
+and token requests that omit ``grant_type`` continue to work.
+
+Successful authorization redirects include ``code``, ``state``, ``iss``, and
+the legacy ``me`` parameter. The ``iss`` value is derived from the same issuer
+policy as the bundled metadata endpoint. With the standard ``/indieweb/``
+mount it is ``https://example.com/indieweb/``. Host projects that route
+metadata at ``/.well-known/oauth-authorization-server`` should publish one
+canonical metadata URL and ensure clients compare redirects against that
+issuer. Denial redirects include ``error=access_denied`` and ``state`` only;
+the IndieAuth spec warns clients not to assume error responses originated from
+the intended authorization server.
+
+The authorization endpoint's profile-code verification POST and the token
+endpoint return JSON success bodies when the client explicitly prefers
+``Accept: application/json``. Default requests and wildcard-only
+``Accept: */*`` requests keep the legacy
+``application/x-www-form-urlencoded`` success body. Access-token responses now
+include ``token_type=Bearer`` in both formats, alongside ``access_token``,
+``expires_in``, ``scope``, and ``me``.
 
 Customizing the Consent Screen
 ------------------------------

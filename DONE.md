@@ -2,6 +2,46 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-05
+
+### Tighten IndieAuth authorization and token wire compatibility
+
+- Added backwards-compatible IndieAuth/OAuth wire handling: authorization GET accepts omitted ``response_type`` for
+  legacy clients, accepts ``response_type=code``, and rejects any other present value; token POST accepts omitted
+  ``grant_type`` for legacy clients, accepts ``grant_type=authorization_code``, and rejects any other present value.
+- Added explicit JSON success negotiation for profile-code verification and token exchange. JSON is returned only when
+  ``Accept: application/json`` is explicitly preferred; default and wildcard-only requests keep the legacy
+  ``application/x-www-form-urlencoded`` body. Access-token responses now include ``token_type=Bearer`` in both form and
+  JSON formats, while preserving the existing ``201`` newly-created and ``200`` reissued-token status semantics.
+- Added ``iss`` to successful authorization approval redirects using the same request-derived issuer policy as bundled
+  metadata, such as ``https://example.com/indieweb/`` for the standard mount. Denial redirects intentionally omit
+  ``iss`` because the IndieAuth spec says clients must not assume error responses came from the intended authorization
+  server.
+- Added read-only CORS support to the public IndieAuth metadata view for configured ``GET`` requests. The endpoint
+  remains public and is not covered by ``INDIEWEB_RATE_LIMITS``.
+- Backlog: removed the completed Priority 3 API Hardening item from ``BACKLOG.md``. Token introspection remains the
+  next API hardening item and still owns adding a real introspection endpoint plus any ``introspection_endpoint``
+  metadata advertisement.
+- Documentation: updated IndieAuth, API, and configuration docs with the compatibility policy, JSON negotiation,
+  ``token_type=Bearer``, authorization-response ``iss`` behavior, denial behavior, issuer guidance, and metadata CORS
+  behavior. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the compatibility changes and metadata CORS
+  follow-up.
+- Compatibility: existing auth-code, state, legacy ``me``, redirect-uri query merging, PKCE, scope normalization, scope
+  matching, one-time auth code use, token expiration, CORS, and rate-limit behavior remains intact. This slice did not
+  add token introspection, protocol token revocation, refresh tokens, user-info/profile claims beyond the existing
+  profile-code verification response, Pushed Authorization Requests, password setup, or Indiekit's signed-JWT
+  authorization-code model.
+- Follow-up risks: future introspection work should update metadata only when the real endpoint exists. Protocol
+  revocation, richer user-info/profile claims, refresh tokens, and client-facing canonical issuer choices for
+  host-level well-known deployments remain separate decisions.
+- Validation: ``uv run pytest tests/test_auth_endpoint.py tests/test_consent_screen.py tests/test_token_endpoint.py -q
+  --no-cov`` (147 passed), ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (38 passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (87 files already formatted), ``uv run mypy`` (no
+  issues), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no output), ``git diff --check`` (passed),
+  ``uv run pytest`` (789 passed, coverage gate passed at 90.18%), and ``uv run prek run --all-files`` (passed).
+
 ## 2026-05-03
 
 ### Add IndieAuth server metadata and discovery endpoints

@@ -109,6 +109,20 @@ def test_allowed_origin_gets_cors_headers_on_actual_response(client, settings, t
 
 
 @pytest.mark.django_db
+def test_allowed_origin_gets_cors_headers_on_metadata_response(client, settings):
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
+    url = reverse("indieweb:auth-metadata")
+
+    response = client.get(url, HTTP_ORIGIN=ALLOWED_ORIGIN)
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    assert response["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
+    assert response["Vary"] == "Origin"
+    assert response.json()["issuer"] == "http://testserver/indieweb/"
+
+
+@pytest.mark.django_db
 def test_disallowed_origin_gets_no_cors_headers_on_actual_response(client, settings, token):
     settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
     url = reverse("indieweb:micropub")
@@ -199,6 +213,7 @@ def test_wildcard_with_credentials_echoes_origin(client, settings, token):
     ("endpoint_name", "method", "args"),
     [
         ("auth", "GET", ()),
+        ("auth-metadata", "GET", ()),
         ("auth", "POST", ()),
         ("token", "POST", ()),
         ("micropub", "GET", ()),

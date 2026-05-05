@@ -180,13 +180,14 @@ Response fields:
 - ``service_documentation`` - Human-facing documentation URL for
   django-indieweb's IndieAuth behavior.
 
+When built-in CORS is enabled, this public read-only endpoint supports
+configured ``GET`` preflight and actual response headers. It is not covered by
+``INDIEWEB_RATE_LIMITS``.
+
 The response intentionally omits ``introspection_endpoint``,
 ``revocation_endpoint``, and ``userinfo_endpoint`` because django-indieweb does
 not implement those protocol endpoints in this slice. The browser token
 management UI at ``/indieweb/tokens/`` is not a protocol revocation endpoint.
-The metadata also does not advertise ``authorization_response_iss_parameter_supported``
-yet; adding the ``iss`` redirect parameter remains a future IndieAuth wire
-compatibility item.
 
 IndieAuth Flow
 --------------
@@ -228,6 +229,10 @@ Initiates the authorization flow.
 
 **Optional Parameters:**
 
+- ``response_type`` - Current IndieAuth clients send ``code``. django-indieweb
+  accepts ``response_type=code`` and rejects any other present value with HTTP
+  400 ``invalid response_type``. Omitted ``response_type`` remains accepted for
+  legacy clients.
 - ``scope`` - Space-separated list of scopes (e.g., "create update"). The
   value is normalized before display/storage by splitting on whitespace,
   removing duplicate tokens while preserving first-seen order, and joining
@@ -250,14 +255,18 @@ Initiates the authorization flow.
 **Response:**
 
 - If user is not authenticated: Redirects to Django login
-- If user is authenticated: Redirects to ``redirect_uri`` with auth code
+- If user is authenticated and approves: Redirects to ``redirect_uri`` with
+  ``code``, ``state``, ``iss``, and the legacy ``me`` parameter
+- If user denies: Redirects to ``redirect_uri`` with ``error=access_denied``
+  and ``state``. Denial redirects do not include ``iss`` because clients must
+  not assume error responses originated from the intended authorization server.
 
 **Example Response:**
 
 .. code-block:: http
 
     HTTP/1.1 302 Found
-    Location: https://app.example.com/callback?code=abc123&state=1234567890&me=https://user.example.com
+    Location: https://app.example.com/callback?code=abc123&state=1234567890&me=https://user.example.com&iss=https%3A%2F%2Fyoursite.com%2Findieweb%2F
 
 POST Request
 ~~~~~~~~~~~~
@@ -281,7 +290,10 @@ Verifies an authorization code (used for code verification).
 
 **Response:**
 
-Returns the ``me`` parameter associated with the auth code.
+Returns the ``me`` parameter associated with the auth code. When the client
+explicitly prefers ``Accept: application/json``, the success response is JSON.
+Default requests and wildcard-only ``Accept: */*`` requests keep the legacy
+form-encoded body.
 
 **Example Response:**
 
@@ -291,6 +303,13 @@ Returns the ``me`` parameter associated with the auth code.
     Content-Type: application/x-www-form-urlencoded
 
     me=https://user.example.com
+
+.. code-block:: http
+
+    HTTP/1.1 200 OK
+    Content-Type: application/json
+
+    {"me": "https://user.example.com"}
 
 Token Endpoint
 --------------
@@ -309,6 +328,10 @@ POST Request
 
 **Optional Parameters:**
 
+- ``grant_type`` - Current IndieAuth clients send ``authorization_code``.
+  django-indieweb accepts ``grant_type=authorization_code`` and rejects any
+  other present value with HTTP 400 ``invalid_request``. Omitted
+  ``grant_type`` remains accepted for legacy clients.
 - ``redirect_uri`` - If sent, it must be a syntactically valid ``http``/``https`` URL with no fragment delimiter (``#``) and no userinfo (``user:pass@``), and must match the value used in the original auth request after normalizing scheme and host case (path and query are compared verbatim); malformed values and mismatches are rejected with ``invalid_grant``
 - ``me`` - The user's profile URL; falls back to the value stored with the auth code
 - ``scope`` - Optional scope confirmation. If omitted, the token is issued
@@ -339,7 +362,10 @@ POST Request
 
 **Response:**
 
-Returns an access token.
+Returns an access token. When the client explicitly prefers
+``Accept: application/json``, the success response is JSON. Default requests
+and wildcard-only ``Accept: */*`` requests keep the legacy form-encoded body.
+Both formats include ``token_type=Bearer``.
 
 **Example Response:**
 
@@ -348,7 +374,20 @@ Returns an access token.
     HTTP/1.1 201 Created
     Content-Type: application/x-www-form-urlencoded
 
-    access_token=xyz789&scope=create&me=https://user.example.com&expires_in=86400
+    access_token=xyz789&token_type=Bearer&expires_in=86400&scope=create&me=https://user.example.com
+
+.. code-block:: http
+
+    HTTP/1.1 201 Created
+    Content-Type: application/json
+
+    {
+        "access_token": "xyz789",
+        "token_type": "Bearer",
+        "expires_in": 86400,
+        "scope": "create",
+        "me": "https://user.example.com"
+    }
 
 The ``expires_in`` value is the remaining token lifetime in seconds. The
 default lifetime is 24 hours and can be tuned with the
@@ -921,6 +960,8 @@ All endpoints may return these error responses:
 **400 Bad Request — ``invalid_request``**
 
 - Missing required ``code`` or ``client_id`` on token exchange
+- ``grant_type`` sent on token exchange is present but is not
+  ``authorization_code``
 - ``client_id`` on token exchange is malformed (invalid URL, contains a ``#``
   delimiter, includes userinfo, or uses a disallowed scheme)
 - ``client_id`` on token exchange is rejected by the configured
