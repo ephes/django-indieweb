@@ -40,6 +40,22 @@ class MicropubEntryList:
     total: int | None = None
 
 
+@dataclass
+class MicropubMediaItem:
+    """Represents a host-owned Micropub media item."""
+
+    url: str
+    properties: dict[str, list[Any]]
+
+
+@dataclass
+class MicropubMediaList:
+    """Represents a page of host-owned Micropub media items."""
+
+    items: list[MicropubMediaItem]
+    total: int | None = None
+
+
 class MicropubContentHandler(ABC):
     """
     Abstract base class for Micropub content handlers.
@@ -142,6 +158,50 @@ class MicropubContentHandler(ABC):
         ``filter`` is ``None`` when the client omitted it or submitted an empty value.
         ``total`` should only be set when it is known accurately after filtering and
         before pagination.
+        """
+        return None
+
+    def list_media(
+        self,
+        user: "AbstractBaseUser",
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        filter: str | None = None,
+    ) -> MicropubMediaList | None:
+        """
+        Return a page of host-owned media for ``GET /indieweb/media/?q=source``.
+
+        The default ``None`` return means media enumeration is unsupported by the
+        handler. django-indieweb does not maintain a built-in media index; host
+        applications that can list uploaded media should implement this hook and
+        enforce their own ownership policy before returning results. Return an
+        empty ``MicropubMediaList(items=[])`` for "no items"; return ``None`` only
+        when list mode is unsupported. Override this method on the handler
+        subclass; instance-level assignments are not detected by the view.
+        """
+        return None
+
+    def get_media(self, url: str, user: "AbstractBaseUser") -> MicropubMediaItem | None:
+        """
+        Return metadata for one host-owned media URL.
+
+        The default ``None`` return means the handler either does not support
+        media lookup or does not recognize the submitted URL as host-owned.
+        Override this method on the handler subclass; instance-level assignments
+        are not detected by the view.
+        """
+        return None
+
+    def delete_media(self, url: str, user: "AbstractBaseUser") -> bool | None:
+        """
+        Delete one host-owned media URL when supported.
+
+        Return ``True`` after deleting the media item, ``False`` to reject a
+        recognized-but-not-deleted URL, or ``None`` when media deletion is
+        unsupported or the URL is unknown. django-indieweb never infers storage
+        paths from submitted URLs for this operation. Override this method on the
+        handler subclass; instance-level assignments are not detected by the view.
         """
         return None
 

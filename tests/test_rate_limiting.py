@@ -250,6 +250,9 @@ def test_auth_media_and_webmention_status_endpoint_keys_are_limited(client, sett
     assert client.post(media_url, data={}).status_code == 401
     assert client.post(media_url, data={}).status_code == 429
 
+    assert client.get(media_url).status_code == 401
+    assert client.get(media_url).status_code == 429
+
     assert client.get(status_url).status_code == 200
     assert client.get(status_url).status_code == 429
 

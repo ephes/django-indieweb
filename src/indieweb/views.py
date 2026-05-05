@@ -31,7 +31,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
 from .cors import CorsMixin
-from .handlers import get_micropub_handler
+from .handlers import MicropubContentHandler, get_micropub_handler
 from .models import Auth, Token, Webmention, WebSubSubscription
 from .processors import WebmentionProcessor
 from .rate_limit import RateLimitMixin
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
     from django.core.files.uploadedfile import UploadedFile
 
-    from .handlers import MicropubContentHandler, MicropubEntry
+    from .handlers import MicropubEntry, MicropubMediaItem
 
 logger = logging.getLogger(__name__)
 
@@ -1608,26 +1608,192 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
 class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, View):
     """
-    Micropub media endpoint for direct file uploads.
+    Micropub media endpoint for direct file uploads and host-owned media hooks.
 
     Accepts multipart/form-data uploads with a single ``file`` part, stores
     the file through Django's configured storage backend, and returns the
-    stored media URL in the Location header.
+    stored media URL in the Location header. Optional source and delete hooks
+    are delegated to the configured Micropub handler when the host implements
+    them.
     """
 
     rate_limit_key = "media"
-    cors_allowed_methods = ("POST",)
+    cors_allowed_methods = ("GET", "POST")
 
     def _scope_authorized(self) -> bool:
-        """Require the conventional Micropub ``media`` scope for uploads."""
+        """Require the conventional Micropub ``media`` scope for all media operations."""
         return self.authorized(self.token.client_id, self.token.scope, MICROPUB_MEDIA_SCOPE)
 
     def _invalid_request(self) -> HttpResponse:
         return HttpResponse("invalid_request", status=400)
 
+    def _not_implemented(self) -> HttpResponse:
+        return HttpResponse("not_implemented", status=501)
+
+    @staticmethod
+    def _parse_optional_non_negative_int(value: str | None) -> int | None:
+        if value is None:
+            return None
+        parsed = int(value)
+        if parsed < 0:
+            raise ValueError
+        return parsed
+
+    @staticmethod
+    def _media_item_body(item: MicropubMediaItem) -> dict[str, Any]:
+        properties = dict(item.properties)
+        properties.setdefault("url", [item.url])
+        return {"properties": properties}
+
+    @staticmethod
+    def _handler_overrides(handler: MicropubContentHandler, method_name: str) -> bool:
+        return getattr(type(handler), method_name) is not getattr(MicropubContentHandler, method_name)
+
+    def _delete_action(self, request: HttpRequest) -> str | None:
+        action = request.POST.get("action")
+        if action:
+            return action
+        if request.content_type == "application/json":
+            payload = self._json_payload(request)
+            if payload is None:
+                return None
+            value = payload.get("action")
+            if isinstance(value, str):
+                return value
+        return None
+
+    def _json_payload(self, request: HttpRequest) -> dict[str, Any] | None:
+        if request.content_type != "application/json":
+            return None
+        try:
+            payload = json.loads(request.body)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _delete_url(self, request: HttpRequest) -> str | None:
+        url = request.POST.get("url")
+        if url:
+            return url
+        payload = self._json_payload(request)
+        if payload is None:
+            return None
+        value = payload.get("url")
+        if isinstance(value, str) and value:
+            return value
+        return None
+
+    def _handle_source_by_url_query(self, request: HttpRequest, handler: MicropubContentHandler) -> HttpResponse:
+        url = request.GET.get("url")
+        if not url:
+            return self._invalid_request()
+        if not self._handler_overrides(handler, "get_media"):
+            return self._not_implemented()
+        try:
+            item = handler.get_media(url, self.token.owner)
+        except ValueError as exc:
+            logger.warning(f"get_media rejected url={url!r}: {exc}")
+            return self._invalid_request()
+        except Exception:
+            logger.exception(f"Unexpected error in get_media for url={url!r}")
+            return HttpResponse(status=500)
+        if item is None:
+            logger.warning(f"get_media did not find url={url!r}")
+            return self._invalid_request()
+        return HttpResponse(json.dumps(self._media_item_body(item)), content_type="application/json")
+
+    def _handle_source_list_query(self, request: HttpRequest, handler: MicropubContentHandler) -> HttpResponse:
+        if not self._handler_overrides(handler, "list_media"):
+            return self._not_implemented()
+
+        try:
+            limit = self._parse_optional_non_negative_int(request.GET.get("limit"))
+            offset = self._parse_optional_non_negative_int(request.GET.get("offset"))
+        except ValueError:
+            return self._invalid_request()
+
+        effective_offset = 0 if offset is None else offset
+        try:
+            result = handler.list_media(
+                self.token.owner,
+                limit=limit,
+                offset=effective_offset,
+                filter=request.GET.get("filter") or None,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "list_media rejected source query "
+                f"limit={limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}: {exc}"
+            )
+            return self._invalid_request()
+        except Exception:
+            logger.exception(
+                "Unexpected error in list_media for source query "
+                f"limit={limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}"
+            )
+            return HttpResponse(status=500)
+
+        if result is None:
+            return self._not_implemented()
+
+        body: dict[str, Any] = {
+            "items": [self._media_item_body(item) for item in result.items],
+            "paging": {
+                "limit": limit,
+                "offset": effective_offset,
+            },
+        }
+        if result.total is not None:
+            body["paging"]["total"] = result.total
+        return HttpResponse(json.dumps(body), content_type="application/json")
+
+    def _handle_source_query(self, request: HttpRequest) -> HttpResponse:
+        handler = get_micropub_handler()
+        if "url" in request.GET:
+            return self._handle_source_by_url_query(request, handler)
+        return self._handle_source_list_query(request, handler)
+
+    def _handle_delete(self, request: HttpRequest) -> HttpResponse:
+        url = self._delete_url(request)
+        if not url:
+            return self._invalid_request()
+
+        handler = get_micropub_handler()
+        if not self._handler_overrides(handler, "delete_media"):
+            return self._not_implemented()
+        try:
+            deleted = handler.delete_media(url, self.token.owner)
+        except ValueError as exc:
+            logger.warning(f"delete_media rejected url={url!r}: {exc}")
+            return self._invalid_request()
+        except Exception:
+            logger.exception(f"Unexpected error in delete_media for url={url!r}")
+            return HttpResponse(status=500)
+
+        if deleted is not True:
+            logger.warning(f"delete_media did not delete url={url!r}")
+            return self._invalid_request()
+        return HttpResponse(status=204)
+
+    def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        if not self._scope_authorized():
+            return HttpResponse("authorization error", status=403)
+
+        q = request.GET.get("q")
+        if not q:
+            return self._invalid_request()
+        if q != "source":
+            return self._not_implemented()
+        return self._handle_source_query(request)
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         if not self._scope_authorized():
             return HttpResponse("authorization error", status=403)
+
+        if self._delete_action(request) == "delete":
+            return self._handle_delete(request)
 
         if request.content_type != "multipart/form-data" or "file" not in request.FILES:
             return self._invalid_request()

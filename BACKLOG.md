@@ -31,10 +31,7 @@ No current Tooling and Maintainability items.
 
 ### Micropub Enhancements and Extensions
 
-- [ ] Add Micropub media source and delete extension points.
-  - Outcome: add optional media handler/storage hooks so ``GET /indieweb/media/?q=source`` can list uploaded media or return metadata for a submitted ``url``, and ``POST /indieweb/media/`` with ``action=delete`` can delete host-owned media when supported. Preserve current direct upload behavior and return clear ``not implemented`` or ``invalid_request`` responses when no media listing/deletion hook is configured.
-  - References: local ``src/indieweb/views.py``, ``tests/test_micropub_media.py``, ``docs/micropub.rst``, ``docs/api.rst``, and ``docs/configuration.rst``; Indiekit ``/Users/jochen/src/getindiekit-indiekit/packages/endpoint-media/lib/controllers/query.js``, ``lib/controllers/action.js``, ``lib/media-data.js``, ``lib/media-content.js``, and ``packages/endpoint-media/README.md`` at ``1ee20d06``; Micropub media extensions ``https://github.com/indieweb/micropub-extensions/issues/13``, ``https://github.com/indieweb/micropub-extensions/issues/14``, ``https://github.com/indieweb/micropub-extensions/issues/30``, and ``https://github.com/indieweb/micropub-extensions/issues/37``.
-  - Scope exclusions: do not add a media management UI, Sharp-style image transforms, MongoDB-like media index, or non-Django storage backend abstraction unless a later design item calls for it.
+No current Micropub Enhancements and Extensions items.
 
 ### Syndication and Storage Examples
 

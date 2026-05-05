@@ -219,6 +219,7 @@ def test_wildcard_with_credentials_echoes_origin(client, settings, token):
         ("token-introspection", "POST", ()),
         ("micropub", "GET", ()),
         ("micropub", "POST", ()),
+        ("media", "GET", ()),
         ("media", "POST", ()),
         ("webmention", "GET", ()),
         ("webmention", "POST", ()),

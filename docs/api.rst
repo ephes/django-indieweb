@@ -24,7 +24,7 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/token/introspect/`` - Token introspection endpoint for verifying bearer tokens
 - ``/indieweb/tokens/`` - Browser UI for authenticated users to view and revoke their own tokens
 - ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
-- ``/indieweb/media/`` - Micropub media endpoint for direct media uploads
+- ``/indieweb/media/`` - Micropub media endpoint for direct uploads and optional host-owned media source/delete hooks
 - ``/indieweb/websub/<token>/`` - WebSub subscriber callback for one subscription token
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
@@ -1118,10 +1118,11 @@ It uses the same bearer-token authentication path as the Micropub endpoint,
 including token expiration, inactive-owner rejection, and the configured
 ``INDIEWEB_CLIENT_ID_VALIDATOR`` resource-server policy.
 
-Uploads require the exact ``media`` scope. This follows the convention used by
-Quill and similar Micropub clients, while keeping django-indieweb's scope model
-explicit. The scope check is separate from ``create``/``post`` so a token that
-can create entries cannot upload files unless the user approved media access.
+Uploads, source queries, and media delete actions require the exact ``media``
+scope. This follows the convention used by Quill and similar Micropub clients,
+while keeping django-indieweb's scope model explicit. The scope check is
+separate from ``create``/``post`` so a token that can create entries cannot use
+the media endpoint unless the user approved media access.
 
 POST Request
 ~~~~~~~~~~~~
@@ -1161,10 +1162,97 @@ The response body is empty. Clients can use the ``Location`` URL as a
 ``photo``, ``audio``, or ``video`` property value in a later Micropub create or
 update request.
 
+GET Source Query
+~~~~~~~~~~~~~~~~
+
+``GET /indieweb/media/?q=source`` delegates to optional host-owned media hooks
+on the configured ``MicropubContentHandler``. django-indieweb does not maintain
+a media index or infer storage ownership from URLs.
+
+When the host implements ``list_media(user, limit=..., offset=..., filter=...)``,
+the endpoint returns a list response:
+
+.. code-block:: http
+
+    GET /indieweb/media/?q=source&limit=10&offset=0 HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+
+.. code-block:: json
+
+    {
+        "items": [
+            {
+                "properties": {
+                    "url": ["https://yoursite.com/media/photo.jpg"],
+                    "name": ["photo.jpg"],
+                    "media-type": ["photo"]
+                }
+            }
+        ],
+        "paging": {"limit": 10, "offset": 0, "total": 1}
+    }
+
+``limit`` and ``offset`` must be non-negative integers when present.
+``filter`` is passed to the hook as a string or ``None``. ``total`` appears
+only when the hook returns a known total.
+
+When the host implements ``get_media(url, user)``, submit ``url`` to retrieve
+one media item's metadata:
+
+.. code-block:: http
+
+    GET /indieweb/media/?q=source&url=https://yoursite.com/media/photo.jpg HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+
+.. code-block:: json
+
+    {
+        "properties": {
+            "url": ["https://yoursite.com/media/photo.jpg"],
+            "name": ["photo.jpg"],
+            "media-type": ["photo"]
+        }
+    }
+
+If the hook omits a ``url`` property, django-indieweb adds one from the
+``MicropubMediaItem.url`` value.
+
+POST Delete Action
+~~~~~~~~~~~~~~~~~~
+
+``POST /indieweb/media/`` with ``action=delete`` delegates to the optional
+``delete_media(url, user)`` hook. Form-encoded bodies are supported; JSON
+objects with ``action`` and ``url`` are also accepted.
+
+.. code-block:: http
+
+    POST /indieweb/media/ HTTP/1.1
+    Host: yoursite.com
+    Authorization: Bearer xyz789
+    Content-Type: application/x-www-form-urlencoded
+
+    action=delete&url=https://yoursite.com/media/photo.jpg
+
+Successful host deletes return:
+
+.. code-block:: http
+
+    HTTP/1.1 204 No Content
+
+The response body is empty. Missing, empty, unknown, or rejected URLs return
+``400 invalid_request``. When no media delete hook is configured, the endpoint
+returns ``501 not_implemented``. django-indieweb never deletes
+``default_storage`` files by guessing from arbitrary submitted URLs.
+
 **Error Response:**
 
 - ``400 Bad Request`` body ``invalid_request`` when the request is not
-  ``multipart/form-data`` or does not include a ``file`` part
+  ``multipart/form-data`` or does not include a ``file`` part; when
+  ``q=source`` has an empty or unknown ``url`` or malformed ``limit``/``offset``;
+  when ``action=delete`` has a missing, empty, unknown, or rejected ``url``;
+  or when a media hook raises ``ValueError``
 - ``401 Unauthorized`` body ``authentication error`` for missing, invalid, or
   expired tokens, or inactive token owners
 - ``413 Payload Too Large`` body ``invalid_request`` when the uploaded file
@@ -1175,8 +1263,11 @@ update request.
   ``media`` scope
 - ``403 Forbidden`` body ``invalid_client`` when the stored token's
   ``client_id`` is rejected by ``INDIEWEB_CLIENT_ID_VALIDATOR``
+- ``501 Not Implemented`` body ``not_implemented`` when the requested source
+  or delete hook is not configured on the handler
 - ``500 Internal Server Error`` if the configured Django storage backend raises
-  unexpectedly while saving the upload
+  unexpectedly while saving the upload, or when a configured media hook raises
+  an unexpected exception
 
 Webmention Endpoint
 -------------------
@@ -1319,6 +1410,13 @@ All endpoints may return these error responses:
 - Micropub ``GET ?q=syndicate-to`` returns an empty list rather than an error
   when the configured handler omits ``syndicate-to`` or returns a non-list
   value.
+- Micropub media endpoint ``GET ?q=source&url=...`` with an empty ``url`` or a
+  URL unknown to the configured ``get_media()`` hook.
+- Micropub media endpoint ``GET ?q=source`` without ``url`` when ``limit`` or
+  ``offset`` is malformed, or when the configured ``list_media()`` hook rejects
+  the query by raising ``ValueError``.
+- Micropub media endpoint ``POST action=delete`` with a missing, empty,
+  unknown, or hook-rejected ``url``.
 - Micropub media endpoint upload requests that are not ``multipart/form-data``
   or do not include a ``file`` part.
 
@@ -1349,9 +1447,11 @@ All endpoints may return these error responses:
   requires ``create`` (or the legacy alias ``post``); ``POST action=update``
   requires ``update``; ``POST action=delete`` requires ``delete``;
   ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
-  ``update``; ``POST /indieweb/media/`` requires ``media``; and multipart
-  create uploads sent to ``POST /indieweb/micropub/`` remain create requests,
-  requiring ``create`` or ``post`` rather than ``media``. ``GET ?q=config``,
+  ``update``; ``POST /indieweb/media/`` requires ``media``; ``GET
+  /indieweb/media/?q=source`` and media ``POST action=delete`` also require
+  ``media``; and multipart create uploads sent to ``POST /indieweb/micropub/``
+  remain create requests, requiring ``create`` or ``post`` rather than
+  ``media``. ``GET ?q=config``,
   ``GET ?q=syndicate-to``, ``GET ?q=category``, ``GET ?q=channel``,
   ``GET ?q=media-endpoint``, ``GET ?q=post-types``, and ``GET`` with no ``q``
   only require an authenticated token. Stored ``scope`` is split on whitespace
@@ -1391,6 +1491,8 @@ All endpoints may return these error responses:
 
 - Micropub ``GET ?q=source`` without ``url`` when the configured handler does
   not support the optional ``MicropubContentHandler.list_entries()`` hook.
+- Micropub media endpoint ``GET ?q=source`` or ``POST action=delete`` when the
+  configured handler does not support the corresponding optional media hook.
 
 **500 Internal Server Error**
 
@@ -1399,6 +1501,8 @@ All endpoints may return these error responses:
   or raised any unexpected exception while servicing ``GET ?q=source`` by URL
   or list mode. The exception is logged via ``logger.exception`` so the stack
   trace stays in the server log rather than the response body.
+- A configured media hook raised an unexpected exception while servicing
+  ``GET /indieweb/media/?q=source`` or media ``POST action=delete``.
 - The configured Django storage backend raised unexpectedly while saving a
   Micropub media endpoint upload or multipart create ``photo`` upload.
 

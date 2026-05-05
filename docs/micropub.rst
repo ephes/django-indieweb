@@ -9,7 +9,8 @@ delete, and undelete content in your Django application, plus a Micropub media
 endpoint for direct media uploads. The content endpoint uses a pluggable
 handler system that allows you to integrate Micropub with any Django content
 model; the media endpoint stores uploads through Django's configured storage
-backend.
+backend and can delegate media listing, metadata, and deletion to optional
+host-owned hooks.
 
 Quick Start
 -----------
@@ -367,6 +368,89 @@ web server, CDN, storage backend, or application enforces equivalent limits.
 If you allow broad content types such as HTML or SVG, serve uploaded media
 from a separate origin or with defensive headers such as
 ``Content-Disposition: attachment``.
+
+Media Source and Delete Hooks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+django-indieweb does not keep a bundled media index. Direct uploads are stored
+through Django storage, but listing uploaded files, returning metadata for a
+specific media URL, and deleting media remain host-owned operations. Host
+projects can opt into those operations by implementing these optional
+``MicropubContentHandler`` hooks:
+
+- ``list_media(user, limit=None, offset=0, filter=None)``
+- ``get_media(url, user)``
+- ``delete_media(url, user)``
+
+The default hooks are unsupported. When no hook is configured,
+``GET /indieweb/media/?q=source`` and ``POST /indieweb/media/`` with
+``action=delete`` return ``501 not_implemented`` after the token and ``media``
+scope checks pass. django-indieweb never infers a storage path from a
+submitted URL and never deletes from ``default_storage`` for this action
+unless host code does so inside ``delete_media()``.
+
+List media with ``q=source``:
+
+.. code:: bash
+
+   curl https://example.com/indieweb/media/?q=source \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+Successful list responses are JSON:
+
+.. code:: json
+
+   {
+     "items": [
+       {
+         "properties": {
+           "url": ["https://example.com/media/photo.jpg"],
+           "name": ["photo.jpg"],
+           "media-type": ["photo"]
+         }
+       }
+     ],
+     "paging": {"limit": null, "offset": 0, "total": 1}
+   }
+
+``limit`` and ``offset`` are optional non-negative integers; malformed values
+return ``400 invalid_request``. ``filter`` is passed through to the host hook
+as submitted. ``total`` is included only when the hook returns a known total.
+
+Fetch metadata for one URL by adding ``url``:
+
+.. code:: bash
+
+   curl "https://example.com/indieweb/media/?q=source&url=https://example.com/media/photo.jpg" \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+The response is a single media object:
+
+.. code:: json
+
+   {
+     "properties": {
+       "url": ["https://example.com/media/photo.jpg"],
+       "name": ["photo.jpg"],
+       "media-type": ["photo"]
+     }
+   }
+
+An empty, unknown, or rejected ``url`` returns ``400 invalid_request``.
+Unexpected hook exceptions return ``500`` and are logged.
+
+Delete host-owned media by submitting ``action=delete`` and ``url`` to the
+media endpoint with a ``media``-scoped token:
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/media/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -d "action=delete" \
+     -d "url=https://example.com/media/photo.jpg"
+
+Successful deletes return ``204 No Content`` with an empty body. Missing,
+empty, unknown, or hook-rejected URLs return ``400 invalid_request``.
 
 Update, Delete, Undelete
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -872,8 +956,11 @@ The Micropub endpoint returns the following HTTP status codes:
   or an otherwise spec-non-conformant operation shape; a ``GET ?q=source``
   by-URL request had an empty ``url`` or a ``url`` unknown to the handler; a
   source-list request had malformed ``limit``/``offset`` or the handler raised
-  ``ValueError``; or a media endpoint upload was not ``multipart/form-data`` or
-  lacked the ``file`` part. Action, source-query, and media-upload client
+  ``ValueError``; a media endpoint ``q=source`` request had an empty or unknown
+  ``url`` or malformed ``limit``/``offset``; a media endpoint ``action=delete``
+  request had a missing, empty, unknown, or hook-rejected ``url``; or a media
+  endpoint upload was not ``multipart/form-data`` or lacked the ``file`` part.
+  Action, source-query, media-query, media-delete, and media-upload client
   failures use the plain-text body ``invalid_request``.
 - ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
   token's owner is inactive
@@ -888,13 +975,15 @@ The Micropub endpoint returns the following HTTP status codes:
   ``INDIEWEB_CLIENT_ID_VALIDATOR``
 - ``501 Not Implemented`` - ``GET ?q=source`` without ``url`` reached a
   configured handler that does not support the optional ``list_entries()`` hook;
-  body ``not_implemented``
+  or ``GET /indieweb/media/?q=source`` / media ``action=delete`` reached a
+  handler that does not support the corresponding optional media hook; body
+  ``not_implemented``
 - ``500 Internal Server Error`` - The configured handler raised an unexpected
   exception (e.g. database failure) during ``update``/``delete``/``undelete``
-  or ``GET ?q=source``, or the configured storage backend raised while saving
-  a media endpoint or multipart create upload; the exception is logged via
-  ``logger.exception`` so the stack trace stays in the server log rather than
-  the response body
+  or ``GET ?q=source``, a configured media hook raised an unexpected exception,
+  or the configured storage backend raised while saving a media endpoint or
+  multipart create upload; the exception is logged via ``logger.exception`` so
+  the stack trace stays in the server log rather than the response body
 
 See :doc:`api` for the full per-operation scope mapping and the complete
 error-response listing across all IndieWeb endpoints.

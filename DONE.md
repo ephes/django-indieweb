@@ -4,6 +4,65 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Add Micropub media source and delete extension points
+
+- Added optional host-owned media hooks on ``MicropubContentHandler``:
+  ``list_media(user, limit=None, offset=0, filter=None)``,
+  ``get_media(url, user)``, and ``delete_media(url, user)``. The default
+  methods are unsupported and do not require existing custom handlers to
+  change.
+- Added ``MicropubMediaItem`` and ``MicropubMediaList`` result dataclasses for
+  hook responses. django-indieweb normalizes successful media source responses
+  to ``{"properties": ...}`` items and adds a ``url`` property from the media
+  item URL when a hook omits it.
+- Added ``GET /indieweb/media/?q=source`` with the existing bearer-token,
+  expired-token, inactive-owner, ``INDIEWEB_CLIENT_ID_VALIDATOR``, rate-limit,
+  CORS, and exact ``media`` scope behavior. List mode dispatches to
+  ``list_media()`` with optional ``limit``, ``offset``, and ``filter``; by-URL
+  mode dispatches to ``get_media(url, user)``.
+- Added media ``POST action=delete`` dispatch before the upload-only validation
+  path. Form-encoded delete requests and JSON object bodies are accepted when
+  they include ``url``. Successful deletes return ``204 No Content``.
+- Preserved direct media upload behavior: multipart ``file`` uploads still use
+  the existing Django storage name generation, size limit, content-type
+  allowlist, error mapping, and ``201 Created`` ``Location`` response. Multipart
+  Micropub create ``photo`` uploads remain unchanged.
+- Kept the storage boundary conservative. django-indieweb does not maintain a
+  built-in media index, infer storage paths from arbitrary URLs, delete
+  ``default_storage`` files without a host hook, add a media management UI,
+  transform media, or add a non-Django storage abstraction.
+- Error behavior: missing hooks return ``501 not_implemented``; missing/empty,
+  unknown, or hook-rejected media URLs return ``400 invalid_request``;
+  malformed media list ``limit``/``offset`` values return
+  ``400 invalid_request``; unexpected hook exceptions return ``500`` and are
+  logged with ``logger.exception``.
+- Backlog: removed the completed Priority 4 media source/delete item from
+  ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/micropub.rst``, ``docs/api.rst``, and
+  ``docs/configuration.rst`` with the host-owned hook boundary, response
+  shapes, scope policy, errors, and the explicit no-new-setting/no-built-in-index
+  behavior. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased media
+  source/delete extension-point note.
+- Compatibility: content Micropub ``q=config``, ``q=media-endpoint``,
+  ``q=post-types``, ``q=source`` for posts, update/delete/undelete actions,
+  direct media uploads, multipart create uploads, token authentication, client
+  ID validation, CORS, rate limiting, and built-in IndieAuth metadata scopes are
+  preserved apart from the additive media endpoint ``GET`` and delete branches.
+- Follow-up risks: hosts still need to implement their own durable media
+  index, metadata extraction, storage deletion policy, audit trail, thumbnails,
+  transforms, and UI if they want those capabilities.
+- Validation: ``uv run pytest tests/test_micropub_media.py -q --no-cov`` (79
+  passed), ``uv run pytest tests/test_micropub_queries.py
+  tests/test_micropub_endpoint.py -q --no-cov`` (181 passed), ``uv run pytest
+  tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (41 passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (88 files
+  already formatted), ``uv run mypy`` (no issues in 44 source files), ``uv run
+  sphinx-build -W -b html docs docs/_build/html`` (passed), ``git ls-files
+  docs/_build --modified --others --exclude-standard`` (no output), ``git
+  diff --check`` (passed), ``uv run pytest`` (958 passed, coverage gate passed
+  at 90.54%), and ``uv run prek run --all-files`` (passed).
+
 ### Preserve Micropub command properties and define draft-scope semantics
 
 - Extended form-encoded Micropub create parsing so submitted ``mp-slug``,

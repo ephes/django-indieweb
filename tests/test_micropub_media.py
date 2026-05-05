@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from indieweb import models
-from indieweb.handlers import InMemoryMicropubHandler
+from indieweb.handlers import InMemoryMicropubHandler, MicropubMediaItem, MicropubMediaList
 
 
 @pytest.fixture
@@ -41,6 +41,54 @@ def _upload(
     name: str = "sunset.jpg", content: bytes = b"image bytes", content_type: str = "image/jpeg"
 ) -> SimpleUploadedFile:
     return SimpleUploadedFile(name, content, content_type=content_type)
+
+
+class _MediaHookHandler(InMemoryMicropubHandler):
+    def __init__(self):
+        super().__init__()
+        self.media_items = [
+            MicropubMediaItem(
+                url="https://example.org/media/photo.jpg",
+                properties={
+                    "url": ["https://example.org/media/photo.jpg"],
+                    "name": ["photo.jpg"],
+                    "media-type": ["photo"],
+                },
+            ),
+            MicropubMediaItem(
+                url="https://example.org/media/audio.mp3",
+                properties={
+                    "url": ["https://example.org/media/audio.mp3"],
+                    "name": ["audio.mp3"],
+                    "media-type": ["audio"],
+                },
+            ),
+        ]
+        self.deleted_urls: list[str] = []
+
+    def list_media(self, user, *, limit=None, offset=0, filter=None):
+        items = list(self.media_items)
+        if filter:
+            needle = filter.lower()
+            items = [item for item in items if needle in json.dumps(item.properties, sort_keys=True).lower()]
+        total = len(items)
+        if offset:
+            items = items[offset:]
+        if limit is not None:
+            items = items[:limit]
+        return MicropubMediaList(items=items, total=total)
+
+    def get_media(self, url, user):
+        for item in self.media_items:
+            if item.url == url:
+                return item
+        return None
+
+    def delete_media(self, url, user):
+        if self.get_media(url, user) is None:
+            return False
+        self.deleted_urls.append(url)
+        return True
 
 
 @pytest.mark.django_db
@@ -199,6 +247,327 @@ def test_media_upload_requires_media_scope(client, user, media_url, scope):
 
     assert response.status_code == 403
     assert response.content.decode("utf-8") == "authorization error"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", [None, "", "create", "post", "update", "delete", "mediaXYZ", "create_media"])
+def test_media_source_query_requires_media_scope(client, user, media_url, scope):
+    token = _make_token(user, scope)
+
+    response = client.get(f"{media_url}?q=source", Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 403
+    assert response.content.decode("utf-8") == "authorization error"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", [None, "", "create", "post", "update", "delete", "mediaXYZ", "create_media"])
+def test_media_delete_action_requires_media_scope(client, user, media_url, scope):
+    token = _make_token(user, scope)
+
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 403
+    assert response.content.decode("utf-8") == "authorization error"
+
+
+@pytest.mark.django_db
+def test_media_source_query_requires_q_parameter(client, user, media_url):
+    token = _make_token(user, "media")
+
+    response = client.get(media_url, Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_source_query_rejects_unsupported_query(client, user, media_url):
+    token = _make_token(user, "media")
+
+    response = client.get(f"{media_url}?q=config", Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 501
+    assert response.content.decode("utf-8") == "not_implemented"
+
+
+@pytest.mark.django_db
+def test_media_source_query_without_hook_returns_not_implemented(client, user, media_url):
+    token = _make_token(user, "media")
+
+    response = client.get(f"{media_url}?q=source", Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 501
+    assert response.content.decode("utf-8") == "not_implemented"
+
+
+@pytest.mark.django_db
+def test_media_source_query_list_returns_media_items(client, monkeypatch, user, media_url):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(
+        f"{media_url}?q=source&filter=photo&limit=1&offset=0",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    assert response.json() == {
+        "items": [
+            {
+                "properties": {
+                    "url": ["https://example.org/media/photo.jpg"],
+                    "name": ["photo.jpg"],
+                    "media-type": ["photo"],
+                }
+            }
+        ],
+        "paging": {"limit": 1, "offset": 0, "total": 1},
+    }
+
+
+@pytest.mark.django_db
+def test_media_source_query_list_omits_total_when_unknown(client, monkeypatch, user, media_url):
+    class NoTotalMediaHandler(_MediaHookHandler):
+        def list_media(self, user, *, limit=None, offset=0, filter=None):
+            return MicropubMediaList(items=self.media_items[:1])
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: NoTotalMediaHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(f"{media_url}?q=source", Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 200
+    assert response.json()["paging"] == {"limit": None, "offset": 0}
+
+
+@pytest.mark.django_db
+def test_media_source_query_by_url_returns_media_metadata(client, monkeypatch, user, media_url):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(
+        f"{media_url}?q=source&url=https://example.org/media/photo.jpg",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    assert response.json() == {
+        "properties": {
+            "url": ["https://example.org/media/photo.jpg"],
+            "name": ["photo.jpg"],
+            "media-type": ["photo"],
+        }
+    }
+
+
+@pytest.mark.django_db
+def test_media_source_query_by_url_adds_url_property_when_missing(client, monkeypatch, user, media_url):
+    class MissingUrlPropertyHandler(_MediaHookHandler):
+        def get_media(self, url, user):
+            return MicropubMediaItem(url=url, properties={"name": ["photo.jpg"]})
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: MissingUrlPropertyHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(
+        f"{media_url}?q=source&url=https://example.org/media/photo.jpg",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"properties": {"name": ["photo.jpg"], "url": ["https://example.org/media/photo.jpg"]}}
+
+
+@pytest.mark.django_db
+def test_media_source_query_by_url_without_hook_returns_not_implemented(client, user, media_url):
+    token = _make_token(user, "media")
+
+    response = client.get(
+        f"{media_url}?q=source&url=https://example.org/media/photo.jpg",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 501
+    assert response.content.decode("utf-8") == "not_implemented"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("query", ["url=", "limit=bad", "limit=-1", "offset=bad", "offset=-1"])
+def test_media_source_query_rejects_empty_url_or_malformed_paging(client, monkeypatch, user, media_url, query):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(f"{media_url}?q=source&{query}", Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_source_query_rejects_unknown_url(client, monkeypatch, user, media_url):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(
+        f"{media_url}?q=source&url=https://example.org/media/missing.jpg",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_source_query_returns_invalid_request_for_hook_value_error(client, monkeypatch, user, media_url):
+    class RejectingMediaHandler(_MediaHookHandler):
+        def get_media(self, url, user):
+            raise ValueError("not host-owned")
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: RejectingMediaHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(
+        f"{media_url}?q=source&url=https://example.org/media/photo.jpg",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_source_query_unexpected_hook_exception_returns_500(client, caplog, monkeypatch, user, media_url):
+    class BrokenMediaHandler(_MediaHookHandler):
+        def list_media(self, user, *, limit=None, offset=0, filter=None):
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: BrokenMediaHandler())
+    token = _make_token(user, "media")
+
+    response = client.get(f"{media_url}?q=source", Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 500
+    assert "Unexpected error in list_media" in caplog.text
+
+
+@pytest.mark.django_db
+def test_media_delete_without_hook_returns_not_implemented(client, user, media_url):
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 501
+    assert response.content.decode("utf-8") == "not_implemented"
+
+
+@pytest.mark.django_db
+def test_media_delete_with_hook_returns_no_content(client, monkeypatch, user, media_url):
+    handler = _MediaHookHandler()
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert handler.deleted_urls == ["https://example.org/media/photo.jpg"]
+
+
+@pytest.mark.django_db
+def test_media_delete_accepts_json_body(client, monkeypatch, user, media_url):
+    handler = _MediaHookHandler()
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data=json.dumps({"action": "delete", "url": "https://example.org/media/photo.jpg"}),
+        content_type="application/json",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 204
+    assert handler.deleted_urls == ["https://example.org/media/photo.jpg"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("payload", [{"action": "delete"}, {"action": "delete", "url": ""}])
+def test_media_delete_rejects_missing_or_empty_url(client, monkeypatch, user, media_url, payload):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    token = _make_token(user, "media")
+
+    response = client.post(media_url, data=payload, Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_delete_rejects_unknown_url(client, monkeypatch, user, media_url):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://example.org/media/missing.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_delete_returns_invalid_request_for_hook_value_error(client, monkeypatch, user, media_url):
+    class RejectingMediaHandler(_MediaHookHandler):
+        def delete_media(self, url, user):
+            raise ValueError("not host-owned")
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: RejectingMediaHandler())
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_delete_unexpected_hook_exception_returns_500(client, caplog, monkeypatch, user, media_url):
+    class BrokenMediaHandler(_MediaHookHandler):
+        def delete_media(self, url, user):
+            raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: BrokenMediaHandler())
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 500
+    assert "Unexpected error in delete_media" in caplog.text
 
 
 @pytest.mark.django_db

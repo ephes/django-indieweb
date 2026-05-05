@@ -318,6 +318,24 @@ Set this to ``None`` to disable django-indieweb's content-type check. If you
 allow broad uploads, serve media from a separate origin or with defensive
 headers such as ``Content-Disposition: attachment`` for risky types.
 
+Media Source and Delete Hooks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+No additional setting is required for Micropub media source or delete support.
+Those optional operations are exposed through the configured
+``INDIEWEB_MICROPUB_HANDLER``:
+
+- ``list_media(user, limit=None, offset=0, filter=None)``
+- ``get_media(url, user)``
+- ``delete_media(url, user)``
+
+When a handler does not implement a hook, ``/indieweb/media/`` returns
+``501 not_implemented`` for that operation after token authentication and the
+``media`` scope check. Host code owns any media index, metadata fields,
+ownership checks, storage deletion, and audit trail. django-indieweb does not
+add a media model, migration, management UI, image transform pipeline, or a
+non-Django storage abstraction for these hooks.
+
 INDIEWEB_WEBSUB_HUBS
 ~~~~~~~~~~~~~~~~~~~~
 
@@ -722,7 +740,8 @@ This creates the following endpoints:
 - ``/indieweb/tokens/`` - Browser UI for viewing and revoking the logged-in user's tokens
 - ``/indieweb/tokens/<pk>/revoke/`` - CSRF-protected POST action for revoking one owned token
 - ``/indieweb/micropub/`` - Micropub endpoint
-- ``/indieweb/media/`` - Micropub media endpoint
+- ``/indieweb/media/`` - Micropub media endpoint for uploads and optional
+  host-owned media source/delete hooks
 - ``/indieweb/websub/<token>/`` - WebSub subscriber callback endpoint
 - ``/indieweb/webmention/`` - Webmention receive endpoint
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
