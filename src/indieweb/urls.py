@@ -20,6 +20,7 @@ urlpatterns = [
     path("auth/", views.AuthView.as_view(), name="auth"),
     path("auth/metadata/", views.IndieAuthMetadataView.as_view(), name="auth-metadata"),
     path("token/", views.TokenView.as_view(), name="token"),
+    path("token/introspect/", views.TokenIntrospectionView.as_view(), name="token-introspection"),
     path("tokens/", views.TokenManagementView.as_view(), name="tokens"),
     path("tokens/<int:pk>/revoke/", views.TokenRevokeView.as_view(), name="token-revoke"),
     path("micropub/", views.MicropubView.as_view(), name="micropub"),

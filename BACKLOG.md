@@ -14,10 +14,7 @@ No current Priority 1 items.
 
 ### API Hardening
 
-- [ ] Add an IndieAuth token introspection endpoint and document revocation/user-info boundaries.
-  - Outcome: provide a token introspection endpoint for resource servers and clients that need to verify django-indieweb bearer tokens, returning inactive responses for missing, expired, revoked, inactive-owner, or disallowed-client tokens and active responses with at least ``me``, ``scope``, ``client_id``, and expiration metadata for valid tokens. Update server metadata to advertise the endpoint. Explicitly document that the existing ``/indieweb/tokens/`` browser revoke UI is not a protocol revocation endpoint, and decide whether protocol revocation and user-info stay out of scope or need separate backlog items.
-  - References: local ``src/indieweb/models.py``, ``src/indieweb/views.py``, ``src/indieweb/urls.py``, ``tests/test_token_endpoint.py``, ``tests/test_token_management.py``, ``docs/indieauth.rst``, and ``docs/api.rst``; Indiekit ``/Users/jochen/src/getindiekit-indiekit/packages/endpoint-auth/lib/controllers/introspection.js``, ``lib/token.js``, ``docs/specifications.md``, and ``test/integration/200-introspect-token-active.js`` at ``1ee20d06``; IndieAuth access-token verification spec ``https://indieauth.spec.indieweb.org/#access-token-verification``.
-  - Scope exclusions: do not expose full bearer token keys in browser UI, and do not implement refresh tokens or user-info profile claims in this introspection slice.
+No current API Hardening items.
 
 ### Tooling and Maintainability
 

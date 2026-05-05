@@ -21,6 +21,7 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/auth/`` - IndieAuth authorization endpoint
 - ``/indieweb/auth/metadata/`` - Public IndieAuth authorization-server metadata endpoint
 - ``/indieweb/token/`` - Token endpoint for exchanging auth codes
+- ``/indieweb/token/introspect/`` - Token introspection endpoint for verifying bearer tokens
 - ``/indieweb/tokens/`` - Browser UI for authenticated users to view and revoke their own tokens
 - ``/indieweb/micropub/`` - Micropub endpoint for creating, querying, updating, and deleting content
 - ``/indieweb/media/`` - Micropub media endpoint for direct media uploads
@@ -150,6 +151,7 @@ It is intended for clients that discover the server through
         "issuer": "https://yoursite.com/indieweb/",
         "authorization_endpoint": "https://yoursite.com/indieweb/auth/",
         "token_endpoint": "https://yoursite.com/indieweb/token/",
+        "introspection_endpoint": "https://yoursite.com/indieweb/token/introspect/",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["plain", "S256"],
@@ -167,6 +169,8 @@ Response fields:
   equivalent namespaced mount path.
 - ``token_endpoint`` - Absolute URL for ``/indieweb/token/`` or the equivalent
   namespaced mount path.
+- ``introspection_endpoint`` - Absolute URL for
+  ``/indieweb/token/introspect/`` or the equivalent namespaced mount path.
 - ``response_types_supported`` - ``["code"]``.
 - ``grant_types_supported`` - ``["authorization_code"]``, matching the token
   endpoint's authorization-code exchange behavior.
@@ -184,10 +188,10 @@ When built-in CORS is enabled, this public read-only endpoint supports
 configured ``GET`` preflight and actual response headers. It is not covered by
 ``INDIEWEB_RATE_LIMITS``.
 
-The response intentionally omits ``introspection_endpoint``,
-``revocation_endpoint``, and ``userinfo_endpoint`` because django-indieweb does
-not implement those protocol endpoints in this slice. The browser token
-management UI at ``/indieweb/tokens/`` is not a protocol revocation endpoint.
+The response intentionally omits ``revocation_endpoint`` and
+``userinfo_endpoint`` because django-indieweb does not implement those
+protocol endpoints. The browser token management UI at ``/indieweb/tokens/``
+is not a protocol revocation endpoint.
 
 IndieAuth Flow
 --------------
@@ -394,6 +398,77 @@ default lifetime is 24 hours and can be tuned with the
 ``INDIEWEB_TOKEN_EXPIRES_IN`` setting (see :doc:`configuration`). Reissuing a
 token via the IndieAuth flow refreshes its expiration. Tokens whose
 ``expires_at`` has passed are rejected with HTTP 401 by the Micropub endpoint.
+
+Token Introspection Endpoint
+----------------------------
+
+**URL:** ``/indieweb/token/introspect/``
+
+Verifies django-indieweb bearer tokens for resource servers and clients that
+need token metadata. The endpoint is CSRF-exempt, returns JSON for all
+successful requests, and is advertised from the IndieAuth metadata response as
+``introspection_endpoint``.
+
+POST Request
+~~~~~~~~~~~~
+
+**Request Fields:**
+
+- ``token`` - Access token value to verify. This is normally sent as
+  ``application/x-www-form-urlencoded``. If omitted, django-indieweb falls
+  back to the token from ``Authorization: Bearer <token>`` as the token being
+  checked.
+
+**Example Request:**
+
+.. code-block:: http
+
+    POST /indieweb/token/introspect/ HTTP/1.1
+    Host: yoursite.com
+    Content-Type: application/x-www-form-urlencoded
+    Accept: application/json
+
+    token=xyz789
+
+**Active Response:**
+
+.. code-block:: http
+
+    HTTP/1.1 200 OK
+    Content-Type: application/json
+
+    {
+        "active": true,
+        "me": "https://user.example.com/",
+        "client_id": "https://app.example.com/",
+        "scope": "create update",
+        "iat": 1762348800,
+        "exp": 1762435200
+    }
+
+``iat`` and ``exp`` are whole-second Unix timestamps. ``iat`` is the token row
+creation time. ``exp`` is the token expiration time and is omitted only for
+legacy non-expiring rows where ``Token.expires_at`` is ``NULL``.
+
+**Inactive Response:**
+
+.. code-block:: http
+
+    HTTP/1.1 200 OK
+    Content-Type: application/json
+
+    {"active": false}
+
+Missing token input, unknown token values, deleted token rows, expired tokens,
+tokens whose owner is inactive, and tokens whose ``client_id`` no longer
+satisfies ``INDIEWEB_CLIENT_ID_VALIDATOR`` all return the same inactive
+response. The endpoint does not disclose which inactive condition applied.
+It does not create tokens, refresh expiration, delete token rows, or expose
+the full bearer token value in the response.
+
+This endpoint is only token introspection. django-indieweb does not implement
+refresh tokens, a separate OAuth/IndieAuth token revocation endpoint, or
+user-info/profile claims in this response.
 
 Token Management UI
 -------------------
@@ -1110,6 +1185,8 @@ Endpoint keys:
 
 - ``auth`` - ``GET`` and ``POST`` requests to ``/indieweb/auth/``
 - ``token`` - ``POST`` requests to ``/indieweb/token/``
+- ``token_introspection`` - ``POST`` requests to
+  ``/indieweb/token/introspect/``
 - ``micropub`` - ``GET`` and ``POST`` requests to ``/indieweb/micropub/``
 - ``media`` - ``POST`` requests to ``/indieweb/media/``
 - ``websub_callback`` - ``GET`` and ``POST`` requests to
@@ -1164,9 +1241,10 @@ add:
 Configured preflight ``OPTIONS`` requests short-circuit before rate limiting,
 token authentication, Micropub handler work, media storage, Webmention
 processing, and async enqueue hooks. WebSub subscriber callbacks are excluded
-from built-in CORS because they are server-to-server hub callbacks. A valid preflight needs an allowed
-``Origin`` plus an ``Access-Control-Request-Method`` that is supported by the
-target endpoint. Successful preflights return:
+from built-in CORS because they are server-to-server hub callbacks. A valid
+preflight needs an allowed ``Origin`` plus an
+``Access-Control-Request-Method`` that is supported by the target endpoint.
+Successful preflights return:
 
 .. code-block:: http
 
@@ -1180,7 +1258,10 @@ target endpoint. Successful preflights return:
 Endpoint method coverage:
 
 - ``auth`` - ``GET`` and ``POST`` requests to ``/indieweb/auth/``
+- ``auth-metadata`` - ``GET`` requests to ``/indieweb/auth/metadata/``
 - ``token`` - ``POST`` requests to ``/indieweb/token/``
+- ``token_introspection`` - ``POST`` requests to
+  ``/indieweb/token/introspect/``
 - ``micropub`` - ``GET`` and ``POST`` requests to ``/indieweb/micropub/``
 - ``media`` - ``POST`` requests to ``/indieweb/media/``
 - ``webmention`` - ``GET`` and ``POST`` requests to ``/indieweb/webmention/``

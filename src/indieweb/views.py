@@ -9,7 +9,7 @@ import math
 import re
 import uuid
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qsl, urlparse, urlunparse
@@ -481,10 +481,12 @@ class IndieAuthMetadataView(CorsMixin, View):
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> JsonResponse:
         authorization_path = _reverse_request_namespace(request, "auth")
         token_path = _reverse_request_namespace(request, "token")
+        introspection_path = _reverse_request_namespace(request, "token-introspection")
         metadata = {
             "issuer": _indieauth_issuer(request, authorization_path, token_path),
             "authorization_endpoint": request.build_absolute_uri(authorization_path),
             "token_endpoint": request.build_absolute_uri(token_path),
+            "introspection_endpoint": request.build_absolute_uri(introspection_path),
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code"],
             "code_challenge_methods_supported": list(ALLOWED_PKCE_METHODS),
@@ -879,6 +881,72 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         except Auth.DoesNotExist:
             logger.error(f"Auth not found for code={code}, client_id={client_id}")
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
+
+def _authorization_bearer_token(request: HttpRequest) -> str | None:
+    """Return the bearer token from the Authorization header, if present."""
+    auth_header = request.headers.get("authorization")
+    if not auth_header:
+        auth_header = request.META.get("Authorization")
+    if not auth_header:
+        return None
+    parts = auth_header.strip().split()
+    if not parts:
+        return None
+    return parts[-1]
+
+
+def _token_timestamp(value: datetime) -> int:
+    """Return a whole-second Unix timestamp for a Django datetime value."""
+    return math.floor(value.timestamp())
+
+
+class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
+    """IndieAuth token introspection endpoint for verifying issued bearer tokens."""
+
+    rate_limit_key = "token_introspection"
+    cors_allowed_methods = ("POST",)
+
+    def _inactive_response(self) -> JsonResponse:
+        return JsonResponse({"active": False})
+
+    def _submitted_token(self, request: HttpRequest) -> str | None:
+        value = request.POST.get("token")
+        if value:
+            return value
+        return _authorization_bearer_token(request)
+
+    def _active_response(self, token: Token) -> JsonResponse:
+        response_values: dict[str, bool | int | str] = {
+            "active": True,
+            "me": token.me,
+            "client_id": token.client_id,
+            "scope": token.scope or "",
+            "iat": _token_timestamp(token.created),
+        }
+        if token.expires_at is not None:
+            response_values["exp"] = _token_timestamp(token.expires_at)
+        return JsonResponse(response_values)
+
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> JsonResponse:
+        submitted_token = self._submitted_token(request)
+        if not submitted_token:
+            return self._inactive_response()
+        try:
+            token = Token.objects.select_related("owner").get(key=submitted_token)
+        except Token.DoesNotExist:
+            logger.info(f"introspection token not found: {submitted_token[:8]}...")
+            return self._inactive_response()
+        if not token.owner.is_active:
+            logger.info(f"introspection rejected inactive token owner: {token.owner}")
+            return self._inactive_response()
+        if token.is_expired():
+            logger.info(f"introspection rejected expired token: {submitted_token[:8]}...")
+            return self._inactive_response()
+        if not _client_id_allowed(token.client_id):
+            logger.warning(f"introspection rejected disallowed client_id: {token.client_id!r}")
+            return self._inactive_response()
+        return self._active_response(token)
 
 
 class UserLoginRequiredMixin(View):

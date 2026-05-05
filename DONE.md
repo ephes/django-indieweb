@@ -4,6 +4,40 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Add IndieAuth token introspection
+
+- Added the bundled ``POST /indieweb/token/introspect/`` endpoint with the stable URL name
+  ``token-introspection``. The endpoint accepts a form ``token`` value or falls back to
+  ``Authorization: Bearer <token>`` as the token being checked, and always returns JSON.
+- Active introspection responses include ``active``, ``me``, ``client_id``, ``scope``, ``iat``, and ``exp`` when the
+  token has an expiration. Inactive responses are the stable shape ``{"active": false}`` for missing, unknown,
+  deleted/revoked, expired, inactive-owner, and ``INDIEWEB_CLIENT_ID_VALIDATOR``-disallowed tokens, without disclosing
+  which condition applied.
+- Updated server metadata to advertise the absolute ``introspection_endpoint`` only now that the endpoint exists. The
+  endpoint is CSRF-exempt, participates in configured CORS for ``POST``, and uses the optional
+  ``token_introspection`` rate-limit key.
+- Backlog: removed the completed Priority 3 API Hardening item from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated IndieAuth, API, and configuration docs with token introspection request/response behavior,
+  metadata advertisement, CORS/rate-limit behavior, and boundaries. No generated docs under ``docs/_build`` were edited
+  or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for token introspection, metadata advertisement,
+  CORS/rate-limit support, and intentional exclusions.
+- Compatibility: existing authorization-code issuance and exchange behavior remains intact, including legacy
+  ``response_type``/``grant_type`` omissions, ``token_type=Bearer``, JSON/form success negotiation, PKCE, scope
+  matching, one-time auth code use, token expiration, CORS, rate limiting, and the browser token-management UI. The
+  introspection endpoint does not create tokens, refresh expiration, delete rows, mutate token state, or expose full
+  bearer token keys.
+- Follow-up risks: protocol token revocation, refresh tokens, and user-info/profile claims remain out of scope and are
+  not advertised. The existing ``/indieweb/tokens/`` pages remain authenticated browser UI for users to delete their own
+  token rows, not an OAuth/IndieAuth revocation endpoint.
+- Validation: ``uv run pytest tests/test_token_endpoint.py tests/test_auth_endpoint.py -q --no-cov`` (143 passed),
+  ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (40 passed),
+  ``uv run pytest tests/test_token_endpoint.py tests/test_token_management.py tests/test_auth_endpoint.py -q --no-cov``
+  (152 passed), ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (87 files already formatted),
+  ``uv run mypy`` (no issues), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no output), ``git diff --check`` (passed),
+  ``uv run pytest`` (801 passed, coverage gate passed at 90.28%), and ``uv run prek run --all-files`` (passed).
+
 ### Tighten IndieAuth authorization and token wire compatibility
 
 - Added backwards-compatible IndieAuth/OAuth wire handling: authorization GET accepts omitted ``response_type`` for

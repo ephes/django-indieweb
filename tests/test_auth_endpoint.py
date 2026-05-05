@@ -51,6 +51,7 @@ def test_indieauth_metadata_endpoint_returns_public_json(client):
         "issuer": "http://testserver/indieweb/",
         "authorization_endpoint": "http://testserver/indieweb/auth/",
         "token_endpoint": "http://testserver/indieweb/token/",
+        "introspection_endpoint": "http://testserver/indieweb/token/introspect/",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["plain", "S256"],
@@ -65,7 +66,6 @@ def test_indieauth_metadata_omits_unimplemented_endpoints(client):
 
     assert response.status_code == 200
     data = response.json()
-    assert "introspection_endpoint" not in data
     assert "revocation_endpoint" not in data
     assert "userinfo_endpoint" not in data
 
@@ -88,6 +88,7 @@ def test_indieauth_metadata_view_supports_host_well_known_route(rf):
     assert data["issuer"] == "http://testserver/"
     assert data["authorization_endpoint"] == "http://testserver/indieweb/auth/"
     assert data["token_endpoint"] == "http://testserver/indieweb/token/"
+    assert data["introspection_endpoint"] == "http://testserver/indieweb/token/introspect/"
 
 
 @pytest.mark.django_db

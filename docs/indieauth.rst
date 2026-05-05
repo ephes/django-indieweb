@@ -10,8 +10,9 @@ IndieAuth is a federated login protocol that enables users to sign in to website
 
 1. **Authorization Endpoint** (``/indieweb/auth/``) - Handles user consent and generates auth codes
 2. **Token Endpoint** (``/indieweb/token/``) - Exchanges auth codes for access tokens
-3. **Authentication** - Verifies auth codes for login-only flows
-4. **Server Metadata** (``/indieweb/auth/metadata/``) - Public JSON discovery for authorization-server capabilities
+3. **Token Introspection Endpoint** (``/indieweb/token/introspect/``) - Verifies issued bearer tokens
+4. **Authentication** - Verifies auth codes for login-only flows
+5. **Server Metadata** (``/indieweb/auth/metadata/``) - Public JSON discovery for authorization-server capabilities
 
 Authorization Flow with Consent Screen
 --------------------------------------
@@ -54,6 +55,7 @@ built from the current request:
        "issuer": "https://example.com/indieweb/",
        "authorization_endpoint": "https://example.com/indieweb/auth/",
        "token_endpoint": "https://example.com/indieweb/token/",
+       "introspection_endpoint": "https://example.com/indieweb/token/introspect/",
        "response_types_supported": ["code"],
        "grant_types_supported": ["authorization_code"],
        "code_challenge_methods_supported": ["plain", "S256"],
@@ -79,14 +81,57 @@ URL from your profile page with ``rel="indieauth-metadata"``. The older
 ``rel="authorization_endpoint"`` and ``rel="token_endpoint"`` links remain
 useful for legacy clients.
 
-This metadata slice does not add token introspection, protocol token
-revocation, refresh tokens, or user-info/profile claims. Those capabilities
-should only be advertised after their endpoints or response behavior are
-implemented.
+The metadata advertises ``introspection_endpoint`` because django-indieweb
+ships the bundled token introspection endpoint described below. It still does
+not advertise protocol token revocation, refresh tokens, or
+user-info/profile claims because those capabilities are not implemented.
 
 When built-in CORS is configured with ``INDIEWEB_CORS_ALLOWED_ORIGINS``, the
 metadata endpoint participates as a public read-only ``GET`` endpoint. It is
 not rate limited by django-indieweb's optional protocol rate limiter.
+
+Token Introspection
+-------------------
+
+The bundled token introspection endpoint is available at
+``/indieweb/token/introspect/``. It accepts ``POST`` requests with a
+form-encoded ``token`` field and returns JSON. If the ``token`` field is
+missing, the endpoint falls back to the bearer credential in
+``Authorization: Bearer <token>`` as the token being checked.
+
+Active responses include only the token metadata needed by resource servers:
+
+.. code-block:: json
+
+   {
+       "active": true,
+       "me": "https://example.com/",
+       "client_id": "https://app.example/",
+       "scope": "create update",
+       "iat": 1762348800,
+       "exp": 1762435200
+   }
+
+``iat`` and ``exp`` are Unix timestamps for the token row creation time and
+expiration time. Tokens created before expiration tracking existed may omit
+``exp`` if their ``expires_at`` value is ``NULL``.
+
+Inactive responses are intentionally stable and non-specific:
+
+.. code-block:: json
+
+   {"active": false}
+
+Missing tokens, unknown tokens, deleted/revoked token rows, expired tokens,
+tokens whose Django owner is inactive, and tokens whose ``client_id`` no
+longer satisfies ``INDIEWEB_CLIENT_ID_VALIDATOR`` all return the same inactive
+shape. Introspection does not create tokens, refresh expiration, delete rows,
+or otherwise mutate token state. It does not return full bearer token keys.
+
+The endpoint is a token-verification surface only. It does not implement a
+separate OAuth token revocation endpoint, refresh tokens, or user-info/profile
+claims. The browser token-management UI remains the way authenticated site
+users delete their own token rows.
 
 Managing Access Tokens
 ----------------------

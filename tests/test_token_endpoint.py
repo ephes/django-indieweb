@@ -53,6 +53,11 @@ def token_endpoint_url():
     return reverse("indieweb:token")
 
 
+@pytest.fixture
+def token_introspection_endpoint_url():
+    return reverse("indieweb:token-introspection")
+
+
 @pytest.mark.django_db
 def test_wrong_auth_code(client, token_endpoint_url, token_payload):
     """Assert we can't get a token with the wrong auth code."""
@@ -617,3 +622,169 @@ def test_token_reissue_resets_expires_at(client, settings, token_endpoint_url, t
     assert stale.expires_at is not None
     delta = stale.expires_at - timezone.now()
     assert delta >= timedelta(seconds=3590)
+
+
+@pytest.mark.django_db
+def test_token_introspection_returns_active_token_metadata(client, user, token_introspection_endpoint_url):
+    """Valid tokens introspect to stable resource-server metadata without exposing secrets."""
+    expires_at = timezone.now() + timedelta(hours=1)
+    token = models.Token.objects.create(
+        owner=user,
+        key="activetokensecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create update",
+        expires_at=expires_at,
+    )
+
+    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    data = response.json()
+    assert data == {
+        "active": True,
+        "me": "https://example.org/",
+        "client_id": "https://webapp.example.org",
+        "scope": "create update",
+        "iat": int(token.created.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    assert token.key not in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+def test_token_introspection_accepts_bearer_header_as_token_input(client, user, token_introspection_endpoint_url):
+    """The endpoint can introspect the bearer token supplied in the Authorization header."""
+    token = models.Token.objects.create(
+        owner=user,
+        key="bearerintrospectionsecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope=None,
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(token_introspection_endpoint_url, HTTP_AUTHORIZATION=f"Bearer {token.key}")
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
+    assert response.json()["scope"] == ""
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("payload", "headers"),
+    [
+        ({}, {}),
+        ({"token": ""}, {}),
+        ({"token": "unknown-token"}, {}),
+    ],
+)
+def test_token_introspection_returns_inactive_for_missing_or_unknown_token(
+    client, token_introspection_endpoint_url, payload, headers
+):
+    """Missing and unknown token inputs do not disclose detail."""
+    response = client.post(token_introspection_endpoint_url, data=payload, **headers)
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/json"
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_returns_inactive_for_expired_token(client, user, token_introspection_endpoint_url):
+    token = models.Token.objects.create(
+        owner=user,
+        key="expiredtokensecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() - timedelta(seconds=1),
+    )
+
+    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_returns_inactive_for_deleted_token(client, user, token_introspection_endpoint_url):
+    token = models.Token.objects.create(
+        owner=user,
+        key="deletedtokensecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    token_key = token.key
+    token.delete()
+
+    response = client.post(token_introspection_endpoint_url, data={"token": token_key})
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_returns_inactive_for_inactive_owner(client, user, token_introspection_endpoint_url):
+    user.is_active = False
+    user.save()
+    token = models.Token.objects.create(
+        owner=user,
+        key="inactiveownersecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_returns_inactive_for_disallowed_client_id(
+    client, settings, user, token_introspection_endpoint_url
+):
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.deny_all"
+    token = models.Token.objects.create(
+        owner=user,
+        key="disallowedclientsecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_does_not_mutate_token_rows(client, user, token_introspection_endpoint_url):
+    expires_at = timezone.now() + timedelta(hours=1)
+    token = models.Token.objects.create(
+        owner=user,
+        key="immutabletokensecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=expires_at,
+    )
+    original_modified = token.modified
+    original_count = models.Token.objects.count()
+
+    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+
+    assert response.status_code == 200
+    token.refresh_from_db()
+    assert models.Token.objects.count() == original_count
+    assert token.expires_at == expires_at
+    assert token.modified == original_modified

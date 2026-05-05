@@ -39,11 +39,12 @@ OAuth-compatible discovery can publish the same reusable metadata view at
        ),
    ]
 
-The metadata view builds absolute authorization and token endpoint URLs from
-the request and the active URL namespace where possible. If you route the view
-directly at the well-known path, keep the bundled URLconf included with its
-default ``indieweb`` namespace so the view can reverse ``indieweb:auth`` and
-``indieweb:token``.
+The metadata view builds absolute authorization, token, and token
+introspection endpoint URLs from the request and the active URL namespace
+where possible. If you route the view directly at the well-known path, keep
+the bundled URLconf included with its default ``indieweb`` namespace so the
+view can reverse ``indieweb:auth``, ``indieweb:token``, and
+``indieweb:token-introspection``.
 
 Advertise metadata discovery from your profile page with a Link header or HTML
 ``link`` element:
@@ -188,6 +189,7 @@ Each configured endpoint key accepts a mapping with:
    INDIEWEB_RATE_LIMITS = {
        "auth": {"limit": 30, "window": 300},
        "token": {"limit": 10, "window": 300},
+       "token_introspection": {"limit": 60, "window": 300},
        "micropub": {"limit": 120, "window": 60},
        "media": {"limit": 30, "window": 300},
        "websub_callback": {"limit": 120, "window": 60},
@@ -199,6 +201,7 @@ Supported endpoint keys:
 
 - ``auth`` - ``/indieweb/auth/``
 - ``token`` - ``/indieweb/token/``
+- ``token_introspection`` - ``/indieweb/token/introspect/``
 - ``micropub`` - ``/indieweb/micropub/``
 - ``media`` - ``/indieweb/media/``
 - ``websub_callback`` - ``/indieweb/websub/<token>/``
@@ -713,7 +716,9 @@ The standard way to include django-indieweb URLs:
 This creates the following endpoints:
 
 - ``/indieweb/auth/`` - Authorization endpoint
+- ``/indieweb/auth/metadata/`` - IndieAuth authorization-server metadata endpoint
 - ``/indieweb/token/`` - Token endpoint
+- ``/indieweb/token/introspect/`` - Token introspection endpoint
 - ``/indieweb/tokens/`` - Browser UI for viewing and revoking the logged-in user's tokens
 - ``/indieweb/tokens/<pk>/revoke/`` - CSRF-protected POST action for revoking one owned token
 - ``/indieweb/micropub/`` - Micropub endpoint
@@ -733,8 +738,10 @@ You can customize the URL paths:
    from indieweb import views
 
    urlpatterns = [
-       path('auth/', views.AuthView.as_view(), name='indieauth'),
+       path('auth/', views.AuthView.as_view(), name='auth'),
+       path('auth/metadata/', views.IndieAuthMetadataView.as_view(), name='auth-metadata'),
        path('token/', views.TokenView.as_view(), name='token'),
+       path('token/introspect/', views.TokenIntrospectionView.as_view(), name='token-introspection'),
        path('tokens/', views.TokenManagementView.as_view(), name='tokens'),
        path('tokens/<int:pk>/revoke/', views.TokenRevokeView.as_view(), name='token-revoke'),
        path('api/micropub/', views.MicropubView.as_view(), name='micropub'),
@@ -958,6 +965,7 @@ disabled by default and applies only to:
 - ``/indieweb/auth/``
 - ``/indieweb/auth/metadata/``
 - ``/indieweb/token/``
+- ``/indieweb/token/introspect/``
 - ``/indieweb/micropub/``
 - ``/indieweb/media/``
 - ``/indieweb/webmention/``
