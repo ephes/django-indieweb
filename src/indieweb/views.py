@@ -66,7 +66,15 @@ PKCE_CHALLENGE_MAX = 128
 PKCE_VERIFIER_MIN = 43
 PKCE_VERIFIER_MAX = 128
 MICROPUB_MEDIA_SCOPE = "media"
-SUPPORTED_MICROPUB_QUERIES = ("config", "source", "syndicate-to", "category", "channel")
+SUPPORTED_MICROPUB_QUERIES = (
+    "config",
+    "source",
+    "syndicate-to",
+    "category",
+    "channel",
+    "media-endpoint",
+    "post-types",
+)
 DEFAULT_MICROPUB_SOURCE_LIST_LIMIT = 20
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -1106,7 +1114,8 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         * ``GET ?q=source`` → ``update`` (typical "read before update" use case;
           the spec does not define a separate read scope)
         * ``GET ?q=config``, ``?q=syndicate-to``, ``?q=category``, ``?q=channel``,
-          ``GET`` (no ``q``) → ``None`` (token-required, no scope gate)
+          ``?q=media-endpoint``, ``?q=post-types``, ``GET`` (no ``q``) → ``None``
+          (token-required, no scope gate)
         """
         if request.method == "POST":
             action = self._post_action(request)
@@ -1362,12 +1371,17 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             result = result[:limit]
         return result
 
-    def _handle_config_query(self, request: HttpRequest) -> HttpResponse:
-        """Return the aggregate ``q=config`` response with media-endpoint and ``q`` advertisement."""
+    def _micropub_config(self, request: HttpRequest) -> dict[str, Any]:
+        """Return a copied handler config with view-owned defaults injected."""
         handler = get_micropub_handler()
         config = dict(handler.get_config(self.token.owner))
         if not config.get("media-endpoint"):
             config["media-endpoint"] = request.build_absolute_uri(_reverse_request_namespace(request, "media"))
+        return config
+
+    def _handle_config_query(self, request: HttpRequest) -> HttpResponse:
+        """Return the aggregate ``q=config`` response with media-endpoint and ``q`` advertisement."""
+        config = self._micropub_config(request)
         config["q"] = list(SUPPORTED_MICROPUB_QUERIES)
         return HttpResponse(json.dumps(config), content_type="application/json")
 
@@ -1378,8 +1392,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         configured handler omits the key or returns a non-list value, the response is an
         empty list rather than an error, matching the rest of the Micropub query surface.
         """
-        handler = get_micropub_handler()
-        config = handler.get_config(self.token.owner)
+        config = self._micropub_config(request)
         raw = config.get(config_key, [])
         if not isinstance(raw, list):
             raw = []
@@ -1387,6 +1400,27 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if filtered is None:
             return self._invalid_request()
         return HttpResponse(json.dumps({config_key: filtered}), content_type="application/json")
+
+    def _handle_post_types_query(self, request: HttpRequest) -> HttpResponse:
+        """Return the handler's ``post-types`` config list, narrowing by ``post-type`` before list filters."""
+        config = self._micropub_config(request)
+        raw = config.get("post-types", [])
+        if not isinstance(raw, list):
+            raw = []
+
+        post_type = request.GET.get("post-type")
+        if post_type:
+            raw = [item for item in raw if isinstance(item, dict) and item.get("type") == post_type]
+
+        filtered = self._filtered_query_items(raw, request)
+        if filtered is None:
+            return self._invalid_request()
+        return HttpResponse(json.dumps({"post-types": filtered}), content_type="application/json")
+
+    def _handle_media_endpoint_query(self, request: HttpRequest) -> HttpResponse:
+        """Return the effective media endpoint as a direct config subquery."""
+        config = self._micropub_config(request)
+        return HttpResponse(json.dumps({"media-endpoint": config["media-endpoint"]}), content_type="application/json")
 
     def _handle_source_query(self, request: HttpRequest) -> HttpResponse:
         """Dispatch ``GET ?q=source`` using the configured content handler."""
@@ -1539,6 +1573,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return self._handle_list_config_query(request, "categories")
         elif q == "channel":
             return self._handle_list_config_query(request, "channels")
+        elif q == "media-endpoint":
+            return self._handle_media_endpoint_query(request)
+        elif q == "post-types":
+            return self._handle_post_types_query(request)
         else:
             # Default response with user's me URL
             params = {"me": self.token.me}

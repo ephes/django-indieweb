@@ -72,6 +72,27 @@ class _NoListsHandler(InMemoryMicropubHandler):
         }
 
 
+class _NoPostTypesHandler(InMemoryMicropubHandler):
+    def get_config(self, user):
+        return {
+            "media-endpoint": None,
+            "syndicate-to": [],
+            "categories": [],
+            "channels": [],
+        }
+
+
+class _CustomPostTypesHandler(InMemoryMicropubHandler):
+    def get_config(self, user):
+        config = super().get_config(user)
+        config["post-types"] = [
+            {"type": "note", "name": "Short Note", "properties": ["content"]},
+            {"type": "article", "name": "Long Article", "properties": ["name", "content", "summary"]},
+            {"type": "photo", "name": "Photo", "properties": ["photo", "content"]},
+        ]
+        return config
+
+
 @pytest.mark.django_db
 class TestQueryDiscovery:
     """Verify ``q=config`` advertises supported query names and default lists."""
@@ -82,13 +103,21 @@ class TestQueryDiscovery:
         config = json.loads(response.content)
         assert "q" in config
         assert isinstance(config["q"], list)
-        assert set(config["q"]) == {"config", "source", "syndicate-to", "category", "channel"}
+        assert set(config["q"]) == {
+            "config",
+            "source",
+            "syndicate-to",
+            "category",
+            "channel",
+            "media-endpoint",
+            "post-types",
+        }
 
-    def test_config_does_not_advertise_unimplemented_query_names(self, client, token, micropub_url):
+    def test_config_does_not_advertise_unsupported_query_names(self, client, token, micropub_url):
         response = client.get(f"{micropub_url}?q=config", Authorization=f"Bearer {token.key}")
         config = json.loads(response.content)
-        assert "media-endpoint" not in config["q"]
-        assert "post-types" not in config["q"]
+        assert "properties" not in config["q"]
+        assert "contacts" not in config["q"]
 
     def test_config_advertises_default_categories_and_channels(self, client, token, micropub_url):
         response = client.get(f"{micropub_url}?q=config", Authorization=f"Bearer {token.key}")
@@ -114,6 +143,104 @@ class TestQueryDiscovery:
         client.get(f"{micropub_url}?q=config", Authorization=f"Bearer {token.key}")
         assert "q" not in cached
         assert cached["media-endpoint"] is None
+
+
+@pytest.mark.django_db
+class TestDirectConfigSubqueries:
+    """Verify direct config subqueries use the same effective handler config as ``q=config``."""
+
+    def test_media_endpoint_query_returns_injected_absolute_endpoint(self, client, token, micropub_url):
+        response = client.get(f"{micropub_url}?q=media-endpoint", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert response["Content-Type"] == "application/json"
+        assert json.loads(response.content) == {"media-endpoint": "http://testserver/indieweb/media/"}
+
+    def test_media_endpoint_query_preserves_custom_handler_value(self, client, token, micropub_url, monkeypatch):
+        class CustomMediaHandler(InMemoryMicropubHandler):
+            def get_config(self, user):
+                config = super().get_config(user)
+                config["media-endpoint"] = "https://cdn.example.org/micropub-media/"
+                return config
+
+        _patch_handler(monkeypatch, CustomMediaHandler)
+        response = client.get(f"{micropub_url}?q=media-endpoint", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {"media-endpoint": "https://cdn.example.org/micropub-media/"}
+
+    def test_post_types_query_returns_default_supported_vocabulary(self, client, token, micropub_url):
+        response = client.get(f"{micropub_url}?q=post-types", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert response["Content-Type"] == "application/json"
+        body = json.loads(response.content)
+        assert list(body) == ["post-types"]
+        assert [item["type"] for item in body["post-types"]] == [
+            "note",
+            "article",
+            "photo",
+            "reply",
+            "bookmark",
+            "like",
+            "repost",
+            "event",
+            "rsvp",
+        ]
+
+    def test_post_types_query_preserves_custom_handler_value(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _CustomPostTypesHandler)
+        response = client.get(f"{micropub_url}?q=post-types", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {
+            "post-types": [
+                {"type": "note", "name": "Short Note", "properties": ["content"]},
+                {"type": "article", "name": "Long Article", "properties": ["name", "content", "summary"]},
+                {"type": "photo", "name": "Photo", "properties": ["photo", "content"]},
+            ]
+        }
+
+    def test_missing_post_types_key_returns_empty(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _NoPostTypesHandler)
+        response = client.get(f"{micropub_url}?q=post-types", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {"post-types": []}
+
+    def test_post_types_query_filters_by_post_type(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _CustomPostTypesHandler)
+        response = client.get(f"{micropub_url}?q=post-types&post-type=article", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {
+            "post-types": [{"type": "article", "name": "Long Article", "properties": ["name", "content", "summary"]}]
+        }
+
+    def test_unknown_post_type_returns_empty_list(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _CustomPostTypesHandler)
+        response = client.get(f"{micropub_url}?q=post-types&post-type=rsvp", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {"post-types": []}
+
+    def test_post_types_query_supports_filter_limit_and_offset(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _CustomPostTypesHandler)
+        response = client.get(
+            f"{micropub_url}?q=post-types&filter=o&offset=2&limit=1",
+            Authorization=f"Bearer {token.key}",
+        )
+        assert response.status_code == 200
+        assert json.loads(response.content) == {
+            "post-types": [
+                {"type": "photo", "name": "Photo", "properties": ["photo", "content"]},
+            ]
+        }
+
+    @pytest.mark.parametrize("params", ["limit=abc", "limit=-1", "offset=abc", "offset=-1", "limit=1.5"])
+    def test_post_types_malformed_limit_or_offset_returns_invalid_request(
+        self, client, token, micropub_url, monkeypatch, params
+    ):
+        _patch_handler(monkeypatch, _CustomPostTypesHandler)
+        response = client.get(
+            f"{micropub_url}?q=post-types&{params}",
+            Authorization=f"Bearer {token.key}",
+        )
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
 
 
 @pytest.mark.django_db
@@ -240,17 +367,17 @@ class TestChannelQuery:
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("q", ["category", "channel"])
+@pytest.mark.parametrize("q", ["category", "channel", "media-endpoint", "post-types"])
 @pytest.mark.parametrize("scope", ["create", "post", "update", "delete", "undelete", "read", "", None])
-def test_category_channel_queries_have_no_scope_gate(client, user, micropub_url, q, scope):
-    """``q=category`` and ``q=channel`` are token-required only; no operation scope is required."""
+def test_config_queries_have_no_scope_gate(client, user, micropub_url, q, scope):
+    """Config subqueries are token-required only; no operation scope is required."""
     token = _make_token(user, scope)
     response = client.get(f"{micropub_url}?q={q}", Authorization=f"Bearer {token.key}")
     assert response.status_code == 200
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("q", ["category", "channel"])
-def test_category_channel_queries_require_a_token(client, micropub_url, q):
+@pytest.mark.parametrize("q", ["category", "channel", "media-endpoint", "post-types"])
+def test_config_queries_require_a_token(client, micropub_url, q):
     response = client.get(f"{micropub_url}?q={q}")
     assert response.status_code == 401

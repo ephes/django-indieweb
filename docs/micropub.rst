@@ -353,10 +353,11 @@ Query Endpoints
 
 Returns supported post types and features. The ``q`` array advertises the query
 names django-indieweb actually implements today, so clients can discover
-``q=category``, ``q=channel``, ``q=source``, and ``q=syndicate-to`` without
-probing every Micropub-extension query name. Direct configuration subqueries
-such as ``q=media-endpoint`` and ``q=post-types`` are intentionally omitted
-because they belong to a separate, future backlog item.
+``q=category``, ``q=channel``, ``q=media-endpoint``, ``q=post-types``,
+``q=source``, and ``q=syndicate-to`` without probing every
+Micropub-extension query name. django-indieweb intentionally does not advertise
+or implement unrelated extension query names such as ``q=contacts`` or a
+standalone ``q=properties`` query.
 
 Example response excerpt:
 
@@ -382,7 +383,7 @@ Example response excerpt:
        },
        {"type": "rsvp", "name": "RSVP", "properties": ["rsvp", "in-reply-to", "name", "content"]}
      ],
-     "q": ["config", "source", "syndicate-to", "category", "channel"]
+     "q": ["config", "source", "syndicate-to", "category", "channel", "media-endpoint", "post-types"]
    }
 
 The built-in handler advertises common h-entry shapes and forwards normalized
@@ -392,6 +393,52 @@ wire-format remains an ``h-entry`` with ``rsvp`` and ``in-reply-to``
 properties. django-indieweb does not infer storage semantics from post-type
 names; your configured handler decides how to persist bookmarks, likes,
 reposts, replies, articles, notes, photo posts, events, and RSVPs.
+
+**Media Endpoint:**
+
+.. code:: bash
+
+   curl https://example.com/indieweb/micropub/?q=media-endpoint \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+Returns the effective media endpoint under the ``media-endpoint`` JSON key:
+
+.. code:: json
+
+   {"media-endpoint": "https://example.com/indieweb/media/"}
+
+The direct query uses the same value as ``q=config``. If your handler returns a
+truthy ``media-endpoint`` value from ``get_config()``, django-indieweb preserves
+it. Otherwise the view injects the bundled ``/indieweb/media/`` endpoint as an
+absolute URL.
+
+**Post Types:**
+
+.. code:: bash
+
+   curl https://example.com/indieweb/micropub/?q=post-types \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+Returns the configured handler's supported vocabulary under the ``post-types``
+JSON key. The default in-memory handler returns the same post-type objects
+shown in ``q=config``. Custom handlers remain authoritative: override
+``MicropubContentHandler.get_config()`` to change the advertised post types,
+names, or property lists.
+
+Clients can request a specific post type with ``post-type``:
+
+.. code:: bash
+
+   curl "https://example.com/indieweb/micropub/?q=post-types&post-type=note" \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+The response remains a ``post-types`` list containing only matching type
+objects, or an empty list if the submitted type is not advertised. ``q=post-types``
+also supports ``filter``, ``limit``, and ``offset`` with the same policy as the
+category and channel queries; ``post-type`` is applied first, then those list
+parameters operate on the narrowed list. django-indieweb does not infer storage
+semantics from this advertisement; the configured handler still decides how
+submitted properties map to host models.
 
 **Categories:**
 
@@ -454,7 +501,7 @@ django-indieweb does not interpret channel data on create/update in this slice;
 forwarding ``mp-channel`` command properties and any publication routing remain
 host-handler concerns and a separate backlog item.
 
-Both list-valued queries support the ``filter``, ``limit``, and ``offset``
+The list-valued config queries support the ``filter``, ``limit``, and ``offset``
 parameters. ``filter`` is a free-form string; items are matched
 case-insensitively as a substring against either the string item itself or a
 stable JSON serialization of dict items (so common fields such as ``uid`` and
@@ -521,8 +568,8 @@ responses; omitted ``offset`` defaults to ``0``. ``filter`` is optional and is
 passed to the handler as a free-form string. The in-memory handler matches it
 case-insensitively as a substring against a stable JSON serialization of each
 source item. Cursor-style ``after``/``before`` paging, bundled post storage or
-search, direct configuration subqueries, media source/delete hooks, command
-properties, and syndication routing remain out of scope for this slice.
+search, media source/delete hooks, command properties, and syndication routing
+remain out of scope for this slice.
 
 **Source Content:**
 

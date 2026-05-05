@@ -788,8 +788,9 @@ The Micropub endpoint supports several query parameters:
 
 Returns supported post types and features. The response also includes a ``q``
 array advertising the query names django-indieweb implements
-(``config``, ``source``, ``syndicate-to``, ``category``, ``channel``), plus
-default empty ``categories`` and ``channels`` arrays from the bundled handler.
+(``config``, ``source``, ``syndicate-to``, ``category``, ``channel``,
+``media-endpoint``, ``post-types``), plus default empty ``categories`` and
+``channels`` arrays from the bundled handler.
 
 The default in-memory handler advertises these post types:
 
@@ -803,6 +804,45 @@ The default in-memory handler advertises these post types:
 - ``event`` - ``name``, ``summary``, ``description``, ``start``, ``end``,
   ``location``, ``category``, ``url``, ``published``
 - ``rsvp`` - ``rsvp``, ``in-reply-to``, ``name``, ``content``
+
+``media-endpoint`` and ``post-types`` can also be queried directly. The direct
+subqueries use the same effective handler configuration as ``q=config``;
+custom handler values remain authoritative, and django-indieweb injects the
+bundled media endpoint only when the handler omits a truthy ``media-endpoint``.
+
+**Media Endpoint Query:**
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=media-endpoint HTTP/1.1
+    Authorization: Bearer xyz789
+
+Returns JSON shaped like:
+
+.. code-block:: json
+
+    {"media-endpoint": "https://yoursite.com/indieweb/media/"}
+
+**Post Types Query:**
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=post-types HTTP/1.1
+    Authorization: Bearer xyz789
+
+Returns the handler's supported vocabulary as ``{"post-types": [...]}``.
+Clients can add ``post-type=<type>`` to return only matching advertised types;
+unknown values return an empty list. ``q=post-types`` also accepts optional
+``filter``, ``limit``, and ``offset`` parameters. ``filter`` is matched
+case-insensitively against a stable JSON serialization of each post-type item;
+``post-type`` is applied first, then ``filter``/``offset``/``limit`` operate on
+the narrowed list. ``limit`` and ``offset`` must be non-negative integers, and
+malformed values return ``400 invalid_request``.
+
+django-indieweb intentionally does not implement unrelated extension query
+names such as ``q=contacts`` or a standalone ``q=properties`` query. Unsupported
+or unknown query names continue to fall back to the legacy token verification
+response with the authenticated token's ``me`` URL.
 
 **Source Query:**
 
@@ -947,8 +987,9 @@ default, or route on channels during ``POST`` create/update in this slice;
 ``mp-channel`` command property forwarding and channel-aware publication
 remain host-handler concerns and a separate backlog item.
 
-Both ``q=category`` and ``q=channel`` accept optional ``filter``, ``limit``,
-and ``offset`` parameters. ``filter`` is matched case-insensitively as a
+``q=category``, ``q=channel``, and ``q=post-types`` accept optional
+``filter``, ``limit``, and ``offset`` parameters. ``filter`` is matched
+case-insensitively as a
 substring against string items, or against a stable JSON serialization of
 dict items (so common fields such as ``uid`` and ``name`` are searchable
 without per-handler configuration). ``limit`` and ``offset`` must be
@@ -956,10 +997,12 @@ non-negative integers; the order of operations is filter → offset → limit.
 Malformed ``limit`` or ``offset`` values (non-integers, negative numbers, or
 floats) return ``400 invalid_request``. Missing ``categories`` or ``channels``
 keys in a custom handler config return an empty list under the response key
-instead of raising.
+instead of raising; missing or non-list ``post-types`` returns an empty
+``post-types`` list.
 
-Both queries are token-required only and do not require a per-operation
-scope, matching the existing ``q=config`` and ``q=syndicate-to`` behavior.
+These configuration queries are token-required only and do not require a
+per-operation scope, matching the existing ``q=config`` and ``q=syndicate-to``
+behavior.
 
 **Syndication Targets Query:**
 
@@ -1174,11 +1217,11 @@ All endpoints may return these error responses:
 - Micropub ``GET ?q=source`` without ``url`` when ``limit`` or ``offset`` is
   malformed (non-integer, negative, or float), or when the configured handler's
   ``list_entries()`` hook rejects the query by raising ``ValueError``.
-- Micropub ``GET ?q=category`` or ``GET ?q=channel`` with a malformed
-  ``limit`` or ``offset`` parameter (non-integer, negative, or float). A
-  missing ``categories``/``channels`` key in the configured handler's config
-  returns an empty list rather than an error, and an unrecognized ``filter``
-  value simply returns no matches.
+- Micropub ``GET ?q=category``, ``GET ?q=channel``, or ``GET ?q=post-types``
+  with a malformed ``limit`` or ``offset`` parameter (non-integer, negative,
+  or float). A missing ``categories``/``channels``/``post-types`` key in the
+  configured handler's config returns an empty list rather than an error, and
+  an unrecognized ``filter`` or ``post-type`` value simply returns no matches.
 - Micropub media endpoint upload requests that are not ``multipart/form-data``
   or do not include a ``file`` part.
 
@@ -1212,10 +1255,11 @@ All endpoints may return these error responses:
   ``update``; ``POST /indieweb/media/`` requires ``media``; and multipart
   create uploads sent to ``POST /indieweb/micropub/`` remain create requests,
   requiring ``create`` or ``post`` rather than ``media``. ``GET ?q=config``,
-  ``GET ?q=syndicate-to``, ``GET ?q=category``, ``GET ?q=channel``, and
-  ``GET`` with no ``q`` only require an authenticated token. Stored ``scope``
-  is split on whitespace and matched as an exact token, so ``createXYZ`` does
-  not satisfy ``create`` and ``mediaXYZ`` does not satisfy ``media``.
+  ``GET ?q=syndicate-to``, ``GET ?q=category``, ``GET ?q=channel``,
+  ``GET ?q=media-endpoint``, ``GET ?q=post-types``, and ``GET`` with no ``q``
+  only require an authenticated token. Stored ``scope`` is split on whitespace
+  and matched as an exact token, so ``createXYZ`` does not satisfy ``create``
+  and ``mediaXYZ`` does not satisfy ``media``.
 - The stored token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (``invalid_client``)
@@ -1294,8 +1338,9 @@ accepted only when the auth code was issued with no scope.
 - ``post`` - Legacy alias for ``create``.
 
 ``GET ?q=config``, ``GET ?q=syndicate-to``, ``GET ?q=category``,
-``GET ?q=channel``, and ``GET`` with no ``q`` only require an authenticated
-token; no specific scope is enforced.
+``GET ?q=channel``, ``GET ?q=media-endpoint``, ``GET ?q=post-types``, and
+``GET`` with no ``q`` only require an authenticated token; no specific scope is
+enforced.
 
 Multiple scopes can be requested by separating with spaces: ``scope=create update``
 

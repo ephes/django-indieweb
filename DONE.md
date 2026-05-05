@@ -4,6 +4,55 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Add Micropub supported-vocabulary and direct config subqueries
+
+- Added direct ``GET /indieweb/micropub/?q=media-endpoint`` and
+  ``GET /indieweb/micropub/?q=post-types`` configuration subqueries. The media
+  endpoint query returns the same effective value as ``q=config``, preserving a
+  truthy custom handler value and otherwise injecting the bundled media
+  endpoint as an absolute URL. The post-types query returns the configured
+  handler's ``post-types`` list under the ``post-types`` JSON key.
+- Kept ``MicropubContentHandler.get_config(user)`` authoritative for custom
+  config. The view now builds one copied effective config payload before
+  injecting view-owned defaults, so direct subqueries and ``q=config`` share
+  the same values without mutating handler-owned dicts.
+- Added ``post-type`` filtering for ``q=post-types`` plus the same
+  ``filter``/``limit``/``offset`` policy used by other list-valued config
+  queries. Missing or non-list ``post-types`` config returns an empty list;
+  unknown ``post-type`` or unmatched ``filter`` values return an empty list;
+  malformed ``limit`` or ``offset`` returns ``400 invalid_request``.
+- Updated ``q=config`` discovery to advertise ``media-endpoint`` and
+  ``post-types`` in the ``q`` array, while documenting that standalone
+  ``q=properties`` and unrelated extension query names such as ``q=contacts``
+  remain unsupported.
+- Backlog: removed the completed Priority 4 Micropub item from ``BACKLOG.md``.
+  No migrations were needed.
+- Documentation: updated ``docs/micropub.rst`` and ``docs/api.rst`` with direct
+  query examples, response shapes, filtering behavior, scope behavior,
+  custom-handler authority, and unsupported query boundaries. No generated docs
+  under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the
+  direct config subqueries, query discovery update, filtering/error policy,
+  custom-handler behavior, and explicit exclusions.
+- Compatibility: existing Micropub create, update, delete, undelete,
+  ``q=config`` aggregate shape, ``q=category``, ``q=channel``, ``q=source``,
+  ``q=syndicate-to``, default ``GET``, media upload, token authentication,
+  scope gating, CORS, and rate-limit behavior remains unchanged beyond the
+  additive direct subqueries and expanded ``q`` advertisement.
+- Follow-up risks: advertising audio/video post types, ``mp-*`` command
+  properties, draft-scope semantics, media source/delete hooks, and syndication
+  routing remain explicitly out of scope and are owned by separate backlog
+  items.
+- Validation: ``uv run pytest tests/test_micropub_queries.py
+  tests/test_micropub_endpoint.py tests/test_micropub_media.py
+  tests/test_micropub_create.py -q --no-cov`` (222 passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (88 files
+  already formatted), ``git diff --check`` (passed), ``uv run pytest`` (888
+  passed, coverage gate passed at 90.54%), ``uv run mypy`` (no issues),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no
+  output), and ``uv run prek run --all-files`` (passed).
+
 ### Add Micropub source-list pagination and filtering
 
 - Added ``GET /indieweb/micropub/?q=source`` list mode when no ``url`` parameter
