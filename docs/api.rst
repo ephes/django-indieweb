@@ -797,6 +797,8 @@ The default in-memory handler advertises these post types:
 - ``note`` - ``content``
 - ``article`` - ``name``, ``content``
 - ``photo`` - ``photo``, optional ``content`` and ``category``
+- ``audio`` - ``audio``, optional ``content`` and ``category``
+- ``video`` - ``video``, optional ``content`` and ``category``
 - ``reply`` - ``in-reply-to``, ``content``
 - ``bookmark`` - ``bookmark-of``, ``name``, ``content``
 - ``like`` - ``like-of``
@@ -809,6 +811,10 @@ The default in-memory handler advertises these post types:
 subqueries use the same effective handler configuration as ``q=config``;
 custom handler values remain authoritative, and django-indieweb injects the
 bundled media endpoint only when the handler omits a truthy ``media-endpoint``.
+The built-in audio and video post types only advertise URL-valued properties
+that are normalized and forwarded to the configured handler. Host code owns
+persistence, rendering, transcoding, media players, storage models, and media
+processing.
 
 **Media Endpoint Query:**
 

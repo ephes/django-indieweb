@@ -4,6 +4,50 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Advertise and document audio/video Micropub post types
+
+- Added built-in ``audio`` and ``video`` post-type entries to the default
+  ``MicropubContentHandler.get_config()`` ``post-types`` list. The advertised
+  shapes are ``audio``/``video`` plus optional ``content`` and ``category``:
+  ``{"type": "audio", "name": "Audio", "properties": ["audio", "content",
+  "category"]}`` and ``{"type": "video", "name": "Video", "properties":
+  ["video", "content", "category"]}``.
+- Kept the behavior boundary narrow: django-indieweb continues to normalize
+  and forward URL-valued ``audio`` and ``video`` form properties to the
+  configured handler, while host code decides how submitted properties map to
+  models, persistence, and rendering.
+- Preserved custom handler authority. Handlers that override ``post-types``
+  still control the exact ``q=config`` and direct ``q=post-types``
+  advertisement.
+- Backlog: removed the completed Priority 4 Micropub item from ``BACKLOG.md``.
+  No migrations were needed.
+- Documentation: updated ``docs/micropub.rst`` and ``docs/api.rst`` with the
+  default audio/video post-type entries, direct-query behavior, host-owned
+  persistence/rendering boundary, and explicit exclusions. No generated docs
+  under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the
+  audio/video post-type advertisement, normalized property forwarding, custom
+  handler authority, and explicit media-processing exclusions.
+- Compatibility: existing Micropub create, update, delete, undelete,
+  ``q=config``, direct ``q=post-types``, ``q=source``, ``q=category``,
+  ``q=channel``, ``q=syndicate-to``, media upload, token authentication, scope
+  gating, CORS, and rate-limit behavior remains unchanged beyond the additive
+  default post-type advertisement.
+- Follow-up risks: media source/delete hooks, command properties, draft-scope
+  semantics, and syndication routing remain out of scope and are owned by
+  separate backlog items. Advertising audio/video post types does not add
+  transcoding, players, storage models, media processing, media-management UI,
+  or media deletion semantics.
+- Validation: ``uv run pytest tests/test_micropub_create.py
+  tests/test_micropub_queries.py -q --no-cov`` (100 passed),
+  ``uv run pytest tests/test_micropub_media.py -q --no-cov`` (39 passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (88 files
+  already formatted), ``uv run mypy`` (no issues), ``uv run sphinx-build -W -b
+  html docs docs/_build/html`` (passed), ``git ls-files docs/_build --modified
+  --others --exclude-standard`` (no output), ``git diff --check`` (passed),
+  ``uv run pytest`` (889 passed, coverage gate passed at 90.54%), and
+  ``uv run prek run --all-files`` (passed).
+
 ### Add Micropub supported-vocabulary and direct config subqueries
 
 - Added direct ``GET /indieweb/micropub/?q=media-endpoint`` and

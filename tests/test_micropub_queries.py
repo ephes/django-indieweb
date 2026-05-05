@@ -177,6 +177,8 @@ class TestDirectConfigSubqueries:
             "note",
             "article",
             "photo",
+            "audio",
+            "video",
             "reply",
             "bookmark",
             "like",
@@ -184,6 +186,13 @@ class TestDirectConfigSubqueries:
             "event",
             "rsvp",
         ]
+
+    def test_post_types_query_filters_default_audio_type(self, client, token, micropub_url):
+        response = client.get(f"{micropub_url}?q=post-types&post-type=audio", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {
+            "post-types": [{"type": "audio", "name": "Audio", "properties": ["audio", "content", "category"]}]
+        }
 
     def test_post_types_query_preserves_custom_handler_value(self, client, token, micropub_url, monkeypatch):
         _patch_handler(monkeypatch, _CustomPostTypesHandler)

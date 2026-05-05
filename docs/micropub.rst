@@ -372,6 +372,8 @@ Example response excerpt:
        {"type": "note", "name": "Note", "properties": ["content"]},
        {"type": "article", "name": "Article", "properties": ["name", "content"]},
        {"type": "photo", "name": "Photo", "properties": ["photo", "content", "category"]},
+       {"type": "audio", "name": "Audio", "properties": ["audio", "content", "category"]},
+       {"type": "video", "name": "Video", "properties": ["video", "content", "category"]},
        {"type": "reply", "name": "Reply", "properties": ["in-reply-to", "content"]},
        {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
        {"type": "like", "name": "Like", "properties": ["like-of"]},
@@ -390,9 +392,14 @@ The built-in handler advertises common h-entry shapes and forwards normalized
 properties to ``create_entry()``. RSVP is advertised as a distinct post type
 because clients commonly expose RSVP as a creation mode, even though the
 wire-format remains an ``h-entry`` with ``rsvp`` and ``in-reply-to``
-properties. django-indieweb does not infer storage semantics from post-type
-names; your configured handler decides how to persist bookmarks, likes,
-reposts, replies, articles, notes, photo posts, events, and RSVPs.
+properties. Audio and video are advertised for URL-valued ``audio`` and
+``video`` properties that django-indieweb already normalizes and forwards to
+the configured handler. django-indieweb does not infer storage semantics from
+post-type names; your configured handler decides how to persist and render
+bookmarks, likes, reposts, replies, articles, notes, photo posts, audio posts,
+video posts, events, and RSVPs. Advertising audio and video post types does
+not add transcoding, players, storage models, media processing, media-source
+listing, or media-delete behavior.
 
 **Media Endpoint:**
 
@@ -423,7 +430,9 @@ Returns the configured handler's supported vocabulary under the ``post-types``
 JSON key. The default in-memory handler returns the same post-type objects
 shown in ``q=config``. Custom handlers remain authoritative: override
 ``MicropubContentHandler.get_config()`` to change the advertised post types,
-names, or property lists.
+names, or property lists. The default audio and video entries advertise only
+normalized ``audio``/``video`` URLs plus optional ``content`` and ``category``;
+host code still owns persistence, rendering, and any media-processing workflow.
 
 Clients can request a specific post type with ``post-type``:
 

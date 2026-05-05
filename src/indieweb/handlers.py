@@ -160,6 +160,8 @@ class MicropubContentHandler(ABC):
                 {"type": "note", "name": "Note", "properties": ["content"]},
                 {"type": "article", "name": "Article", "properties": ["name", "content"]},
                 {"type": "photo", "name": "Photo", "properties": ["photo", "content", "category"]},
+                {"type": "audio", "name": "Audio", "properties": ["audio", "content", "category"]},
+                {"type": "video", "name": "Video", "properties": ["video", "content", "category"]},
                 {"type": "reply", "name": "Reply", "properties": ["in-reply-to", "content"]},
                 {"type": "bookmark", "name": "Bookmark", "properties": ["bookmark-of", "name", "content"]},
                 {"type": "like", "name": "Like", "properties": ["like-of"]},
