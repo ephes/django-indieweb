@@ -4,6 +4,53 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Route Micropub syndication targets through handler configuration
+
+- Updated ``GET /indieweb/micropub/?q=syndicate-to`` to read the configured
+  ``MicropubContentHandler.get_config(user)`` ``syndicate-to`` list instead of
+  returning an unconditional empty list.
+- Kept the built-in/default handler behavior unchanged: no configured targets
+  returns ``{"syndicate-to": []}``.
+- Added defensive handling for custom handlers. Missing or non-list
+  ``syndicate-to`` values return an empty list rather than raising, while
+  ``q=config`` preserves a custom handler's configured ``syndicate-to`` value
+  unchanged.
+- Preserved authentication and scope behavior. ``q=syndicate-to`` remains
+  token-required only and does not require ``create``, ``update``, ``delete``,
+  ``undelete``, ``media``, or any other operation scope.
+- Backlog: removed the completed Priority 4 syndication-target item from
+  ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/micropub.rst`` and ``docs/api.rst`` with the
+  handler-backed response shape, default empty behavior, expected target fields
+  (``uid``, ``name``, optional ``service`` metadata, optional ``checked``), and
+  the host-owned syndication boundary. No generated docs under ``docs/_build``
+  were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the
+  handler-backed ``q=syndicate-to`` response, defensive empty-list behavior,
+  default-handler compatibility, no-scope-gate behavior, and explicit
+  syndicator/plugin exclusions.
+- Compatibility: existing Micropub create, update, delete, undelete,
+  ``q=config``, ``q=source``, ``q=category``, ``q=channel``,
+  ``q=media-endpoint``, ``q=post-types``, default ``GET``, media upload, token
+  authentication, scope gating, CORS, and rate-limit behavior remains
+  unchanged beyond the direct ``q=syndicate-to`` response now reflecting
+  custom handler configuration.
+- Follow-up risks: actual cross-posting, webhook-triggered syndication,
+  syndicator credentials, syndicator plugins, ``mp-syndicate-to`` form
+  forwarding, wider ``mp-*`` command-property preservation, and draft-scope
+  semantics remain out of scope and are owned by separate backlog items or host
+  code.
+- Validation: ``uv run pytest tests/test_micropub_queries.py
+  tests/test_micropub_endpoint.py tests/test_micropub_create.py -q --no-cov``
+  (203 passed), ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py
+  -q --no-cov`` (40 passed), ``uv run ruff check .`` (passed), ``uv run ruff
+  format . --check`` (88 files already formatted), ``uv run mypy`` (no
+  issues), ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``git ls-files docs/_build --modified --others --exclude-standard`` (no
+  output), ``git diff --check`` (passed), ``uv run pytest`` (908 passed,
+  coverage gate passed at 90.56%), and ``uv run prek run --all-files``
+  (passed).
+
 ### Advertise and document audio/video Micropub post types
 
 - Added built-in ``audio`` and ``video`` post-type entries to the default

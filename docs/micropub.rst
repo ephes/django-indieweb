@@ -529,6 +529,60 @@ raising.
    curl https://example.com/indieweb/micropub/?q=syndicate-to \
      -H "Authorization: Bearer YOUR_TOKEN"
 
+Returns the configured handler's ``syndicate-to`` list under the
+``syndicate-to`` JSON key. The built-in handler returns an empty list because
+django-indieweb does not include bundled syndicators.
+
+.. code:: json
+
+   {
+     "syndicate-to": [
+       {
+         "uid": "https://social.example/@username",
+         "name": "Example Social",
+         "service": {
+           "name": "Example Social",
+           "url": "https://social.example/"
+         },
+         "checked": true
+       }
+     ]
+   }
+
+Custom handlers populate this list from
+``MicropubContentHandler.get_config()``. Each target should include a stable
+``uid`` clients can submit back and a human-readable ``name``. Hosts may add
+``service`` metadata, such as service ``name``, ``url``, or ``photo`` values,
+when clients should display platform details. Hosts that support a default
+selection can add a boolean ``checked`` value; django-indieweb only advertises
+that value and does not choose targets for the client.
+
+.. code:: python
+
+   def get_config(self, user):
+       config = super().get_config(user)
+       config["syndicate-to"] = [
+           {
+               "uid": "https://social.example/@username",
+               "name": "Example Social",
+               "service": {
+                   "name": "Example Social",
+                   "url": "https://social.example/",
+               },
+               "checked": True,
+           },
+           {
+               "uid": "https://syndication.example/targets/newsletter",
+               "name": "Newsletter",
+           },
+       ]
+       return config
+
+If a custom handler omits ``syndicate-to`` or returns a non-list value, the
+direct query returns ``{"syndicate-to": []}`` rather than raising. The
+aggregate ``q=config`` response preserves the handler's configured
+``syndicate-to`` value unchanged.
+
 **Source List:**
 
 .. code:: bash
@@ -661,24 +715,61 @@ Handling Different Post Types
 Adding Syndication Support
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+Syndication is host-owned. django-indieweb can advertise targets through
+``get_config()`` and pass Micropub request properties to your content handler,
+but it does not cross-post, call webhooks, choose targets, store syndicator
+credentials, or run syndicator plugins.
+
 .. code:: python
 
    def get_config(self, user):
        config = super().get_config(user)
 
-       # Add syndication targets
        config['syndicate-to'] = [
            {
-               'uid': 'https://twitter.com/username',
-               'name': 'Twitter'
+               'uid': 'https://social.example/@username',
+               'name': 'Example Social',
+               'service': {
+                   'name': 'Example Social',
+                   'url': 'https://social.example/'
+               },
+               'checked': True
            },
            {
-               'uid': 'https://mastodon.social/@username',
-               'name': 'Mastodon'
+               'uid': 'https://syndication.example/targets/newsletter',
+               'name': 'Newsletter'
            }
        ]
 
        return config
+
+When a client submits syndication choices, consume those values inside your
+handler after the host post is created. JSON Micropub requests are passed
+through with their submitted property names, so a host can read an
+``mp-syndicate-to`` array from ``properties`` and enqueue its own task or
+record pending syndication state:
+
+.. code:: python
+
+   class MyMicropubHandler(MicropubContentHandler):
+       def create_entry(self, properties, user):
+           post = create_post_from_micropub_properties(properties, user)
+           targets = properties.get("mp-syndicate-to", [])
+
+           for target_uid in targets:
+               create_pending_syndication(post=post, target_uid=target_uid)
+
+           return MicropubEntry(
+               type=["h-entry"],
+               properties=properties,
+               url=post.get_absolute_url(),
+           )
+
+Form-encoded ``mp-*`` command-property forwarding is intentionally not broadened
+in this slice. If your client submits form data, only the properties already
+normalized by django-indieweb are forwarded today. Preserve and route additional
+command properties in host code or in the separate command-property extension
+work.
 
 Error Handling
 --------------

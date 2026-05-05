@@ -63,6 +63,27 @@ class _ChannelsHandler(InMemoryMicropubHandler):
         return config
 
 
+class _SyndicationTargetsHandler(InMemoryMicropubHandler):
+    def get_config(self, user):
+        config = super().get_config(user)
+        config["syndicate-to"] = [
+            {
+                "uid": "https://social.example/@queryuser",
+                "name": "Example Social",
+                "service": {
+                    "name": "Example Social",
+                    "url": "https://social.example/",
+                },
+                "checked": True,
+            },
+            {
+                "uid": "https://syndication.example/targets/newsletter",
+                "name": "Newsletter",
+            },
+        ]
+        return config
+
+
 class _NoListsHandler(InMemoryMicropubHandler):
     def get_config(self, user):
         return {
@@ -80,6 +101,20 @@ class _NoPostTypesHandler(InMemoryMicropubHandler):
             "categories": [],
             "channels": [],
         }
+
+
+class _NoSyndicationTargetsHandler(InMemoryMicropubHandler):
+    def get_config(self, user):
+        config = super().get_config(user)
+        del config["syndicate-to"]
+        return config
+
+
+class _MalformedSyndicationTargetsHandler(InMemoryMicropubHandler):
+    def get_config(self, user):
+        config = super().get_config(user)
+        config["syndicate-to"] = "https://social.example/@queryuser"
+        return config
 
 
 class _CustomPostTypesHandler(InMemoryMicropubHandler):
@@ -119,11 +154,12 @@ class TestQueryDiscovery:
         assert "properties" not in config["q"]
         assert "contacts" not in config["q"]
 
-    def test_config_advertises_default_categories_and_channels(self, client, token, micropub_url):
+    def test_config_advertises_default_list_configs(self, client, token, micropub_url):
         response = client.get(f"{micropub_url}?q=config", Authorization=f"Bearer {token.key}")
         config = json.loads(response.content)
         assert config.get("categories") == []
         assert config.get("channels") == []
+        assert config.get("syndicate-to") == []
 
     def test_config_does_not_mutate_handler_owned_config(self, client, token, micropub_url, monkeypatch):
         """A custom handler that reuses one config dict must not receive injected view-owned keys."""
@@ -143,6 +179,27 @@ class TestQueryDiscovery:
         client.get(f"{micropub_url}?q=config", Authorization=f"Bearer {token.key}")
         assert "q" not in cached
         assert cached["media-endpoint"] is None
+
+    def test_config_preserves_custom_syndication_targets(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _SyndicationTargetsHandler)
+        response = client.get(f"{micropub_url}?q=config", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        config = json.loads(response.content)
+        assert config["syndicate-to"] == [
+            {
+                "uid": "https://social.example/@queryuser",
+                "name": "Example Social",
+                "service": {
+                    "name": "Example Social",
+                    "url": "https://social.example/",
+                },
+                "checked": True,
+            },
+            {
+                "uid": "https://syndication.example/targets/newsletter",
+                "name": "Newsletter",
+            },
+        ]
 
 
 @pytest.mark.django_db
@@ -166,6 +223,46 @@ class TestDirectConfigSubqueries:
         response = client.get(f"{micropub_url}?q=media-endpoint", Authorization=f"Bearer {token.key}")
         assert response.status_code == 200
         assert json.loads(response.content) == {"media-endpoint": "https://cdn.example.org/micropub-media/"}
+
+    def test_syndicate_to_query_returns_default_empty_targets(self, client, token, micropub_url):
+        response = client.get(f"{micropub_url}?q=syndicate-to", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert response["Content-Type"] == "application/json"
+        assert json.loads(response.content) == {"syndicate-to": []}
+
+    def test_syndicate_to_query_preserves_custom_handler_value(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _SyndicationTargetsHandler)
+        response = client.get(f"{micropub_url}?q=syndicate-to", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {
+            "syndicate-to": [
+                {
+                    "uid": "https://social.example/@queryuser",
+                    "name": "Example Social",
+                    "service": {
+                        "name": "Example Social",
+                        "url": "https://social.example/",
+                    },
+                    "checked": True,
+                },
+                {
+                    "uid": "https://syndication.example/targets/newsletter",
+                    "name": "Newsletter",
+                },
+            ]
+        }
+
+    def test_missing_syndicate_to_key_returns_empty(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _NoSyndicationTargetsHandler)
+        response = client.get(f"{micropub_url}?q=syndicate-to", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {"syndicate-to": []}
+
+    def test_non_list_syndicate_to_value_returns_empty(self, client, token, micropub_url, monkeypatch):
+        _patch_handler(monkeypatch, _MalformedSyndicationTargetsHandler)
+        response = client.get(f"{micropub_url}?q=syndicate-to", Authorization=f"Bearer {token.key}")
+        assert response.status_code == 200
+        assert json.loads(response.content) == {"syndicate-to": []}
 
     def test_post_types_query_returns_default_supported_vocabulary(self, client, token, micropub_url):
         response = client.get(f"{micropub_url}?q=post-types", Authorization=f"Bearer {token.key}")
@@ -376,8 +473,8 @@ class TestChannelQuery:
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("q", ["category", "channel", "media-endpoint", "post-types"])
-@pytest.mark.parametrize("scope", ["create", "post", "update", "delete", "undelete", "read", "", None])
+@pytest.mark.parametrize("q", ["syndicate-to", "category", "channel", "media-endpoint", "post-types"])
+@pytest.mark.parametrize("scope", ["create", "post", "update", "delete", "undelete", "media", "read", "", None])
 def test_config_queries_have_no_scope_gate(client, user, micropub_url, q, scope):
     """Config subqueries are token-required only; no operation scope is required."""
     token = _make_token(user, scope)
@@ -386,7 +483,7 @@ def test_config_queries_have_no_scope_gate(client, user, micropub_url, q, scope)
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("q", ["category", "channel", "media-endpoint", "post-types"])
+@pytest.mark.parametrize("q", ["syndicate-to", "category", "channel", "media-endpoint", "post-types"])
 def test_config_queries_require_a_token(client, micropub_url, q):
     response = client.get(f"{micropub_url}?q={q}")
     assert response.status_code == 401

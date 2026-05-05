@@ -1422,6 +1422,14 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         config = self._micropub_config(request)
         return HttpResponse(json.dumps({"media-endpoint": config["media-endpoint"]}), content_type="application/json")
 
+    def _handle_syndicate_to_query(self, request: HttpRequest) -> HttpResponse:
+        """Return configured Micropub syndication targets as a direct config query."""
+        config = self._micropub_config(request)
+        raw = config.get("syndicate-to", [])
+        if not isinstance(raw, list):
+            raw = []
+        return HttpResponse(json.dumps({"syndicate-to": raw}), content_type="application/json")
+
     def _handle_source_query(self, request: HttpRequest) -> HttpResponse:
         """Dispatch ``GET ?q=source`` using the configured content handler."""
         handler = get_micropub_handler()
@@ -1567,8 +1575,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         elif q == "source":
             return self._handle_source_query(request)
         elif q == "syndicate-to":
-            # Return empty syndication targets for now
-            return HttpResponse(json.dumps({"syndicate-to": []}), content_type="application/json")
+            return self._handle_syndicate_to_query(request)
         elif q == "category":
             return self._handle_list_config_query(request, "categories")
         elif q == "channel":

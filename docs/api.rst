@@ -789,8 +789,8 @@ The Micropub endpoint supports several query parameters:
 Returns supported post types and features. The response also includes a ``q``
 array advertising the query names django-indieweb implements
 (``config``, ``source``, ``syndicate-to``, ``category``, ``channel``,
-``media-endpoint``, ``post-types``), plus default empty ``categories`` and
-``channels`` arrays from the bundled handler.
+``media-endpoint``, ``post-types``), plus default empty ``syndicate-to``,
+``categories``, and ``channels`` arrays from the bundled handler.
 
 The default in-memory handler advertises these post types:
 
@@ -1017,7 +1017,41 @@ behavior.
     GET /indieweb/micropub/?q=syndicate-to HTTP/1.1
     Authorization: Bearer xyz789
 
-Returns available syndication targets.
+Returns the configured handler's syndication target list as
+``{"syndicate-to": [...]}``. The bundled in-memory handler returns
+``{"syndicate-to": []}``; custom handlers populate the list by overriding
+``MicropubContentHandler.get_config()``.
+
+Target objects should include a stable ``uid`` value clients can submit back
+and a human-readable ``name``. Hosts may include optional ``service`` metadata
+when clients should display platform details, and may include a boolean
+``checked`` value when a target should be selected by default:
+
+.. code-block:: json
+
+    {
+        "syndicate-to": [
+            {
+                "uid": "https://social.example/@username",
+                "name": "Example Social",
+                "service": {
+                    "name": "Example Social",
+                    "url": "https://social.example/"
+                },
+                "checked": true
+            }
+        ]
+    }
+
+The direct query uses the same copied effective handler configuration as
+``q=config``. If a handler omits ``syndicate-to`` or returns a non-list value,
+the direct query returns an empty list instead of raising. ``q=config``
+preserves a custom handler's ``syndicate-to`` value unchanged.
+
+This query is token-required only and does not require ``create``, ``update``,
+``delete``, ``undelete``, or ``media`` scope. Syndication execution remains
+host-owned: django-indieweb does not cross-post, call webhooks, choose targets,
+store syndicator credentials, or run syndicator plugins.
 
 Micropub Media Endpoint
 -----------------------
@@ -1228,6 +1262,9 @@ All endpoints may return these error responses:
   or float). A missing ``categories``/``channels``/``post-types`` key in the
   configured handler's config returns an empty list rather than an error, and
   an unrecognized ``filter`` or ``post-type`` value simply returns no matches.
+- Micropub ``GET ?q=syndicate-to`` returns an empty list rather than an error
+  when the configured handler omits ``syndicate-to`` or returns a non-list
+  value.
 - Micropub media endpoint upload requests that are not ``multipart/form-data``
   or do not include a ``file`` part.
 
