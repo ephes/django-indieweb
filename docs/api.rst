@@ -786,7 +786,10 @@ The Micropub endpoint supports several query parameters:
     GET /indieweb/micropub/?q=config HTTP/1.1
     Authorization: Bearer xyz789
 
-Returns supported post types and features.
+Returns supported post types and features. The response also includes a ``q``
+array advertising the query names django-indieweb implements
+(``config``, ``source``, ``syndicate-to``, ``category``, ``channel``), plus
+default empty ``categories`` and ``channels`` arrays from the bundled handler.
 
 The default in-memory handler advertises these post types:
 
@@ -848,6 +851,63 @@ the Micropub source-query examples:
 unknown to the handler, and ``500 Internal Server Error`` when the handler
 raises an unexpected exception. Scope failures still return ``403`` with
 body ``authorization error`` before source-query dispatch.
+
+**Category Query:**
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=category HTTP/1.1
+    Authorization: Bearer xyz789
+
+Returns the handler's ``categories`` configuration list under the
+``categories`` JSON key. The bundled in-memory handler advertises an empty
+list; custom handlers populate it by overriding
+``MicropubContentHandler.get_config()``.
+
+The response is JSON shaped like:
+
+.. code-block:: json
+
+    {"categories": ["indieweb", "micropub"]}
+
+**Channel Query:**
+
+.. code-block:: http
+
+    GET /indieweb/micropub/?q=channel HTTP/1.1
+    Authorization: Bearer xyz789
+
+Returns the handler's ``channels`` configuration list under the ``channels``
+JSON key. Channel item shape is host-defined; clients commonly expect
+``{"uid": ..., "name": ...}`` objects:
+
+.. code-block:: json
+
+    {
+        "channels": [
+            {"uid": "notes", "name": "Notes"},
+            {"uid": "articles", "name": "Articles"}
+        ]
+    }
+
+Channel data exposed here is informational. django-indieweb does not select,
+default, or route on channels during ``POST`` create/update in this slice;
+``mp-channel`` command property forwarding and channel-aware publication
+remain host-handler concerns and a separate backlog item.
+
+Both ``q=category`` and ``q=channel`` accept optional ``filter``, ``limit``,
+and ``offset`` parameters. ``filter`` is matched case-insensitively as a
+substring against string items, or against a stable JSON serialization of
+dict items (so common fields such as ``uid`` and ``name`` are searchable
+without per-handler configuration). ``limit`` and ``offset`` must be
+non-negative integers; the order of operations is filter → offset → limit.
+Malformed ``limit`` or ``offset`` values (non-integers, negative numbers, or
+floats) return ``400 invalid_request``. Missing ``categories`` or ``channels``
+keys in a custom handler config return an empty list under the response key
+instead of raising.
+
+Both queries are token-required only and do not require a per-operation
+scope, matching the existing ``q=config`` and ``q=syndicate-to`` behavior.
 
 **Syndication Targets Query:**
 
@@ -1059,6 +1119,11 @@ All endpoints may return these error responses:
 - Micropub ``GET ?q=source`` with a missing ``url`` parameter or a ``url``
   unknown to the configured handler. Missing requested ``properties[]`` names
   are omitted from successful filtered responses instead of causing an error.
+- Micropub ``GET ?q=category`` or ``GET ?q=channel`` with a malformed
+  ``limit`` or ``offset`` parameter (non-integer, negative, or float). A
+  missing ``categories``/``channels`` key in the configured handler's config
+  returns an empty list rather than an error, and an unrecognized ``filter``
+  value simply returns no matches.
 - Micropub media endpoint upload requests that are not ``multipart/form-data``
   or do not include a ``file`` part.
 
@@ -1092,10 +1157,10 @@ All endpoints may return these error responses:
   ``update``; ``POST /indieweb/media/`` requires ``media``; and multipart
   create uploads sent to ``POST /indieweb/micropub/`` remain create requests,
   requiring ``create`` or ``post`` rather than ``media``. ``GET ?q=config``,
-  ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only require an
-  authenticated token. Stored ``scope`` is split on whitespace and matched as
-  an exact token, so ``createXYZ`` does not satisfy ``create`` and
-  ``mediaXYZ`` does not satisfy ``media``.
+  ``GET ?q=syndicate-to``, ``GET ?q=category``, ``GET ?q=channel``, and
+  ``GET`` with no ``q`` only require an authenticated token. Stored ``scope``
+  is split on whitespace and matched as an exact token, so ``createXYZ`` does
+  not satisfy ``create`` and ``mediaXYZ`` does not satisfy ``media``.
 - The stored token's ``client_id`` is rejected by the configured
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (``invalid_client``)
@@ -1168,8 +1233,9 @@ accepted only when the auth code was issued with no scope.
   create/post scope because they create an entry.
 - ``post`` - Legacy alias for ``create``.
 
-``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only
-require an authenticated token; no specific scope is enforced.
+``GET ?q=config``, ``GET ?q=syndicate-to``, ``GET ?q=category``,
+``GET ?q=channel``, and ``GET`` with no ``q`` only require an authenticated
+token; no specific scope is enforced.
 
 Multiple scopes can be requested by separating with spaces: ``scope=create update``
 

@@ -351,7 +351,12 @@ Query Endpoints
    curl https://example.com/indieweb/micropub/?q=config \
      -H "Authorization: Bearer YOUR_TOKEN"
 
-Returns supported post types and features.
+Returns supported post types and features. The ``q`` array advertises the query
+names django-indieweb actually implements today, so clients can discover
+``q=category``, ``q=channel``, ``q=source``, and ``q=syndicate-to`` without
+probing every Micropub-extension query name. Direct configuration subqueries
+such as ``q=media-endpoint`` and ``q=post-types`` are intentionally omitted
+because they belong to a separate, future backlog item.
 
 Example response excerpt:
 
@@ -360,6 +365,8 @@ Example response excerpt:
    {
      "media-endpoint": "https://example.com/indieweb/media/",
      "syndicate-to": [],
+     "categories": [],
+     "channels": [],
      "post-types": [
        {"type": "note", "name": "Note", "properties": ["content"]},
        {"type": "article", "name": "Article", "properties": ["name", "content"]},
@@ -374,7 +381,8 @@ Example response excerpt:
          "properties": ["name", "summary", "description", "start", "end", "location", "category", "url", "published"]
        },
        {"type": "rsvp", "name": "RSVP", "properties": ["rsvp", "in-reply-to", "name", "content"]}
-     ]
+     ],
+     "q": ["config", "source", "syndicate-to", "category", "channel"]
    }
 
 The built-in handler advertises common h-entry shapes and forwards normalized
@@ -384,6 +392,79 @@ wire-format remains an ``h-entry`` with ``rsvp`` and ``in-reply-to``
 properties. django-indieweb does not infer storage semantics from post-type
 names; your configured handler decides how to persist bookmarks, likes,
 reposts, replies, articles, notes, photo posts, events, and RSVPs.
+
+**Categories:**
+
+.. code:: bash
+
+   curl https://example.com/indieweb/micropub/?q=category \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+Returns the configured handler's ``categories`` list under the ``categories``
+JSON key. The default in-memory handler advertises an empty list. Override
+``MicropubContentHandler.get_config()`` in your handler to expose host-defined
+categories:
+
+.. code:: python
+
+   def get_config(self, user):
+       config = super().get_config(user)
+       config["categories"] = ["indieweb", "micropub", "django"]
+       return config
+
+Example response:
+
+.. code:: json
+
+   {"categories": ["indieweb", "micropub", "django"]}
+
+**Channels:**
+
+.. code:: bash
+
+   curl https://example.com/indieweb/micropub/?q=channel \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+Returns the configured handler's ``channels`` list under the ``channels`` JSON
+key. The shape of each item is host-defined; clients commonly expect objects
+with ``uid`` and ``name``:
+
+.. code:: python
+
+   def get_config(self, user):
+       config = super().get_config(user)
+       config["channels"] = [
+           {"uid": "notes", "name": "Notes"},
+           {"uid": "articles", "name": "Articles"},
+       ]
+       return config
+
+Example response:
+
+.. code:: json
+
+   {
+     "channels": [
+       {"uid": "notes", "name": "Notes"},
+       {"uid": "articles", "name": "Articles"}
+     ]
+   }
+
+django-indieweb does not interpret channel data on create/update in this slice;
+forwarding ``mp-channel`` command properties and any publication routing remain
+host-handler concerns and a separate backlog item.
+
+Both list-valued queries support the ``filter``, ``limit``, and ``offset``
+parameters. ``filter`` is a free-form string; items are matched
+case-insensitively as a substring against either the string item itself or a
+stable JSON serialization of dict items (so common fields such as ``uid`` and
+``name`` are searchable without per-handler configuration). ``limit`` and
+``offset`` must be non-negative integers; the order of operations is filter →
+offset → limit. Malformed ``limit`` or ``offset`` values (non-integers,
+negative numbers, or floats) return ``400 invalid_request`` rather than being
+silently coerced to zero. Missing ``categories`` or ``channels`` keys in a
+custom handler config return an empty list under the response key rather than
+raising.
 
 **Syndication Targets:**
 

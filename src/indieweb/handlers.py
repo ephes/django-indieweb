@@ -125,6 +125,8 @@ class MicropubContentHandler(ABC):
         return {
             "media-endpoint": None,
             "syndicate-to": [],
+            "categories": [],
+            "channels": [],
             "post-types": [
                 {"type": "note", "name": "Note", "properties": ["content"]},
                 {"type": "article", "name": "Article", "properties": ["name", "content"]},

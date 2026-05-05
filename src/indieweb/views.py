@@ -66,6 +66,7 @@ PKCE_CHALLENGE_MAX = 128
 PKCE_VERIFIER_MIN = 43
 PKCE_VERIFIER_MAX = 128
 MICROPUB_MEDIA_SCOPE = "media"
+SUPPORTED_MICROPUB_QUERIES = ("config", "source", "syndicate-to", "category", "channel")
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES = (
@@ -1103,8 +1104,8 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         * ``POST action=undelete`` → ``undelete``
         * ``GET ?q=source`` → ``update`` (typical "read before update" use case;
           the spec does not define a separate read scope)
-        * ``GET ?q=config``, ``?q=syndicate-to``, ``GET`` (no ``q``) → ``None``
-          (token-required, no scope gate)
+        * ``GET ?q=config``, ``?q=syndicate-to``, ``?q=category``, ``?q=channel``,
+          ``GET`` (no ``q``) → ``None`` (token-required, no scope gate)
         """
         if request.method == "POST":
             action = self._post_action(request)
@@ -1305,6 +1306,87 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return HttpResponse(status=500)
         return self._action_response(request, entry, url)
 
+    @staticmethod
+    def _parse_optional_non_negative_int(value: str | None) -> int | None:
+        """Parse an optional non-negative ``int`` query value.
+
+        Returns ``None`` when the parameter is omitted, the parsed value when it is a
+        well-formed non-negative integer, and raises ``ValueError`` for malformed
+        input that the caller should reject with ``400 invalid_request``. Floats like
+        ``"1.5"`` and negative values like ``"-1"`` are treated as malformed protocol
+        input rather than silently coerced to ``0``.
+        """
+        if value is None:
+            return None
+        parsed = int(value)
+        if parsed < 0:
+            raise ValueError
+        return parsed
+
+    @staticmethod
+    def _query_filter_match(item: Any, needle: str) -> bool:
+        """Return whether a list item matches a case-insensitive substring filter.
+
+        Strings are matched directly; non-string items (typically dicts such as
+        ``{"uid": ..., "name": ...}``) are matched against a stable JSON
+        serialization so common fields are searchable without a per-shape policy.
+        """
+        if isinstance(item, str):
+            return needle in item.lower()
+        return needle in json.dumps(item, sort_keys=True).lower()
+
+    def _filtered_query_items(self, items: list[Any], request: HttpRequest) -> list[Any] | None:
+        """Apply ``filter``/``offset``/``limit`` to a list-valued query response.
+
+        Returns the filtered list, or ``None`` when ``limit``/``offset`` are malformed
+        so the caller can return ``400 invalid_request``. ``filter`` is a free-form
+        string that is compared case-insensitively as a substring; an empty value
+        matches every item. The order is filter → offset → limit, matching the
+        Indiekit reference and avoiding surprising interactions with ``offset``.
+        """
+        try:
+            limit = self._parse_optional_non_negative_int(request.GET.get("limit"))
+            offset = self._parse_optional_non_negative_int(request.GET.get("offset"))
+        except ValueError:
+            return None
+
+        filter_value = request.GET.get("filter")
+        result = list(items)
+        if filter_value:
+            needle = filter_value.lower()
+            result = [item for item in result if self._query_filter_match(item, needle)]
+        if isinstance(offset, int):
+            result = result[offset:]
+        if isinstance(limit, int):
+            result = result[:limit]
+        return result
+
+    def _handle_config_query(self, request: HttpRequest) -> HttpResponse:
+        """Return the aggregate ``q=config`` response with media-endpoint and ``q`` advertisement."""
+        handler = get_micropub_handler()
+        config = dict(handler.get_config(self.token.owner))
+        if not config.get("media-endpoint"):
+            config["media-endpoint"] = request.build_absolute_uri(_reverse_request_namespace(request, "media"))
+        config["q"] = list(SUPPORTED_MICROPUB_QUERIES)
+        return HttpResponse(json.dumps(config), content_type="application/json")
+
+    def _handle_list_config_query(self, request: HttpRequest, config_key: str) -> HttpResponse:
+        """Return a list-valued config property under ``config_key`` with filter/limit/offset.
+
+        Used for ``q=category`` (``categories``) and ``q=channel`` (``channels``). When the
+        configured handler omits the key or returns a non-list value, the response is an
+        empty list rather than an error, matching the rest of the Micropub query surface.
+        """
+        handler = get_micropub_handler()
+        config = handler.get_config(self.token.owner)
+        raw = config.get(config_key, [])
+        if not isinstance(raw, list):
+            raw = []
+        filtered = self._filtered_query_items(raw, request)
+        if filtered is None:
+            return self._invalid_request()
+        return HttpResponse(json.dumps({config_key: filtered}), content_type="application/json")
+
     def _handle_source_query(self, request: HttpRequest) -> HttpResponse:
         """Dispatch ``GET ?q=source`` using the handler's existing ``get_entry`` hook."""
         url = request.GET.get("url")
@@ -1390,17 +1472,16 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         q = request.GET.get("q")
 
         if q == "config":
-            # Return configuration
-            handler = get_micropub_handler()
-            config = handler.get_config(self.token.owner)
-            if not config.get("media-endpoint"):
-                config["media-endpoint"] = request.build_absolute_uri(_reverse_request_namespace(request, "media"))
-            return HttpResponse(json.dumps(config), content_type="application/json")
+            return self._handle_config_query(request)
         elif q == "source":
             return self._handle_source_query(request)
         elif q == "syndicate-to":
             # Return empty syndication targets for now
             return HttpResponse(json.dumps({"syndicate-to": []}), content_type="application/json")
+        elif q == "category":
+            return self._handle_list_config_query(request, "categories")
+        elif q == "channel":
+            return self._handle_list_config_query(request, "channels")
         else:
             # Default response with user's me URL
             params = {"me": self.token.me}

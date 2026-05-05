@@ -4,6 +4,64 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Add Micropub category, channel, and query-discovery support
+
+- Added ``GET /indieweb/micropub/?q=category`` and ``?q=channel`` using the configured
+  ``MicropubContentHandler.get_config(user)`` as the authoritative data source. ``q=category``
+  returns the handler's ``categories`` list under the JSON key ``categories``; ``q=channel``
+  returns the handler's ``channels`` list under ``channels``. Missing ``categories`` or
+  ``channels`` keys in a custom handler config return an empty list rather than raising.
+- Added ``filter``, ``limit``, and ``offset`` support for both list-valued queries. ``filter``
+  is matched case-insensitively as a substring against string items, or against a stable JSON
+  serialization of dict items so common fields such as ``uid`` and ``name`` are searchable
+  without per-handler configuration. ``limit`` and ``offset`` must be non-negative integers;
+  malformed values (non-integers, negative numbers, or floats) return ``400 invalid_request``
+  rather than being silently coerced to zero. The order of operations is filter → offset →
+  limit.
+- Added query discovery to ``GET /indieweb/micropub/?q=config``. The response now includes a
+  ``q`` array advertising only the query names django-indieweb implements
+  (``config``, ``source``, ``syndicate-to``, ``category``, ``channel``); direct configuration
+  subqueries such as ``q=media-endpoint`` and ``q=post-types`` are intentionally not advertised
+  because they are owned by a separate backlog item. The bundled handler now also includes
+  default empty ``categories`` and ``channels`` keys, and the view copies the handler config
+  before injecting ``media-endpoint`` and ``q`` so cached or shared handler-owned dicts are not
+  mutated across requests.
+- ``q=category`` and ``q=channel`` are token-required only (no scope gate), matching existing
+  ``q=config`` and ``q=syndicate-to`` behavior. Existing Micropub create, update, delete,
+  undelete, ``q=source``, ``q=config``, ``q=syndicate-to``, ``GET`` with no ``q``, media
+  upload, CORS, and rate-limit semantics remain unchanged.
+- Backlog: removed the completed Priority 4 Micropub item from ``BACKLOG.md``. No migrations
+  were needed.
+- Documentation: updated ``docs/micropub.rst`` with category/channel query behavior, examples,
+  filter/limit/offset policy, and query discovery in ``q=config``; updated ``docs/api.rst``
+  with endpoint reference details for ``q=category`` and ``q=channel``, the new ``q``
+  advertisement in ``q=config``, the no-scope-gate listing, and the ``400 invalid_request``
+  listing for malformed ``limit``/``offset``. No generated docs under ``docs/_build`` were
+  edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for category/channel
+  queries, the ``q`` advertisement, default empty ``categories``/``channels`` config, the
+  filter/limit/offset policy, the malformed-input behavior, the no-scope-gate guarantee, and
+  the explicit out-of-scope items.
+- Compatibility: existing Micropub endpoint behavior (create, update, delete, undelete,
+  ``q=source``, ``q=config`` aggregate response shape, ``q=syndicate-to``, default ``GET``,
+  media uploads, scope gating, token authentication, CORS, and rate limiting) is unchanged
+  beyond the additive ``q``/``categories``/``channels`` keys and the two new query branches.
+  Custom handlers that already returned ``categories``/``channels`` keys continue to work
+  unchanged.
+- Follow-up risks: Indiekit-style channel routing on create/update, ``mp-channel`` command
+  property forwarding, ``GET ?q=source`` post-list pagination, direct configuration subqueries
+  (``q=media-endpoint``, ``q=post-types``, supported-vocabulary), and host-owned syndication
+  target routing remain explicitly out of scope and are owned by separate backlog items.
+- Validation: ``uv run pytest tests/test_micropub_endpoint.py tests/test_micropub_create.py
+  tests/test_micropub_source.py tests/test_micropub_actions.py tests/test_micropub_media.py
+  tests/test_micropub_queries.py -q --no-cov`` (232 passed),
+  ``uv run pytest tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (88 files already
+  formatted), ``uv run mypy`` (no issues), ``uv run sphinx-build -W -b html docs
+  docs/_build/html`` (passed), ``git ls-files docs/_build --modified --others
+  --exclude-standard`` (no output), ``git diff --check`` (passed), ``uv run pytest`` (full
+  suite passed with coverage gate), and ``uv run prek run --all-files`` (passed).
+
 ### Add IndieAuth token introspection
 
 - Added the bundled ``POST /indieweb/token/introspect/`` endpoint with the stable URL name

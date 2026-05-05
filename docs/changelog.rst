@@ -5,6 +5,7 @@ Changelog
 
 Unreleased
 ----------
+* Added Micropub ``q=category`` and ``q=channel`` queries plus query discovery in ``q=config``. ``GET /indieweb/micropub/?q=category`` returns the configured handler's ``categories`` config list under the JSON key ``categories``; ``GET /indieweb/micropub/?q=channel`` returns the configured handler's ``channels`` list under ``channels``. Both accept optional ``filter`` (case-insensitive substring against string items or a stable JSON serialization of dict items), ``limit``, and ``offset`` (non-negative integers; malformed values return ``400 invalid_request``); the order of operations is filter → offset → limit. Missing ``categories`` or ``channels`` keys in a custom handler config return an empty list instead of raising. ``q=config`` now advertises the supported query names through a ``q`` array (``["config", "source", "syndicate-to", "category", "channel"]``) and includes default empty ``categories`` and ``channels`` keys from the bundled handler. The new queries are token-required only (no specific operation scope), matching existing ``q=config`` and ``q=syndicate-to`` behavior. Direct configuration subqueries (``q=media-endpoint``, ``q=post-types``), ``mp-channel`` command property handling, and channel-aware publication routing remain out of scope and are owned by separate backlog items.
 * Removed Beads and Beadsflow project-tracking files and instructions
 * Added ``BACKLOG.md`` and ``DONE.md`` as the repository-local work tracking workflow
 * Linked the backlog workflow from the project documentation
