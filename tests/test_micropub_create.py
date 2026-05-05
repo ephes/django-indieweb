@@ -381,6 +381,79 @@ class TestMicropubCreate:
         assert received_properties["video"] == ["https://example.com/one.mp4", "https://example.com/two.mp4"]
 
     @pytest.mark.django_db
+    def test_form_create_forwards_single_command_properties(self, client, token, micropub_url, monkeypatch):
+        """Test that single-value command properties are forwarded as arrays without execution."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={
+                "h": "entry",
+                "content": "Publish later",
+                "photo": "https://example.com/photo.jpg",
+                "mp-slug": "my-suggested-slug",
+                "mp-channel": "notes",
+                "mp-photo-alt": "A text alternative",
+                "mp-syndicate-to": "https://social.example/@user",
+                "post-status": "draft",
+            },
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == {
+            "content": ["Publish later"],
+            "photo": ["https://example.com/photo.jpg"],
+            "mp-slug": ["my-suggested-slug"],
+            "mp-channel": ["notes"],
+            "mp-photo-alt": ["A text alternative"],
+            "mp-syndicate-to": ["https://social.example/@user"],
+            "post-status": ["draft"],
+        }
+        assert "slug" not in received_properties
+        assert "channel" not in received_properties
+        assert "syndication" not in received_properties
+
+    @pytest.mark.django_db
+    def test_form_create_forwards_array_command_properties(self, client, token, micropub_url, monkeypatch):
+        """Test that array notation works for list-shaped command properties."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={
+                "h": "entry",
+                "mp-channel[]": ["notes", "articles"],
+                "mp-photo-alt[]": ["First alt", "Second alt"],
+                "mp-syndicate-to[]": ["https://social.example/@user", "https://news.example/list"],
+            },
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == {
+            "mp-channel": ["notes", "articles"],
+            "mp-photo-alt": ["First alt", "Second alt"],
+            "mp-syndicate-to": ["https://social.example/@user", "https://news.example/list"],
+        }
+
+    @pytest.mark.django_db
     def test_json_create_preserves_additional_post_type_properties(self, client, token, micropub_url, monkeypatch):
         """Test that JSON create keeps the additional h-entry properties unchanged."""
         received_properties = None
@@ -410,6 +483,44 @@ class TestMicropubCreate:
 
         assert response.status_code == 201
         assert received_properties == payload["properties"]
+
+    @pytest.mark.django_db
+    def test_json_create_preserves_command_properties_and_post_status(self, client, token, micropub_url, monkeypatch):
+        """Test that Microformats2 JSON command properties remain handler-owned."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {
+            "type": ["h-entry"],
+            "properties": {
+                "content": ["Publish later"],
+                "photo": ["https://example.com/photo.jpg"],
+                "mp-slug": ["my-suggested-slug"],
+                "mp-channel": ["notes"],
+                "mp-photo-alt": ["A text alternative"],
+                "mp-syndicate-to": ["https://social.example/@user"],
+                "post-status": ["draft"],
+            },
+        }
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == payload["properties"]
+        assert "slug" not in received_properties
+        assert "channel" not in received_properties
+        assert "syndication" not in received_properties
 
     @pytest.mark.django_db
     def test_form_create_forwards_event_properties(self, client, token, micropub_url, monkeypatch):

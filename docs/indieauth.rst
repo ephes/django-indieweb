@@ -70,7 +70,9 @@ because the token endpoint exchanges authorization codes. ``plain`` and
 ``S256`` are both listed because both PKCE challenge methods are accepted
 today. The scope list advertises the built-in Micropub resource-server scopes;
 the legacy ``post`` alias is still accepted for create requests but is not
-advertised as a preferred scope. ``service_documentation`` points to the
+advertised as a preferred scope. The extension ``draft`` scope is not
+advertised because django-indieweb does not implement built-in draft-only
+resource-server behavior. ``service_documentation`` points to the
 human-readable django-indieweb IndieAuth documentation.
 
 django-indieweb does not assume it owns the host project's root URLconf. Host
@@ -177,6 +179,12 @@ extension-defined, and clients may request values such as ``profile``,
 ``media``, or site-specific scopes. django-indieweb enforces ``media`` for
 direct uploads to the Micropub media endpoint; other unknown scopes are stored
 but have no built-in resource-server behavior unless your application adds it.
+That includes ``draft``: clients may request it and django-indieweb will store
+it on auth codes and tokens, but the built-in Micropub resource server does not
+advertise it or let it replace ``create``/``post`` for creates or ``update``
+for updates. Submitted ``post-status=draft`` values are forwarded to the
+configured Micropub handler; the host application decides how to persist,
+filter, expose, or restrict draft content.
 
 Wire Compatibility Policy
 -------------------------
@@ -358,13 +366,17 @@ Security Considerations
     ``POST action=undelete`` requires ``undelete``; ``GET ?q=source`` requires
     ``update`` (the spec does not define a separate read scope and the typical
     use case for ``q=source`` is "fetch a post to edit it"); and
-    ``POST /indieweb/media/`` requires ``media``.
-    ``GET ?q=config``, ``GET ?q=syndicate-to``, and ``GET`` with no ``q`` only
-    require an authenticated token. Stored ``scope`` is split on whitespace
-    and compared as an exact token, so ``createXYZ`` does not satisfy
-    ``create`` and ``mediaXYZ`` does not satisfy ``media``. Scope failures
-    return HTTP 403 with the plain-text body ``authorization error``. The
-    ``update``, ``delete``, and ``undelete``
+    ``POST /indieweb/media/`` requires ``media``. Configuration queries such
+    as ``GET ?q=config``, ``GET ?q=category``, ``GET ?q=channel``,
+    ``GET ?q=media-endpoint``, ``GET ?q=post-types``, ``GET ?q=syndicate-to``,
+    and ``GET`` with no ``q`` only require an authenticated token. Stored
+    ``scope`` is split on whitespace and compared as an exact token, so
+    ``createXYZ`` does not satisfy ``create`` and ``mediaXYZ`` does not
+    satisfy ``media``. ``draft`` is treated as an opaque extension scope by
+    this built-in resource server: a token with only ``draft`` cannot create
+    or update, while ``create draft`` can create because ``create`` is present.
+    Scope failures return HTTP 403 with the plain-text body
+    ``authorization error``. The ``update``, ``delete``, and ``undelete``
     actions and the ``GET ?q=source`` query dispatch into the configured
     ``MicropubContentHandler`` after the scope check succeeds.
 

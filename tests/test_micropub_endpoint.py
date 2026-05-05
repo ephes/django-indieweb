@@ -273,7 +273,7 @@ def _make_token(user, scope: str | None) -> "models.Token":
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("scope", ["create", "post", "create update delete", "profile create"])
+@pytest.mark.parametrize("scope", ["create", "post", "create update delete", "profile create", "create draft"])
 def test_post_create_accepts_create_or_post_scope(client, user, micropub_endpoint_url, micropub_payload, scope):
     """A POST entry create succeeds for ``create`` (standard) or ``post`` (legacy alias)."""
     token = _make_token(user, scope)
@@ -284,12 +284,41 @@ def test_post_create_accepts_create_or_post_scope(client, user, micropub_endpoin
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("scope", ["update", "delete", "undelete", "read", "", "createXYZ", "postscript"])
+@pytest.mark.parametrize("scope", ["update", "delete", "undelete", "read", "draft", "", "createXYZ", "postscript"])
 def test_post_create_rejects_other_scopes(client, user, micropub_endpoint_url, micropub_payload, scope):
     """A POST entry create requires exact ``create``/``post`` scope tokens; substrings must not satisfy it."""
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+    assert response.status_code == 403
+    assert "authorization error" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["create", "post", "create draft"])
+def test_post_create_with_post_status_draft_accepts_create_or_post_scope(client, user, micropub_endpoint_url, scope):
+    """``post-status=draft`` is a create property and still uses the normal create/post scope gate."""
+    token = _make_token(user, scope)
+    auth_header = f"Bearer {token.key}"
+    response = client.post(
+        micropub_endpoint_url,
+        data={"h": "entry", "content": "Draft body", "post-status": "draft"},
+        Authorization=auth_header,
+    )
+    assert response.status_code == 201
+    assert "Location" in response
+
+
+@pytest.mark.django_db
+def test_post_create_with_post_status_draft_rejects_draft_scope(client, user, micropub_endpoint_url):
+    """The extension ``draft`` scope alone does not authorize built-in Micropub create."""
+    token = _make_token(user, "draft")
+    auth_header = f"Bearer {token.key}"
+    response = client.post(
+        micropub_endpoint_url,
+        data={"h": "entry", "content": "Draft body", "post-status": "draft"},
+        Authorization=auth_header,
+    )
     assert response.status_code == 403
     assert "authorization error" in response.content.decode("utf-8")
 
@@ -313,7 +342,7 @@ def test_post_action_update_accepts_update_scope(client, user, micropub_endpoint
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("scope", ["create", "post", "delete", "undelete", "read", ""])
+@pytest.mark.parametrize("scope", ["create", "post", "delete", "undelete", "read", "draft", ""])
 def test_post_action_update_rejects_non_update_scope(client, user, micropub_endpoint_url, scope):
     """``action=update`` must not be authorized by ``create``/``post``/``delete`` (regression)."""
     token = _make_token(user, scope)

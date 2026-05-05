@@ -180,6 +180,12 @@ Common h-entry properties are supported:
 - ``start`` - Event start value
 - ``end`` - Event end value
 - ``url`` - Event URL
+- ``mp-slug`` - Suggested slug for host code to interpret
+- ``mp-channel`` - Requested host-defined channel UID(s)
+- ``mp-photo-alt`` - Submitted text alternatives for photo values
+- ``mp-syndicate-to`` - Requested host-defined syndication target UID(s)
+- ``post-status`` - Submitted publication status such as ``draft`` or
+  ``published``
 
 For h-event-style form requests, django-indieweb forwards event properties
 such as ``name``, ``summary``, ``description``, ``start``, ``end``,
@@ -191,6 +197,90 @@ For RSVP posts, the form parser forwards ``rsvp``, ``in-reply-to``, ``name``,
 ``content``, ``category``, and ``published``. django-indieweb does not infer
 attendance, event date, time-zone, calendar-feed, or persistence behavior.
 Your configured handler owns those choices.
+
+Command Properties and Draft Status
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+django-indieweb preserves common Micropub command-style properties on create
+requests so your configured ``MicropubContentHandler.create_entry()`` can make
+host-specific decisions. It does not execute those commands itself: it does
+not generate slugs, choose or route channels, attach ``mp-photo-alt`` to stored
+files, cross-post, enqueue syndication, or implement draft storage.
+
+Form-encoded creates normalize submitted command values to property arrays.
+Single values become one-item arrays:
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -d "h=entry" \
+     -d "content=Draft note" \
+     -d "mp-slug=draft-note" \
+     -d "mp-channel=notes" \
+     -d "mp-photo-alt=A text alternative" \
+     -d "mp-syndicate-to=https://social.example/@user" \
+     -d "post-status=draft"
+
+The handler receives:
+
+.. code:: json
+
+   {
+     "content": ["Draft note"],
+     "mp-slug": ["draft-note"],
+     "mp-channel": ["notes"],
+     "mp-photo-alt": ["A text alternative"],
+     "mp-syndicate-to": ["https://social.example/@user"],
+     "post-status": ["draft"]
+   }
+
+For list-shaped command properties, clients can use array notation:
+
+.. code:: bash
+
+   curl -X POST https://example.com/indieweb/micropub/ \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -d "h=entry" \
+     -d "mp-channel[]=notes" \
+     -d "mp-channel[]=articles" \
+     -d "mp-photo-alt[]=First image alt" \
+     -d "mp-photo-alt[]=Second image alt" \
+     -d "mp-syndicate-to[]=https://social.example/@user" \
+     -d "mp-syndicate-to[]=https://news.example/list"
+
+Only ``category`` keeps the historical comma-splitting behavior. Command
+properties are not comma-split. Array notation is meaningful only for the
+list-shaped command properties shown above: ``mp-channel``,
+``mp-photo-alt``, and ``mp-syndicate-to``.
+
+Microformats2 JSON creates already pass the submitted ``properties`` object to
+the handler unchanged, including command properties and ``post-status``:
+
+.. code:: json
+
+   {
+     "type": ["h-entry"],
+     "properties": {
+       "content": ["Draft note"],
+       "mp-slug": ["draft-note"],
+       "mp-channel": ["notes"],
+       "mp-photo-alt": ["A text alternative"],
+       "mp-syndicate-to": ["https://social.example/@user"],
+       "post-status": ["draft"]
+     }
+   }
+
+The ``draft`` IndieAuth scope is treated as an extension scope by
+django-indieweb. It may be requested, displayed, stored, and returned on
+tokens, but it is not advertised in built-in server metadata and does not
+replace the normal operation scopes. A create request with
+``post-status=draft`` still requires ``create`` or the legacy ``post`` alias;
+``action=update`` still requires ``update``. A token with ``create draft``
+can create because ``create`` is present, while a token with only ``draft`` is
+rejected by the built-in Micropub resource-server scope gate. Hosts that want
+draft-only permissions should add their own policy around token issuance,
+handler behavior, or a custom resource-server layer.
 
 Media Endpoint
 ~~~~~~~~~~~~~~
@@ -506,9 +596,9 @@ Example response:
      ]
    }
 
-django-indieweb does not interpret channel data on create/update in this slice;
-forwarding ``mp-channel`` command properties and any publication routing remain
-host-handler concerns and a separate backlog item.
+django-indieweb preserves submitted ``mp-channel`` command properties on
+creates, but it does not interpret channel data, select defaults, or route
+publication by channel. Those decisions remain host-handler concerns.
 
 The list-valued config queries support the ``filter``, ``limit``, and ``offset``
 parameters. ``filter`` is a free-form string; items are matched
@@ -744,10 +834,9 @@ credentials, or run syndicator plugins.
        return config
 
 When a client submits syndication choices, consume those values inside your
-handler after the host post is created. JSON Micropub requests are passed
-through with their submitted property names, so a host can read an
-``mp-syndicate-to`` array from ``properties`` and enqueue its own task or
-record pending syndication state:
+handler after the host post is created. JSON and form-encoded Micropub creates
+preserve an ``mp-syndicate-to`` array in ``properties`` so a host can enqueue
+its own task or record pending syndication state:
 
 .. code:: python
 
@@ -764,12 +853,6 @@ record pending syndication state:
                properties=properties,
                url=post.get_absolute_url(),
            )
-
-Form-encoded ``mp-*`` command-property forwarding is intentionally not broadened
-in this slice. If your client submits form data, only the properties already
-normalized by django-indieweb are forwarded today. Preserve and route additional
-command properties in host code or in the separate command-property extension
-work.
 
 Error Handling
 --------------

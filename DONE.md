@@ -4,6 +4,63 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-05
 
+### Preserve Micropub command properties and define draft-scope semantics
+
+- Extended form-encoded Micropub create parsing so submitted ``mp-slug``,
+  ``mp-channel``, ``mp-photo-alt``, ``mp-syndicate-to``, and ``post-status``
+  values are preserved for ``MicropubContentHandler.create_entry()`` as
+  normalized property arrays.
+- Added ``mp-channel[]``, ``mp-photo-alt[]``, and ``mp-syndicate-to[]`` array
+  notation support while preserving existing category comma-splitting and
+  media upload behavior. Command properties are not comma-split.
+- Kept JSON create behavior unchanged: Microformats2 JSON ``properties`` are
+  still passed through unchanged, including command properties and
+  ``post-status``.
+- Kept command execution host-owned. django-indieweb preserves submitted
+  command values but does not generate slugs, choose channels, write
+  ``mp-photo-alt`` into files or media metadata, syndicate, enqueue
+  syndication, store drafts, filter drafts, or add a draft workflow.
+- Defined the conservative built-in ``draft`` scope policy. ``draft`` remains
+  an opaque/host-owned extension scope that can be requested and stored but is
+  not advertised in built-in IndieAuth metadata and does not satisfy
+  ``create`` or ``update``. ``post-status=draft`` creates still require
+  ``create`` or legacy ``post``; ``create draft`` succeeds because ``create``
+  is present.
+- Added parser and scope regression tests in ``tests/test_micropub_create.py``
+  and ``tests/test_micropub_endpoint.py`` for single-value command
+  properties, array command properties, ``post-status=draft``, JSON
+  pass-through, and ``draft`` scope rejection.
+- Backlog: removed the completed Priority 4 command-property/draft-scope item
+  from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/micropub.rst``, ``docs/api.rst``, and
+  ``docs/indieauth.rst`` with command-property shapes, form and JSON examples,
+  host-owned execution boundaries, and conservative ``draft`` scope semantics.
+  No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for
+  form-encoded command-property preservation, JSON pass-through compatibility,
+  host-owned command execution, and ``draft`` scope semantics.
+- Compatibility: existing Micropub create, update, delete, undelete,
+  ``q=config``, ``q=source``, ``q=category``, ``q=channel``,
+  ``q=media-endpoint``, ``q=post-types``, ``q=syndicate-to``, default ``GET``,
+  media upload, token authentication, scope gating, CORS, rate limiting, and
+  built-in IndieAuth metadata scopes remain unchanged beyond additive
+  form-property preservation.
+- Follow-up risks: media source/delete hooks, static-site/storage handler
+  examples, actual syndication execution, draft-only permission policies,
+  channel routing, slug generation, and alt-text persistence remain explicitly
+  host-owned or separate backlog work.
+- Validation: ``uv run pytest tests/test_micropub_create.py
+  tests/test_micropub_endpoint.py tests/test_micropub_actions.py -q --no-cov``
+  (155 passed), ``uv run pytest tests/test_micropub_queries.py
+  tests/test_micropub_media.py -q --no-cov`` (129 passed), ``uv run pytest
+  tests/test_cors.py tests/test_rate_limiting.py -q --no-cov`` (40 passed),
+  ``uv run ruff check .`` (passed), ``uv run ruff format . --check`` (88
+  files already formatted), ``uv run mypy`` (no issues in 44 source files),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed), ``git
+  ls-files docs/_build --modified --others --exclude-standard`` (no output),
+  ``git diff --check`` (passed), ``uv run pytest`` (918 passed, coverage gate
+  passed at 90.56%), and ``uv run prek run --all-files`` (passed).
+
 ### Route Micropub syndication targets through handler configuration
 
 - Updated ``GET /indieweb/micropub/?q=syndicate-to`` to read the configured

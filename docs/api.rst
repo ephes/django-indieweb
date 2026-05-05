@@ -180,7 +180,9 @@ Response fields:
   django-indieweb: ``create``, ``update``, ``delete``, ``undelete``, and
   ``media``. Unknown extension scopes can still be requested and stored, and
   the legacy ``post`` alias is still accepted for create requests, but those
-  values are not advertised as built-in capabilities.
+  values are not advertised as built-in capabilities. The extension ``draft``
+  scope is also not advertised; django-indieweb stores it like any other
+  unknown scope and leaves draft-only permission policy to host code.
 - ``service_documentation`` - Human-facing documentation URL for
   django-indieweb's IndieAuth behavior.
 
@@ -569,6 +571,15 @@ Creates a new post using the configured content handler.
 - ``audio`` - Audio URL(s)
 - ``video`` - Video URL(s)
 - ``published`` - Publication date
+- ``mp-slug`` - Suggested slug preserved for the configured handler
+- ``mp-channel`` - Requested host-defined channel UID(s), including
+  ``mp-channel[]`` array notation in form data
+- ``mp-photo-alt`` - Submitted photo text alternative(s), including
+  ``mp-photo-alt[]`` array notation in form data
+- ``mp-syndicate-to`` - Requested host-defined syndication target UID(s),
+  including ``mp-syndicate-to[]`` array notation in form data
+- ``post-status`` - Submitted publication status such as ``draft`` or
+  ``published``, preserved for the configured handler
 
 **Form-Encoded Example:**
 
@@ -633,9 +644,28 @@ continues to require the exact ``media`` scope.
         "type": ["h-entry"],
         "properties": {
             "content": ["Hello World"],
-            "category": ["test", "indieweb"]
+            "category": ["test", "indieweb"],
+            "mp-syndicate-to": ["https://social.example/@user"],
+            "post-status": ["draft"]
         }
     }
+
+Form-encoded creates normalize forwarded properties to arrays. Single
+``mp-slug``, ``mp-channel``, ``mp-photo-alt``, ``mp-syndicate-to``, and
+``post-status`` form values become one-item arrays in the handler properties.
+``mp-channel[]``, ``mp-photo-alt[]``, and ``mp-syndicate-to[]`` preserve all
+submitted values as arrays. Only ``category`` is comma-split; command
+properties are not comma-split.
+
+Microformats2 JSON create requests pass the submitted ``properties`` object to
+``MicropubContentHandler.create_entry()`` unchanged, including command
+properties and ``post-status``.
+
+These values are preserved, not executed. django-indieweb does not generate
+slugs from ``mp-slug``, choose or route publication by ``mp-channel``, attach
+``mp-photo-alt`` to stored files or media metadata, cross-post or enqueue
+syndication from ``mp-syndicate-to``, or implement draft storage from
+``post-status``. Host code owns those behaviors.
 
 **Response:**
 
@@ -988,10 +1018,10 @@ JSON key. Channel item shape is host-defined; clients commonly expect
         ]
     }
 
-Channel data exposed here is informational. django-indieweb does not select,
-default, or route on channels during ``POST`` create/update in this slice;
-``mp-channel`` command property forwarding and channel-aware publication
-remain host-handler concerns and a separate backlog item.
+Channel data exposed here is informational. django-indieweb preserves submitted
+``mp-channel`` values on create requests, but it does not select defaults or
+route publication by channel. Channel-aware publication remains a
+host-handler concern.
 
 ``q=category``, ``q=channel``, and ``q=post-types`` accept optional
 ``filter``, ``limit``, and ``offset`` parameters. ``filter`` is matched
@@ -1052,6 +1082,30 @@ This query is token-required only and does not require ``create``, ``update``,
 ``delete``, ``undelete``, or ``media`` scope. Syndication execution remains
 host-owned: django-indieweb does not cross-post, call webhooks, choose targets,
 store syndicator credentials, or run syndicator plugins.
+
+Micropub Scope Policy
+~~~~~~~~~~~~~~~~~~~~~
+
+django-indieweb enforces built-in Micropub scopes by operation:
+
+- entry create requires ``create`` or the legacy ``post`` alias
+- ``action=update`` and ``GET ?q=source`` require ``update``
+- ``action=delete`` requires ``delete``
+- ``action=undelete`` requires ``undelete``
+- direct media uploads to ``/indieweb/media/`` require ``media``
+- configuration queries such as ``q=config``, ``q=category``, ``q=channel``,
+  ``q=media-endpoint``, ``q=post-types``, and ``q=syndicate-to`` are
+  token-required only and have no operation-scope gate
+
+The extension ``draft`` scope may be requested and stored as an opaque
+IndieAuth scope string, but django-indieweb does not advertise it as a
+built-in resource-server scope and does not treat it as a substitute for
+``create`` or ``update``. A create request with ``post-status=draft`` still
+requires ``create`` or ``post``; an update request still requires ``update``.
+A token scoped ``create draft`` can create because ``create`` is present, not
+because ``draft`` has built-in behavior. Hosts that want draft-only
+permissions need to implement that policy in host token handling, handlers, or
+a custom resource-server layer.
 
 Micropub Media Endpoint
 -----------------------

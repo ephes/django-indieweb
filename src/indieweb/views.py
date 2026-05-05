@@ -75,6 +75,41 @@ SUPPORTED_MICROPUB_QUERIES = (
     "media-endpoint",
     "post-types",
 )
+MICROPUB_FORM_CREATE_PROPERTIES = (
+    "content",
+    "name",
+    "summary",
+    "description",
+    "category",
+    "location",
+    "start",
+    "end",
+    "in-reply-to",
+    "bookmark-of",
+    "like-of",
+    "repost-of",
+    "rsvp",
+    "url",
+    "published",
+    "photo",
+    "audio",
+    "video",
+    "mp-slug",
+    "mp-channel",
+    "mp-photo-alt",
+    "mp-syndicate-to",
+    "post-status",
+)
+MICROPUB_FORM_CREATE_LIST_PROPERTIES = (
+    "content",
+    "photo",
+    "audio",
+    "video",
+    "category",
+    "mp-channel",
+    "mp-photo-alt",
+    "mp-syndicate-to",
+)
 DEFAULT_MICROPUB_SOURCE_LIST_LIMIT = 20
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -1040,30 +1075,11 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         properties = {}
 
         # Simple properties (including category which can be comma-separated)
-        for prop in [
-            "content",
-            "name",
-            "summary",
-            "description",
-            "category",
-            "location",
-            "start",
-            "end",
-            "in-reply-to",
-            "bookmark-of",
-            "like-of",
-            "repost-of",
-            "rsvp",
-            "url",
-            "published",
-            "photo",
-            "audio",
-            "video",
-        ]:
+        for prop in MICROPUB_FORM_CREATE_PROPERTIES:
             properties.update(self._parse_form_property(request, prop))
 
         # List properties (override if array format is used)
-        for prop in ["content", "photo", "audio", "video", "category"]:
+        for prop in MICROPUB_FORM_CREATE_LIST_PROPERTIES:
             list_props = self._parse_form_property(request, prop, is_list=True)
             if list_props:
                 properties.update(list_props)
