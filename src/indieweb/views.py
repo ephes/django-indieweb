@@ -532,6 +532,15 @@ def _prefers_json_response(request: HttpRequest) -> bool:
     return json_q > form_q or (json_q == form_q and json_order < form_order)
 
 
+def _redact_auth_code(code: str | None) -> str:
+    """Return a log-safe representation of an authorization code."""
+    if not code:
+        return "<empty>"
+    if len(code) <= 6:
+        return f"<redacted:{len(code)} chars>"
+    return f"{code[:6]}..."
+
+
 class CSRFExemptMixin(View):
     """Mixin to exempt views from CSRF protection."""
 
@@ -863,19 +872,21 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         response = urlencode(response_values)
         return HttpResponse(response, status=status_code, content_type="application/x-www-form-urlencoded")
 
+    def _consume_invalid_grant(self, auth: Auth, message: str) -> HttpResponse:
+        """Delete a matched auth code and return the token endpoint's invalid_grant response."""
+        logger.error(message)
+        auth.delete()
+        return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
     def _check_pkce(self, auth: Auth, code_verifier: str | None) -> HttpResponse | None:
         """Verify PKCE for a token exchange. Deletes ``auth`` on failure to preserve one-time use."""
         if auth.code_challenge:
             if not code_verifier or not _verify_pkce(
                 auth.code_challenge, auth.code_challenge_method or "plain", code_verifier
             ):
-                logger.error("PKCE verification failed on token exchange")
-                auth.delete()
-                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+                return self._consume_invalid_grant(auth, "PKCE verification failed on token exchange")
         elif code_verifier:
-            logger.error("PKCE verifier submitted without stored challenge")
-            auth.delete()
-            return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+            return self._consume_invalid_grant(auth, "PKCE verifier submitted without stored challenge")
         return None
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
@@ -892,7 +903,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
         # Validate required parameters
         if not code or not client_id:
-            logger.error(f"Missing required parameters: code={code}, client_id={client_id}")
+            logger.error(f"Missing required parameters: code={_redact_auth_code(code)}, client_id={client_id}")
             return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
 
         parameter_error = _token_grant_type_error(grant_type) or _token_client_id_error(client_id)
@@ -913,8 +924,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
                 stored = _normalize_redirect_uri(auth.redirect_uri)
                 submitted = _normalize_redirect_uri(redirect_uri)
                 if stored != submitted:
-                    logger.error("Redirect URI mismatch on token exchange")
-                    return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+                    return self._consume_invalid_grant(auth, "Redirect URI mismatch on token exchange")
 
             pkce_error = self._check_pkce(auth, code_verifier)
             if pkce_error is not None:
@@ -923,21 +933,18 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             stored_scope = _normalize_scope(auth.scope)
             normalized_request_scope = _normalize_scope(requested_scope)
             if requested_scope is not None and normalized_request_scope != stored_scope:
-                logger.error(f"Scope mismatch on token exchange for client_id={client_id}")
-                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+                return self._consume_invalid_grant(auth, f"Scope mismatch on token exchange for client_id={client_id}")
 
             # Use values from auth object if not provided in request
             me = me or auth.me
             scope = stored_scope
 
-            logger.info(f"token view post: {client_id}, {me}, {code} {scope}")
+            logger.info(f"token view post: {client_id}, {me}, {_redact_auth_code(code)} {scope}")
 
             # Check if auth code is still valid
             timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
             if (timezone.now() - auth.created).total_seconds() > timeout:
-                logger.error(f"Auth code expired for client_id={client_id}")
-                auth.delete()  # Clean up expired auth
-                return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+                return self._consume_invalid_grant(auth, f"Auth code expired for client_id={client_id}")
 
             # Delete auth code after use (one-time use)
             auth.delete()
@@ -946,7 +953,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             return self.send_token(request, me, client_id, scope, auth.owner)
 
         except Auth.DoesNotExist:
-            logger.error(f"Auth not found for code={code}, client_id={client_id}")
+            logger.error(f"Auth not found for code={_redact_auth_code(code)}, client_id={client_id}")
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
 

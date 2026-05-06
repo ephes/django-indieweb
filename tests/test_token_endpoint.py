@@ -7,6 +7,7 @@ test_django-indieweb
 Tests for `django-indieweb` auth endpoint.
 """
 
+import logging
 from datetime import timedelta
 from urllib.parse import parse_qs, unquote
 
@@ -65,16 +66,19 @@ def test_wrong_auth_code(client, token_endpoint_url, token_payload):
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert models.Auth.objects.filter(key="authkey").exists()
+    assert models.Token.objects.count() == 0
 
 
 @pytest.mark.django_db
-def test_correct_auth_code(client, token_endpoint_url, token_payload):
+def test_correct_auth_code(client, auth, token_endpoint_url, token_payload):
     """Assert we get a token when the auth code is correct."""
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 201
     data = parse_qs(unquote(response.content.decode("utf-8")))
     assert "access_token" in data
     assert data["token_type"] == ["Bearer"]
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -260,7 +264,19 @@ def test_token_exchange_rejects_different_scope_without_token(client, auth, toke
     assert response["Content-Type"] == "application/x-www-form-urlencoded"
     assert "invalid_grant" in response.content.decode("utf-8")
     assert models.Token.objects.count() == 0
-    assert models.Auth.objects.filter(pk=auth.pk).exists()
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+    replay = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "scope": "create",
+        },
+    )
+    assert replay.status_code == 400
+    assert "invalid_grant" in replay.content.decode("utf-8")
+    assert models.Token.objects.count() == 0
 
 
 @pytest.mark.django_db
@@ -289,7 +305,7 @@ def test_token_exchange_rejects_different_scope_without_reissue(client, settings
     token.refresh_from_db()
     assert token.expires_at == stale_expires_at
     assert models.Token.objects.count() == 1
-    assert models.Auth.objects.filter(pk=auth.pk).exists()
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -309,7 +325,7 @@ def test_token_exchange_rejects_empty_scope_parameter_for_scoped_auth_code(clien
     assert response["Content-Type"] == "application/x-www-form-urlencoded"
     assert "invalid_grant" in response.content.decode("utf-8")
     assert models.Token.objects.count() == 0
-    assert models.Auth.objects.filter(pk=auth.pk).exists()
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -349,7 +365,7 @@ def test_token_exchange_cannot_override_no_scope_auth_code(client, auth, token_e
     assert response["Content-Type"] == "application/x-www-form-urlencoded"
     assert "invalid_grant" in response.content.decode("utf-8")
     assert models.Token.objects.count() == 0
-    assert models.Auth.objects.filter(pk=auth.pk).exists()
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -362,6 +378,7 @@ def test_auth_code_timeout(client, auth, token_endpoint_url, token_payload):
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -389,6 +406,7 @@ def test_auth_code_timeout_multi_day(client, auth, token_endpoint_url, token_pay
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -435,6 +453,8 @@ def test_token_rejects_invalid_redirect_uri(client, token_endpoint_url, token_pa
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert models.Auth.objects.filter(key=token_payload["code"]).exists()
+    assert models.Token.objects.count() == 0
 
 
 @pytest.mark.django_db
@@ -458,6 +478,13 @@ def test_token_rejects_path_only_difference_in_redirect_uri(client, auth, token_
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+    token_payload["redirect_uri"] = auth.redirect_uri
+    replay = client.post(token_endpoint_url, data=token_payload)
+    assert replay.status_code == 400
+    assert "invalid_grant" in replay.content.decode("utf-8")
+    assert models.Token.objects.count() == 0
 
 
 PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
@@ -486,6 +513,12 @@ def test_token_rejects_missing_verifier_when_challenge_stored(client, auth, toke
     # PKCE failure deletes the auth row to preserve one-time-use semantics.
     assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
+    token_payload["code_verifier"] = PKCE_VERIFIER
+    replay = client.post(token_endpoint_url, data=token_payload)
+    assert replay.status_code == 400
+    assert "invalid_grant" in replay.content.decode("utf-8")
+    assert models.Token.objects.count() == 0
+
 
 @pytest.mark.django_db
 def test_token_rejects_verifier_when_no_challenge_stored(client, auth, token_endpoint_url, token_payload):
@@ -494,6 +527,7 @@ def test_token_rejects_verifier_when_no_challenge_stored(client, auth, token_end
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -533,6 +567,7 @@ def test_token_rejects_wrong_verifier(client, auth, token_endpoint_url, token_pa
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -556,6 +591,68 @@ def test_token_rejects_malformed_verifier(client, auth, token_endpoint_url, toke
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_token_exchange_logs_redact_full_authorization_code(client, caplog, token_endpoint_url):
+    """Token exchange failure logs must not disclose full authorization codes."""
+    submitted_code = "authorization-code-secret-for-logs"
+
+    with caplog.at_level(logging.ERROR, logger="indieweb.views"):
+        response = client.post(
+            token_endpoint_url,
+            data={
+                "code": submitted_code,
+                "client_id": "https://webapp.example.org",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+    assert submitted_code not in caplog.text
+    assert "author..." in caplog.text
+
+
+@pytest.mark.django_db
+def test_token_exchange_success_logs_redact_full_authorization_code(client, auth, caplog, token_endpoint_url):
+    """Successful token exchange logs must not disclose the full authorization code."""
+    auth.key = "success-code-secret-1234567890"
+    auth.save()
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        response = client.post(
+            token_endpoint_url,
+            data={
+                "code": auth.key,
+                "client_id": auth.client_id,
+            },
+        )
+
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+    assert auth.key not in caplog.text
+    assert "succes..." in caplog.text
+
+
+@pytest.mark.django_db
+def test_token_exchange_missing_parameter_logs_redact_full_authorization_code(client, caplog, token_endpoint_url):
+    """Missing-parameter logs must redact a submitted authorization code."""
+    submitted_code = "missing-code-secret-for-logs"
+
+    with caplog.at_level(logging.ERROR, logger="indieweb.views"):
+        response = client.post(
+            token_endpoint_url,
+            data={
+                "code": submitted_code,
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_request"
+    assert submitted_code not in caplog.text
+    assert "missin..." in caplog.text
 
 
 BAD_CLIENT_IDS = [

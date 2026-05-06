@@ -157,9 +157,18 @@ Worse, the deny branch executes the redirect *before* the `request.user.is_authe
 
 **Severity:** High
 
+**Status:** Resolved 2026-05-06 for the authorization-code single-use slice.
+`TokenView.post` now consumes a matched `Auth` row on PKCE failures,
+`redirect_uri` mismatches, scope mismatches, and expired-code failures before
+returning the existing `invalid_grant` response. Token endpoint logs now redact
+authorization codes. The related bearer parsing, key uniqueness, and token
+rotation issues listed below remain tracked as separate backlog items.
+
 **References:**
 
 - `src/indieweb/views.py` (`TokenView.post` deletion at line 921; PKCE deletion paths at 844; mismatch returns at 893/903)
+
+Historical finding:
 
 Only PKCE failure and the happy path delete the authorization code. Mismatched `redirect_uri` and mismatched `scope` paths return errors but leave the code intact, so a leaked code can be probed for the full 60-second TTL with different `redirect_uri`/`scope` values until one is accepted.
 

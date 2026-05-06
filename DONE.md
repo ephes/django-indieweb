@@ -4,6 +4,40 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Make IndieAuth authorization codes single-use on every failure path
+
+- Updated ``TokenView.post`` so once a submitted authorization code resolves to
+  an ``Auth`` row, every grant-validation failure consumes that row before
+  returning the existing ``invalid_grant`` response.
+- Preserved pre-lookup validation behavior for missing parameters, malformed
+  ``redirect_uri`` values, invalid ``client_id`` values, and unknown codes so
+  unrelated authorization-code rows are not deleted.
+- Kept successful token exchange behavior intact while confirming success still
+  deletes the authorization code.
+- Redacted authorization codes in token endpoint logs, including missing
+  parameter logs, unknown-code logs, and successful exchange logs, without
+  changing existing token redaction.
+- Added regression coverage proving PKCE, ``redirect_uri``, and ``scope``
+  failures consume the matched authorization code and cannot be replayed for a
+  token.
+- Backlog: removed the completed Priority 1 IndieAuth authorization-code
+  single-use item from ``BACKLOG.md``. No migrations were needed.
+- Documentation: no user-facing docs beyond the changelog needed changes
+  because response bodies, status codes, content types, settings, and public
+  usage remain unchanged. ``SECURITY_ANALYSIS.md`` now marks the fixed
+  authorization-code single-use finding resolved while leaving related token
+  hardening issues open.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased security note.
+- Validation: ``uv run pytest tests/test_token_endpoint.py -q --no-cov``
+  passed (66 passed); ``uv run pytest tests/test_auth_endpoint.py -q
+  --no-cov`` passed (80 passed); ``uv run ruff check src/indieweb/views.py
+  tests/test_token_endpoint.py tests/test_auth_endpoint.py`` passed; ``uv run
+  pytest`` passed (1026 passed, coverage gate reached at 90.56%); ``uv run
+  mypy`` passed; ``uv run ruff check .`` passed; ``uv run ruff format .
+  --check`` passed; ``uv run prek run --all-files`` passed; ``uv run
+  sphinx-build -W -b html docs docs/_build/html`` passed; and ``git diff
+  --check`` passed.
+
 ### Add shared SSRF-safe HTTP handling and synchronous Webmention/WebSub resource limits
 
 - Added shared outbound HTTP safety helpers in ``src/indieweb/http_client.py``
