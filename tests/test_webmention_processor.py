@@ -98,6 +98,47 @@ class TestWebmentionProcessor:
 
         assert processor._verify_target_link(html_content, target_url) is True
 
+    def test_verify_target_link_rejects_template_link(self, processor):
+        """Links inside template content are not rendered source links."""
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><template><a href="{target_url}">Link</a></template></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is False
+
+    def test_verify_target_link_rejects_noscript_link(self, processor):
+        """Links inside noscript content are not accepted for source verification."""
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><noscript><a href="{target_url}">Link</a></noscript></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is False
+
+    def test_verify_target_link_rejects_comment_link(self, processor):
+        """Links inside HTML comments are not accepted for source verification."""
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><!-- <a href="{target_url}">Link</a> --></body></html>'
+
+        assert processor._verify_target_link(html_content, target_url) is False
+
+    def test_content_value_text_token_does_not_verify_without_rendered_link(self, processor):
+        """Plain-text URL tokens in parsed content are not standalone source-link proof."""
+        target_url = "https://mysite.com/article"
+        content = {
+            "html": "<p>Plain text mention without a link</p>",
+            "value": f"Plain text mention {target_url}",
+        }
+
+        assert processor._content_links_to_target(content, target_url) is False
+
+    def test_content_html_rendered_link_still_verifies(self, processor):
+        """Rendered content links still identify the mentioning h-entry."""
+        target_url = "https://mysite.com/article"
+        content = {
+            "html": f'<p>Rendered <a href="{target_url}">link</a></p>',
+            "value": "Rendered link",
+        }
+
+        assert processor._content_links_to_target(content, target_url) is True
+
     def test_verify_target_link_matches_source_fragment_variant(self, processor):
         """Test that a source link with a fragment matches a target without it."""
         target_url = "https://mysite.com/article"
@@ -1769,8 +1810,8 @@ class TestWebmentionProcessor:
 
         assert processor._search_for_mentioning_entry(items, target_url) == items[0]
 
-    def test_search_for_mentioning_entry_matches_plain_text_url_token(self, processor):
-        """Test plain text content can conservatively match target URL tokens."""
+    def test_search_for_mentioning_entry_rejects_plain_text_url_token(self, processor):
+        """Plain text URL tokens no longer identify the mentioning entry."""
         target_url = "https://en.wikipedia.org/wiki/Foo_(bar)"
         items = [
             {
@@ -1787,10 +1828,10 @@ class TestWebmentionProcessor:
             }
         ]
 
-        assert processor._search_for_mentioning_entry(items, target_url) == items[0]
+        assert processor._search_for_mentioning_entry(items, target_url) is None
 
-    def test_search_for_mentioning_entry_matches_angle_bracketed_plain_text_url_token(self, processor):
-        """Test angle-bracketed plain text URL tokens can match the target."""
+    def test_search_for_mentioning_entry_rejects_angle_bracketed_plain_text_url_token(self, processor):
+        """Angle-bracketed plain text URL tokens are not standalone source links."""
         target_url = "https://mysite.com/article"
         items = [
             {
@@ -1805,7 +1846,7 @@ class TestWebmentionProcessor:
             }
         ]
 
-        assert processor._search_for_mentioning_entry(items, target_url) == items[0]
+        assert processor._search_for_mentioning_entry(items, target_url) is None
 
     def test_processor_handles_no_microformats(self, processor):
         """Test that processor handles pages without microformats."""

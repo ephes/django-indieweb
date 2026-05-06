@@ -819,9 +819,8 @@ production.
 Salmention Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-There is no Salmention-specific setting in django-indieweb today.
 django-indieweb persists verified Webmention source snapshots and stable nested
-child response rows as a foundation for receive-side Salmention support, but
+child response rows as a foundation for receive-side Salmention support, and
 the bundled ``show_webmentions`` template tag renders verified children inline
 under verified parent replies. Outbound sender support records ordinary
 ``WebmentionSender.send_webmentions()`` delivery attempts to the outbound
@@ -829,9 +828,42 @@ target-history table by default and exposes
 ``WebmentionSender.resend_salmentions()`` for application-triggered union-of-
 current-and-historical resends. The ``send_webmentions`` management command
 also exposes this workflow with ``--salmention-resend`` for operator-triggered
-resends and ``--dry-run --salmention-resend`` previews. The documented design
-uses package-managed history plus an explicit host-application or
-operator-triggered resend workflow, not a setting toggle.
+resends and ``--dry-run --salmention-resend`` previews.
+
+Resends remain explicit: receiving a Webmention never automatically triggers a
+Salmention resend. Host applications or operators call the sender API or
+management command after the source permalink has actually changed.
+
+``INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS`` controls the cooldown for
+historical-only targets after recent resend attempts, including no-endpoint
+outcomes.
+
+**Default:** ``86400`` (24 hours)
+
+``INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS`` controls when successful
+historical-only targets are skipped so removed links are not re-pinged
+forever. The cutoff is measured from ``last_seen_in_source_at`` when available,
+with send/attempt/create timestamps used as fallbacks for older rows. Set this
+to ``None`` to disable the successful-target cutoff.
+
+**Default:** ``2592000`` (30 days)
+
+``INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES`` controls when a
+historical-only target row is deleted after repeated failures. Failures include
+failed deliveries and no-endpoint outcomes. Successful deliveries reset the
+counter. Current targets are still attempted even if their historical state
+would otherwise be skipped or dropped.
+
+**Default:** ``5``
+
+**Example:**
+
+.. code-block:: python
+
+   INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS = 6 * 60 * 60
+   INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS = 14 * 24 * 60 * 60
+   INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES = 3
+
 See :doc:`webmention` for the support-status details, target-history design,
 and current ordinary Webmention reprocessing behavior.
 

@@ -9,7 +9,6 @@ from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import URLValidator
 
 from indieweb.http_client import is_safe_http_url
-from indieweb.models import WebmentionOutboundTarget
 from indieweb.senders import WebmentionSender
 
 
@@ -65,7 +64,7 @@ class Command(BaseCommand):
 
         if dry_run:
             if salmention_resend:
-                self._handle_salmention_dry_run(sender, source_url, urls)
+                self._handle_salmention_dry_run(sender, source_url, html_content)
             else:
                 self._handle_dry_run(sender, source_url, urls)
         elif salmention_resend:
@@ -133,20 +132,20 @@ class Command(BaseCommand):
                     )
                 )
 
-    def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, urls: list[str]) -> None:
+    def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
         """Show the Salmention resend target union without sending or recording history."""
-        current_targets = set(self._extract_external_target_urls(source_url, urls))
-        historical_targets = set(
-            WebmentionOutboundTarget.objects.filter(source_url=source_url).values_list("target_url", flat=True)
-        )
+        results = sender.preview_salmention_resend_targets(source_url, html_content)
+        if not results:
+            self.stdout.write("No Salmention resends would be sent (no current or historical targets found)")
+            return
 
-        for target_url in sorted(current_targets | historical_targets):
-            provenance = self._target_provenance(target_url, current_targets, historical_targets)
-            endpoint = sender.discover_endpoint(target_url)
-            if endpoint:
-                self.stdout.write(f"  - [{provenance}] {target_url} -> {endpoint}")
+        for result in results:
+            if result.get("skipped"):
+                self.stdout.write(f"  - {self._format_salmention_result(result)}")
+            elif result["endpoint"]:
+                self.stdout.write(f"  - [{result['provenance']}] {result['target']} -> {result['endpoint']}")
             else:
-                self.stdout.write(f"  - [{provenance}] {target_url} (no endpoint found)")
+                self.stdout.write(f"  - [{result['provenance']}] {result['target']} (no endpoint found)")
 
     def _handle_salmention_send(
         self,
@@ -162,47 +161,33 @@ class Command(BaseCommand):
             self.stdout.write("No Salmention resends were sent (no current or historical targets found)")
             return
 
-        success_count = sum(1 for r in results if r["success"])
-        self.stdout.write(f"\nResent {success_count}/{len(results)} Salmention webmentions successfully\n")
+        sent_results = [result for result in results if not result.get("skipped")]
+        success_count = sum(1 for r in sent_results if r["success"])
+        skipped_count = len(results) - len(sent_results)
+        summary = f"\nResent {success_count}/{len(sent_results)} Salmention webmentions successfully"
+        if skipped_count:
+            summary += f" ({skipped_count} skipped by policy)"
+        self.stdout.write(f"{summary}\n")
 
         for result in results:
             line = self._format_salmention_result(result)
+            if result.get("skipped"):
+                self.stdout.write(self.style.WARNING(line))
+                continue
             if result["success"]:
                 self.stdout.write(self.style.SUCCESS(line))
             else:
                 self.stdout.write(self.style.ERROR(line))
-
-    def _extract_external_target_urls(self, source_url: str, urls: list[str]) -> list[str]:
-        """Filter extracted URLs to absolute external HTTP(S) targets."""
-        # Keep this aligned with WebmentionSender._extract_external_target_urls for dry-run previews.
-        source_domain = urlparse(source_url).netloc
-        target_urls = []
-        for target_url in urls:
-            if not is_safe_http_url(target_url, resolver=None):
-                continue
-
-            target_domain = urlparse(target_url).netloc
-            if target_domain == source_domain:
-                continue
-
-            target_urls.append(target_url)
-
-        return target_urls
-
-    def _target_provenance(self, target_url: str, current_targets: set[str], historical_targets: set[str]) -> str:
-        """Return the resend provenance label for a target URL."""
-        # Keep this aligned with WebmentionSender._target_provenance for dry-run previews.
-        if target_url in current_targets and target_url in historical_targets:
-            return "both"
-        if target_url in current_targets:
-            return "current"
-        return "history"
 
     def _format_salmention_result(self, result: dict[str, Any]) -> str:
         """Format one provenance-aware resend result."""
         target = result["target"]
         endpoint = result["endpoint"]
         provenance = result.get("provenance", "unknown")
+
+        if result.get("skipped"):
+            action = "dropped" if result.get("dropped") else "skipped"
+            return f"- [{provenance}] {target} ({action}: {result.get('error', 'Policy skip')})"
 
         if result["success"]:
             return f"✓ [{provenance}] {target} -> {endpoint} (HTTP {result['status_code']})"

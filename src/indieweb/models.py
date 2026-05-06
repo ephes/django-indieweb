@@ -247,9 +247,11 @@ class WebmentionOutboundTarget(models.Model):
 
     first_sent_at = models.DateTimeField(null=True, blank=True)
     last_sent_at = models.DateTimeField(null=True, blank=True)
+    last_attempted_at = models.DateTimeField(null=True, blank=True)
     last_status_code = models.PositiveIntegerField(null=True, blank=True)
     last_success = models.BooleanField(default=False)
     last_error = models.TextField(blank=True)
+    consecutive_failures = models.PositiveIntegerField(default=0)
     last_vouch_url = models.URLField(max_length=500, blank=True, validators=[URLValidator(schemes=["http", "https"])])
     last_seen_in_source_at = models.DateTimeField(null=True, blank=True)
 

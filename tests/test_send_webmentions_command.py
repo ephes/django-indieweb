@@ -379,23 +379,35 @@ def test_salmention_resend_dry_run_includes_current_history_and_both(mock_sender
         "https://example.com/same-domain",
         "/relative",
     ]
-    WebmentionOutboundTarget.objects.create(
-        source_url="https://example.com/my-post",
-        target_url="https://history.example/post",
-    )
-    WebmentionOutboundTarget.objects.create(
-        source_url="https://example.com/my-post",
-        target_url="https://both.example/post",
-    )
-    WebmentionOutboundTarget.objects.create(
-        source_url="https://example.com/other-post",
-        target_url="https://other-history.example/post",
-    )
-
-    def discover(target_url):
-        return f"{target_url}/webmention"
-
-    mock_sender.discover_endpoint.side_effect = discover
+    mock_sender.preview_salmention_resend_targets.return_value = [
+        {
+            "target": "https://current.example/post",
+            "endpoint": "https://current.example/post/webmention",
+            "success": False,
+            "status_code": None,
+            "provenance": "current",
+            "dry_run": True,
+            "error": "",
+        },
+        {
+            "target": "https://history.example/post",
+            "endpoint": "https://history.example/post/webmention",
+            "success": False,
+            "status_code": None,
+            "provenance": "history",
+            "dry_run": True,
+            "error": "",
+        },
+        {
+            "target": "https://both.example/post",
+            "endpoint": "https://both.example/post/webmention",
+            "success": False,
+            "status_code": None,
+            "provenance": "both",
+            "dry_run": True,
+            "error": "",
+        },
+    ]
 
     out = StringIO()
     call_command(
@@ -414,11 +426,11 @@ def test_salmention_resend_dry_run_includes_current_history_and_both(mock_sender
     assert "https://other-history.example/post" not in output
     assert "https://example.com/same-domain" not in output
     assert "/relative" not in output
-    assert {call.args[0] for call in mock_sender.discover_endpoint.call_args_list} == {
-        "https://current.example/post",
-        "https://both.example/post",
-        "https://history.example/post",
-    }
+    mock_sender.preview_salmention_resend_targets.assert_called_once_with(
+        "https://example.com/my-post",
+        '<a href="https://current.example/post">Current</a>',
+    )
+    mock_sender.discover_endpoint.assert_not_called()
     mock_sender.send_webmentions.assert_not_called()
     mock_sender.resend_salmentions.assert_not_called()
 
@@ -429,7 +441,26 @@ def test_salmention_resend_dry_run_reports_no_endpoint_without_history_write(moc
     mock_sender = Mock()
     mock_sender_class.return_value = mock_sender
     mock_sender.extract_urls.return_value = ["https://current.example/post"]
-    mock_sender.discover_endpoint.return_value = None
+    mock_sender.preview_salmention_resend_targets.return_value = [
+        {
+            "target": "https://current.example/post",
+            "endpoint": None,
+            "success": False,
+            "status_code": None,
+            "provenance": "current",
+            "dry_run": True,
+            "error": "No endpoint found",
+        },
+        {
+            "target": "https://history.example/post",
+            "endpoint": None,
+            "success": False,
+            "status_code": None,
+            "provenance": "history",
+            "dry_run": True,
+            "error": "No endpoint found",
+        },
+    ]
     existing = WebmentionOutboundTarget.objects.create(
         source_url="https://example.com/my-post",
         target_url="https://history.example/post",
@@ -452,5 +483,87 @@ def test_salmention_resend_dry_run_reports_no_endpoint_without_history_write(moc
     assert WebmentionOutboundTarget.objects.count() == 1
     existing.refresh_from_db()
     assert existing.endpoint_url == "https://history.example/old-webmention"
+    mock_sender.send_webmentions.assert_not_called()
+    mock_sender.resend_salmentions.assert_not_called()
+
+
+@patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+def test_salmention_resend_output_reports_policy_skips(mock_sender_class):
+    """Test resend output separates sent results from policy skips."""
+    mock_sender = Mock()
+    mock_sender_class.return_value = mock_sender
+    mock_sender.extract_urls.return_value = []
+    mock_sender.resend_salmentions.return_value = [
+        {
+            "target": "https://history.example/post",
+            "endpoint": None,
+            "success": False,
+            "status_code": None,
+            "error": "Historical target skipped during resend cooldown",
+            "provenance": "history",
+            "skipped": True,
+            "skip_reason": "cooldown",
+        }
+    ]
+
+    out = StringIO()
+    call_command(
+        "send_webmentions",
+        "https://example.com/my-post",
+        content="<p>No links here</p>",
+        salmention_resend=True,
+        stdout=out,
+    )
+
+    output = out.getvalue()
+    assert "Resent 0/0 Salmention webmentions successfully (1 skipped by policy)" in output
+    assert (
+        "- [history] https://history.example/post (skipped: Historical target skipped during resend cooldown)"
+        in output
+    )
+
+
+@patch("indieweb.management.commands.send_webmentions.WebmentionSender")
+def test_salmention_resend_dry_run_reports_policy_skips_without_history_write(mock_sender_class):
+    """Test dry-run reports policy drops through the preview API without mutating history."""
+    mock_sender = Mock()
+    mock_sender_class.return_value = mock_sender
+    mock_sender.extract_urls.return_value = []
+    mock_sender.preview_salmention_resend_targets.return_value = [
+        {
+            "target": "https://history.example/post",
+            "endpoint": None,
+            "success": False,
+            "status_code": None,
+            "error": "Historical target dropped after consecutive failures",
+            "provenance": "history",
+            "skipped": True,
+            "skip_reason": "failure_drop",
+            "dropped": True,
+            "dry_run": True,
+        }
+    ]
+    existing = WebmentionOutboundTarget.objects.create(
+        source_url="https://example.com/my-post",
+        target_url="https://history.example/post",
+        consecutive_failures=5,
+    )
+
+    out = StringIO()
+    call_command(
+        "send_webmentions",
+        "https://example.com/my-post",
+        content="<p>No links here</p>",
+        dry_run=True,
+        salmention_resend=True,
+        stdout=out,
+    )
+
+    assert (
+        "- [history] https://history.example/post (dropped: Historical target dropped after consecutive failures)"
+        in out.getvalue()
+    )
+    existing.refresh_from_db()
+    assert existing.consecutive_failures == 5
     mock_sender.send_webmentions.assert_not_called()
     mock_sender.resend_salmentions.assert_not_called()

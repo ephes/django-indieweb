@@ -381,6 +381,7 @@ class TestWebmentionOutboundTargetModel:
         first_sent_at = datetime(2026, 5, 2, 10, 1, 0, tzinfo=timezone.utc)
         last_sent_at = datetime(2026, 5, 2, 10, 2, 0, tzinfo=timezone.utc)
         last_seen_at = datetime(2026, 5, 2, 10, 3, 0, tzinfo=timezone.utc)
+        last_attempted_at = datetime(2026, 5, 2, 10, 4, 0, tzinfo=timezone.utc)
 
         target = WebmentionOutboundTarget.objects.create(
             source_url="https://source.example/posts/1",
@@ -389,9 +390,11 @@ class TestWebmentionOutboundTargetModel:
             endpoint_discovered_at=endpoint_discovered_at,
             first_sent_at=first_sent_at,
             last_sent_at=last_sent_at,
+            last_attempted_at=last_attempted_at,
             last_status_code=202,
             last_success=True,
             last_error="",
+            consecutive_failures=0,
             last_vouch_url="https://source.example/vouch",
             last_seen_in_source_at=last_seen_at,
         )
@@ -402,9 +405,11 @@ class TestWebmentionOutboundTargetModel:
         assert target.endpoint_discovered_at == endpoint_discovered_at
         assert target.first_sent_at == first_sent_at
         assert target.last_sent_at == last_sent_at
+        assert target.last_attempted_at == last_attempted_at
         assert target.last_status_code == 202
         assert target.last_success is True
         assert target.last_error == ""
+        assert target.consecutive_failures == 0
         assert target.last_vouch_url == "https://source.example/vouch"
         assert target.last_seen_in_source_at == last_seen_at
         assert target.created
@@ -421,9 +426,11 @@ class TestWebmentionOutboundTargetModel:
         assert target.endpoint_discovered_at is None
         assert target.first_sent_at is None
         assert target.last_sent_at is None
+        assert target.last_attempted_at is None
         assert target.last_status_code is None
         assert target.last_success is False
         assert target.last_error == ""
+        assert target.consecutive_failures == 0
         assert target.last_vouch_url == ""
         assert target.last_seen_in_source_at is None
 
@@ -520,14 +527,17 @@ class TestWebmentionOutboundTargetModel:
         first_sent_at = datetime(2026, 5, 2, 11, 1, 0, tzinfo=timezone.utc)
         last_sent_at = datetime(2026, 5, 2, 11, 2, 0, tzinfo=timezone.utc)
         last_seen_at = datetime(2026, 5, 2, 11, 3, 0, tzinfo=timezone.utc)
+        last_attempted_at = datetime(2026, 5, 2, 11, 4, 0, tzinfo=timezone.utc)
 
         target.endpoint_url = "https://target.example/webmention"
         target.endpoint_discovered_at = endpoint_discovered_at
         target.first_sent_at = first_sent_at
         target.last_sent_at = last_sent_at
+        target.last_attempted_at = last_attempted_at
         target.last_status_code = 500
         target.last_success = False
         target.last_error = "HTTP 500"
+        target.consecutive_failures = 2
         target.last_vouch_url = "https://source.example/vouch"
         target.last_seen_in_source_at = last_seen_at
         target.save()
@@ -538,9 +548,11 @@ class TestWebmentionOutboundTargetModel:
         assert target.endpoint_discovered_at == endpoint_discovered_at
         assert target.first_sent_at == first_sent_at
         assert target.last_sent_at == last_sent_at
+        assert target.last_attempted_at == last_attempted_at
         assert target.last_status_code == 500
         assert target.last_success is False
         assert target.last_error == "HTTP 500"
+        assert target.consecutive_failures == 2
         assert target.last_vouch_url == "https://source.example/vouch"
         assert target.last_seen_in_source_at == last_seen_at
 

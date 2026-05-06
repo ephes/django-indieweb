@@ -62,6 +62,11 @@ Add these settings to your Django settings:
     # Optional: Use custom receiver-side Vouch trust logic
     INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY = 'myproject.webmention_config.trust_vouch'
 
+    # Optional: Tune explicit Salmention resend policy
+    INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS = 86400
+    INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS = 2592000
+    INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
+
     # Optional: Comment adapter to convert webmentions to comments
     INDIEWEB_COMMENT_ADAPTER = 'myproject.webmention_config.MyCommentAdapter'
 
@@ -211,6 +216,21 @@ search is bounded by ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS``. Pair these
 application limits with endpoint rate limits, worker time limits, and
 deployment-level request/body limits.
 
+Source Link Verification
+------------------------
+
+Receive-side verification requires the fetched source HTML to contain a
+rendered ``href`` that matches the submitted target URL under django-indieweb's
+conservative canonical URL matching policy. Links inside non-rendered
+ancestors such as ``<template>`` and ``<noscript>`` do not verify a source
+link, and HTML comments do not count as source links.
+
+Microformats URL properties such as ``in-reply-to``, ``like-of``,
+``repost-of``, ``bookmark-of``, and ``mention-of`` can still identify the
+mentioning ``h-entry`` after the page-level source link has been verified.
+Plain-text URL tokens in ``content.value`` are not accepted as standalone
+source-link proof; content matching needs a rendered link in ``content.html``.
+
 Vouch Support
 =============
 
@@ -333,14 +353,20 @@ permalink to notify the union of current links and previously recorded targets.
 Operators can trigger the same sender workflow with
 ``python manage.py send_webmentions SOURCE --salmention-resend``.
 
-No Salmention setting is available. Source snapshots and child response storage
-are always owned by verified processor/worker processing, bundled nested
-rendering is part of the default ``show_webmentions`` template path, and
-outbound target-history storage plus sender and management-command resend
-support are package behavior rather than setting toggles. Host applications
-and operators still own the explicit signal that a source permalink changed
-and should use the sender API or the management command rather than a global
-setting.
+Source snapshots and child response storage are always owned by verified
+processor/worker processing, bundled nested rendering is part of the default
+``show_webmentions`` template path, and outbound target-history storage plus
+sender and management-command resend support are package behavior. Host
+applications and operators still own the explicit signal that a source
+permalink changed and should use the sender API or the management command
+rather than expecting automatic receive-side resends.
+
+Salmention resend policy has operator-tunable settings for historical-only
+targets: ``INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS`` defaults to ``86400``,
+``INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS`` defaults to ``2592000`` (30
+days), and ``INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES`` defaults to ``5``.
+Set ``INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS = None`` to disable the
+successful-target cutoff.
 
 Outbound Target Tracking
 ------------------------
@@ -371,9 +397,14 @@ The persisted fields are:
   current endpoint discovery.
 * ``first_sent_at`` and ``last_sent_at``: timestamps for the first and latest
   outbound attempt.
+* ``last_attempted_at``: timestamp for the latest policy-relevant resend or
+  delivery attempt, including no-endpoint outcomes where no Webmention POST was
+  made.
 * ``last_status_code``, ``last_success``, and ``last_error``: the latest
   delivery outcome in the same spirit as ``WebmentionSender`` result
   dictionaries.
+* ``consecutive_failures``: failure count used by the Salmention historical
+  resend drop policy. Successful deliveries reset this counter.
 * ``last_vouch_url``: the voucher URL used on the latest attempt, blank when no
   Vouch URL was sent.
 * ``last_seen_in_source_at``: the last time the target was discovered in the
@@ -450,10 +481,11 @@ or fetchable source content, then:
 2. Load previously recorded target history for exactly that ``source_url``.
 3. Attempts Webmentions for the union of current targets and historical
    targets.
-4. Rediscover each target's endpoint before delivery.
-5. Marks each result with ``provenance`` set to ``current``, ``history``, or
+4. Applies the historical-only resend policy before rediscovery.
+5. Rediscover each eligible target's endpoint before delivery.
+6. Marks each result with ``provenance`` set to ``current``, ``history``, or
    ``both``.
-6. Refresh outbound target history for each attempted target, including targets
+7. Refresh outbound target history for each attempted target, including targets
    that are no longer linked from the current source.
 
 Every resend result includes at least ``target``, ``endpoint``, ``success``,
@@ -461,12 +493,30 @@ Every resend result includes at least ``target``, ``endpoint``, ``success``,
 endpoint, the result reports ``success=False``, ``status_code=None``, and an
 ``error`` explaining that no endpoint was found so callers can see historical
 targets that could not be delivered. No-endpoint resend results refresh the
-latest outcome fields but do not overwrite previously discovered endpoint
+latest outcome fields, increment ``consecutive_failures``, and update
+``last_attempted_at`` but do not overwrite previously discovered endpoint
 diagnostics or advance sent timestamps because no Webmention POST was made.
-Resend attempts refresh ``WebmentionOutboundTarget`` diagnostics for current
-and historical targets. For historical-only targets, ``last_seen_in_source_at``
-is not advanced because the target was not present in the latest source
-content.
+Successful deliveries reset ``consecutive_failures``. Resend attempts refresh
+``WebmentionOutboundTarget`` diagnostics for current and historical targets.
+For historical-only targets, ``last_seen_in_source_at`` is not advanced because
+the target was not present in the latest source content.
+
+Current targets are always attempted because they are linked from the latest
+source content. Historical-only targets are subject to three policy checks:
+
+* Historical-only rows with a recent ``last_attempted_at`` or ``last_sent_at``
+  inside ``INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS`` are skipped without
+  endpoint discovery or history mutation.
+* Historical-only rows whose latest result was successful are skipped after
+  ``INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS`` has elapsed since
+  ``last_seen_in_source_at`` (falling back to send/attempt/create timestamps
+  for older rows). This prevents successful removed links from being re-pinged
+  forever.
+* Historical-only rows whose ``consecutive_failures`` reaches
+  ``INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES`` are deleted. A failure that
+  reaches the threshold is recorded and then drops the row; a row already at
+  the threshold is dropped before rediscovery. Dry-run reports the drop but
+  does not delete the row.
 
 This helper is not called automatically by ``WebmentionProcessor``.
 Receive-side verification, source snapshots, nested response storage, Vouch
@@ -508,12 +558,15 @@ available, success or error, and a provenance label:
   history.
 
 No-endpoint union targets remain visible in resend output as failures with an
-``Error: No endpoint found`` message.
+``Error: No endpoint found`` message. Policy skips are shown separately as
+``skipped`` or ``dropped`` rows and are not counted as sent Webmentions in the
+summary.
 
 In resend mode, ``--dry-run`` shows the union of current and historical targets
 for exactly the provided source URL, labels each target with the same
-``current``/``history``/``both`` provenance, and rediscovers endpoints for
-display without sending Webmentions or writing outbound target history.
+``current``/``history``/``both`` provenance, applies the historical-only policy
+for display, and rediscovers endpoints for eligible targets without sending
+Webmentions or writing outbound target history.
 Without resend mode, ``--dry-run`` keeps showing only current targets and
 preserves the ordinary same-domain skip and endpoint-discovery preview. The
 existing ``--content`` option, including ``--content -`` for stdin, and

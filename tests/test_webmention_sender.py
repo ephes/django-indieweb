@@ -2,6 +2,7 @@ from datetime import timedelta
 from unittest.mock import Mock, patch
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone
 
 from indieweb.http_client import SAFE_HTTP_DEFAULT_TIMEOUT
@@ -692,9 +693,11 @@ def test_send_webmentions_records_outbound_target_history(sender, source_url, ta
     assert target.endpoint_discovered_at == sent_at
     assert target.first_sent_at == sent_at
     assert target.last_sent_at == sent_at
+    assert target.last_attempted_at == sent_at
     assert target.last_status_code == 202
     assert target.last_success is True
     assert target.last_error == ""
+    assert target.consecutive_failures == 0
     assert target.last_seen_in_source_at == sent_at
 
 
@@ -734,6 +737,24 @@ def test_send_webmentions_records_failed_delivery_history(sender, source_url, ta
     assert target.last_success is False
     assert target.last_status_code == 500
     assert target.last_error == "HTTP 500"
+    assert target.consecutive_failures == 1
+
+
+def test_send_webmentions_success_resets_consecutive_failures(sender, source_url, target_url):
+    """Test a successful current send resets prior failure state."""
+    WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://target.com/post",
+        consecutive_failures=3,
+    )
+    html_content = '<a href="https://target.com/post">Target</a>'
+
+    with patch.object(sender, "discover_endpoint", return_value="https://target.com/webmention"):
+        with patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 202}):
+            sender.send_webmentions(source_url, html_content)
+
+    target = WebmentionOutboundTarget.objects.get(source_url=source_url, target_url="https://target.com/post")
+    assert target.consecutive_failures == 0
 
 
 def test_send_webmentions_records_latest_vouch_url(sender, source_url, target_url):
@@ -930,8 +951,8 @@ def test_resend_salmentions_passes_vouch_to_each_delivery(sender, source_url, ta
 
 def test_resend_salmentions_returns_no_endpoint_result_and_history(sender, source_url, target_url):
     """Test resend reports and records union targets whose endpoints cannot be discovered."""
-    discovered_at = timezone.now() - timedelta(hours=2)
-    sent_at = timezone.now() - timedelta(hours=1)
+    discovered_at = timezone.now() - timedelta(days=2, hours=1)
+    sent_at = timezone.now() - timedelta(days=2)
     WebmentionOutboundTarget.objects.create(
         source_url=source_url,
         target_url="https://history.example/post",
@@ -960,6 +981,7 @@ def test_resend_salmentions_returns_no_endpoint_result_and_history(sender, sourc
     assert target.last_success is False
     assert target.last_status_code is None
     assert target.last_error == "No endpoint found"
+    assert target.consecutive_failures == 1
     assert target.endpoint_url == "https://history.example/old-webmention"
     assert target.endpoint_discovered_at == discovered_at
     assert target.first_sent_at == sent_at
@@ -995,7 +1017,183 @@ def test_resend_salmentions_current_no_endpoint_records_unsent_history(sender, s
     assert target.last_success is False
     assert target.last_status_code is None
     assert target.last_error == "No endpoint found"
+    assert target.consecutive_failures == 1
     assert target.last_seen_in_source_at == discovered_at
+
+
+@override_settings(INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS=3600)
+def test_resend_salmentions_skips_historical_target_inside_cooldown(sender, source_url, target_url):
+    """Historical-only targets inside the resend cooldown are skipped without mutation."""
+    attempted_at = timezone.now() - timedelta(minutes=30)
+    target = WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://history.example/post",
+        last_attempted_at=attempted_at,
+        consecutive_failures=1,
+        last_error="HTTP 500",
+    )
+
+    with patch.object(sender, "discover_endpoint") as discover:
+        with patch.object(sender, "send_webmention") as send:
+            results = sender.resend_salmentions(source_url, "<p>No current links</p>")
+
+    assert results == [
+        {
+            "success": False,
+            "status_code": None,
+            "error": "Historical target skipped during resend cooldown",
+            "target": "https://history.example/post",
+            "endpoint": None,
+            "provenance": "history",
+            "skipped": True,
+            "skip_reason": "cooldown",
+        }
+    ]
+    discover.assert_not_called()
+    send.assert_not_called()
+    target.refresh_from_db()
+    assert target.last_attempted_at == attempted_at
+    assert target.consecutive_failures == 1
+
+
+@override_settings(
+    INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS=60,
+    INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS=3600,
+)
+def test_resend_salmentions_skips_old_successful_historical_target(sender, source_url, target_url):
+    """Old successful historical-only targets stop being re-pinged."""
+    old_seen_at = timezone.now() - timedelta(hours=2)
+    WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://history.example/post",
+        first_sent_at=old_seen_at,
+        last_sent_at=old_seen_at,
+        last_attempted_at=old_seen_at,
+        last_seen_in_source_at=old_seen_at,
+        last_success=True,
+    )
+
+    with patch.object(sender, "discover_endpoint") as discover:
+        results = sender.resend_salmentions(source_url, "<p>No current links</p>")
+
+    assert results[0]["skipped"] is True
+    assert results[0]["skip_reason"] == "success_cutoff"
+    discover.assert_not_called()
+    assert WebmentionOutboundTarget.objects.count() == 1
+
+
+@override_settings(
+    INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS=60,
+    INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS=3600,
+)
+def test_resend_salmentions_attempts_recent_successful_historical_target(sender, source_url, target_url):
+    """Successful historical-only targets remain eligible before the success cutoff."""
+    seen_at = timezone.now() - timedelta(minutes=30)
+    attempted_at = timezone.now() - timedelta(minutes=2)
+    WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://history.example/post",
+        first_sent_at=seen_at,
+        last_sent_at=attempted_at,
+        last_attempted_at=attempted_at,
+        last_seen_in_source_at=seen_at,
+        last_success=True,
+    )
+
+    with patch.object(sender, "discover_endpoint", return_value="https://history.example/webmention") as discover:
+        with patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 202}) as send:
+            results = sender.resend_salmentions(source_url, "<p>No current links</p>")
+
+    assert results[0]["success"] is True
+    discover.assert_called_once_with("https://history.example/post")
+    send.assert_called_once()
+
+
+@override_settings(INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES=2)
+def test_resend_salmentions_drops_historical_target_after_failure_limit(sender, source_url, target_url):
+    """A historical-only failure that reaches the limit is recorded then deleted."""
+    WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://history.example/post",
+        consecutive_failures=1,
+    )
+
+    with patch.object(sender, "discover_endpoint", return_value=None):
+        results = sender.resend_salmentions(source_url, "<p>No current links</p>")
+
+    assert results[0]["dropped"] is True
+    assert results[0]["skipped"] is True
+    assert results[0]["skip_reason"] == "failure_drop"
+    assert "dropped" in results[0]["error"]
+    assert not WebmentionOutboundTarget.objects.filter(source_url=source_url).exists()
+
+
+@override_settings(INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES=2)
+def test_resend_salmentions_drops_previously_exhausted_historical_target(sender, source_url, target_url):
+    """Historical-only targets already at the failure limit are deleted without rediscovery."""
+    WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://history.example/post",
+        consecutive_failures=2,
+    )
+
+    with patch.object(sender, "discover_endpoint") as discover:
+        results = sender.resend_salmentions(source_url, "<p>No current links</p>")
+
+    assert results[0]["skipped"] is True
+    assert results[0]["dropped"] is True
+    assert results[0]["skip_reason"] == "failure_drop"
+    discover.assert_not_called()
+    assert not WebmentionOutboundTarget.objects.filter(source_url=source_url).exists()
+
+
+@override_settings(
+    INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES=2,
+    INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS=86400,
+    INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS=3600,
+)
+def test_resend_salmentions_current_target_bypasses_historical_policy(sender, source_url, target_url):
+    """Current targets are still attempted even when historical-only policy would skip them."""
+    old_time = timezone.now() - timedelta(days=3)
+    html_content = '<a href="https://history.example/post">Current again</a>'
+    WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://history.example/post",
+        first_sent_at=old_time,
+        last_sent_at=old_time,
+        last_attempted_at=timezone.now(),
+        last_seen_in_source_at=old_time,
+        last_success=True,
+        consecutive_failures=2,
+    )
+
+    with patch.object(sender, "discover_endpoint", return_value="https://history.example/webmention"):
+        with patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 202}) as send:
+            results = sender.resend_salmentions(source_url, html_content)
+
+    assert results[0]["provenance"] == "both"
+    assert results[0]["success"] is True
+    send.assert_called_once()
+    assert WebmentionOutboundTarget.objects.get(source_url=source_url).consecutive_failures == 0
+
+
+@override_settings(INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES=2)
+def test_salmention_preview_does_not_mutate_policy_state(sender, source_url, target_url):
+    """Dry-run preview reports policy drops without deleting or updating history."""
+    target = WebmentionOutboundTarget.objects.create(
+        source_url=source_url,
+        target_url="https://history.example/post",
+        consecutive_failures=2,
+    )
+
+    with patch.object(sender, "discover_endpoint") as discover:
+        results = sender.preview_salmention_resend_targets(source_url, "<p>No current links</p>")
+
+    assert results[0]["dry_run"] is True
+    assert results[0]["dropped"] is True
+    discover.assert_not_called()
+    target.refresh_from_db()
+    assert target.consecutive_failures == 2
 
 
 def test_resend_salmentions_returns_empty_when_content_fetch_fails(sender, source_url, target_url):

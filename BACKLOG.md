@@ -6,15 +6,7 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 1
 
-### Webmentions Reliability and Compliance
-
-- [ ] Add Salmention resend cooldown, success cutoff, and failure drop policy.
-  References: `src/indieweb/senders.py` (`resend_salmentions`, `_record_outbound_target`), `src/indieweb/models.py` (`WebmentionOutboundTarget`), `tests/test_webmention_sender.py`, `tests/test_send_webmentions_command.py`, `docs/webmention.rst`.
-  The shared SSRF-safe HTTP slice screens current and historical targets before discovery and delivery, but `resend_salmentions` still has no operator-tunable resend policy. Add coherent state for consecutive failures, a cooldown for historical-only resends, a success cutoff so already-successful historical targets are not re-pinged forever, and a drop/delete rule after N consecutive failures. Include migration coverage and command-output expectations.
-
-- [ ] Harden Webmention source-link verification against non-rendered HTML and text-only matches.
-  References: `src/indieweb/processors.py` (`_html_links_to_target` ~line 122, `_text_links_to_target` ~line 875), `tests/test_webmention_processor.py`.
-  The verifier matches `<a href>` inside `<template>` and `<noscript>` (BeautifulSoup's `html.parser` does not extract tags from inside HTML comments, so that path is not affected), and accepts plain-text URL tokens that the source page never renders as a link. Both bypass Webmention spec §3.2.2. Skip non-rendered ancestors before searching for hrefs; only accept the text-token path when the same content's `html` also contains a real `<a href>`. Tests should include `<template>`, `<noscript>`, and text-only-token cases.
+No current Priority 1 items.
 
 ## Priority 2
 

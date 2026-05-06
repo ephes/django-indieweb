@@ -4,6 +4,59 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Harden Webmention source verification and Salmention resend policy
+
+- Hardened receive-side Webmention source-link verification so links inside
+  non-rendered ``<template>`` and ``<noscript>`` ancestors, links hidden inside
+  HTML comments, and plain-text URL tokens in microformats content no longer
+  verify a source link. Rendered ``href`` links and microformats URL
+  properties keep the existing conservative canonical target matching.
+- Added Salmention resend policy state to ``WebmentionOutboundTarget`` via
+  migration ``0019``: ``last_attempted_at`` and ``consecutive_failures``.
+  ``WebmentionSender.resend_salmentions()`` now applies a historical-only
+  resend cooldown, successful-target cutoff, and consecutive-failure
+  drop/delete policy while current targets remain eligible for delivery.
+- Updated resend history maintenance so no-endpoint outcomes count as failures,
+  failures increment the consecutive counter, successful deliveries reset it,
+  and historical-only rows are deleted when they reach the configured failure
+  threshold. Dry-run preview reports skips/drops without sending or mutating
+  history.
+- Updated ``send_webmentions --salmention-resend`` dry-run and send output to
+  surface policy skips/drops and to keep skipped targets out of sent-result
+  counts.
+- Backlog: removed the completed Priority 1 Webmention source-link hardening
+  item and Salmention resend-policy item from ``BACKLOG.md``.
+- Documentation: updated ``docs/webmention.rst`` for rendered-link
+  verification, text-token rejection, Salmention policy semantics, command
+  output, and dry-run behavior. Updated ``docs/configuration.rst`` for
+  ``INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS``,
+  ``INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS``, and
+  ``INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES``. Searched ``README.rst``;
+  no update was needed because it only has generic Webmention references.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased notes for the
+  source-link verification hardening, new migration, Salmention policy
+  settings, no-endpoint failure accounting, and command/dry-run output.
+- Review follow-up: normalized historical-only post-attempt failure drops so
+  the sender marks them with the same ``skipped``/``failure_drop``/``dropped``
+  result fields as pre-attempt policy drops, keeping command summaries and
+  output consistent. Removed the unused ``attempted`` argument from
+  ``_record_outbound_target`` and clarified that the plain-text URL-token
+  helper must not be used as standalone source-link proof.
+- Validation: ``uv run pytest tests/test_webmention_processor.py -q
+  --no-cov`` passed (125 passed); ``uv run pytest
+  tests/test_webmention_sender.py -q --no-cov`` passed (62 passed); ``uv run
+  pytest tests/test_send_webmentions_command.py -q --no-cov`` passed (18
+  passed); ``uv run pytest tests/test_webmention_models.py -q --no-cov``
+  passed (28 passed); targeted ``uv run ruff check`` passed; ``uv run python
+  manage.py makemigrations --check --dry-run --settings=tests.settings``
+  passed with no changes detected; ``uv run python manage.py migrate
+  --settings=tests.settings`` applied all migrations including ``0019``;
+  ``uv run pytest`` passed (1078 passed, coverage gate reached at 90.40%);
+  ``uv run mypy`` passed; ``uv run ruff check .`` passed; ``uv run ruff format
+  . --check`` passed; ``uv run sphinx-build -W -b html docs docs/_build/html``
+  passed; ``uv run prek run --all-files`` passed; and ``git diff --check``
+  passed.
+
 ### Restore consent CSRF protection and require redirect_uri-bound token exchange
 
 - Restored CSRF enforcement for IndieAuth browser consent ``action=approve``

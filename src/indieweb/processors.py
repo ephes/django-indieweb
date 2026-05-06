@@ -53,6 +53,7 @@ WRAPPING_TEXT_URL_PUNCTUATION = {
     "}": "{",
     ">": "<",
 }
+NON_RENDERED_LINK_ANCESTORS = {"noscript", "template"}
 
 
 def _positive_int_setting(name: str, default: int) -> int:
@@ -177,10 +178,20 @@ def _html_links_to_target(html_content: str, target_url: str) -> bool:
     soup = BeautifulSoup(html_content, "html.parser")
     for tag in soup.find_all(href=True):
         if isinstance(tag, Tag):
+            if _has_non_rendered_ancestor(tag):
+                continue
             href = tag.get("href")
             if isinstance(href, str) and _urls_match(href, target_url):
                 return True
     return False
+
+
+def _has_non_rendered_ancestor(tag: Tag) -> bool:
+    """Return whether a candidate link is inside HTML that is not rendered."""
+    return any(
+        isinstance(parent, Tag) and parent.name and parent.name.lower() in NON_RENDERED_LINK_ANCESTORS
+        for parent in tag.parents
+    )
 
 
 def _canonical_domain_for_vouch(value: str) -> str | None:
@@ -934,8 +945,6 @@ class WebmentionProcessor:
                 for c in content:
                     if isinstance(c, dict) and self._content_links_to_target(c, target_url):
                         return item
-                    elif isinstance(c, str) and self._text_links_to_target(c, target_url):
-                        return item
 
             if depth >= max_depth:
                 continue
@@ -963,11 +972,14 @@ class WebmentionProcessor:
         html = content.get("html")
         if isinstance(html, str) and _html_links_to_target(html, target_url):
             return True
-        value = content.get("value")
-        return isinstance(value, str) and self._text_links_to_target(value, target_url)
+        return False
 
     def _text_links_to_target(self, value: str, target_url: str) -> bool:
-        """Return whether a plain-text microformats value is exactly or URL-token linked to the target."""
+        """Return whether a plain-text URL token matches the target.
+
+        Do not use this as standalone source-link proof; Webmention source
+        verification requires a rendered link in the source page.
+        """
         if _urls_match(value, target_url):
             return True
         for token in value.split():

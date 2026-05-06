@@ -1,6 +1,7 @@
 """Webmention sender implementation."""
 
 import re
+from datetime import timedelta
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -18,6 +19,9 @@ from .http_client import (
 from .models import WebmentionOutboundTarget
 
 DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES = 1024 * 1024
+DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS = 24 * 60 * 60
+DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
 
 
 def _sender_fetch_max_bytes() -> int | None:
@@ -29,6 +33,48 @@ def _sender_fetch_max_bytes() -> int | None:
     except (TypeError, ValueError):
         return DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
     return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
+
+
+def _positive_int_setting(name: str, default: int) -> int:
+    configured = getattr(settings, name, default)
+    try:
+        parsed = int(configured)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _optional_positive_int_setting(name: str, default: int) -> int | None:
+    configured = getattr(settings, name, default)
+    if configured is None:
+        return None
+    return _positive_int_setting(name, default)
+
+
+def _salmention_resend_cooldown() -> timedelta:
+    return timedelta(
+        seconds=_positive_int_setting(
+            "INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS",
+            DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS,
+        )
+    )
+
+
+def _salmention_success_cutoff() -> timedelta | None:
+    seconds = _optional_positive_int_setting(
+        "INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS",
+        DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS,
+    )
+    if seconds is None:
+        return None
+    return timedelta(seconds=seconds)
+
+
+def _salmention_max_consecutive_failures() -> int:
+    return _positive_int_setting(
+        "INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES",
+        DEFAULT_SALMENTION_MAX_CONSECUTIVE_FAILURES,
+    )
 
 
 class WebmentionSender:
@@ -304,13 +350,22 @@ class WebmentionSender:
                 return []
 
         current_targets = set(self._extract_external_target_urls(source_url, html_content))
-        historical_targets = set(
-            WebmentionOutboundTarget.objects.filter(source_url=source_url).values_list("target_url", flat=True)
-        )
+        historical_rows = {
+            row.target_url: row for row in WebmentionOutboundTarget.objects.filter(source_url=source_url)
+        }
+        historical_targets = set(historical_rows)
 
         results = []
         for target_url in sorted(current_targets | historical_targets):
             provenance = self._target_provenance(target_url, current_targets, historical_targets)
+            historical_only = provenance == "history"
+            if historical_only:
+                row = historical_rows[target_url]
+                skipped = self._salmention_historical_skip_result(row, dry_run=False)
+                if skipped is not None:
+                    results.append(skipped)
+                    continue
+
             endpoint = self.discover_endpoint(target_url)
             if endpoint:
                 result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url)
@@ -325,7 +380,7 @@ class WebmentionSender:
             result["endpoint"] = endpoint
             result["provenance"] = provenance
             results.append(result)
-            self._record_outbound_target(
+            target = self._record_outbound_target(
                 source_url=source_url,
                 target_url=target_url,
                 endpoint=endpoint,
@@ -334,7 +389,47 @@ class WebmentionSender:
                 seen_in_source=target_url in current_targets,
                 sent=endpoint is not None,
             )
+            if historical_only and not result["success"] and self._salmention_failure_limit_reached(target):
+                target.delete()
+                result["dropped"] = True
+                result["skipped"] = True
+                result["skip_reason"] = "failure_drop"
+                result["error"] = f"{result.get('error', 'Delivery failed')}; historical target dropped"
 
+        return results
+
+    def preview_salmention_resend_targets(
+        self,
+        source_url: str,
+        html_content: str,
+    ) -> list[dict]:
+        """Return a dry-run Salmention resend preview without sending or recording history."""
+        current_targets = set(self._extract_external_target_urls(source_url, html_content))
+        historical_rows = {
+            row.target_url: row for row in WebmentionOutboundTarget.objects.filter(source_url=source_url)
+        }
+        historical_targets = set(historical_rows)
+
+        results = []
+        for target_url in sorted(current_targets | historical_targets):
+            provenance = self._target_provenance(target_url, current_targets, historical_targets)
+            if provenance == "history":
+                skipped = self._salmention_historical_skip_result(historical_rows[target_url], dry_run=True)
+                if skipped is not None:
+                    results.append(skipped)
+                    continue
+            endpoint = self.discover_endpoint(target_url)
+            results.append(
+                {
+                    "target": target_url,
+                    "endpoint": endpoint,
+                    "success": False,
+                    "status_code": None,
+                    "provenance": provenance,
+                    "dry_run": True,
+                    "error": "" if endpoint else "No endpoint found",
+                }
+            )
         return results
 
     def _extract_external_target_urls(self, source_url: str, html_content: str) -> list[str]:
@@ -365,7 +460,7 @@ class WebmentionSender:
         vouch_url: str | None,
         seen_in_source: bool,
         sent: bool,
-    ) -> None:
+    ) -> WebmentionOutboundTarget:
         """Create or refresh outbound Webmention target history for an attempt."""
         now = timezone.now()
         target, _ = WebmentionOutboundTarget.objects.get_or_create(
@@ -381,12 +476,19 @@ class WebmentionSender:
                 target.first_sent_at = now
             target.last_sent_at = now
             target.last_vouch_url = vouch_url or ""
+        target.last_attempted_at = now
         target.last_status_code = result.get("status_code")
-        target.last_success = bool(result.get("success"))
+        success = bool(result.get("success"))
+        target.last_success = success
         target.last_error = result.get("error") or ""
+        if success:
+            target.consecutive_failures = 0
+        else:
+            target.consecutive_failures += 1
         if seen_in_source:
             target.last_seen_in_source_at = now
         target.save()
+        return target
 
     def _target_provenance(self, target_url: str, current_targets: set[str], historical_targets: set[str]) -> str:
         """Return the resend provenance label for a target URL."""
@@ -395,3 +497,73 @@ class WebmentionSender:
         if target_url in current_targets:
             return "current"
         return "history"
+
+    def _salmention_historical_skip_result(
+        self,
+        row: WebmentionOutboundTarget,
+        *,
+        dry_run: bool,
+    ) -> dict | None:
+        """Return a policy skip result for a historical-only target, if one applies."""
+        now = timezone.now()
+        if self._salmention_failure_limit_reached(row):
+            if not dry_run:
+                row.delete()
+            return self._salmention_skip_result(
+                row.target_url,
+                "failure_drop",
+                "Historical target dropped after consecutive failures",
+                dry_run=dry_run,
+                dropped=True,
+            )
+
+        last_attempted_at = row.last_attempted_at or row.last_sent_at
+        if last_attempted_at and now - last_attempted_at < _salmention_resend_cooldown():
+            return self._salmention_skip_result(
+                row.target_url,
+                "cooldown",
+                "Historical target skipped during resend cooldown",
+                dry_run=dry_run,
+            )
+
+        success_cutoff = _salmention_success_cutoff()
+        success_reference = row.last_seen_in_source_at or row.first_sent_at or row.last_attempted_at or row.created
+        if row.last_success and success_cutoff is not None and now - success_reference >= success_cutoff:
+            return self._salmention_skip_result(
+                row.target_url,
+                "success_cutoff",
+                "Historical target skipped after successful resend cutoff",
+                dry_run=dry_run,
+            )
+
+        return None
+
+    def _salmention_skip_result(
+        self,
+        target_url: str,
+        reason: str,
+        error: str,
+        *,
+        dry_run: bool,
+        dropped: bool = False,
+    ) -> dict:
+        """Build a Salmention policy skip result."""
+        result = {
+            "success": False,
+            "status_code": None,
+            "error": error,
+            "target": target_url,
+            "endpoint": None,
+            "provenance": "history",
+            "skipped": True,
+            "skip_reason": reason,
+        }
+        if dry_run:
+            result["dry_run"] = True
+        if dropped:
+            result["dropped"] = True
+        return result
+
+    def _salmention_failure_limit_reached(self, row: WebmentionOutboundTarget) -> bool:
+        """Return whether a target has reached the historical failure drop threshold."""
+        return row.consecutive_failures >= _salmention_max_consecutive_failures()
