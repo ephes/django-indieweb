@@ -4,6 +4,48 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Document host-owned WebSub workflow examples for delivery processing and lease renewal
+
+- Added tested examples in ``examples/websub_workflows.py`` for host-owned
+  WebSub subscriber workflows. The examples show a delivery hook shaped for
+  ``INDIEWEB_WEBSUB_DELIVERY_HOOK``, compact queue payload handoff, worker-side
+  delegation to host-owned feed parsing and persistence, explicit lease
+  renewal, and delivery-attempt pruning.
+- Kept django-indieweb's boundary unchanged. The examples do not add a WebSub
+  hub, automatic topic discovery, hidden network calls, background scheduler,
+  queue dependency, feed parser, feed-entry model, retry policy, raw delivery
+  body storage, or automatic pruning.
+- Added focused tests for delivery payload queueing, delivery hook queue
+  resolution, worker delegation, missing-subscription handling, candidate
+  renewal with an injected requester, renewal exception capture, delivery
+  attempt pruning, and retention validation.
+- Backlog: removed the completed Priority 4 WebSub workflow examples item from
+  ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/websub.rst`` with host-owned delivery queue,
+  worker parsing boundary, explicit lease renewal, and pruning examples;
+  updated ``docs/configuration.rst`` with links from the WebSub delivery hook
+  and model/command settings; updated ``docs/concepts.rst`` to remove this
+  slice from future work. No generated docs under ``docs/_build`` were edited
+  or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased
+  documentation/examples note.
+- Compatibility: WebSub endpoint behavior, callback validation, signature
+  validation, model fields, migrations, settings contracts, and public helper
+  signatures are unchanged. The new examples are opt-in host code.
+- Follow-up risks: hosts still need their own queue implementation, worker
+  retry policy, feed parsing, entry persistence, subscription ownership model,
+  lease-renewal schedule, secret rotation policy, hub allowlist, and retention
+  window.
+- Validation: ``uv run pytest tests/test_websub_workflow_examples.py -q
+  --no-cov`` (10 passed), ``uv run pytest tests/test_websub_subscriber.py
+  tests/test_notify_websub_command.py -q --no-cov`` (40 passed), ``uv run
+  ruff check .`` (passed), ``uv run ruff format . --check`` (92 files already
+  formatted), ``uv run mypy`` (no issues in 44 source files), ``uv run
+  sphinx-build -W -b html docs docs/_build/html`` (passed), ``git ls-files
+  docs/_build --modified --others --exclude-standard`` (no output), ``git
+  diff --check`` (passed), ``uv run pytest`` (980 passed, coverage gate passed
+  at 90.54%), and ``uv run prek run --all-files`` (passed).
+
 ### Add static-site and storage-boundary Micropub handler examples
 
 - Added tested examples in ``examples/static_site_micropub.py`` for host-owned

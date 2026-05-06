@@ -501,6 +501,12 @@ verifies the renewal; failed renewal requests keep the previous secret. Passing
 ``secret=""`` stages removal of the stored secret, so a verified renewal can
 switch the subscription back to unsigned deliveries.
 
+See :doc:`websub` and ``examples/websub_workflows.py`` for tested
+copy-and-adapt delivery hook examples that enqueue a compact payload for a
+host-owned worker. The examples keep feed parsing, entry persistence, queue
+choice, retry behavior, and delivery body storage policy outside
+django-indieweb.
+
 WebSub Subscriber Models and Commands
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -528,6 +534,11 @@ example:
    cutoff = timezone.now() - timedelta(days=90)
    WebSubDeliveryAttempt.objects.filter(received_at__lt=cutoff).delete()
 
+The tested ``prune_websub_delivery_attempts()`` example in
+``examples/websub_workflows.py`` wraps the same policy with a returned count
+for operator logs. Retention days remain host configuration, not a
+django-indieweb setting.
+
 Use the read-only ``websub_subscriptions`` management command to inspect
 active subscriptions whose leases have expired or expire within a configured
 window:
@@ -540,6 +551,10 @@ The command makes no hub network calls. Operators that want to renew a listed
 subscription should explicitly call ``request_websub_subscription()`` from
 their application workflow or a separate, host-owned management task.
 Set ``--renewal-window-hours 0`` when you only want expired subscriptions.
+The tested ``renew_websub_candidates()`` example shows how to combine
+``get_websub_renewal_candidates()`` with explicit
+``request_websub_subscription()`` calls from a host-owned cron, Celery beat,
+Django management command, or manual operator workflow.
 
 INDIEWEB_WEBMENTION_ENQUEUE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

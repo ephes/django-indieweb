@@ -264,6 +264,113 @@ logged, recorded on the subscription row, and returned as HTTP ``500`` so the
 hub can retry. When no hook is configured, accepted deliveries return
 ``204 No Content`` after metadata is recorded.
 
+Host-Owned Delivery Workflows
+-----------------------------
+
+The delivery hook is intended to hand work to your application quickly. Keep
+feed parsing, entry persistence, retry policy, and queue configuration in host
+code so the WebSub callback path remains small and hub retries stay meaningful.
+
+The tested examples in ``examples/websub_workflows.py`` are copy-and-adapt
+host code. They show a hook shaped for ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` that
+builds a compact queue payload:
+
+.. code-block:: python
+
+   # myapp/websub_workflows.py
+   from examples.websub_workflows import queue_websub_delivery
+   from myapp.tasks import websub_delivery_queue
+
+   def process_delivery(*, subscription_id, hub_url, topic_url, body, headers):
+       queue_websub_delivery(
+           subscription_id=subscription_id,
+           hub_url=hub_url,
+           topic_url=topic_url,
+           body=body,
+           headers=headers,
+           queue=websub_delivery_queue,
+       )
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBSUB_DELIVERY_HOOK = "myapp.websub_workflows.process_delivery"
+
+The queue adapter only needs an ``enqueue_websub_delivery(payload)`` method.
+That method can call Celery, RQ, a database-backed job table, or another
+host-owned worker system. django-indieweb does not import those packages,
+create queues, start workers, or retry deliveries itself.
+
+Worker code can later load the subscription metadata and delegate the raw feed
+body to your parser and persistence layer:
+
+.. code-block:: python
+
+   from examples.websub_workflows import process_queued_websub_delivery
+   from myapp.feeds import feed_delivery_processor
+
+   def process_websub_delivery_task(payload):
+       result = process_queued_websub_delivery(
+           payload,
+           processor=feed_delivery_processor,
+       )
+       if not result.processed:
+           logger.info("Skipped WebSub delivery: %s", result.error)
+
+The processor owns feed parsing and storage. It might use ``feedparser``,
+``xml.etree.ElementTree``, a Microformats parser, or a custom reader pipeline,
+but those choices stay in the host application. django-indieweb records bounded
+delivery metadata and passes raw bytes to the hook; it does not store delivery
+bodies or parsed feed entries.
+
+Explicit Lease Renewal
+----------------------
+
+Lease renewal is also host-owned. The examples include
+``renew_websub_candidates()`` as a pattern for a management command, cron job,
+Celery beat task, or manual operator action:
+
+.. code-block:: python
+
+   from datetime import timedelta
+
+   from examples.websub_workflows import renew_websub_candidates
+
+   attempts = renew_websub_candidates(
+       callback_base_url="https://example.com/indieweb/websub",
+       within=timedelta(hours=24),
+       lease_seconds=86400,
+       secret_for_subscription=lambda subscription: None,
+   )
+   for attempt in attempts:
+       if not attempt.success:
+           logger.warning("WebSub renewal failed: %s", attempt)
+
+The helper selects rows with ``get_websub_renewal_candidates()`` and calls
+``request_websub_subscription()`` for each candidate. That means it sends hub
+network requests only when your host job explicitly invokes it. The optional
+``secret_for_subscription`` callable is where your application can keep,
+rotate, or remove delivery secrets according to operator policy.
+
+Delivery Attempt Retention
+--------------------------
+
+``WebSubDeliveryAttempt`` rows are metadata-only diagnostics, but busy
+subscribers should still prune them according to a host retention policy. The
+example ``prune_websub_delivery_attempts()`` deletes attempts older than a
+configured number of days and returns a count suitable for operator logs:
+
+.. code-block:: python
+
+   from examples.websub_workflows import prune_websub_delivery_attempts
+
+   result = prune_websub_delivery_attempts(retention_days=90)
+   logger.info("Pruned %s WebSub delivery attempts", result.deleted_count)
+
+Choose the retention window in your application. django-indieweb does not add
+a global retention setting, scheduler, or management command that deletes rows
+automatically.
+
 Signed Deliveries
 -----------------
 

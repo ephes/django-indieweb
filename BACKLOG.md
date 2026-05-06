@@ -24,10 +24,7 @@ No current Tooling and Maintainability items.
 
 ### WebSub Enhancements
 
-- [ ] Document host-owned WebSub workflow examples for delivery processing and lease renewal.
-  - Outcome: add examples and docs showing how a Django project can wire ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` to a task queue, parse delivered feeds in host code, renew expiring subscriptions with ``get_websub_renewal_candidates()`` and ``request_websub_subscription()``, and prune old ``WebSubDeliveryAttempt`` rows. Include tests for any example helpers that live in the package.
-  - References: local ``src/indieweb/websub.py``, ``src/indieweb/models.py``, ``docs/websub.rst``, ``docs/concepts.rst``, ``docs/configuration.rst``, ``tests/test_websub_subscriber.py``, and ``tests/test_notify_websub_command.py``; Indiekit comparison reference ``/Users/jochen/src/getindiekit-indiekit/docs/specifications.md`` at ``1ee20d06``; WebSub Recommendation ``https://www.w3.org/TR/websub/``.
-  - Scope exclusions: do not add a WebSub hub service, automatic topic discovery, hidden network calls, feed persistence, or a background scheduler owned by django-indieweb.
+No current WebSub Enhancements items.
 
 ### Micropub Enhancements and Extensions
 
