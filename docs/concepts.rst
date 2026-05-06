@@ -250,6 +250,12 @@ workflows: IndieAuth, Micropub publishing, Webmention, and WebSub
 publisher/subscriber helper workflows. It does not implement reader-side
 protocols such as Microsub.
 
+For Webmention, django-indieweb includes built-in receive/send endpoints and
+processor-owned verification/display primitives. External services such as
+Webmention.io can still be used by a host project as an optional collection,
+import, or display integration, but that code remains host-owned and is not a
+replacement for a missing core django-indieweb endpoint.
+
 Reader-oriented IndieAuth scope strings such as ``read``, ``follow``,
 ``mute``, ``block``, ``channels``, and similar extension scopes can be
 requested, normalized, stored on auth codes and tokens, and returned by token
@@ -293,10 +299,13 @@ Micropub h-entry post-type advertisement, and Micropub event/RSVP property
 forwarding are available. WebSub subscriber denial handling, lease-inspection
 helpers, metadata-only delivery history, host-owned WebSub delivery/renewal
 workflow examples, and static-site/storage-boundary Micropub handler examples
-are also available. A bundled WebSub hub, automatic subscriber discovery,
-automatic background lease renewal, static-site builds, repository
-commits/pushes, media indexing/deletion policy, Microsub, reader feed
-fetching, following/muting/blocking workflows, reader timelines, reader UI, and
+are also available. Webmention.io import/display guidance is available for
+host-owned integrations without adding core Webmention.io support. A bundled
+Webmention.io endpoint, API client, token setting, dashboard, importer, or
+display tag; bundled WebSub hub; automatic subscriber discovery; automatic
+background lease renewal; static-site builds; repository commits/pushes; media
+indexing/deletion policy; Microsub; reader feed fetching;
+following/muting/blocking workflows; reader timelines; reader UI; and
 host-owned event/RSVP storage semantics remain outside django-indieweb.
 
 Future Enhancements

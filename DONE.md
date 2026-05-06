@@ -4,6 +4,55 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Add Webmention.io import/display guidance without replacing built-in Webmention processing
+
+- Documented Webmention.io as an optional host-owned integration choice, not a
+  missing django-indieweb core endpoint and not a replacement for the built-in
+  receive/send Webmention support.
+- Added guidance for two host-owned patterns: advertising Webmention.io's
+  external endpoint on selected pages instead of the built-in endpoint, and
+  fetching Webmention.io JF2 from host code for display/import alongside
+  verified django-indieweb ``Webmention`` rows.
+- Documented conservative JF2 mapping guidance for ``wm-source``/``url``,
+  ``wm-target``, author fields, content fields, timestamps, and common
+  ``wm-property`` values. ``in-reply-to``, ``like-of``, and ``repost-of`` map
+  to the built-in ``reply``, ``like``, and ``repost`` vocabulary; unknown
+  values can fall back to ``mention`` or host-owned types.
+- Clarified that ``bookmark-of`` and ``rsvp`` require host-owned handling or a
+  lossy ``mention`` fallback because built-in ``Webmention`` and
+  ``WebmentionNestedResponse`` mention-type choices do not include
+  ``bookmark`` or ``rsvp``.
+- Added safety guidance that Webmention.io JF2 and ``content.html`` are
+  untrusted external content. Hosts must sanitize external HTML before
+  rendering it or storing it in fields such as ``content_html`` that the
+  bundled templates render with ``|safe``.
+- Backlog: removed the completed Priority 4 Webmention.io guidance item from
+  ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/webmention.rst`` with the main guidance and
+  updated ``docs/concepts.rst``, ``docs/configuration.rst``, and
+  ``docs/api.rst`` with concise boundary notes. No generated docs under
+  ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased documentation
+  note.
+- Compatibility: built-in Webmention endpoint behavior, sender behavior,
+  processor verification, spam/Vouch behavior, Salmention behavior, async queue
+  behavior, models, migrations, settings, templates, template tags, response
+  shapes, dependencies, and tests are unchanged. No Webmention.io endpoint, API
+  client, token setting, dashboard, model, import command, parser, scheduler,
+  queue integration, or display tag was added.
+- Follow-up risks: host projects that use Webmention.io still need their own
+  account/token management, endpoint advertisement policy, API client, polling
+  or webhook strategy, cache, moderation, sanitization, deduplication, target
+  ownership checks, unsupported-type modeling, and reconciliation with
+  processor-verified django-indieweb rows.
+- Validation: ``uv run sphinx-build -W -b html docs docs/_build/html``
+  (passed), ``git ls-files docs/_build --modified --others
+  --exclude-standard`` (no output), ``uv run ruff check .`` (passed), ``uv run
+  ruff format . --check`` (92 files already formatted), ``git diff --check``
+  (passed), ``uv run mypy`` (no issues in 44 source files), ``uv run pytest``
+  (980 passed, coverage gate passed at 90.54%), and ``uv run prek run
+  --all-files`` (passed).
+
 ### Document Microsub and reader-side protocol non-goals
 
 - Documented django-indieweb's protocol boundary: the package supports

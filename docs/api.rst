@@ -32,6 +32,10 @@ django-indieweb provides these endpoints and browser views:
 There is no bundled Microsub endpoint, reader feed endpoint, reader timeline,
 following/muting/blocking endpoint, or reader UI. Host applications that need
 reader-side protocols must provide that resource-server behavior themselves.
+There is also no bundled Webmention.io endpoint, API client, token setting,
+import command, dashboard, or display API. Host applications that use
+Webmention.io own that external integration; the endpoint contracts below
+describe only django-indieweb's built-in Webmention receiver and status views.
 
 WebSub Publisher Helpers
 ------------------------

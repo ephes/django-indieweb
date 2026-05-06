@@ -763,6 +763,22 @@ operator-triggered resend workflow, not a setting toggle.
 See :doc:`webmention` for the support-status details, target-history design,
 and current ordinary Webmention reprocessing behavior.
 
+Webmention.io Host Integrations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There is no Webmention.io setting in django-indieweb. Host projects that use
+Webmention.io own their API token, endpoint advertisement, client code,
+import/display layer, caching, moderation, sanitization, and scheduling outside
+this package. Do not configure ``WEBMENTION_IO_TOKEN`` or a similar value as a
+django-indieweb core setting.
+
+The built-in Webmention URLs remain ``/indieweb/webmention/`` and
+``/indieweb/webmention/<pk>/``. A host may choose to advertise Webmention.io's
+external endpoint on selected pages instead of django-indieweb's endpoint, or
+may fetch Webmention.io JF2 from host code and display/import it alongside
+built-in ``Webmention`` rows. See :doc:`webmention` for mapping and HTML
+sanitization guidance.
+
 URL Configuration
 -----------------
 
@@ -796,10 +812,12 @@ This creates the following endpoints:
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
 
 The bundled URLconf does not create a Microsub endpoint, reader feed endpoint,
-reader timeline, following/muting/blocking endpoint, or reader UI. There is no
-Microsub setting in django-indieweb; host projects that add reader-side
-protocols own those URLs, storage models, authorization policy, discovery or
-metadata behavior, and documentation.
+reader timeline, following/muting/blocking endpoint, reader UI, or
+Webmention.io endpoint/dashboard. There is no Microsub setting or Webmention.io
+token setting in django-indieweb; host projects that add reader-side protocols
+or Webmention.io integrations own those URLs, storage models, authorization
+policy, discovery or metadata behavior, credentials, sanitization, and
+documentation.
 
 Custom URL Paths
 ~~~~~~~~~~~~~~~~

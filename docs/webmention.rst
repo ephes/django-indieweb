@@ -816,6 +816,119 @@ the target, but a ``spam`` row is not advertised as currently verified, and
 previously parsed author, content, published, and mention-type fields are
 preserved.
 
+Using Webmention.io Alongside django-indieweb
+=============================================
+
+Webmention.io can be useful for host projects that want an external
+collection/display service, but it is an optional host integration choice. It
+is not a missing django-indieweb core endpoint and it does not replace the
+built-in receive/send Webmention support described above.
+
+If a site wants package-managed receiving, keep advertising django-indieweb's
+``/indieweb/webmention/`` endpoint. That endpoint validates submitted
+``source`` and ``target`` values, can process synchronously or enqueue via
+``INDIEWEB_WEBMENTION_ENQUEUE``, fetches and verifies source pages in
+``WebmentionProcessor``, parses Microformats2, classifies ``mention``,
+``like``, ``reply``, and ``repost`` rows, runs configured spam/Vouch checks,
+stores source snapshots and nested responses, and exposes status URLs. The
+bundled sender workflows are unaffected.
+
+A host project that wants Webmention.io collection instead can advertise
+Webmention.io's endpoint on selected pages instead of rendering
+``{% webmention_endpoint_link %}`` for those pages. That means incoming
+Webmentions for those pages are collected by Webmention.io, not processed by
+django-indieweb's receiver. The host owns any Webmention.io account setup,
+token storage, API client, polling, caching, moderation, display templates, and
+documentation. django-indieweb does not ship a Webmention.io endpoint, API
+client, token setting, import command, dashboard, scheduled sync, model, parser,
+queue integration, or display tag.
+
+Hosts may also fetch Webmention.io JF2 data from their own code and display it
+alongside verified django-indieweb ``Webmention`` rows. Keep that display layer
+separate unless you deliberately choose an import policy. A common host-owned
+shape is:
+
+.. code-block:: python
+
+    # myapp/webmention_io.py
+    from indieweb.models import Webmention
+
+    def webmention_io_items_for_target(target_url: str) -> list[dict]:
+        """Fetch/cache Webmention.io JF2 in host code, then filter by target."""
+        ...
+
+    def responses_for_template(target_url: str) -> dict[str, list]:
+        return {
+            "django_indieweb": Webmention.objects.filter(
+                target_url=target_url,
+                status="verified",
+            ),
+            "webmention_io": webmention_io_items_for_target(target_url),
+        }
+
+If a host imports Webmention.io data into django-indieweb's built-in
+``Webmention`` model, it owns deduplication against rows created by the
+built-in endpoint, target ownership checks, moderation, status assignment,
+source/author URL validation, sanitization, and reconciliation when Webmention.io
+data changes. Imported rows should not be presented as verified by
+django-indieweb's processor unless the host has a clear verification policy or
+has reprocessed them through the built-in receive/processor flow. A separate
+host-owned model is often cleaner when the site wants to preserve Webmention.io
+metadata or distinguish service-originated display data from processor-verified
+``Webmention`` rows.
+
+JF2 Mapping Guidance
+--------------------
+
+Webmention.io JF2 fields are external display/import inputs, not a
+django-indieweb storage contract. Hosts should tolerate missing fields and map
+only the values their UI or import policy needs.
+
+Common mappings:
+
+* ``url`` is the canonical source URL; ``wm-source`` may also be present as a
+  meta field.
+* ``wm-target`` can be treated as the target URL concept.
+* ``author.name``, ``author.url``, and ``author.photo`` can feed author display
+  fields after validation and escaping.
+* ``content.text`` can feed plain-text display.
+* ``content.html`` can feed HTML display only after host sanitization.
+* ``published`` and ``wm-received`` can feed display ordering, with a host-owned
+  fallback policy when either value is missing or malformed.
+
+For ``wm-property`` values, use django-indieweb's built-in vocabulary only when
+it fits:
+
+* ``in-reply-to`` -> ``reply``
+* ``like-of`` -> ``like``
+* ``repost-of`` -> ``repost``
+* unknown values -> ``mention`` or a host-owned type
+
+``bookmark-of`` and ``rsvp`` need explicit host-owned handling if the site
+wants to preserve them distinctly. The built-in ``Webmention.mention_type`` and
+``WebmentionNestedResponse.mention_type`` choices do not include ``bookmark`` or
+``rsvp``. These values fall under the unknown bucket above; falling back to
+``mention`` is lossy, while preserving them requires a separate host model,
+separate display field, or another host-owned extension.
+
+Safety and Trust
+----------------
+
+Treat Webmention.io JF2 as untrusted external content. In particular,
+``content.html`` must be sanitized before rendering, and before storing it in
+any field that a template later renders as trusted HTML. The bundled
+django-indieweb reply, mention, and nested-response templates render stored
+``content_html`` with ``|safe`` for processor-owned Webmention data, so hosts
+that import external JF2 into those fields must sanitize first.
+
+Validate source URLs, author URLs, author photos, and target URLs before
+storing or linking them. Render external profile/source links with
+``rel="nofollow"`` or an equivalent policy, and keep moderation decisions
+explicit. Webmention.io collection confirms that the service collected a
+mention for the domain; it does not mean django-indieweb fetched the source,
+verified the target link, ran configured spam/Vouch checks, stored processor
+snapshots, or synchronized nested response rows.
+
 Template Usage
 ==============
 

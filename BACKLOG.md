@@ -36,10 +36,7 @@ No current Syndication and Storage Examples items.
 
 ### Webmention and Reader Boundaries
 
-- [ ] Add Webmention.io import/display guidance without replacing built-in Webmention processing.
-  - Outcome: document how a host project could outsource collection to Webmention.io or import/display Webmention.io JF2 data alongside django-indieweb's built-in ``Webmention`` model, including sanitization expectations and mention type mapping. Make clear when using Webmention.io is an alternative integration choice rather than a missing core protocol endpoint.
-  - References: local ``src/indieweb/models.py``, ``src/indieweb/processors.py``, ``src/indieweb/templatetags/webmention_tags.py``, ``docs/webmention.rst``, and ``tests/test_webmention_*.py``; Indiekit ``/Users/jochen/src/getindiekit-indiekit/packages/endpoint-webmention-io/README.md``, ``lib/controllers/webmentions.js``, ``lib/utils.js``, and ``docs/plugins/endpoints/webmention-io.md`` at ``1ee20d06``; Webmention.io API docs ``https://webmention.io/``.
-  - Scope exclusions: do not replace django-indieweb's receive/send Webmention endpoints, add a Webmention.io API token setting to core, or add a bundled Webmention management dashboard in this item.
+No current Webmention and Reader Boundaries items.
 
 ## Agent Workflow Improvements
 
