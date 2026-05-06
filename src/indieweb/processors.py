@@ -25,6 +25,7 @@ from django.utils.module_loading import import_string
 
 from .http_client import RedirectedResponse, request_with_webmention_redirects
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
+from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
 if TYPE_CHECKING:
     from .interfaces import SpamChecker
@@ -489,18 +490,18 @@ class WebmentionProcessor:
         if local_profile:
             # Use local profile data
             webmention.author_name = local_profile.name
-            webmention.author_url = local_profile.url
-            webmention.author_photo = local_profile.photo_url
+            webmention.author_url = sanitize_remote_webmention_url(local_profile.url)
+            webmention.author_photo = sanitize_remote_webmention_url(local_profile.photo_url)
         else:
             # Use parsed data
             webmention.author_name = author.get("name", "")
-            webmention.author_url = author.get("url", "")
-            webmention.author_photo = author.get("photo", "")
+            webmention.author_url = sanitize_remote_webmention_url(author.get("url", ""))
+            webmention.author_photo = sanitize_remote_webmention_url(author.get("photo", ""))
 
         # Extract content
         content_data = self._extract_content(h_entry)
         webmention.content = content_data.get("text", "")
-        webmention.content_html = content_data.get("html", "")
+        webmention.content_html = sanitize_webmention_html(content_data.get("html", ""))
 
         # Extract published date
         published = self._extract_published(h_entry)
@@ -588,10 +589,10 @@ class WebmentionProcessor:
                     "identity": identity,
                     "response_url": response_url,
                     "author_name": author.get("name", ""),
-                    "author_url": author.get("url", ""),
-                    "author_photo": author.get("photo", ""),
+                    "author_url": sanitize_remote_webmention_url(author.get("url", "")),
+                    "author_photo": sanitize_remote_webmention_url(author.get("photo", "")),
                     "content": content.get("text", ""),
-                    "content_html": content.get("html", ""),
+                    "content_html": sanitize_webmention_html(content.get("html", "")),
                     "published": self._extract_published(nested_entry),
                     "mention_type": self._determine_mention_type(nested_entry, base_url),
                     "parsed_h_entry": normalized_entry,

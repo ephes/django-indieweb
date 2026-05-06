@@ -917,14 +917,25 @@ Safety and Trust
 Treat Webmention.io JF2 as untrusted external content. In particular,
 ``content.html`` must be sanitized before rendering, and before storing it in
 any field that a template later renders as trusted HTML. The bundled
-django-indieweb reply, mention, and nested-response templates render stored
-``content_html`` with ``|safe`` for processor-owned Webmention data, so hosts
-that import external JF2 into those fields must sanitize first.
+django-indieweb processor sanitizes verified incoming Webmention
+``content_html`` and nested-response ``content_html`` before storing it, and
+the bundled ``show_webmentions`` tag sanitizes those fields again before
+rendering so older stored rows cannot bypass the display policy. Hosts that
+import external JF2 into built-in ``content_html`` fields directly should still
+sanitize first so non-bundled queries, APIs, admin views, or custom rendering
+paths do not encounter unsafe stored HTML. Links and citation URLs inside
+sanitized remote HTML are kept only when they are absolute ``http://`` or
+``https://`` URLs; relative URLs are dropped so remote content cannot render
+same-origin-looking links.
 
 Validate source URLs, author URLs, author photos, and target URLs before
-storing or linking them. Render external profile/source links with
-``rel="nofollow"`` or an equivalent policy, and keep moderation decisions
-explicit. Webmention.io collection confirms that the service collected a
+storing or linking them. Processor-owned Webmention author URLs and author
+photos are restricted to absolute ``http://`` and ``https://`` values; unsafe
+or malformed remote values are stored and rendered as blank. The bundled
+Webmention templates render external author/source links with
+``rel="nofollow noopener ugc"`` and ``referrerpolicy="no-referrer"``. Keep
+moderation decisions explicit. Webmention.io collection confirms that the
+service collected a
 mention for the domain; it does not mean django-indieweb fetched the source,
 verified the target link, ran configured spam/Vouch checks, stored processor
 snapshots, or synchronized nested response rows.
@@ -965,6 +976,14 @@ You can override the default templates by creating your own:
 * ``indieweb/webmention_types/nested_response.html`` - Nested child response template
 * ``indieweb/webmention_types/repost.html`` - Repost template
 * ``indieweb/webmention_types/mention.html`` - Generic mention template
+
+Custom templates that render built-in ``Webmention.content_html`` or
+``WebmentionNestedResponse.content_html`` should use rows prepared by
+``show_webmentions`` or apply the same sanitizer before marking HTML safe.
+Custom outbound links to Webmention authors, source pages, and nested response
+URLs should preserve the bundled ``rel="nofollow noopener ugc"`` and
+``referrerpolicy="no-referrer"`` attributes unless the host has a stricter
+site policy.
 
 Management Commands
 ===================
@@ -1040,8 +1059,10 @@ Fields:
 * ``vouch_url`` - Optional Vouch URL submitted with the Webmention
 * ``status`` - pending, verified, failed, or spam
 * ``mention_type`` - mention, like, reply, or repost
-* ``author_name``, ``author_url``, ``author_photo`` - Author info
-* ``content``, ``content_html`` - The mention content
+* ``author_name``, ``author_url``, ``author_photo`` - Author info. Processor-owned
+  remote author URLs/photos are stored only when they are absolute HTTP(S) URLs.
+* ``content``, ``content_html`` - The mention content. Processor-owned rich HTML
+  is stored as an allowlist-sanitized fragment.
 * ``published`` - When the mention was published
 * ``created``, ``modified`` - Timestamps
 * ``verified_at`` - When the mention was verified

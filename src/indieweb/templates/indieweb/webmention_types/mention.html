@@ -5,12 +5,12 @@
     {% endif %}
     <div class="p-author h-card">
       {% if webmention.author_url %}
-        <a class="p-name u-url" href="{{ webmention.author_url }}" rel="nofollow">{{ webmention.author_name|default:"A website" }}</a>
+        <a class="p-name u-url" href="{{ webmention.author_url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">{{ webmention.author_name|default:"A website" }}</a>
       {% else %}
         <span class="p-name">{{ webmention.author_name|default:"A website" }}</span>
       {% endif %}
       mentioned this
-      <a class="u-url" href="{{ webmention.source_url }}" rel="nofollow">
+      <a class="u-url" href="{{ webmention.source_url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">
         {% if webmention.published %}
           <time class="dt-published" datetime="{{ webmention.published|date:'c' }}">
             {{ webmention.published|date:"M j, Y" }}

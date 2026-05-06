@@ -87,3 +87,18 @@ def test_h_card_renders_address(user, profile):
     assert "p-adr" in rendered
     assert "p-locality" in rendered
     assert "Portland" in rendered
+
+
+def test_h_card_org_url_uses_outbound_link_attributes(user, profile):
+    """Organization URLs include the same outbound link hardening as Webmentions."""
+    profile.h_card["org"] = [{"name": "Example Org", "url": "https://org.example"}]
+    profile.save()
+
+    template = Template("{% load indieweb_tags %}{% h_card user %}")
+    context = Context({"user": user})
+    rendered = template.render(context)
+
+    assert "Example Org" in rendered
+    assert 'href="https://org.example"' in rendered
+    assert 'rel="nofollow noopener ugc"' in rendered
+    assert 'referrerpolicy="no-referrer"' in rendered

@@ -7,9 +7,11 @@ from django import template
 from django.db.models import Prefetch
 from django.db.models.functions import Coalesce
 from django.urls import reverse
-from django.utils.safestring import SafeString, mark_safe
+from django.utils.html import format_html
+from django.utils.safestring import SafeString
 
 from indieweb.models import Webmention, WebmentionNestedResponse
+from indieweb.sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
 register = template.Library()
 
@@ -42,12 +44,28 @@ def _attach_displayable_nested_responses(
                     continue
 
                 displayed_child_identities.add(nested_response.identity)
-                displayable_nested_responses.append(nested_response)
+                displayable_nested_responses.append(_prepare_nested_response_for_display(nested_response))
 
         cast(Any, webmention).displayable_nested_responses = displayable_nested_responses
         prepared_webmentions.append(webmention)
 
     return prepared_webmentions
+
+
+def _prepare_nested_response_for_display(nested_response: WebmentionNestedResponse) -> WebmentionNestedResponse:
+    """Sanitize remote child response fields before bundled templates render them."""
+    nested_response.author_url = sanitize_remote_webmention_url(nested_response.author_url)
+    nested_response.author_photo = sanitize_remote_webmention_url(nested_response.author_photo)
+    nested_response.content_html = sanitize_webmention_html(nested_response.content_html)
+    return nested_response
+
+
+def _prepare_webmention_for_display(webmention: Webmention) -> Webmention:
+    """Sanitize remote Webmention fields before bundled templates render them."""
+    webmention.author_url = sanitize_remote_webmention_url(webmention.author_url)
+    webmention.author_photo = sanitize_remote_webmention_url(webmention.author_photo)
+    webmention.content_html = sanitize_webmention_html(webmention.content_html)
+    return webmention
 
 
 @register.simple_tag
@@ -62,8 +80,7 @@ def webmention_endpoint_link(endpoint_url: str | None = None) -> SafeString:
     if endpoint_url is None:
         endpoint_url = reverse("indieweb:webmention")
 
-    link_tag = f'<link rel="webmention" href="{endpoint_url}" />'
-    return mark_safe(link_tag)
+    return format_html('<link rel="webmention" href="{}" />', endpoint_url)
 
 
 @register.inclusion_tag("indieweb/webmentions.html")
@@ -98,7 +115,7 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
 
     # Order by published date (newest first) or created if published is not set
     webmentions = webmentions.order_by("-published", "-created")
-    webmention_list = list(webmentions)
+    webmention_list = [_prepare_webmention_for_display(webmention) for webmention in webmentions]
 
     if mention_type:
         direct_source_urls = set(

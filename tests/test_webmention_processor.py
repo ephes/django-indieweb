@@ -11,6 +11,7 @@ from django.utils import timezone as django_timezone
 
 from indieweb.models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from indieweb.processors import WebmentionProcessor, process_queued_webmention
+from indieweb.sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
 
 def _mock_source_response(
@@ -38,6 +39,41 @@ def _source_response(*, status_code, text="", content_type="text/html", headers=
     mock_response.text = text
     mock_response.headers = headers if headers is not None else {"content-type": content_type}
     return mock_response
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "javascript:alert(1)",
+        "data:image/svg+xml,<svg onload=alert(1)>",
+        "file:///etc/passwd",
+        "ftp://example.com/avatar.jpg",
+        "http://[broken",
+        "/relative/path",
+    ],
+)
+def test_sanitize_remote_webmention_url_blanks_unsafe_values(value):
+    """Remote Webmention URL fields only accept absolute HTTP(S) URLs."""
+    assert sanitize_remote_webmention_url(value) == ""
+
+
+@pytest.mark.parametrize("value", ["http://example.com/author", "https://example.com/avatar.jpg"])
+def test_sanitize_remote_webmention_url_allows_http_urls(value):
+    """Remote Webmention URL sanitization preserves absolute HTTP(S) URLs."""
+    assert sanitize_remote_webmention_url(value) == value
+
+
+def test_sanitize_webmention_html_drops_relative_url_attributes():
+    """Remote HTML fragments cannot create same-origin-looking relative links."""
+    sanitized = sanitize_webmention_html(
+        '<p><a href="/admin">local link</a> '
+        '<a href="https://example.com/post">remote link</a> '
+        '<blockquote cite="/private">quote</blockquote></p>'
+    )
+
+    assert 'href="/admin"' not in sanitized
+    assert 'cite="/private"' not in sanitized
+    assert 'href="https://example.com/post"' in sanitized
 
 
 @pytest.mark.django_db
@@ -636,6 +672,79 @@ class TestWebmentionProcessor:
             assert webmention.author_url == "https://new.example.com/final/author"
             assert webmention.author_photo == "https://new.example.com/final/avatar.jpg"
 
+    def test_processor_sanitizes_remote_webmention_content_html(self, processor):
+        """Remote rich content is allowlist-sanitized before it is stored."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <div class="e-content">
+                    <p onclick="alert(1)">Safe <strong>formatting</strong>
+                        <a href="{target_url}">target</a>
+                        <a href="javascript:alert(1)">bad link</a>
+                        <a href="data:text/html,evil">bad data</a>
+                    </p>
+                    <script>alert(1)</script>
+                    <svg onload="alert(1)"><circle></circle></svg>
+                    <form action="https://evil.example"><input name="x"></form>
+                    <iframe src="https://evil.example/frame"></iframe>
+                    <style>body {{ background: url(javascript:alert(1)); }}</style>
+                </div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert webmention.status == "verified"
+        assert "<strong>formatting</strong>" in webmention.content_html
+        assert f'href="{target_url}"' in webmention.content_html
+        assert "<script" not in webmention.content_html
+        assert "<svg" not in webmention.content_html
+        assert "<form" not in webmention.content_html
+        assert "<iframe" not in webmention.content_html
+        assert "<style" not in webmention.content_html
+        assert "onclick" not in webmention.content_html
+        assert "onload" not in webmention.content_html
+        assert 'href="javascript:' not in webmention.content_html
+        assert 'href="data:' not in webmention.content_html
+
+    def test_processor_blanks_unsafe_remote_author_url_fields(self, processor):
+        """Unsafe top-level author URL and photo schemes are not persisted."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <div class="p-author h-card">
+                    <a class="p-name u-url" href="javascript:alert(1)">Mallory</a>
+                    <img class="u-photo" src="data:image/svg+xml,<svg onload=alert(1)>">
+                </div>
+                <div class="e-content">
+                    Content with <a href="{target_url}">link</a>
+                </div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert webmention.status == "verified"
+        assert webmention.author_name == "Mallory"
+        assert webmention.author_url == ""
+        assert webmention.author_photo == ""
+
     def test_processor_fails_when_source_redirect_limit_is_exceeded(self, processor):
         """Test excess redirects fail predictably and clear stale verification."""
         source_url = "https://example.com/post"
@@ -953,6 +1062,54 @@ class TestWebmentionProcessor:
         assert child.parsed_h_entry["type"] == ["h-entry"]
         assert len(child.content_digest) == 64
         assert child.is_currently_displayable is True
+
+    def test_processor_sanitizes_nested_response_remote_fields(self, processor):
+        """Nested response author URLs and HTML content use the same remote sanitizers."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'''
+        <html>
+        <body>
+            <article class="h-entry">
+                <a class="u-in-reply-to" href="{target_url}">In reply to</a>
+                <div class="e-content">
+                    Parent response
+                    <article class="h-entry">
+                        <a class="u-url" href="/comments/unsafe-child">Permalink</a>
+                        <a class="u-in-reply-to" href="{source_url}">Reply</a>
+                        <div class="p-author h-card">
+                            <a class="p-name u-url" href="data:text/html,evil">Nested Mallory</a>
+                            <img class="u-photo" src="javascript:alert(1)">
+                        </div>
+                        <div class="e-content">
+                            <p onmouseover="alert(1)">Nested <em>reply</em></p>
+                            <script>alert(1)</script>
+                            <svg onload="alert(1)"></svg>
+                            <iframe src="https://evil.example"></iframe>
+                            <a href="javascript:alert(1)">bad child link</a>
+                        </div>
+                    </article>
+                </div>
+            </article>
+        </body>
+        </html>
+        '''
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        child = WebmentionNestedResponse.objects.get(webmention=webmention)
+        assert child.author_name == "Nested Mallory"
+        assert child.author_url == ""
+        assert child.author_photo == ""
+        assert "<em>reply</em>" in child.content_html
+        assert "<script" not in child.content_html
+        assert "<svg" not in child.content_html
+        assert "<iframe" not in child.content_html
+        assert "onmouseover" not in child.content_html
+        assert 'href="javascript:' not in child.content_html
 
     def test_processor_duplicate_receive_updates_existing_nested_response(self, processor):
         """Test duplicate processing updates one child row without creating duplicates."""

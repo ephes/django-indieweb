@@ -61,7 +61,7 @@
     {% for org in h_card.org %}
       <div class="p-org h-card">
         {% if org.name %}<span class="p-name">{{ org.name }}</span>{% endif %}
-        {% if org.url %}<a class="u-url" href="{{ org.url }}">{{ org.url }}</a>{% endif %}
+        {% if org.url %}<a class="u-url" href="{{ org.url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">{{ org.url }}</a>{% endif %}
       </div>
     {% endfor %}
   {% endif %}

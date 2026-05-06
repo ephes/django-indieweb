@@ -4,13 +4,13 @@
   {% endif %}
   <span class="p-author">
     {% if webmention.author_url %}
-      <a class="u-url" href="{{ webmention.author_url }}" rel="nofollow">{{ webmention.author_name|default:"Someone" }}</a>
+      <a class="u-url" href="{{ webmention.author_url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">{{ webmention.author_name|default:"Someone" }}</a>
     {% else %}
       {{ webmention.author_name|default:"Someone" }}
     {% endif %}
   </span>
   <span class="webmention-action">liked this</span>
-  <a class="u-url" href="{{ webmention.source_url }}" rel="nofollow">
+  <a class="u-url" href="{{ webmention.source_url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">
     {% if webmention.published %}
       <time class="dt-published" datetime="{{ webmention.published|date:'c' }}">
         {{ webmention.published|date:"M j, Y" }}

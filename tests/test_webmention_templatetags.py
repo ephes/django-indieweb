@@ -150,6 +150,16 @@ def test_webmention_endpoint_link_with_custom_endpoint():
     assert 'href="https://custom.endpoint/webmention"' in rendered
 
 
+def test_webmention_endpoint_link_escapes_custom_endpoint():
+    """A custom endpoint argument is escaped inside the generated link tag."""
+    template = Template("{% load webmention_tags %}{% webmention_endpoint_link endpoint %}")
+    rendered = template.render(Context({"endpoint": 'https://evil.example/" onload="alert(1)'}))
+
+    assert '<link rel="webmention"' in rendered
+    assert 'href="https://evil.example/&quot; onload=&quot;alert(1)"' in rendered
+    assert '" onload="' not in rendered
+
+
 def test_show_webmentions_tag(render_webmentions):
     """Test the show_webmentions tag."""
     rendered = render_webmentions()
@@ -165,6 +175,92 @@ def test_show_webmentions_tag(render_webmentions):
     assert "h-cite" in rendered
     assert "p-author" in rendered
     assert "u-url" in rendered
+
+
+def test_show_webmentions_sanitizes_existing_stored_remote_fields(target_url, render_webmentions):
+    """Bundled templates sanitize older stored Webmention rows before display."""
+    Webmention.objects.create(
+        source_url="https://unsafe.example/post",
+        target_url=target_url,
+        mention_type="reply",
+        author_name="Mallory",
+        author_url="javascript:alert(1)",
+        author_photo="data:image/svg+xml,<svg onload=alert(1)>",
+        content="Unsafe content",
+        content_html="""
+        <p onclick="alert(1)">Safe <strong>formatting</strong>
+          <a href="javascript:alert(1)">bad link</a>
+          <a href="data:text/html,evil">bad data</a>
+        </p>
+        <script>alert(1)</script>
+        <svg onload="alert(1)"></svg>
+        <form><input name="x"></form>
+        <iframe src="https://evil.example"></iframe>
+        <style>body { color: red; }</style>
+        """,
+        status="verified",
+    )
+
+    rendered = render_webmentions()
+
+    assert "Mallory" in rendered
+    assert "<strong>formatting</strong>" in rendered
+    assert 'href="javascript:' not in rendered
+    assert 'href="data:' not in rendered
+    assert 'src="data:' not in rendered
+    assert "<script" not in rendered
+    assert "<svg" not in rendered
+    assert "<form" not in rendered
+    assert "<iframe" not in rendered
+    assert "<style" not in rendered
+    assert "onclick" not in rendered
+    assert "onload" not in rendered
+
+
+def test_show_webmentions_sanitizes_existing_stored_nested_response_fields(
+    reply, render_webmentions, create_nested_response
+):
+    """Bundled nested response output sanitizes stored child rows before display."""
+    create_nested_response(
+        reply,
+        "https://comments.example/unsafe-child",
+        author_name="Nested Mallory",
+        author_url="data:text/html,evil",
+        author_photo="javascript:alert(1)",
+        content="Unsafe child",
+        content_html="""
+        <p onmouseover="alert(1)">Nested <em>reply</em></p>
+        <script>alert(1)</script>
+        <svg onload="alert(1)"></svg>
+        <iframe src="https://evil.example"></iframe>
+        <a href="javascript:alert(1)">bad child link</a>
+        """,
+    )
+
+    rendered = render_webmentions()
+
+    assert "Nested Mallory" in rendered
+    assert "<em>reply</em>" in rendered
+    assert 'href="javascript:' not in rendered
+    assert 'src="javascript:' not in rendered
+    assert 'href="data:' not in rendered
+    assert "<script" not in rendered
+    assert "<svg" not in rendered
+    assert "<iframe" not in rendered
+    assert "onmouseover" not in rendered
+    assert "onload" not in rendered
+
+
+def test_webmention_templates_harden_outbound_link_attributes(render_webmentions):
+    """Bundled Webmention links include outbound safety attributes."""
+    rendered = render_webmentions()
+
+    assert 'rel="nofollow noopener ugc"' in rendered
+    assert 'referrerpolicy="no-referrer"' in rendered
+    assert 'href="https://bob.example" rel="nofollow noopener ugc" referrerpolicy="no-referrer"' in rendered
+    assert (
+        'href="https://blog.example/reply-post" rel="nofollow noopener ugc" referrerpolicy="no-referrer"'
+    ) in rendered
 
 
 def test_show_webmentions_empty(render_webmentions):

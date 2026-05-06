@@ -8,7 +8,7 @@
         {% endif %}
         <span class="author-info">
           {% if nested_response.author_url %}
-            <a class="p-name u-url" href="{{ nested_response.author_url }}" rel="nofollow">{{ nested_response.author_name|default:"Someone" }}</a>
+            <a class="p-name u-url" href="{{ nested_response.author_url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">{{ nested_response.author_name|default:"Someone" }}</a>
           {% else %}
             <span class="p-name">{{ nested_response.author_name|default:"Someone" }}</span>
           {% endif %}
@@ -22,7 +22,7 @@
             {% else %}
               <span class="webmention-action">mentioned this</span>
             {% endif %}
-            <a class="u-url" href="{{ nested_response_url }}" rel="nofollow">
+            <a class="u-url" href="{{ nested_response_url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">
               {% if nested_response.published %}
                 <time class="dt-published" datetime="{{ nested_response.published|date:'c' }}">
                   {{ nested_response.published|date:"M j, Y g:i A" }}

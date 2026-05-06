@@ -4,6 +4,53 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Sanitize remote Webmention HTML and Webmention author URL fields before display
+
+- Added a shared Webmention sanitizer using ``nh3``. Processor-owned
+  ``Webmention.content_html`` and ``WebmentionNestedResponse.content_html`` are
+  allowlist-sanitized before persistence, while remote author URL/photo fields
+  are blanked unless they are absolute HTTP(S) URLs.
+- Applied the same sanitizer in ``show_webmentions`` before bundled templates
+  render rows, so older stored Webmention and nested-response data is cleaned
+  for bundled output without requiring a migration.
+- Replaced ``webmention_endpoint_link`` f-string ``mark_safe`` usage with
+  ``format_html`` and added regression coverage for escaping malicious custom
+  endpoint arguments.
+- Hardened bundled Webmention author/source links with
+  ``rel="nofollow noopener ugc"`` and ``referrerpolicy="no-referrer"``; added
+  the same outbound-link attributes to the h-card organization URL link.
+- Added focused regression tests for script/event-handler/SVG/form/iframe/style
+  payloads, unsafe ``javascript:``/``data:`` URL attributes, disallowed remote
+  URL schemes, relative links inside remote HTML, nested response payloads,
+  existing stored unsafe rows, and link attribute expectations.
+- Backlog: removed the completed Priority 1 Webmention XSS item from
+  ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/webmention.rst`` with the sanitizer behavior,
+  HTTP(S)-only remote author URL/photo policy, and custom-template guidance.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased security note.
+- Review follow-up: fixed the ``ruff`` B018 report for the intentional malformed
+  port probe and hardened sanitized remote HTML so relative ``href``/``cite``
+  attributes are dropped instead of rendering same-origin-looking links.
+- Validation: ``uv run pytest tests/test_webmention_processor.py
+  tests/test_webmention_templatetags.py tests/test_h_card_templatetags.py -q``
+  ran 155 selected tests successfully but exited non-zero because the
+  repo-wide coverage gate reports 39.01% on this subset; ``uv run pytest
+  tests/test_webmention_processor.py tests/test_webmention_templatetags.py
+  tests/test_h_card_templatetags.py -q --no-cov`` passed (155 passed);
+  ``uv run ruff check .`` passed; ``uv run ruff check src/indieweb/processors.py
+  src/indieweb/templatetags/webmention_tags.py
+  tests/test_webmention_processor.py tests/test_webmention_templatetags.py
+  tests/test_h_card_templatetags.py`` passed; ``uv run ruff format . --check``
+  passed after formatting; ``uv run sphinx-build -W -b html docs
+  docs/_build/html`` passed; ``uv run pytest`` passed (997 passed, coverage
+  gate reached at 90.60%); ``uv run mypy`` passed; ``uv run prek run
+  --all-files`` passed; ``git diff --check`` passed; ``uv sync`` passed; and
+  ``uv build`` passed.
+- Follow-up risks: this slice intentionally did not change Webmention
+  source/target SSRF handling, Webmention source-link verification, status URL
+  privacy, or broader protocol endpoint hardening; those remain separate
+  backlog items.
+
 ### Add curated agent learnings file
 
 - Added ``AGENT_LEARNINGS.md`` as a small tracked guidance file for repeated,
