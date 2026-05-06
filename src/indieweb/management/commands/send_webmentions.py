@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import URLValidator
 
+from indieweb.http_client import is_safe_http_url
 from indieweb.models import WebmentionOutboundTarget
 from indieweb.senders import WebmentionSender
 
@@ -89,7 +90,7 @@ class Command(BaseCommand):
         source_domain = urlparse(source_url).netloc
 
         for url in urls:
-            if not url.startswith(("http://", "https://")):
+            if not is_safe_http_url(url, resolver=None):
                 continue
 
             target_domain = urlparse(url).netloc
@@ -177,7 +178,7 @@ class Command(BaseCommand):
         source_domain = urlparse(source_url).netloc
         target_urls = []
         for target_url in urls:
-            if not target_url.startswith(("http://", "https://")):
+            if not is_safe_http_url(target_url, resolver=None):
                 continue
 
             target_domain = urlparse(target_url).netloc

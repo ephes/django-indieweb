@@ -19,6 +19,13 @@ from django.http import HttpResponseBase
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
+from .http_client import (
+    UnsafeHTTPUrlError,
+    WebmentionRedirectError,
+    default_address_resolver,
+    request_with_safe_redirects,
+    validate_safe_http_url,
+)
 from .models import WebSubDeliveryAttempt, WebSubSubscription
 
 logger = logging.getLogger(__name__)
@@ -379,11 +386,20 @@ def request_websub_subscription(
         data["hub.secret"] = secret
 
     close_client = client is None
-    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False)
+    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True)
+    resolver = default_address_resolver if close_client else None
     try:
         try:
-            response = http_client.post(subscription.hub_url, data=data)
-        except httpx.RequestError as exc:
+            validate_safe_http_url(subscription.hub_url, resolver=resolver)
+            delivered = request_with_safe_redirects(
+                http_client,
+                "POST",
+                subscription.hub_url,
+                data=data,
+                resolver=resolver,
+            )
+            response = delivered.response
+        except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError) as exc:
             logger.warning(f"WebSub subscription request failed for hub={subscription.hub_url!r}: {exc}")
             _save_subscription_request_failure(
                 subscription,
@@ -613,6 +629,23 @@ def delivery_body_too_large(body: bytes) -> bool:
     return max_bytes is not None and len(body) > max_bytes
 
 
+def delivery_max_bytes() -> int | None:
+    """Return the configured WebSub delivery byte limit."""
+    return _delivery_max_bytes()
+
+
+def delivery_content_length_too_large(content_length: str | None) -> bool:
+    """Return whether a WebSub delivery ``Content-Length`` exceeds the configured limit."""
+    max_bytes = _delivery_max_bytes()
+    if max_bytes is None or not content_length:
+        return False
+    try:
+        parsed = int(content_length)
+    except (TypeError, ValueError):
+        return False
+    return parsed > max_bytes
+
+
 def delivery_content_type_allowed(content_type: str) -> bool:
     """Return whether a WebSub delivery content type is accepted by configuration."""
     return _delivery_content_type_allowed(content_type)
@@ -762,13 +795,22 @@ def notify_hubs(
     data = {"hub.mode": "publish", "hub.url": validated_topic_url}
 
     close_client = client is None
-    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False)
+    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True)
+    resolver = default_address_resolver if close_client else None
     results: list[WebSubNotificationResult] = []
     try:
         for hub_url in hub_urls:
             try:
-                response = http_client.post(hub_url, data=data)
-            except httpx.RequestError as exc:
+                validate_safe_http_url(hub_url, resolver=resolver)
+                delivered = request_with_safe_redirects(
+                    http_client,
+                    "POST",
+                    hub_url,
+                    data=data,
+                    resolver=resolver,
+                )
+                response = delivered.response
+            except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError) as exc:
                 logger.warning(f"WebSub hub notification failed for {hub_url!r}: {exc}")
                 results.append(
                     WebSubNotificationResult(

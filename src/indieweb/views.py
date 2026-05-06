@@ -39,7 +39,9 @@ from .websub import (
     WebSubDeliveryHookError,
     confirm_websub_verification,
     delivery_body_too_large,
+    delivery_content_length_too_large,
     delivery_content_type_allowed,
+    delivery_max_bytes,
     process_websub_delivery,
     record_websub_delivery,
     record_websub_denial,
@@ -53,6 +55,26 @@ if TYPE_CHECKING:
     from .handlers import MicropubEntry, MicropubMediaItem
 
 logger = logging.getLogger(__name__)
+
+
+def _read_request_body_with_invalid_content_length_fallback(request: HttpRequest) -> bytes:
+    """Read a request body even when a malformed Content-Length would make Django raise."""
+    try:
+        return request.body
+    except ValueError:
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                int(content_length)
+            except (TypeError, ValueError):
+                stream = request.META.get("wsgi.input")
+                max_bytes = delivery_max_bytes()
+                read_size = max_bytes + 1 if max_bytes is not None else -1
+                body = stream.read(read_size) if stream is not None else b""
+                request._body = body
+                return body
+        raise
+
 
 DEFAULT_TOKEN_EXPIRES_IN = 86400
 ALLOWED_REDIRECT_URI_SCHEMES = ("http", "https")
@@ -1867,8 +1889,12 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
         if subscription is None or subscription.state != WebSubSubscription.STATE_ACTIVE:
             return HttpResponse(status=404)
 
-        body = request.body
         content_type = request.headers.get("Content-Type", "")
+        if delivery_content_length_too_large(request.headers.get("Content-Length")):
+            record_websub_delivery(subscription, b"", content_type=content_type, status_code=413, error="too large")
+            return HttpResponse(status=413)
+
+        body = _read_request_body_with_invalid_content_length_fallback(request)
         if delivery_body_too_large(body):
             record_websub_delivery(subscription, body, content_type=content_type, status_code=413, error="too large")
             return HttpResponse(status=413)
@@ -1940,13 +1966,12 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             return HttpResponse(status=400)
 
         # Validate URLs
-        validator = URLValidator()
-        vouch_validator = URLValidator(schemes=["http", "https"])
+        validator = URLValidator(schemes=["http", "https"])
         try:
             validator(source)
             validator(target)
             if vouch is not None:
-                vouch_validator(vouch)
+                validator(vouch)
         except ValidationError:
             return HttpResponse(status=400)
 
@@ -1991,7 +2016,7 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         try:
             current_site = Site.objects.get_current()
             parsed = urlparse(target_url)
-            return parsed.netloc == current_site.domain
+            return parsed.netloc.lower() == current_site.domain.lower()
         except Exception:
             return False
 

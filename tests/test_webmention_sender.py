@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 from django.utils import timezone
 
+from indieweb.http_client import SAFE_HTTP_DEFAULT_TIMEOUT
 from indieweb.models import WebmentionOutboundTarget
 from indieweb.senders import WebmentionSender
 
@@ -71,6 +72,18 @@ def test_extract_urls_handles_duplicates(sender, source_url, target_url):
 
     assert len(urls) == 1
     assert "https://example.com/page" in urls
+
+
+def test_extract_external_target_urls_filters_unsafe_hosts(sender, source_url):
+    """Private and metadata targets are not eligible for outbound discovery."""
+    html = """
+    <a href="https://target.com/post">Public</a>
+    <a href="http://127.0.0.1/admin">Loopback</a>
+    <a href="http://169.254.169.254/latest/meta-data/">Metadata</a>
+    <a href="ftp://target.com/file">FTP</a>
+    """
+
+    assert sender._extract_external_target_urls(source_url, html) == ["https://target.com/post"]
 
 
 @patch("httpx.Client")
@@ -174,7 +187,7 @@ def test_discover_endpoint_from_html_link_tag(mock_client_class, sender, source_
 
     assert endpoint == "https://target.com/webmention-endpoint"
     mock_client.head.assert_called_once()
-    mock_client.get.assert_called_once_with(target_url, timeout=10)
+    mock_client.get.assert_called_once_with(target_url, timeout=SAFE_HTTP_DEFAULT_TIMEOUT)
 
 
 @patch("httpx.Client")
@@ -426,6 +439,20 @@ def test_send_webmention_network_error(mock_client_class, sender, source_url, ta
 
 
 @patch("httpx.Client")
+def test_send_webmention_rejects_unsafe_vouch_without_post(mock_client_class, sender, source_url, target_url):
+    """send_webmention validates Vouch even when callers bypass the command."""
+    result = sender.send_webmention(
+        source_url,
+        target_url,
+        "https://target.com/webmention",
+        vouch="http://127.0.0.1/vouch",
+    )
+
+    assert result["success"] is False
+    mock_client_class.return_value.__enter__.return_value.post.assert_not_called()
+
+
+@patch("httpx.Client")
 def test_fetch_content(mock_client_class, sender, source_url, target_url):
     """Test fetching content from a URL."""
     mock_client = Mock()
@@ -439,7 +466,7 @@ def test_fetch_content(mock_client_class, sender, source_url, target_url):
     content = sender.fetch_content("https://example.com/page")
 
     assert content == "<html><body>Test content</body></html>"
-    mock_client.get.assert_called_once_with("https://example.com/page", timeout=10)
+    mock_client.get.assert_called_once_with("https://example.com/page", timeout=SAFE_HTTP_DEFAULT_TIMEOUT)
 
 
 @patch("httpx.Client")

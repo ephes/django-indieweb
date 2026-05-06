@@ -395,17 +395,27 @@ WebSub network calls unless your application explicitly calls
 ``notify_hubs()``, runs ``notify_websub``, or calls
 ``request_websub_subscription()``.
 
-``request_websub_subscription()`` validates that hub and topic values are
-syntactically valid ``http`` or ``https`` URLs, but it does not apply a private
-IP, internal hostname, or allowlist policy. Treat hub URLs as trusted operator
-configuration or apply your own allowlist before passing user-influenced URLs
-to the helper.
+``request_websub_subscription()`` and ``notify_hubs()`` validate that hub and
+topic values are syntactically valid ``http`` or ``https`` URLs. Hub network
+requests use the shared outbound HTTP safety checks: loopback, private,
+link-local, multicast, reserved, metadata-service, and other non-global IP
+destinations are rejected after DNS resolution and again after each redirect.
+Treat hub URLs as trusted operator configuration and do not build them from
+request data or user-editable templates.
 
 The subscriber callback is CSRF-exempt because hubs are server-to-server
 senders. It is not included in django-indieweb's opt-in CORS mixin; browsers do
 not need cross-origin access to this callback. The optional
 ``websub_callback`` rate-limit key can be configured with
 ``INDIEWEB_RATE_LIMITS``.
+
+The callback checks an oversized ``Content-Length`` before reading the request
+body when that header is present, then applies
+``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` to the body that is actually read.
+Production deployments should also set a tight Django
+``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching proxy/CDN body-size limit. Keep
+``INDIEWEB_WEBSUB_DELIVERY_HOOK`` small and enqueue accepted deliveries for
+host-owned workers when feed parsing or persistence is non-trivial.
 
 django-indieweb does not auto-discover feeds, auto-subscribe to arbitrary
 topics, renew leases in the background, parse delivered feeds, create calendar

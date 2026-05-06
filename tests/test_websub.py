@@ -126,6 +126,40 @@ def test_notify_hubs_reports_request_errors_without_raising():
     assert "connection refused" in results[0].error
 
 
+def test_notify_hubs_rejects_private_hub_without_posting():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(204)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    results = notify_hubs("https://example.com/feed", ("http://127.0.0.1/hub",), client=client)
+
+    assert results[0].success is False
+    assert results[0].status_code is None
+    assert "blocked address" in results[0].error
+    assert requests == []
+
+
+def test_notify_hubs_rejects_redirect_to_private_hub():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1/hub"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    results = notify_hubs("https://example.com/feed", ("https://hub.example/",), client=client)
+
+    assert results[0].success is False
+    assert results[0].status_code is None
+    assert "redirect target" in results[0].error
+    assert len(requests) == 1
+
+
 def test_notify_hubs_rejects_invalid_timeout(settings):
     settings.INDIEWEB_WEBSUB_TIMEOUT = 0
 

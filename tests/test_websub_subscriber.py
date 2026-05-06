@@ -85,6 +85,30 @@ def test_request_websub_subscription_posts_subscribe_form(settings):
 
 
 @pytest.mark.django_db
+def test_request_websub_subscription_rejects_private_hub_without_posting():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(202)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = request_websub_subscription(
+        "https://source.example/feed",
+        "http://127.0.0.1/sub",
+        callback_base_url="https://example.org/indieweb/websub",
+        client=http_client,
+    )
+
+    result.subscription.refresh_from_db()
+    assert result.success is False
+    assert "blocked address" in result.error
+    assert result.subscription.last_request_status_code is None
+    assert requests == []
+
+
+@pytest.mark.django_db
 def test_request_websub_subscription_records_hub_rejection():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, text="bad topic")
@@ -711,6 +735,40 @@ def test_callback_post_applies_delivery_size_limit(client, settings, subscriptio
     subscription.refresh_from_db()
     assert response.status_code == 413
     assert subscription.last_delivery_status_code == 413
+
+
+@pytest.mark.django_db
+def test_callback_post_rejects_oversized_content_length_before_body_read(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = 4
+
+    response = client.post(
+        _callback_url(subscription),
+        data=b"12345",
+        content_type="application/atom+xml",
+        CONTENT_LENGTH="5",
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 413
+    assert subscription.last_delivery_status_code == 413
+    assert subscription.last_delivery_size == 0
+
+
+@pytest.mark.django_db
+def test_callback_post_invalid_content_length_falls_back_to_body_limit(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = 4
+
+    response = client.post(
+        _callback_url(subscription),
+        data=b"12345",
+        content_type="application/atom+xml",
+        CONTENT_LENGTH="not-a-number",
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 413
+    assert subscription.last_delivery_status_code == 413
+    assert subscription.last_delivery_size == 5
 
 
 @pytest.mark.django_db

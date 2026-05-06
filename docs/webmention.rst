@@ -186,6 +186,31 @@ If the callable itself raises, the ``Webmention`` row has already been created
 or reused and remains ``pending``; operators should rely on their queue retry
 path or manual cleanup to reconcile those rows.
 
+Receive-Side Network and Resource Limits
+----------------------------------------
+
+Incoming ``source``, ``target``, and optional ``vouch`` values must be absolute
+``http`` or ``https`` URLs. Source and Vouch fetches use the shared outbound
+HTTP safety checks: loopback, private, link-local, multicast, reserved,
+metadata-service, and other non-global IP destinations are rejected after DNS
+resolution and again after each redirect. Redirects remain bounded.
+
+Synchronous receiving is still available for compatibility, but production
+deployments should use ``INDIEWEB_WEBMENTION_ENQUEUE`` so source fetching,
+target-link verification, microformats parsing, spam checks, Vouch checks,
+snapshot persistence, and nested response persistence happen in a worker
+instead of the public request path.
+
+Fetched source and Vouch responses are streamed and capped by
+``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` while decoded response chunks are read.
+Oversized responses mark the Webmention ``failed`` and are not stored as
+source snapshots. Nested response extraction is bounded by
+``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH`` and
+``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES``; mentioning-entry
+search is bounded by ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS``. Pair these
+application limits with endpoint rate limits, worker time limits, and
+deployment-level request/body limits.
+
 Vouch Support
 =============
 

@@ -4,6 +4,68 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Add shared SSRF-safe HTTP handling and synchronous Webmention/WebSub resource limits
+
+- Added shared outbound HTTP safety helpers in ``src/indieweb/http_client.py``
+  for absolute HTTP(S)-only validation, DNS-backed blocked-IP checks,
+  redirect re-checking, explicit TLS verification on built-in clients, and
+  decoded response byte limits.
+- Routed Webmention source/Vouch fetching, Webmention sender discovery/content
+  fetch/delivery, sender target filtering, Vouch payload validation, WebSub
+  subscribe/unsubscribe requests, and WebSub publisher notifications through
+  the shared safety path.
+- Tightened ``POST /indieweb/webmention/`` URL validation so ``source``,
+  ``target``, and ``vouch`` accept only HTTP(S).
+- Added Webmention source/Vouch decoded-size limits, tighter fetch timeouts,
+  nested response depth/candidate caps, and mentioning-entry search work caps.
+- Hardened WebSub callback body handling by rejecting oversized
+  ``Content-Length`` before reading the body where possible and preserving the
+  existing body-size/content-type/signature/hook behavior for accepted bodies.
+- Added regression coverage for private/loopback/metadata/IPv6/IPv4-mapped
+  IPv6 URLs, DNS-to-private rejection, redirect-to-private rejection, allowed
+  public mocked requests, endpoint scheme validation, oversized source
+  handling, recursion caps, unsafe sender targets/Vouch, unsafe WebSub hubs,
+  and WebSub callback content-length behavior.
+- Backlog: removed the completed Priority 1 SSRF and synchronous DoS/resource
+  limit items from ``BACKLOG.md``. Added a precise follow-up for Salmention
+  resend cooldown/success-cutoff/failure-drop policy because that subpoint
+  needs its own state/migration and command-output design.
+- Documentation: updated ``docs/configuration.rst``, ``docs/webmention.rst``,
+  and ``docs/websub.rst`` with new settings, HTTP(S)-only validation behavior,
+  queue/rate-limit/body-size guidance, and operator-controlled WebSub hub
+  guidance.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased security note.
+- Validation: ``uv run pytest tests/test_webmention_processor.py
+  tests/test_webmention_endpoint.py tests/test_webmention_sender.py
+  tests/test_send_webmentions_command.py -q --no-cov`` passed (224 passed);
+  ``uv run pytest tests/test_websub.py tests/test_websub_subscriber.py
+  tests/test_notify_websub_command.py -q --no-cov`` passed (58 passed);
+  ``uv run pytest tests/test_rate_limiting.py -q --no-cov`` passed
+  (12 passed); ``uv run ruff check
+  src/indieweb/http_client.py src/indieweb/processors.py
+  src/indieweb/senders.py src/indieweb/websub.py src/indieweb/views.py
+  tests/test_webmention_processor.py tests/test_webmention_endpoint.py
+  tests/test_webmention_sender.py tests/test_websub.py
+  tests/test_websub_subscriber.py`` passed; ``uv run pytest`` passed
+  (1021 passed, coverage gate reached at 90.07%); ``uv run mypy`` passed;
+  ``uv run ruff check .`` passed; ``uv run ruff format . --check`` passed;
+  ``uv run prek run --all-files`` passed; ``uv run sphinx-build -W -b html
+  docs docs/_build/html`` passed; and ``git diff --check`` passed.
+- Follow-up risks: the helper performs DNS resolution and rejects unsafe
+  resolved addresses before each request and redirect. It does not implement a
+  custom transport that pins the already-validated IP address through the
+  underlying TCP/TLS connection; deployments with strict DNS-rebinding threat
+  models should combine this with egress firewalling or a dedicated outbound
+  proxy.
+- Review follow-up: changed Webmention source/Vouch and sender content fetches
+  to use streamed decoded reads under the byte cap before materializing text,
+  fixed IPv6 literal handling so public IPv6 literals can pass while blocked
+  IPv6 ranges still fail, removed the hidden DNS-bypass branch from the
+  non-streaming redirect helper, and made Webmention target host comparison
+  case-insensitive. A Mock-client fallback remains only in the streaming helper
+  for legacy unit-test compatibility; production callers instantiate real
+  ``httpx.Client`` objects and use the resolver-backed streaming path.
+
 ### Sanitize remote Webmention HTML and Webmention author URL fields before display
 
 - Added a shared Webmention sanitizer using ``nh3``. Processor-owned

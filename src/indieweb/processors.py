@@ -23,7 +23,13 @@ from django.dispatch import Signal
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from .http_client import RedirectedResponse, request_with_webmention_redirects
+from .http_client import (
+    SAFE_HTTP_DEFAULT_TIMEOUT,
+    HTTPResponseTooLarge,
+    RedirectedResponse,
+    response_text_with_limit,
+    stream_with_safe_redirects,
+)
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
@@ -35,6 +41,10 @@ logger = logging.getLogger(__name__)
 # Signal sent when a webmention is received and processed
 webmention_received = Signal()
 MAX_NESTED_RESPONSE_IDENTITY_LENGTH = 500
+DEFAULT_WEBMENTION_FETCH_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH = 8
+DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES = 100
+DEFAULT_WEBMENTION_SEARCH_MAX_ITEMS = 1000
 TRAILING_TEXT_URL_PUNCTUATION = ".,;:!?\"'"
 LEADING_TEXT_URL_PUNCTUATION = "([{<\"'"
 WRAPPING_TEXT_URL_PUNCTUATION = {
@@ -43,6 +53,48 @@ WRAPPING_TEXT_URL_PUNCTUATION = {
     "}": "{",
     ">": "<",
 }
+
+
+def _positive_int_setting(name: str, default: int) -> int:
+    configured = getattr(settings, name, default)
+    try:
+        parsed = int(configured)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid %s value; using default %s", name, default)
+        return default
+    if parsed <= 0:
+        logger.warning("Ignoring non-positive %s value; using default %s", name, default)
+        return default
+    return parsed
+
+
+def _optional_positive_int_setting(name: str, default: int) -> int | None:
+    configured = getattr(settings, name, default)
+    if configured is None:
+        return None
+    return _positive_int_setting(name, default)
+
+
+def _webmention_fetch_max_bytes() -> int | None:
+    return _optional_positive_int_setting("INDIEWEB_WEBMENTION_FETCH_MAX_BYTES", DEFAULT_WEBMENTION_FETCH_MAX_BYTES)
+
+
+def _webmention_nested_max_depth() -> int:
+    return _positive_int_setting(
+        "INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH",
+        DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH,
+    )
+
+
+def _webmention_nested_max_candidates() -> int:
+    return _positive_int_setting(
+        "INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES",
+        DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES,
+    )
+
+
+def _webmention_search_max_items() -> int:
+    return _positive_int_setting("INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS", DEFAULT_WEBMENTION_SEARCH_MAX_ITEMS)
 
 
 def _reject_vouch_policy(**kwargs: Any) -> bool:
@@ -208,7 +260,7 @@ class WebmentionProcessor:
                 logger.error(f"Failed to load spam checker {spam_checker_path}: {e}")
         return None
 
-    def process_webmention(self, source_url: str, target_url: str, vouch_url: str | None = None) -> Webmention:
+    def process_webmention(self, source_url: str, target_url: str, vouch_url: str | None = None) -> Webmention:  # noqa: C901
         """
         Process a webmention by fetching and parsing the source.
 
@@ -256,8 +308,10 @@ class WebmentionProcessor:
                 logger.warning(f"Source URL is not HTML: {content_type}")
                 return webmention
 
+            source_html = response_text_with_limit(response, max_bytes=_webmention_fetch_max_bytes())
+
             # Verify target link exists
-            if not self._verify_target_link(response.text, target_url):
+            if not self._verify_target_link(source_html, target_url):
                 self._mark_webmention_failed(webmention)
                 logger.warning(f"Target URL {target_url} not found in source")
                 return webmention
@@ -265,7 +319,7 @@ class WebmentionProcessor:
             fetched_at = timezone.now()
 
             # Parse microformats2
-            _parsed, h_entry = self._parse_microformats(webmention, response.text, fetched.final_url, target_url)
+            _parsed, h_entry = self._parse_microformats(webmention, source_html, fetched.final_url, target_url)
 
             if not self._verify_vouch_for_webmention(webmention, source_url):
                 self._mark_webmention_failed(webmention)
@@ -300,7 +354,7 @@ class WebmentionProcessor:
             )
             self._store_source_snapshot_safely(
                 webmention=webmention,
-                raw_source_html=response.text,
+                raw_source_html=source_html,
                 final_source_url=fetched.final_url,
                 fetched_at=fetched_at,
                 h_entry=h_entry,
@@ -317,6 +371,10 @@ class WebmentionProcessor:
             logger.info(f"Successfully processed webmention from {source_url}")
             return webmention
 
+        except HTTPResponseTooLarge as e:
+            logger.warning(f"Fetched Webmention source exceeded size limit for {source_url}: {e}")
+            self._mark_webmention_failed(webmention)
+            return webmention
         except Exception as e:
             logger.error(f"Error processing webmention from {source_url}: {e}")
             self._mark_webmention_failed(webmention)
@@ -332,14 +390,28 @@ class WebmentionProcessor:
     def _fetch_source(self, source_url: str) -> RedirectedResponse:
         """Fetch the source URL with explicit bounded redirect handling."""
         headers = {"User-Agent": "django-indieweb/1.0"}
-        with httpx.Client() as client:
-            return request_with_webmention_redirects(client, "GET", source_url, headers=headers, timeout=30)
+        with httpx.Client(verify=True) as client:
+            return stream_with_safe_redirects(
+                client,
+                "GET",
+                source_url,
+                headers=headers,
+                max_bytes=_webmention_fetch_max_bytes(),
+                timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+            )
 
     def _fetch_vouch(self, vouch_url: str) -> RedirectedResponse:
         """Fetch a Vouch URL with the same bounded redirect policy as source fetches."""
         headers = {"User-Agent": "django-indieweb/1.0"}
-        with httpx.Client() as client:
-            return request_with_webmention_redirects(client, "GET", vouch_url, headers=headers, timeout=30)
+        with httpx.Client(verify=True) as client:
+            return stream_with_safe_redirects(
+                client,
+                "GET",
+                vouch_url,
+                headers=headers,
+                max_bytes=_webmention_fetch_max_bytes(),
+                timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+            )
 
     def _verify_target_link(self, html_content: str, target_url: str) -> bool:
         """Verify that the target URL is linked in the source content."""
@@ -367,7 +439,11 @@ class WebmentionProcessor:
         content_type = response.headers.get("content-type", "").lower()
         if not content_type.startswith("text/html"):
             return False
-        if not _html_links_to_source_domain(response.text, source_url):
+        try:
+            vouch_html = response_text_with_limit(response, max_bytes=_webmention_fetch_max_bytes())
+        except HTTPResponseTooLarge:
+            return False
+        if not _html_links_to_source_domain(vouch_html, source_url):
             return False
 
         webmention.vouch_verified_at = timezone.now()
@@ -765,12 +841,24 @@ class WebmentionProcessor:
     def _nested_h_entries(self, item: dict[str, Any]) -> list[dict[str, Any]]:
         """Return h-entry descendants of a parsed microformats item, excluding the item itself."""
         nested_entries: list[dict[str, Any]] = []
-        for child in item.get("children", []):
-            if not isinstance(child, dict):
-                continue
-            if "h-entry" in child.get("type", []):
-                nested_entries.append(child)
-            nested_entries.extend(self._nested_h_entries(child))
+        max_depth = _webmention_nested_max_depth()
+        max_candidates = _webmention_nested_max_candidates()
+
+        def visit(candidate: dict[str, Any], depth: int) -> None:
+            if depth >= max_depth or len(nested_entries) >= max_candidates:
+                return
+            for child in candidate.get("children", []):
+                if not isinstance(child, dict):
+                    continue
+                if "h-entry" in child.get("type", []):
+                    nested_entries.append(child)
+                    if len(nested_entries) >= max_candidates:
+                        return
+                visit(child, depth + 1)
+                if len(nested_entries) >= max_candidates:
+                    return
+
+        visit(item, 0)
         return nested_entries
 
     def _nested_response_identity(self, h_entry: dict[str, Any], base_url: str) -> str | None:
@@ -824,7 +912,14 @@ class WebmentionProcessor:
 
     def _search_for_mentioning_entry(self, items: list[dict[str, Any]], target_url: str) -> dict[str, Any] | None:
         """Recursively search for an h-entry that mentions the target URL."""
-        for item in items:
+        max_depth = _webmention_nested_max_depth()
+        max_items = _webmention_search_max_items()
+        searched = 0
+        stack = [(item, 0) for item in reversed(items) if isinstance(item, dict)]
+
+        while stack and searched < max_items:
+            item, depth = stack.pop()
+            searched += 1
             if "h-entry" in item.get("type", []):
                 # Check if this entry mentions the target
                 properties = item.get("properties", {})
@@ -842,12 +937,10 @@ class WebmentionProcessor:
                     elif isinstance(c, str) and self._text_links_to_target(c, target_url):
                         return item
 
-            # Recursively search children
+            if depth >= max_depth:
+                continue
             children = item.get("children", [])
-            if children:
-                result = self._search_for_mentioning_entry(children, target_url)
-                if result:
-                    return result
+            stack.extend((child, depth + 1) for child in reversed(children) if isinstance(child, dict))
 
         return None
 

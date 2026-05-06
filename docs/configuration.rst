@@ -395,6 +395,13 @@ advertisement. ``notify_hubs()`` with no configured hubs returns an empty
 result list; the ``notify_websub`` management command treats that as a
 configuration error.
 
+Hub URLs are outbound server-to-server targets. ``notify_hubs()`` and
+``request_websub_subscription()`` reject loopback, private, link-local,
+multicast, reserved, metadata-service, and other non-global IP destinations
+after DNS resolution and after every redirect. Keep
+``INDIEWEB_WEBSUB_HUBS`` operator-controlled; do not template hub URLs from
+request data or user-editable content.
+
 INDIEWEB_WEBSUB_TIMEOUT
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -453,6 +460,11 @@ to ``None`` to disable django-indieweb's built-in size check only when your
 server, proxy, or worker queue enforces an equivalent limit.
 Malformed values are ignored and logged; the callback falls back to the
 default 1 MiB limit instead of failing every delivery.
+The callback rejects an oversized ``Content-Length`` before reading the body
+when the header is present. Also configure a tight Django
+``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching reverse-proxy request-body limit
+so oversized or malformed requests are stopped before they reach application
+workers.
 
 INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -497,6 +509,9 @@ subscription state, size/content-type limits, and any stored ``hub.secret``
 signature before loading or calling this hook. Hook import failures,
 non-callables, and raised exceptions are logged, recorded on the subscription
 row, and returned as HTTP ``500`` so the hub can retry.
+For production, keep this hook short and hand accepted deliveries to a
+host-owned queue or job table; feed parsing and persistence should not run
+inline in the callback request.
 
 ``hub.secret`` values stored on ``WebSubSubscription`` are limited to 200
 characters. Renewal requests preserve the existing stored secret when
@@ -611,6 +626,12 @@ The configured enqueue callable should schedule work only. It should not call
 ``process_queued_webmention()`` inline from the receive request unless your
 deployment intentionally wants synchronous behavior under a custom hook.
 
+Production deployments should prefer queued processing. Synchronous receiving
+uses bounded fetches and parser work limits, but it still performs network
+fetching and parsing in the request path. Pair the queue with deployment-level
+request limits and an ``INDIEWEB_RATE_LIMITS`` entry for the ``webmention``
+endpoint.
+
 .. note::
    If the configured path cannot be imported, resolves to a non-callable, or
    raises while enqueueing, the receive endpoint returns HTTP 500 and does not
@@ -619,6 +640,42 @@ deployment intentionally wants synchronous behavior under a custom hook.
    happen before a row is persisted; if the callable itself raises, the
    ``Webmention`` row has already been created or reused and remains
    ``pending`` until a queue retry path or manual cleanup reconciles it.
+
+INDIEWEB_WEBMENTION_FETCH_MAX_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum decoded response size accepted for receive-side Webmention source and
+Vouch fetches.
+
+**Default:** ``1048576`` (1 MiB)
+
+Responses are streamed and counted while decoded chunks are read. Responses
+over this limit mark the Webmention ``failed`` and are not stored as source
+snapshots. Set this to ``None`` only when an upstream proxy, queue, or worker
+boundary enforces an equivalent limit.
+
+INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum nested ``h-entry`` child depth inspected when extracting nested
+Webmention/Salmention response candidates.
+
+**Default:** ``8``
+
+INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum nested response candidates persisted for one verified source page.
+
+**Default:** ``100``
+
+INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum parsed microformats items scanned while looking for the ``h-entry``
+that mentions the submitted target.
+
+**Default:** ``1000``
 
 INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

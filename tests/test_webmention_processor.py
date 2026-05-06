@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from django.test import RequestFactory, override_settings
 from django.utils import timezone as django_timezone
 
+from indieweb.http_client import SAFE_HTTP_DEFAULT_TIMEOUT
 from indieweb.models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from indieweb.processors import WebmentionProcessor, process_queued_webmention
 from indieweb.sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
@@ -191,9 +192,68 @@ class TestWebmentionProcessor:
             webmention = processor.process_webmention(source_url, target_url)
 
             mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
             )
             assert webmention.status == "verified"
+
+    @override_settings(INDIEWEB_WEBMENTION_FETCH_MAX_BYTES=10)
+    def test_processor_marks_oversized_source_failed_without_snapshot(self, processor):
+        """Source responses over the decoded byte cap fail without storing raw HTML."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.return_value = _source_response(status_code=200, text=html_content)
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        assert webmention.status == "failed"
+        assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
+
+    @override_settings(INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH=2)
+    def test_nested_h_entries_respects_depth_cap(self, processor):
+        """Deep h-entry descendants are ignored after the configured depth."""
+        item = {
+            "children": [
+                {
+                    "type": ["h-entry"],
+                    "properties": {"uid": ["https://example.com/one"]},
+                    "children": [
+                        {
+                            "type": ["h-entry"],
+                            "properties": {"uid": ["https://example.com/two"]},
+                            "children": [
+                                {
+                                    "type": ["h-entry"],
+                                    "properties": {"uid": ["https://example.com/three"]},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        nested = processor._nested_h_entries(item)
+
+        assert [entry["properties"]["uid"][0] for entry in nested] == [
+            "https://example.com/one",
+            "https://example.com/two",
+        ]
+
+    @override_settings(INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES=2)
+    def test_nested_h_entries_respects_candidate_cap(self, processor):
+        """Only the configured number of nested h-entry candidates is returned."""
+        item = {
+            "children": [
+                {"type": ["h-entry"], "properties": {"uid": [f"https://example.com/{index}"]}} for index in range(5)
+            ]
+        }
+
+        assert len(processor._nested_h_entries(item)) == 2
 
     def test_processor_stores_vouch_without_verification_when_policy_unset(self, processor):
         """Test submitted Vouch metadata is stored without extra fetching by default."""
@@ -213,7 +273,7 @@ class TestWebmentionProcessor:
             assert webmention.vouch_url == vouch_url
             assert webmention.vouch_verified_at is None
             mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
             )
 
     def test_processor_without_vouch_does_not_clear_existing_vouch(self, processor):
@@ -317,7 +377,7 @@ class TestWebmentionProcessor:
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
             mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
             )
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.reject_final")
@@ -374,7 +434,7 @@ class TestWebmentionProcessor:
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
             mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
             )
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
@@ -440,7 +500,7 @@ class TestWebmentionProcessor:
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
             mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
             )
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
@@ -503,7 +563,7 @@ class TestWebmentionProcessor:
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
             mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=30
+                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
             )
 
     def test_process_queued_webmention_processes_existing_row(self):

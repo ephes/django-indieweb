@@ -5,10 +5,30 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup, Tag
+from django.conf import settings
 from django.utils import timezone
 
-from .http_client import request_with_webmention_redirects
+from .http_client import (
+    SAFE_HTTP_DEFAULT_TIMEOUT,
+    is_safe_http_url,
+    request_with_webmention_redirects,
+    stream_with_safe_redirects,
+    validate_safe_http_url,
+)
 from .models import WebmentionOutboundTarget
+
+DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES = 1024 * 1024
+
+
+def _sender_fetch_max_bytes() -> int | None:
+    configured = getattr(settings, "INDIEWEB_WEBMENTION_FETCH_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES)
+    if configured is None:
+        return None
+    try:
+        parsed = int(configured)
+    except (TypeError, ValueError):
+        return DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
+    return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
 
 
 class WebmentionSender:
@@ -51,8 +71,9 @@ class WebmentionSender:
             The webmention endpoint URL or None if not found
         """
         try:
+            validate_safe_http_url(target_url)
             # First try HEAD request to check Link headers
-            with httpx.Client() as client:
+            with httpx.Client(verify=True) as client:
                 discovered = request_with_webmention_redirects(client, "HEAD", target_url, timeout=self.timeout)
                 response = discovered.response
                 response.raise_for_status()
@@ -61,14 +82,25 @@ class WebmentionSender:
                 link_header = response.headers.get("Link", "")
                 endpoint = self._parse_link_header(link_header)
                 if endpoint:
-                    return urljoin(discovered.final_url, endpoint)
+                    resolved_endpoint = urljoin(discovered.final_url, endpoint)
+                    validate_safe_http_url(resolved_endpoint)
+                    return resolved_endpoint
 
                 # Fall back to GET request to parse HTML
-                discovered = request_with_webmention_redirects(client, "GET", target_url, timeout=self.timeout)
+                discovered = stream_with_safe_redirects(
+                    client,
+                    "GET",
+                    target_url,
+                    max_bytes=_sender_fetch_max_bytes(),
+                    timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                )
                 response = discovered.response
                 response.raise_for_status()
 
-                return self._parse_html_for_endpoint(response.text, discovered.final_url)
+                endpoint = self._parse_html_for_endpoint(response.text, discovered.final_url)
+                if endpoint:
+                    validate_safe_http_url(endpoint)
+                return endpoint
 
         except Exception:
             # Return None for any errors during discovery
@@ -136,10 +168,13 @@ class WebmentionSender:
             Dict with 'success', 'status_code', and optionally 'error'
         """
         try:
+            validate_safe_http_url(endpoint)
+            if vouch:
+                validate_safe_http_url(vouch, resolver=None)
             payload = {"source": source, "target": target}
             if vouch:
                 payload["vouch"] = vouch
-            with httpx.Client() as client:
+            with httpx.Client(verify=True) as client:
                 delivered = request_with_webmention_redirects(
                     client,
                     "POST",
@@ -180,8 +215,15 @@ class WebmentionSender:
             HTML content or None if error
         """
         try:
-            with httpx.Client() as client:
-                fetched = request_with_webmention_redirects(client, "GET", url, timeout=self.timeout)
+            validate_safe_http_url(url)
+            with httpx.Client(verify=True) as client:
+                fetched = stream_with_safe_redirects(
+                    client,
+                    "GET",
+                    url,
+                    max_bytes=_sender_fetch_max_bytes(),
+                    timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                )
                 response = fetched.response
                 response.raise_for_status()
                 return response.text
@@ -302,7 +344,7 @@ class WebmentionSender:
         target_urls = []
 
         for target_url in urls:
-            if not target_url.startswith(("http://", "https://")):
+            if not is_safe_http_url(target_url, resolver=None):
                 continue
 
             target_domain = urlparse(target_url).netloc

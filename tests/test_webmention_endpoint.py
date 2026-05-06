@@ -88,6 +88,16 @@ class TestWebmentionEndpoint:
         )
         assert response.status_code == 400
 
+        # Unsupported source URL scheme
+        response = client.post(
+            url,
+            {
+                "source": "ftp://other.com/reply",
+                "target": "https://example.com/post",
+            },
+        )
+        assert response.status_code == 400
+
         # Invalid vouch URL
         response = client.post(
             url,
@@ -106,6 +116,16 @@ class TestWebmentionEndpoint:
                 "source": "https://other.com/reply",
                 "target": "https://example.com/post",
                 "vouch": "ftp://trusted.example/vouch",
+            },
+        )
+        assert response.status_code == 400
+
+        # Unsupported target URL scheme
+        response = client.post(
+            url,
+            {
+                "source": "https://other.com/reply",
+                "target": "ftp://example.com/post",
             },
         )
         assert response.status_code == 400
@@ -500,6 +520,7 @@ class TestWebmentionEndpoint:
 
         # Valid target on our domain
         assert view.is_valid_target(f"https://{site.domain}/post") is True
+        assert view.is_valid_target(f"https://{site.domain.upper()}/post") is True
         assert view.is_valid_target(f"http://{site.domain}/post") is True
 
         # Invalid targets
