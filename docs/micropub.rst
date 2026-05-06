@@ -125,6 +125,110 @@ In your Django settings:
    # settings.py
    INDIEWEB_MICROPUB_HANDLER = 'myapp.micropub_handler.BlogPostMicropubHandler'
 
+5. Static-Site and Storage-Boundary Examples
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Static-site projects can use the same ``MicropubContentHandler`` interface.
+django-indieweb only parses the Micropub request, checks the token and scope,
+and calls your handler. Host code still owns persistence, path and URL
+mapping, front matter format, static-site rendering, build/deploy commands,
+repository credentials, commits, pushes, media indexing, and media deletion
+policy.
+
+The repository includes tested copy-and-adapt source in
+``examples/static_site_micropub.py``. That directory is not installed as a
+public Python package when django-indieweb is installed from PyPI, so copy the
+parts you need into your Django project, for example
+``myapp/static_site_examples.py``, and configure your copied handler from
+there. The example mapper turns Micropub properties into Markdown files with
+front matter. It uses ``mp-slug`` when present, falls back to
+title/content-derived slugs, stores common fields such as title, date, tags,
+post status, photos, channel and syndication requests in front matter, and
+preserves the original Micropub properties for host code that wants to
+reconstruct source responses later.
+
+For a Jekyll- or Eleventy-style layout, configure the mapper with a posts
+directory such as ``_posts`` and a date-prefixed filename. For Hugo-style
+content, use a directory such as ``content/posts``. The example deliberately
+does not run Jekyll, Hugo, Eleventy, Git, or deployment commands:
+
+.. code:: python
+
+   from pathlib import Path
+
+   from myapp.static_site_examples import LocalFilesystemStaticSiteHandler
+
+   class MyStaticSiteMicropubHandler(LocalFilesystemStaticSiteHandler):
+       def __init__(self):
+           super().__init__(
+               content_root=Path("/srv/example-site"),
+               public_base_url="https://example.com/",
+           )
+
+   # settings.py
+   INDIEWEB_MICROPUB_HANDLER = "myapp.micropub.MyStaticSiteMicropubHandler"
+
+``LocalFilesystemStaticSiteHandler`` writes only below the explicit
+``content_root`` passed by host code. Its default mapping creates paths such as
+``content/posts/2026-05-06-my-note.md`` and public URLs such as
+``https://example.com/posts/2026/05/06/my-note/``. Adapt the mapper when your
+site uses a different permalink policy. The filesystem example rejects an
+already-existing target path so hosts must choose their own slug-collision
+policy instead of silently overwriting a post.
+
+If your publication workflow stores source files through Django storage, pass
+an explicit storage instance instead of teaching django-indieweb a new storage
+abstraction:
+
+.. code:: python
+
+   from django.core.files.storage import storages
+   from myapp.static_site_examples import DjangoStorageStaticSiteHandler
+
+   class MyStorageMicropubHandler(DjangoStorageStaticSiteHandler):
+       def __init__(self):
+           super().__init__(
+               storage=storages["static_site_posts"],
+               public_base_url="https://example.com/",
+           )
+
+For Git-backed workflows, keep credentials, commits, pushes, branches, review
+policy, and deployment triggers in a host adapter. The example handler only
+calls the adapter boundary:
+
+.. code:: python
+
+   from myapp.static_site_examples import GitBackedStaticSiteHandler
+
+   class RepositoryPostStore:
+       def save_file(self, *, path, content, message):
+           # Host-owned: write a worktree file, open a pull request, call a
+           # private GitHub/GitLab client, or enqueue review. No network call
+           # is hidden inside django-indieweb.
+           raise NotImplementedError
+
+   class MyGitMicropubHandler(GitBackedStaticSiteHandler):
+       def __init__(self):
+           super().__init__(
+               store=RepositoryPostStore(),
+               public_base_url="https://example.com/",
+           )
+
+Static-site source queries and editing actions usually require more than a
+file write. To support ``GET ?q=source`` by URL, ``GET ?q=source`` list mode,
+``action=update``, ``action=delete``, or ``action=undelete``, keep a durable
+host index that maps public URLs to source paths and ownership. Without that
+index, return ``None`` for optional source-list/media-list hooks or raise an
+explicit host error rather than guessing paths from arbitrary URLs.
+
+The same boundary applies to media. Direct media uploads can store files
+through Django storage, but source listing, metadata lookup, and deletion need
+a host-owned media index. The example ``IndexedMediaHooksMixin`` delegates
+``list_media()``, ``get_media()``, and ``delete_media()`` to such an index so
+django-indieweb never infers storage paths from submitted URLs. Assign the
+index on the concrete handler, for example in ``__init__``, before enabling
+those hooks.
+
 Supported Features
 ------------------
 

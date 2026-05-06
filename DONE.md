@@ -2,6 +2,59 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-06
+
+### Add static-site and storage-boundary Micropub handler examples
+
+- Added tested examples in ``examples/static_site_micropub.py`` for host-owned
+  static-site Micropub handlers. The examples map Micropub properties to
+  Markdown paths, public URLs, YAML-compatible front matter, body content, and
+  returned ``MicropubEntry`` values without changing endpoint behavior.
+- Added conservative mapping helpers for ``mp-slug``/fallback slug generation,
+  note/article/photo-like classification, published-date path segments, common
+  front matter fields, and preservation of the original Micropub properties.
+- Added storage-boundary examples for explicit local filesystem roots, explicit
+  Django storage instances, and Git-backed repository adapters. The filesystem
+  example rejects target collisions instead of silently overwriting an existing
+  post. The Git example delegates to a host adapter only; it does not add
+  credentials, network calls, commits, pushes, branch policy, or deploy
+  automation.
+- Added an ``IndexedMediaHooksMixin`` example that delegates ``list_media()``,
+  ``get_media()``, and ``delete_media()`` to a durable host-owned media index
+  so django-indieweb does not infer storage paths or deletion policy from
+  submitted URLs.
+- Added focused tests for property-to-document mapping, slug fallback,
+  note/article/photo-like output, dict-shaped property values, local-root
+  writes, collision rejection, escape rejection, explicit Django storage
+  delegation, Git-adapter delegation, and media-index hook delegation.
+- Backlog: removed the completed Priority 4 static-site/storage-boundary item
+  from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/micropub.rst`` with static-site, filesystem,
+  Django storage, Git-backed adapter, source-query/update/delete, and media
+  index boundary guidance; updated ``docs/configuration.rst`` with
+  ``INDIEWEB_MICROPUB_HANDLER`` guidance; updated ``docs/concepts.rst`` with
+  the static-site boundary. No generated docs under ``docs/_build`` were
+  edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased
+  documentation/examples note.
+- Compatibility: Micropub endpoint behavior, scopes, auth, CORS, rate
+  limiting, media uploads, handler method signatures, and response shapes are
+  unchanged. The new examples are opt-in host code.
+- Follow-up risks: hosts still need their own durable URL-to-path index,
+  collision resolution policy, update/delete/undelete semantics,
+  rendering/build/deploy workflow, repository credentials, media metadata
+  index, media authorization, and storage deletion audit trail.
+- Validation: ``uv run pytest tests/test_static_site_micropub_examples.py -q
+  --no-cov`` (11 passed), ``uv run pytest tests/test_micropub_media.py
+  tests/test_micropub_create.py tests/test_micropub_actions.py
+  tests/test_micropub_source.py -q --no-cov`` (169 passed), ``uv run ruff
+  check .`` (passed), ``uv run ruff format . --check`` (90 files already
+  formatted), ``uv run mypy`` (no issues in 44 source files), ``uv run
+  sphinx-build -W -b html docs docs/_build/html`` (passed), ``git ls-files
+  docs/_build --modified --others --exclude-standard`` (no output), ``git
+  diff --check`` (passed), ``uv run pytest`` (970 passed, coverage gate passed
+  at 90.54%), and ``uv run prek run --all-files`` (passed).
+
 ## 2026-05-05
 
 ### Add Micropub media source and delete extension points

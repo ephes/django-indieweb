@@ -166,6 +166,10 @@ Data Flow
    - The configured ``MicropubContentHandler`` creates, retrieves, updates,
      deletes, or undeletes entries (the in-memory handler ships by default;
      see :doc:`micropub` for custom handlers)
+   - For static-site workflows, the handler can map Micropub properties to
+     host-owned Markdown files, front matter, public URLs, Django storage
+     objects, or Git-backed adapters. django-indieweb does not run a
+     static-site generator, commit files, push repositories, or deploy a site.
    - Creates return ``201 Created`` with a ``Location`` header; successful
      update/delete/undelete actions return ``204 No Content`` unless an
      update or undelete relocates the entry and returns ``201 Created``
@@ -266,9 +270,11 @@ rate limiting, built-in CORS support, Webmention vouch support, Salmentions,
 publisher-side WebSub support, minimal WebSub subscriber callbacks, common
 Micropub h-entry post-type advertisement, and Micropub event/RSVP property
 forwarding are available. WebSub subscriber denial handling, lease-inspection
-helpers, and metadata-only delivery history are also available. A bundled
-WebSub hub, automatic subscriber discovery, automatic background lease renewal,
-and host-owned event/RSVP storage semantics remain outside django-indieweb.
+helpers, metadata-only delivery history, and static-site/storage-boundary
+Micropub handler examples are also available. A bundled WebSub hub, automatic
+subscriber discovery, automatic background lease renewal, static-site builds,
+repository commits/pushes, media indexing/deletion policy, and host-owned
+event/RSVP storage semantics remain outside django-indieweb.
 
 Future Enhancements
 -------------------

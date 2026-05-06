@@ -35,10 +35,7 @@ No current Micropub Enhancements and Extensions items.
 
 ### Syndication and Storage Examples
 
-- [ ] Add static-site and storage-boundary Micropub handler examples.
-  - Outcome: add examples that show how a host project can implement ``MicropubContentHandler`` for file/static-site workflows inspired by Jekyll, Hugo, Eleventy, Git-backed storage, and Django storage, including how to map post properties to paths/URLs and how to keep host rendering ownership. The examples should be executable or tested where practical and should call out when a full host model is required.
-  - References: local ``src/indieweb/handlers.py``, ``src/indieweb/handlers_example.py``, ``examples/``, ``docs/concepts.rst``, and ``docs/micropub.rst``; Indiekit ``/Users/jochen/src/getindiekit-indiekit/docs/concepts.md``, ``docs/configuration/post-template.md``, ``docs/plugins/stores/index.md``, ``docs/plugins/presets/index.md``, ``packages/preset-jekyll/README.md``, ``packages/preset-hugo/README.md``, ``packages/store-github/README.md``, and ``/Users/jochen/src/getindiekit-example-config/indiekit.config.js`` at ``b11b749``.
-  - Scope exclusions: do not introduce a django-indieweb content-store plugin architecture, repository credentials, file commit/push behavior, or static-site generator presets as core runtime features.
+No current Syndication and Storage Examples items.
 
 ### Webmention and Reader Boundaries
 

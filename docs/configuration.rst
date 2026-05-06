@@ -243,6 +243,34 @@ The browser token-management pages at ``/indieweb/tokens/`` and
 are authenticated Django UI views rather than public IndieWeb protocol
 endpoints.
 
+INDIEWEB_MICROPUB_HANDLER
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a ``MicropubContentHandler`` subclass that owns
+Micropub persistence for your host project.
+
+**Default:** ``None`` (use the bundled in-memory development handler)
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_MICROPUB_HANDLER = "myapp.micropub.BlogPostMicropubHandler"
+
+The handler is loaded and instantiated for Micropub content operations. It is
+the extension point for creating, retrieving, listing, updating, deleting, and
+undeleting entries, and for optional media source/delete hooks. See
+:doc:`micropub` for model-backed examples and for tested static-site examples
+that map Micropub properties to host-owned file paths, public URLs, front
+matter, local filesystem writes, Django storage writes, and Git-backed adapter
+boundaries.
+
+django-indieweb does not add a content-store plugin system, static-site
+generator preset system, repository credential setting, commit/push workflow,
+build command, deployment hook, media database, or media deletion policy for
+this setting. Host code remains responsible for those concerns.
+
 INDIEWEB_MEDIA_MAX_UPLOAD_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
