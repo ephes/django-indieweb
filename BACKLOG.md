@@ -40,5 +40,4 @@ No current Webmention and Reader Boundaries items.
 
 ## Agent Workflow Improvements
 
-- [ ] Add a curated agent learnings file if repeated repo-specific mistakes emerge.
-  - Outcome: future agents get concise, reviewed guidance rather than raw transcript dumps.
+No current Agent Workflow Improvements items.

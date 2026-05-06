@@ -4,6 +4,38 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Add curated agent learnings file
+
+- Added ``AGENT_LEARNINGS.md`` as a small tracked guidance file for repeated,
+  reviewed repo-specific agent lessons: backlog/DONE completion mechanics,
+  Sphinx validation without staging ``docs/_build``, ``prek`` hook usage,
+  pytest guidance for legacy ``django.test.TestCase`` files, and host-owned
+  protocol boundary wording.
+- Preserved the privacy boundary from the prior session-material evaluation:
+  raw transcripts, prompts, command output, generated summaries, and private
+  local context remain untracked and should not be promoted into the curated
+  file.
+- Backlog: removed the completed Agent Workflow Improvements item from
+  ``BACKLOG.md``. No migrations were needed.
+- Documentation: linked the curated file from ``AGENTS.md``. ``CLAUDE.md``
+  already points to ``AGENTS.md``, so no separate Claude-specific duplication
+  was needed. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased
+  developer-agent workflow note for the curated guidance file.
+- Compatibility: no production runtime behavior, dependencies, migrations,
+  models, settings, templates, endpoint URLs, endpoint semantics, public APIs,
+  package metadata, hooks, scripts, CI jobs, transcript scraping, or generated
+  docs changed for this slice.
+- Follow-up risks: future updates to ``AGENT_LEARNINGS.md`` should stay short
+  and require reviewed repo-specific evidence; generic agent advice and raw
+  session material should remain out of tracked files.
+- Validation: ``git diff --check`` (passed), ``git ls-files docs/_build
+  --modified --others --exclude-standard`` (no output), ``uv run ruff check .``
+  (passed), ``uv run ruff format . --check`` (92 files already formatted),
+  ``uv run sphinx-build -W -b html docs docs/_build/html`` (passed),
+  ``uv run mypy`` (no issues), ``uv run pytest`` (980 passed, coverage gate
+  passed at 90.54%), and ``uv run prek run --all-files`` (passed).
+
 ### Add Webmention.io import/display guidance without replacing built-in Webmention processing
 
 - Documented Webmention.io as an optional host-owned integration choice, not a

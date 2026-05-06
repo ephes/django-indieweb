@@ -150,7 +150,8 @@ When finishing a backlog item:
 - Keep raw agent transcripts, prompts, command output, and local session summaries private and untracked.
 - If a local summary is useful, write it under `.agent-summaries/` or use a `codex-session-*.md`/`claude-session-*.md` file; these paths are gitignored.
 - Do not add hooks or scripts that scrape agent or terminal transcripts into tracked files by default.
-- Promote only concise, reviewed, repo-specific guidance into tracked documentation; use the curated learnings backlog item for that work.
+- Promote only concise, reviewed, repo-specific guidance into tracked documentation. `AGENT_LEARNINGS.md` holds the
+  curated repo-specific lessons; do not use it for raw or generated session material.
 
 ## Key Dependencies
 
