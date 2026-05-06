@@ -273,11 +273,16 @@ Initiates the authorization flow.
 **Response:**
 
 - If user is not authenticated: Redirects to Django login
+- If user is authenticated: Returns the consent screen with
+  ``X-Frame-Options: DENY`` and ``Content-Security-Policy: frame-ancestors
+  'none'`` to prevent framing
 - If user is authenticated and approves: Redirects to ``redirect_uri`` with
   ``code``, ``state``, ``iss``, and the legacy ``me`` parameter
 - If user denies: Redirects to ``redirect_uri`` with ``error=access_denied``
   and ``state``. Denial redirects do not include ``iss`` because clients must
   not assume error responses originated from the intended authorization server.
+  Consent approve/deny submissions require a valid Django CSRF token and a
+  logged-in user before any client redirect is built.
 
 **Example Response:**
 
@@ -289,7 +294,9 @@ Initiates the authorization flow.
 POST Request
 ~~~~~~~~~~~~
 
-Verifies an authorization code (used for code verification).
+Verifies an authorization code (used for code verification). This legacy
+protocol POST remains CSRF-exempt; browser consent approve/deny POSTs to the
+same endpoint are CSRF-protected.
 
 **Required Parameters:**
 
@@ -350,7 +357,16 @@ POST Request
   django-indieweb accepts ``grant_type=authorization_code`` and rejects any
   other present value with HTTP 400 ``invalid_request``. Omitted
   ``grant_type`` remains accepted for legacy clients.
-- ``redirect_uri`` - If sent, it must be a syntactically valid ``http``/``https`` URL with no fragment delimiter (``#``) and no userinfo (``user:pass@``), and must match the value used in the original auth request after normalizing scheme and host case (path and query are compared verbatim); malformed values and mismatches are rejected with ``invalid_grant``
+- ``redirect_uri`` - Required when the original authorization request stored a
+  ``redirect_uri``. When sent, it must be a syntactically valid
+  ``http``/``https`` URL with no fragment delimiter (``#``) and no userinfo
+  (``user:pass@``), and must match the value used in the original auth request
+  after normalization. Normalization lowercases scheme/host, IDNA-encodes host
+  names, collapses default ports (``:80`` for HTTP and ``:443`` for HTTPS),
+  lowercases percent-encoded triplets, and treats an empty root path as
+  equivalent to ``/``. Non-default ports, non-root paths, and query strings
+  remain significant. Malformed, omitted-required, and mismatched values are
+  rejected with ``invalid_grant``.
 - ``me`` - The user's profile URL; falls back to the value stored with the auth code
 - ``scope`` - Optional scope confirmation. If omitted, the token is issued
   with the normalized scope stored with the auth code. If sent, the submitted
@@ -1397,7 +1413,12 @@ All endpoints may return these error responses:
   the auth code, including attempts to add a scope to a no-scope auth code
   or attempts to submit an explicitly empty ``scope=`` for a scoped auth code
 - ``redirect_uri`` sent on token exchange is malformed (invalid URL, contains a ``#`` delimiter, includes userinfo, or uses a disallowed scheme)
-- ``redirect_uri`` sent on token exchange does not match the value stored with the auth code (after lowercasing scheme and host)
+- ``redirect_uri`` is omitted on token exchange when the matched auth code was
+  issued with one
+- ``redirect_uri`` sent on token exchange does not match the value stored with
+  the auth code after normalization of scheme/host case, IDNA host form,
+  default ports, percent-encoded triplet case, and root empty-path/``/``
+  equivalence
 - ``code_verifier`` is missing on token exchange when the auth code was issued with a ``code_challenge``
 - ``code_verifier`` does not match the stored ``code_challenge`` under the stored ``code_challenge_method`` (``S256`` or ``plain``)
 - ``code_verifier`` is submitted on token exchange but no ``code_challenge`` was stored with the auth code
@@ -1561,6 +1582,14 @@ auth-code scope exactly. A mismatch returns ``400 invalid_grant`` with content
 type ``application/x-www-form-urlencoded`` and does not create or reissue a
 token. An explicitly empty ``scope=`` parameter normalizes to no scope and is
 accepted only when the auth code was issued with no scope.
+
+When an auth code was issued with a ``redirect_uri``, token exchange also
+requires a submitted ``redirect_uri``. Omitted required values and mismatches
+return ``400 invalid_grant`` with content type
+``application/x-www-form-urlencoded`` and consume the matched auth code.
+Comparison normalizes scheme/host case, IDNA host form, default ports,
+percent-encoded triplet case, and empty root path versus ``/``. Non-default
+ports, non-root paths, and query strings remain significant.
 
 - ``create`` - Required for ``POST`` requests that create new posts. The
   legacy alias ``post`` is also accepted.

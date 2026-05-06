@@ -3,10 +3,12 @@
 Comprehensive tests for IndieAuth consent screen functionality.
 """
 
+import re
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from django.contrib.auth.models import User
+from django.test import Client
 from django.urls import reverse
 
 from indieweb.models import Auth
@@ -20,6 +22,29 @@ def user(db):
 @pytest.fixture
 def auth_url():
     return reverse("indieweb:auth")
+
+
+def _consent_data(action="approve", redirect_uri="https://app.example.com/callback"):
+    return {
+        "action": action,
+        "client_id": "https://app.example.com",
+        "redirect_uri": redirect_uri,
+        "state": "test123",
+        "me": "https://example.com",
+        "scope": "create",
+    }
+
+
+def _authorization_request_data():
+    data = _consent_data()
+    data.pop("action")
+    return data
+
+
+def _csrf_token(response):
+    match = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', response.content.decode("utf-8"))
+    assert match is not None
+    return match.group(1)
 
 
 class TestConsentScreenDisplay:
@@ -123,6 +148,24 @@ class TestConsentScreenDisplay:
         assert response.context["state"] == "complex-state-123"
         assert response.context["me"] == "https://example.com"
         assert response.context["scope"] == "create"
+
+    def test_consent_screen_blocks_framing(self, client, user, auth_url):
+        """Consent GET emits frame protections."""
+        client.login(username=user.username, password="testpass")
+
+        response = client.get(
+            auth_url,
+            {
+                "me": "https://example.com",
+                "client_id": "https://app.example.com",
+                "redirect_uri": "https://app.example.com/callback",
+                "state": "test123",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in response["Content-Security-Policy"]
 
 
 class TestConsentActions:
@@ -298,6 +341,93 @@ class TestConsentSecurity:
         assert hasattr(response, "templates"), "Response should have templates attribute"
         template_names = [t.name for t in response.templates]
         assert "indieweb/consent.html" in template_names
+
+    def test_approve_requires_csrf_token(self, user, auth_url):
+        """Approve consent POST is CSRF-protected for browser clients."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(user)
+
+        blocked = csrf_client.post(auth_url, _consent_data("approve"))
+
+        assert blocked.status_code == 403
+        assert Auth.objects.count() == 0
+
+    def test_deny_requires_csrf_token(self, user, auth_url):
+        """Deny consent POST is CSRF-protected for browser clients."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(user)
+
+        blocked = csrf_client.post(auth_url, _consent_data("deny"))
+
+        assert blocked.status_code == 403
+        assert Auth.objects.count() == 0
+
+    def test_approve_with_valid_csrf_token_still_works(self, user, auth_url):
+        """Authenticated approve with a valid CSRF token creates an auth code."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(user)
+        page = csrf_client.get(auth_url, _authorization_request_data())
+
+        response = csrf_client.post(
+            auth_url,
+            _consent_data("approve") | {"csrfmiddlewaretoken": _csrf_token(page)},
+        )
+
+        assert response.status_code == 302
+        params = parse_qs(urlparse(response.url).query)
+        assert "code" in params
+        assert params["state"] == ["test123"]
+        assert Auth.objects.get(client_id="https://app.example.com").owner == user
+
+    def test_deny_with_valid_csrf_token_still_works(self, user, auth_url):
+        """Authenticated deny with a valid CSRF token redirects with access_denied."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(user)
+        page = csrf_client.get(auth_url, _authorization_request_data())
+
+        response = csrf_client.post(
+            auth_url,
+            _consent_data("deny") | {"csrfmiddlewaretoken": _csrf_token(page)},
+        )
+
+        assert response.status_code == 302
+        params = parse_qs(urlparse(response.url).query)
+        assert params["error"] == ["access_denied"]
+        assert params["state"] == ["test123"]
+        assert Auth.objects.count() == 0
+
+    def test_unauthenticated_deny_does_not_redirect_to_client_uri(self, client, auth_url):
+        """Unauthenticated deny submissions are rejected before client redirect handling."""
+        response = client.post(
+            auth_url,
+            _consent_data("deny", redirect_uri="https://attacker.example/callback"),
+        )
+
+        assert response.status_code == 401
+        assert "Location" not in response
+        assert b"User not authenticated" in response.content
+
+    def test_code_verification_post_remains_csrf_exempt(self, user, auth_url):
+        """Legacy IndieAuth code verification POST remains a protocol POST."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        auth = Auth.objects.create(
+            owner=user,
+            client_id="https://app.example.com",
+            redirect_uri="https://app.example.com/callback",
+            state="test123",
+            me="https://example.com",
+        )
+
+        response = csrf_client.post(
+            auth_url,
+            {
+                "code": auth.key,
+                "client_id": "https://app.example.com",
+            },
+        )
+
+        assert response.status_code == 200
+        assert "me=https%3A%2F%2Fexample.com" in response.content.decode("utf-8")
 
     def test_state_parameter_preserved(self, client, user, auth_url):
         """Test that state parameter is preserved through the flow."""

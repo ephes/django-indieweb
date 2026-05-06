@@ -4,6 +4,52 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Restore consent CSRF protection and require redirect_uri-bound token exchange
+
+- Restored CSRF enforcement for IndieAuth browser consent ``action=approve``
+  and ``action=deny`` POSTs while preserving the legacy authorization-code
+  verification POST as a CSRF-exempt protocol request.
+- Moved the consent authentication gate before approve/deny redirect handling
+  so unauthenticated denial submissions no longer redirect to client-provided
+  ``redirect_uri`` values.
+- Added clickjacking protection to the consent screen with
+  ``X-Frame-Options: DENY`` and ``Content-Security-Policy: frame-ancestors
+  'none'``. Moved bundled consent and token-management inline styles into
+  ``src/indieweb/static/css/indieweb.css``.
+- Hardened token exchange so a code issued with ``redirect_uri`` must be
+  redeemed with one. Submitted and stored values are compared after
+  normalizing scheme/host case, IDNA host forms, default ports,
+  percent-encoded triplet case, and root empty-path/``/`` equivalence while
+  preserving non-default ports, non-root paths, and query semantics.
+- Backlog: removed the completed Priority 1 IndieAuth consent CSRF/open
+  redirect item and the completed Priority 1 token-exchange
+  ``redirect_uri`` matching item from ``BACKLOG.md``. No migrations were
+  needed.
+- Documentation: updated ``docs/api.rst``, ``docs/indieauth.rst``, and
+  ``docs/configuration.rst`` for consent CSRF enforcement, frame protections,
+  static bundled styles, and token-exchange ``redirect_uri`` matching.
+  ``SECURITY_ANALYSIS.md`` now marks only the fixed consent CSRF/open redirect
+  and token-exchange ``redirect_uri`` findings resolved while leaving
+  unrelated findings open.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased security notes for
+  the consent and token-exchange hardening.
+- Review follow-up: hardened ``_normalize_redirect_uri`` so pathological
+  historical stored values that fail URL parsing, IDNA encoding, or port
+  parsing do not raise during token exchange; such rows now fail cleanly as
+  mismatches and are consumed. Clarified the generic CSRF configuration docs
+  and removed an over-specific inline-style assertion from the consent tests.
+- Validation: ``uv run pytest tests/test_auth_endpoint.py -q --no-cov``
+  passed (81 passed); ``uv run pytest tests/test_consent_screen.py -q
+  --no-cov`` passed (21 passed); ``uv run pytest
+  tests/test_token_endpoint.py -q --no-cov`` passed (91 passed); ``uv run
+  ruff check src/indieweb/views.py tests/test_auth_endpoint.py
+  tests/test_consent_screen.py tests/test_token_endpoint.py`` passed; ``uv
+  run pytest`` passed (1063 passed, coverage gate reached at 90.67%); ``uv run
+  mypy`` passed; ``uv run ruff check .`` passed; ``uv run ruff format .
+  --check`` passed; ``uv run prek run --all-files`` passed; ``uv run
+  sphinx-build -W -b html docs docs/_build/html`` passed; and ``git diff
+  --check`` passed.
+
 ### Tighten IndieAuth bearer parsing and rotate unique token keys on reissue
 
 - Tightened shared bearer-token parsing so token-protected resource views and

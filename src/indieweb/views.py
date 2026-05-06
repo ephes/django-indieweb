@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import math
@@ -21,6 +22,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
+from django.middleware.csrf import CsrfViewMiddleware
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
@@ -389,15 +391,50 @@ def _store_webmention_submission(source: str, target: str, vouch: str | None) ->
 
 
 def _normalize_redirect_uri(value: str) -> str:
-    """Return ``value`` with scheme and host lowercased.
+    """Return ``value`` normalized for redirect_uri comparison.
 
-    Path, query and fragment are preserved verbatim. Used for comparison only;
-    the original value is what is sent to the client.
+    The comparison form lowercases scheme/host, IDNA-encodes host names,
+    collapses default ports, lowercases percent-encoded triplets, and treats an
+    empty root path as equivalent to ``/``. Other path and query semantics are
+    preserved. Used for comparison only; the original value is what is sent to
+    the client.
     """
-    parsed = urlparse(value)
-    netloc = parsed.netloc.lower()
+
+    def normalize_percent_triplets(component: str) -> str:
+        return re.sub(r"%[0-9A-Fa-f]{2}", lambda match: match.group(0).lower(), component)
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return normalize_percent_triplets(value).lower()
+
     scheme = parsed.scheme.lower()
-    return parsed._replace(scheme=scheme, netloc=netloc).geturl()
+    hostname = parsed.hostname or ""
+    try:
+        ipaddress.ip_address(hostname)
+        normalized_host = hostname.lower()
+    except ValueError:
+        try:
+            normalized_host = hostname.encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            normalized_host = hostname.lower()
+    if ":" in normalized_host and not normalized_host.startswith("["):
+        normalized_host = f"[{normalized_host}]"
+
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = normalized_host
+    if port is not None and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+        netloc = f"{netloc}:{port}"
+
+    path = normalize_percent_triplets(parsed.path)
+    if path == "":
+        path = "/"
+    query = normalize_percent_triplets(parsed.query)
+    params = normalize_percent_triplets(parsed.params)
+    return parsed._replace(scheme=scheme, netloc=netloc, path=path, params=params, query=query).geturl()
 
 
 def _validate_pkce_request(challenge: str | None, method: str | None) -> tuple[str, str] | None:
@@ -658,6 +695,7 @@ class TokenAuthMixin(View):
         return super().dispatch(request, *args, **kwargs)
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     """
     IndieAuth authorization endpoint.
@@ -670,6 +708,24 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     required_params: list[str] = ["client_id", "redirect_uri", "state", "me"]
     rate_limit_key = "auth"
     cors_allowed_methods = ("GET", "POST")
+
+    def _csrf_failure_response(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase | None:
+        """Run Django's CSRF check for browser consent POSTs only."""
+        action = request.POST.get("action")
+        if request.method == "POST" and action in {"approve", "deny"}:
+            return CsrfViewMiddleware(lambda csrf_request: HttpResponse()).process_view(
+                request,
+                self.post,
+                args,
+                kwargs,
+            )
+        return None
+
+    def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
+        csrf_failure = self._csrf_failure_response(request, *args, **kwargs)
+        if csrf_failure is not None:
+            return csrf_failure
+        return super().dispatch(request, *args, **kwargs)
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
@@ -737,7 +793,10 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             "code_challenge": code_challenge,
             "code_challenge_method": effective_method,
         }
-        return render(request, "indieweb/consent.html", context)
+        response = render(request, "indieweb/consent.html", context)
+        response["X-Frame-Options"] = "DENY"
+        response["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return response
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         logger.info(f"auth view post: {request}, {args}, {kwargs}")
@@ -761,6 +820,9 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         assert redirect_uri is not None
         assert state is not None
         assert me is not None
+
+        if not request.user.is_authenticated:
+            return HttpResponse("User not authenticated", status=401)
 
         if _validate_redirect_uri(redirect_uri) is None:
             logger.info("rejected invalid redirect_uri on auth consent")
@@ -790,9 +852,6 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             target = _append_redirect_params(redirect_uri, deny_params)
             logger.info("auth view consent denied")
             return redirect(target)
-
-        if not request.user.is_authenticated:
-            return HttpResponse("User not authenticated", status=401)
 
         try:
             existing = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
@@ -925,6 +984,17 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             Auth.objects.filter(key=code, client_id=client_id).delete()
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
+    def _check_redirect_uri(self, auth: Auth, redirect_uri: str | None) -> HttpResponse | None:
+        """Verify redirect_uri binding for a matched authorization code."""
+        if auth.redirect_uri and not redirect_uri:
+            return self._consume_invalid_grant(auth, "Missing redirect_uri on token exchange")
+        if redirect_uri and auth.redirect_uri:
+            stored = _normalize_redirect_uri(auth.redirect_uri)
+            submitted = _normalize_redirect_uri(redirect_uri)
+            if stored != submitted:
+                return self._consume_invalid_grant(auth, "Redirect URI mismatch on token exchange")
+        return None
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         # Get parameters from request
         code = request.POST.get("code")
@@ -955,13 +1025,11 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         if isinstance(auth, HttpResponse):
             return auth
 
-        # Verify redirect_uri if provided. Already-stored values are not re-validated;
+        # Already-stored redirect_uri values are not re-validated structurally;
         # they were validated when the auth code was issued (or pre-date validation).
-        if redirect_uri and auth.redirect_uri:
-            stored = _normalize_redirect_uri(auth.redirect_uri)
-            submitted = _normalize_redirect_uri(redirect_uri)
-            if stored != submitted:
-                return self._consume_invalid_grant(auth, "Redirect URI mismatch on token exchange")
+        redirect_uri_error = self._check_redirect_uri(auth, redirect_uri)
+        if redirect_uri_error is not None:
+            return redirect_uri_error
 
         pkce_error = self._check_pkce(auth, code_verifier)
         if pkce_error is not None:

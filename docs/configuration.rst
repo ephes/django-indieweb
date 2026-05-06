@@ -75,6 +75,20 @@ resource-server scopes: ``create``, ``update``, ``delete``, ``undelete``, and
 ``read``, ``follow``, ``mute``, ``block``, or ``channels`` because the package
 does not include Microsub or other reader-side resource-server behavior.
 
+Bundled Browser UI Assets
+-------------------------
+
+The bundled IndieAuth consent page and token-management page load their
+package stylesheet from ``static/css/indieweb.css``. Ensure your deployment's
+normal static-file collection/serving setup includes django-indieweb's package
+static files if you use those default templates.
+
+The consent page sends ``X-Frame-Options: DENY`` and
+``Content-Security-Policy: frame-ancestors 'none'``. Host projects that
+override ``indieweb/consent.html`` should keep consent approve/deny forms as
+ordinary CSRF-protected browser POSTs and should not rely on inline styles for
+frame protection.
+
 Django Settings
 ---------------
 
@@ -132,8 +146,9 @@ Optional dotted path to a callable ``(client_id: str) -> bool`` that gates which
 When set, the configured callable is invoked **on top of** structural validation
 (an ``http``/``https`` URL with no userinfo and no fragment) at four
 authorization/token paths — the authorization GET, the consent approval POST,
-the code-verification POST, and the token endpoint POST — and again on the
-resource-server path inside ``TokenAuthMixin``. The latter is intentional:
+the consent denial POST, the code-verification POST, and the token endpoint
+POST — and again on the resource-server path inside ``TokenAuthMixin``. The
+latter is intentional:
 operator policy may evolve and revoke a previously-allowed ``client_id``, in
 which case existing tokens for that client must stop working immediately.
 
@@ -906,10 +921,13 @@ Middleware Configuration
 CSRF Exemption
 ~~~~~~~~~~~~~~
 
-The IndieWeb protocol views are automatically exempt from CSRF protection.
+Most IndieWeb protocol views are automatically exempt from CSRF protection.
 This is necessary for token and Micropub endpoints to accept POST requests
 from external clients, and for the WebSub subscriber callback to accept
-server-to-server hub deliveries.
+server-to-server hub deliveries. The browser consent approve/deny POST branch
+of ``AuthView`` is the exception: it enforces Django CSRF protection because it
+is a logged-in browser state-changing flow. The legacy authorization-code
+verification POST to the same endpoint remains CSRF-exempt.
 
 If you need CSRF protection, you'll need to implement your own views:
 

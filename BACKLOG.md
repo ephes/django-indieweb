@@ -16,16 +16,6 @@ When adding or completing items, keep each entry specific enough for an agent or
   References: `src/indieweb/processors.py` (`_html_links_to_target` ~line 122, `_text_links_to_target` ~line 875), `tests/test_webmention_processor.py`.
   The verifier matches `<a href>` inside `<template>` and `<noscript>` (BeautifulSoup's `html.parser` does not extract tags from inside HTML comments, so that path is not affected), and accepts plain-text URL tokens that the source page never renders as a link. Both bypass Webmention spec §3.2.2. Skip non-rendered ancestors before searching for hrefs; only accept the text-token path when the same content's `html` also contains a real `<a href>`. Tests should include `<template>`, `<noscript>`, and text-only-token cases.
 
-### IndieAuth and Token Security
-
-- [ ] Restore CSRF protection for the IndieAuth consent POST and close the unauthenticated `action=deny` open redirect.
-  References: `src/indieweb/views.py` (`AuthView` at line 609; deny branch at lines 736-743), `src/indieweb/templates/indieweb/consent.html`, `tests/test_auth_endpoint.py`, `tests/test_consent_screen.py`.
-  `AuthView` is fully CSRF-exempt. The legacy IndieAuth verification POST (`_verify_auth_code`) is a protocol POST and should remain exempt, but the `action in {approve, deny}` branches must require a valid CSRF token. Additionally the deny branch executes its redirect *before* `request.user.is_authenticated`, so an unauthenticated attacker with a self-submitting form bounces any visitor to any HTTPS URL with `?error=access_denied&state=...`; move the auth gate above the deny branch (or require CSRF on deny). Decorate the consent GET with `@xframe_options_deny` and emit `Content-Security-Policy: frame-ancestors 'none'` to defeat clickjacking. Move inline `<style>` blocks from `consent.html:45-100` and `tokens.html:52-94` into the existing `static/css/indieweb.css` (or supply a CSP-nonce hook) so the new CSP does not require `'unsafe-inline'`. Tests: cross-site POSTs without CSRF rejected; unauthenticated `action=deny` rejected; valid consent submissions still work.
-
-- [ ] Require token exchange `redirect_uri` to match the issued authorization request, with full normalization.
-  References: `src/indieweb/views.py` (`TokenView.post` ~line 890; `_normalize_redirect_uri` at line 369), `tests/test_token_endpoint.py`, IndieAuth/OAuth authorization code flow specs.
-  `TokenView.post()` only compares `redirect_uri` when the client submits one. Require it whenever the stored grant has one. `_normalize_redirect_uri` only lowercases scheme/host — it does not collapse default ports, lowercase percent-encoded triplets, normalise trailing slashes, or IDNA-encode hosts, so registered `https://example.org/cb` mismatches submitted `https://example.org:443/cb`. Apply full normalisation on both submitted and stored values. Tests: omitted, mismatched, matching, and equivalent-but-different-form pairs.
-
 ## Priority 2
 
 ### API Hardening

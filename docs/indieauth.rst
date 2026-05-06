@@ -26,6 +26,11 @@ The consent screen shows:
 * Requested permissions/scopes (if any)
 * Approve and Deny buttons
 
+The bundled consent page is protected against framing with
+``X-Frame-Options: DENY`` and ``Content-Security-Policy: frame-ancestors
+'none'``. Its bundled styles are served from ``static/css/indieweb.css`` rather
+than inline CSS.
+
 Example consent screen::
 
     Authorization Request
@@ -307,8 +312,13 @@ Security Considerations
    default; the Micropub endpoint rejects expired tokens with HTTP 401. Users
    can also revoke their own tokens at ``/indieweb/tokens/``; revocation
    deletes the token row and immediately invalidates the bearer credential.
-4. **CSRF Protection**: The consent form includes Django's CSRF token
-5. **User Authentication**: Users must be logged in to approve/deny requests
+4. **CSRF Protection**: Browser consent ``approve`` and ``deny`` POSTs require
+   Django's CSRF token. The legacy authorization-code verification POST remains
+   CSRF-exempt because it is a protocol request rather than a browser consent
+   submission.
+5. **User Authentication**: Users must be logged in to approve/deny requests;
+   unauthenticated submissions are rejected before django-indieweb builds any
+   redirect to the submitted ``redirect_uri``.
 6. **PKCE (RFC 7636)**: The authorization endpoint accepts an optional
    ``code_challenge`` (43-128 characters from the unreserved set
    ``[A-Za-z0-9._~-]``) and ``code_challenge_method`` (``S256`` or
@@ -352,12 +362,15 @@ Security Considerations
    content, and must not include userinfo (``user:pass@``). The authorization
    endpoint rejects malformed values with HTTP 400 *before* creating an
    authorization code; the token endpoint rejects malformed submissions with
-   ``invalid_grant``. When comparing the value submitted at the token
-   endpoint with the value stored alongside the authorization code, the
-   scheme and host are compared case-insensitively while the path and query
-   are compared verbatim. ``redirect_uri`` values that already contain a
-   query (e.g. ``?next=/x``) are preserved when ``code`` and ``state`` are
-   appended.
+   ``invalid_grant``. If the authorization code was issued with a
+   ``redirect_uri``, token exchange requires a submitted ``redirect_uri`` and
+   compares it with the stored value after normalizing scheme/host case, IDNA
+   host form, default ports, percent-encoded triplet case, and empty root path
+   versus ``/``. Non-default ports, non-root paths, and query strings remain
+   significant. Omitted required values and mismatches return
+   ``invalid_grant`` and consume the matched auth code. ``redirect_uri`` values
+   that already contain a query (e.g. ``?next=/x``) are preserved when
+   ``code`` and ``state`` are appended.
 9. **Scope Issuance Semantics**: The authorization endpoint normalizes scope
    strings before showing them on the consent screen and before storing them on
    the ``Auth`` row. Normalization splits on whitespace, de-duplicates while

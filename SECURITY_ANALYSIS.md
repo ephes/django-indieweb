@@ -16,7 +16,7 @@ The most urgent production blockers are:
 
 1. Stored XSS via `|safe` rendering of remote `content_html` AND via attacker-controlled URL schemes (e.g. `javascript:`/`data:`) in `Webmention.author_url` / `Webmention.author_photo`, neither of which is scheme-validated before persistence.
 2. SSRF on every outbound HTTP path: Webmention source/vouch fetches, outbound Webmention discovery and delivery, WebSub subscribe POSTs, and WebSub publish (`notify_hubs`) — none filter loopback / private / link-local / metadata addresses, and the redirect helper does not re-resolve and re-check after DNS resolution.
-3. CSRF exemption on the logged-in IndieAuth consent flow PLUS an unauthenticated open-redirect via the `action=deny` branch of the same view.
+3. Resolved 2026-05-06: CSRF exemption on the logged-in IndieAuth consent flow PLUS an unauthenticated open-redirect via the `action=deny` branch of the same view.
 4. Authorization codes are not invalidated on `redirect_uri` or scope mismatch (only PKCE failure deletes them), so a leaked code can be probed for the full TTL.
 
 ## Positive Security Properties
@@ -137,14 +137,25 @@ The WebSub callback path has parallel issues:
 
 **Severity:** High
 
+**Status:** Resolved 2026-05-06. Browser consent `action=approve` and
+`action=deny` POSTs now run Django's CSRF check while the legacy IndieAuth
+authorization-code verification POST remains CSRF-exempt. The consent
+authentication gate now runs before approve/deny redirect handling, so
+unauthenticated denial submissions no longer redirect to client-supplied
+`redirect_uri` values. The consent screen now emits `X-Frame-Options: DENY`
+and `Content-Security-Policy: frame-ancestors 'none'`, and bundled consent and
+token-management inline styles moved into `static/css/indieweb.css`.
+
 **References:**
 
 - `src/indieweb/views.py` (`AuthView` at line 609; deny branch at lines 736-743)
 - `src/indieweb/templates/indieweb/consent.html:23`
 
-`AuthView` inherits `CSRFExemptMixin`, which exempts the entire view including the logged-in browser approve/deny POST. The template renders `{% csrf_token %}` but the exemption means the token is not enforced.
+Historical finding:
 
-Worse, the deny branch executes the redirect *before* the `request.user.is_authenticated` check. Combined with the CSRF exemption, an unauthenticated attacker can host a self-submitting form that bounces any visitor to any HTTPS URL with `?error=access_denied&state=<attacker_value>`. This both phishes and provides an OAuth-style state-injection primitive.
+`AuthView` inherited `CSRFExemptMixin`, which exempted the entire view including the logged-in browser approve/deny POST. The template rendered `{% csrf_token %}` but the exemption meant the token was not enforced.
+
+Worse, the deny branch executed the redirect *before* the `request.user.is_authenticated` check. Combined with the CSRF exemption, an unauthenticated attacker could host a self-submitting form that bounced any visitor to any HTTPS URL with `?error=access_denied&state=<attacker_value>`. This both phished and provided an OAuth-style state-injection primitive.
 
 **Recommended fixes:**
 
@@ -196,13 +207,24 @@ Only PKCE failure and the happy path delete the authorization code. Mismatched `
 
 **Severity:** Medium/High
 
+**Status:** Resolved 2026-05-06. Token exchange now requires `redirect_uri`
+when the matched authorization code stores one. Omitted required values and
+mismatches return the existing `invalid_grant` response and consume the matched
+auth code. Matching now normalizes scheme/host case, IDNA host form, default
+ports, percent-encoded triplet case, and root empty-path/`/` equivalence while
+preserving non-default ports, non-root paths, and query strings. Malformed
+submitted `redirect_uri` values remain pre-lookup `invalid_grant` failures and
+do not delete unrelated auth-code rows.
+
 **References:**
 
 - `src/indieweb/views.py` (`TokenView.post` ~line 890; `_normalize_redirect_uri` at line 369)
 
-`TokenView.post()` compares `redirect_uri` only if the client submits one. If an authorisation code was issued with a redirect URI, the exchange should require the same value. Otherwise a leaked code can be redeemed with only the `client_id`, unless PKCE was used.
+Historical finding:
 
-In addition, `_normalize_redirect_uri` only lowercases scheme/host. It does not collapse default ports, lowercase percent-encoded triplets, normalise trailing slashes, or IDNA-encode host names, so registered `https://example.org/cb` mismatches submitted `https://example.org:443/cb` and vice versa.
+`TokenView.post()` compared `redirect_uri` only if the client submitted one. If an authorisation code was issued with a redirect URI, the exchange should require the same value. Otherwise a leaked code could be redeemed with only the `client_id`, unless PKCE was used.
+
+In addition, `_normalize_redirect_uri` only lowercased scheme/host. It did not collapse default ports, lowercase percent-encoded triplets, normalise trailing slashes, or IDNA-encode host names, so registered `https://example.org/cb` mismatched submitted `https://example.org:443/cb` and vice versa.
 
 **Recommended fixes:**
 

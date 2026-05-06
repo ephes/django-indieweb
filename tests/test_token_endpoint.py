@@ -459,6 +459,94 @@ def test_token_rejects_invalid_redirect_uri(client, token_endpoint_url, token_pa
 
 
 @pytest.mark.django_db
+def test_token_rejects_omitted_redirect_uri_when_auth_code_has_one(client, auth, token_endpoint_url):
+    """A redirect_uri-bound auth code must be redeemed with redirect_uri."""
+    auth.redirect_uri = "https://webapp.example.org/auth/callback"
+    auth.save()
+
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert response.content == b"invalid_grant"
+    assert models.Token.objects.count() == 0
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+    replay = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "redirect_uri": auth.redirect_uri,
+        },
+    )
+    assert replay.status_code == 400
+    assert replay.content == b"invalid_grant"
+
+
+@pytest.mark.django_db
+def test_token_does_not_delete_unrelated_auth_on_malformed_redirect_uri(client, user, token_endpoint_url):
+    """Malformed submitted redirect_uri is rejected before any auth-code lookup/deletion."""
+    other = models.Auth.objects.create(
+        owner=user,
+        client_id="https://other.example.org",
+        redirect_uri="https://other.example.org/callback",
+        state="other",
+        me="https://example.org",
+    )
+
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": "not-a-real-code",
+            "client_id": "https://webapp.example.org",
+            "redirect_uri": "https://webapp.example.org/callback#fragment",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert response.content == b"invalid_grant"
+    assert models.Auth.objects.filter(pk=other.pk).exists()
+    assert models.Token.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_token_consumes_auth_with_pathological_stored_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """Historical stored redirect_uri values that fail IDNA normalization do not 500."""
+    auth.redirect_uri = "http://../callback"
+    auth.save()
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert response.content == b"invalid_grant"
+    assert models.Token.objects.count() == 0
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_token_accepts_exact_redirect_uri_match(client, auth, token_endpoint_url, token_payload):
+    """Submitted redirect_uri matching the stored auth-code value is accepted."""
+    auth.redirect_uri = "https://webapp.example.org/auth/callback"
+    auth.save()
+    token_payload["redirect_uri"] = auth.redirect_uri
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
 def test_token_accepts_case_only_difference_in_redirect_uri(client, auth, token_endpoint_url, token_payload):
     """Submitted redirect_uri matching stored value only by scheme/host case is accepted."""
     auth.redirect_uri = "https://webapp.example.org/auth/callback"
@@ -468,6 +556,78 @@ def test_token_accepts_case_only_difference_in_redirect_uri(client, auth, token_
     assert response.status_code == 201
     data = parse_qs(unquote(response.content.decode("utf-8")))
     assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_accepts_default_port_difference_in_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """Default HTTP(S) ports are collapsed before redirect_uri comparison."""
+    auth.redirect_uri = "https://webapp.example.org/auth/callback"
+    auth.save()
+    token_payload["redirect_uri"] = "https://webapp.example.org:443/auth/callback"
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_accepts_idna_equivalent_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """Unicode and IDNA-encoded host forms compare equivalent."""
+    auth.redirect_uri = "https://bücher.example/auth/callback"
+    auth.save()
+    token_payload["redirect_uri"] = "https://xn--bcher-kva.example/auth/callback"
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_accepts_percent_triplet_case_difference_in_redirect_uri(
+    client, auth, token_endpoint_url, token_payload
+):
+    """Percent-encoded triplet case is normalized before redirect_uri comparison."""
+    auth.redirect_uri = "https://webapp.example.org/auth/%7Ecallback?next=%2Fhome"
+    auth.save()
+    token_payload["redirect_uri"] = "https://webapp.example.org/auth/%7ecallback?next=%2fhome"
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_accepts_root_empty_path_equivalent_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """A root redirect_uri with no path is equivalent to the same URL with ``/``."""
+    auth.redirect_uri = "https://webapp.example.org"
+    auth.save()
+    token_payload["redirect_uri"] = "https://webapp.example.org/"
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    assert "access_token" in data
+
+
+@pytest.mark.django_db
+def test_token_rejects_non_default_port_difference_in_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """Non-default ports remain semantically significant."""
+    auth.redirect_uri = "https://webapp.example.org:8443/auth/callback"
+    auth.save()
+    token_payload["redirect_uri"] = "https://webapp.example.org/auth/callback"
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_grant"
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db
@@ -486,6 +646,21 @@ def test_token_rejects_path_only_difference_in_redirect_uri(client, auth, token_
     assert replay.status_code == 400
     assert "invalid_grant" in replay.content.decode("utf-8")
     assert models.Token.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_token_rejects_query_difference_in_redirect_uri(client, auth, token_endpoint_url, token_payload):
+    """Query differences remain semantically significant."""
+    auth.redirect_uri = "https://webapp.example.org/auth/callback?next=/one"
+    auth.save()
+    token_payload["redirect_uri"] = "https://webapp.example.org/auth/callback?next=/two"
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_grant"
+    assert models.Token.objects.count() == 0
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
