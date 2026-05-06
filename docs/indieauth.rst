@@ -72,7 +72,10 @@ today. The scope list advertises the built-in Micropub resource-server scopes;
 the legacy ``post`` alias is still accepted for create requests but is not
 advertised as a preferred scope. The extension ``draft`` scope is not
 advertised because django-indieweb does not implement built-in draft-only
-resource-server behavior. ``service_documentation`` points to the
+resource-server behavior. Reader-oriented extension scopes such as ``read``,
+``follow``, ``mute``, ``block``, and ``channels`` are also not advertised:
+django-indieweb does not implement Microsub or other built-in reader-side
+resource-server behavior for them. ``service_documentation`` points to the
 human-readable django-indieweb IndieAuth documentation.
 
 django-indieweb does not assume it owns the host project's root URLconf. Host
@@ -185,6 +188,16 @@ advertise it or let it replace ``create``/``post`` for creates or ``update``
 for updates. Submitted ``post-status=draft`` values are forwarded to the
 configured Micropub handler; the host application decides how to persist,
 filter, expose, or restrict draft content.
+
+The same opaque-extension rule applies to reader-side scope names. Clients may
+request values such as ``read``, ``follow``, ``mute``, ``block``, or
+``channels``, and django-indieweb will preserve them after normalization and
+return them from token issuance and introspection. Those scopes do not
+authorize any built-in django-indieweb resource-server behavior: the package
+does not ship Microsub channels, feed fetching, following, muting, blocking,
+reader timelines, or reader UI. Host applications that implement reader-side
+protocols need their own endpoints, models, authorization policy, metadata or
+discovery behavior where applicable, and documentation.
 
 Wire Compatibility Policy
 -------------------------
@@ -375,6 +388,10 @@ Security Considerations
     satisfy ``media``. ``draft`` is treated as an opaque extension scope by
     this built-in resource server: a token with only ``draft`` cannot create
     or update, while ``create draft`` can create because ``create`` is present.
+    Reader scopes such as ``read``, ``follow``, ``mute``, ``block``, and
+    ``channels`` are treated the same way: they may be stored on tokens, but
+    they are not built-in Micropub permissions and are not advertised by the
+    bundled metadata endpoint.
     Scope failures return HTTP 403 with the plain-text body
     ``authorization error``. The ``update``, ``delete``, and ``undelete``
     actions and the ``GET ?q=source`` query dispatch into the configured

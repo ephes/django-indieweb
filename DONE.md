@@ -4,6 +4,49 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Document Microsub and reader-side protocol non-goals
+
+- Documented django-indieweb's protocol boundary: the package supports
+  IndieAuth, Micropub publishing, Webmention, and WebSub publisher/subscriber
+  helper workflows, but does not implement Microsub or other reader-side
+  resource-server behavior.
+- Clarified that reader-oriented IndieAuth extension scopes such as ``read``,
+  ``follow``, ``mute``, ``block``, ``channels``, and similar strings may be
+  requested, normalized, stored on auth codes and tokens, and returned by token
+  issuance/introspection as opaque scope strings.
+- Clarified that those reader scopes do not grant built-in django-indieweb
+  behavior. The package still does not provide Microsub channels, feed
+  fetching, following, muting, blocking, reader timelines, reader UI, a
+  Microsub endpoint, a reader model, a parser, a scheduler, or a Microsub
+  setting.
+- Clarified that built-in IndieAuth metadata intentionally advertises only
+  ``create``, ``update``, ``delete``, ``undelete``, and ``media`` because those
+  are the bundled resource-server scopes. Reader scopes remain unadvertised.
+- Clarified that Micropub ``q=channel`` and ``mp-channel`` are publishing-side
+  configuration/command features, not Microsub channel support.
+- Backlog: removed the completed Priority 4 Microsub and reader-side protocol
+  non-goals item from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/concepts.rst``, ``docs/indieauth.rst``,
+  ``docs/api.rst``, and ``docs/configuration.rst`` with concise non-goal,
+  scope, metadata, endpoint inventory, and host-owned reader behavior
+  guidance. No generated docs under ``docs/_build`` were edited or staged.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased documentation
+  note.
+- Compatibility: endpoint behavior, token issuance, token introspection, scope
+  normalization, Micropub scope gates, built-in metadata response shape,
+  models, migrations, settings, and dependencies are unchanged.
+- Follow-up risks: host projects that want reader-side protocols still need
+  their own Microsub or reader endpoints, authorization policy, channel/feed
+  models, following/muting/blocking semantics, feed fetching, timeline storage,
+  UI, metadata/discovery behavior, and documentation.
+- Validation: ``uv run sphinx-build -W -b html docs docs/_build/html``
+  (passed), ``git ls-files docs/_build --modified --others
+  --exclude-standard`` (no output), ``uv run ruff check .`` (passed), ``uv
+  run ruff format . --check`` (92 files already formatted), ``git diff
+  --check`` (passed), ``uv run mypy`` (no issues in 44 source files), ``uv
+  run pytest`` (980 passed, coverage gate passed at 90.54%), and ``uv run prek
+  run --all-files`` (passed).
+
 ### Document host-owned WebSub workflow examples for delivery processing and lease renewal
 
 - Added tested examples in ``examples/websub_workflows.py`` for host-owned

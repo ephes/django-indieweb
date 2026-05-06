@@ -242,6 +242,27 @@ The Micropub resource server enforces scopes per operation; see :doc:`api` and
 - ``undelete`` - Required for ``POST action=undelete``
 - ``media`` - Required for direct uploads to the Micropub media endpoint
 
+Protocol Boundaries
+-------------------
+
+django-indieweb is focused on publishing, authorization, and notification
+workflows: IndieAuth, Micropub publishing, Webmention, and WebSub
+publisher/subscriber helper workflows. It does not implement reader-side
+protocols such as Microsub.
+
+Reader-oriented IndieAuth scope strings such as ``read``, ``follow``,
+``mute``, ``block``, ``channels``, and similar extension scopes can be
+requested, normalized, stored on auth codes and tokens, and returned by token
+responses because unknown IndieAuth scopes are preserved. They do not grant
+built-in django-indieweb resource-server behavior. The package does not provide
+Microsub channels, feed fetching, following, muting, blocking, reader
+timelines, or reader UI.
+
+The built-in IndieAuth metadata intentionally advertises only the scopes
+django-indieweb enforces for its bundled resource servers. Host applications
+that add reader-side protocols own their endpoints, models, authorization
+policy, discovery or metadata behavior, and user-facing documentation.
+
 Best Practices
 --------------
 
@@ -274,8 +295,9 @@ helpers, metadata-only delivery history, host-owned WebSub delivery/renewal
 workflow examples, and static-site/storage-boundary Micropub handler examples
 are also available. A bundled WebSub hub, automatic subscriber discovery,
 automatic background lease renewal, static-site builds, repository
-commits/pushes, media indexing/deletion policy, and host-owned event/RSVP
-storage semantics remain outside django-indieweb.
+commits/pushes, media indexing/deletion policy, Microsub, reader feed
+fetching, following/muting/blocking workflows, reader timelines, reader UI, and
+host-owned event/RSVP storage semantics remain outside django-indieweb.
 
 Future Enhancements
 -------------------

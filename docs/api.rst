@@ -29,6 +29,10 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
 
+There is no bundled Microsub endpoint, reader feed endpoint, reader timeline,
+following/muting/blocking endpoint, or reader UI. Host applications that need
+reader-side protocols must provide that resource-server behavior themselves.
+
 WebSub Publisher Helpers
 ------------------------
 
@@ -183,6 +187,10 @@ Response fields:
   values are not advertised as built-in capabilities. The extension ``draft``
   scope is also not advertised; django-indieweb stores it like any other
   unknown scope and leaves draft-only permission policy to host code.
+  Reader-oriented extension scopes such as ``read``, ``follow``, ``mute``,
+  ``block``, and ``channels`` are likewise not advertised because
+  django-indieweb does not implement Microsub or other built-in reader-side
+  resource-server behavior.
 - ``service_documentation`` - Human-facing documentation URL for
   django-indieweb's IndieAuth behavior.
 
@@ -1021,7 +1029,10 @@ JSON key. Channel item shape is host-defined; clients commonly expect
 Channel data exposed here is informational. django-indieweb preserves submitted
 ``mp-channel`` values on create requests, but it does not select defaults or
 route publication by channel. Channel-aware publication remains a
-host-handler concern.
+host-handler concern. This Micropub ``q=channel`` configuration query and the
+``mp-channel`` command property are publishing-side features; they are not
+Microsub channels and do not imply reader timeline, feed, or subscription
+support.
 
 ``q=category``, ``q=channel``, and ``q=post-types`` accept optional
 ``filter``, ``limit``, and ``offset`` parameters. ``filter`` is matched
@@ -1106,6 +1117,15 @@ A token scoped ``create draft`` can create because ``create`` is present, not
 because ``draft`` has built-in behavior. Hosts that want draft-only
 permissions need to implement that policy in host token handling, handlers, or
 a custom resource-server layer.
+
+Reader-oriented scopes such as ``read``, ``follow``, ``mute``, ``block``,
+``channels``, and similar extension strings follow the same storage rule:
+django-indieweb accepts and preserves them as opaque IndieAuth scopes, and
+token issuance/introspection can return them. They do not satisfy any built-in
+Micropub or media endpoint permission, and no bundled Microsub/resource-server
+behavior is attached to them. Host applications that implement reader
+protocols own their reader endpoints, channel/follow/mute/block models, feed
+fetching, authorization policy, metadata/discovery behavior, and API contracts.
 
 Micropub Media Endpoint
 -----------------------
@@ -1544,6 +1564,12 @@ accepted only when the auth code was issued with no scope.
 enforced.
 
 Multiple scopes can be requested by separating with spaces: ``scope=create update``
+
+Reader-oriented extension scopes such as ``read``, ``follow``, ``mute``,
+``block``, and ``channels`` may also be requested and stored, but
+django-indieweb treats them as opaque strings. They are not advertised in the
+built-in IndieAuth metadata and do not grant built-in Microsub, reader feed,
+channel, following, muting, blocking, timeline, or reader UI behavior.
 
 Rate Limiting
 -------------

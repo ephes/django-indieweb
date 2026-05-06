@@ -69,6 +69,12 @@ well-known publication. Successful bundled authorization redirects now include
 metadata URL as canonical, keep client-facing discovery and issuer validation
 guidance aligned with that canonical URL.
 
+The built-in metadata advertises only django-indieweb's bundled
+resource-server scopes: ``create``, ``update``, ``delete``, ``undelete``, and
+``media``. It intentionally does not advertise reader-oriented scopes such as
+``read``, ``follow``, ``mute``, ``block``, or ``channels`` because the package
+does not include Microsub or other reader-side resource-server behavior.
+
 Django Settings
 ---------------
 
@@ -788,6 +794,12 @@ This creates the following endpoints:
 - ``/indieweb/websub/<token>/`` - WebSub subscriber callback endpoint
 - ``/indieweb/webmention/`` - Webmention receive endpoint
 - ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
+
+The bundled URLconf does not create a Microsub endpoint, reader feed endpoint,
+reader timeline, following/muting/blocking endpoint, or reader UI. There is no
+Microsub setting in django-indieweb; host projects that add reader-side
+protocols own those URLs, storage models, authorization policy, discovery or
+metadata behavior, and documentation.
 
 Custom URL Paths
 ~~~~~~~~~~~~~~~~
