@@ -541,6 +541,35 @@ def _redact_auth_code(code: str | None) -> str:
     return f"{code[:6]}..."
 
 
+def _authorization_header(request: HttpRequest) -> str | None:
+    """Return the Authorization header value across Django client/server spellings."""
+    auth_header = request.headers.get("authorization")
+    if not auth_header:
+        auth_header = request.META.get("Authorization")
+    return auth_header
+
+
+def _parse_bearer_authorization_header(auth_header: str | None) -> str | None:
+    """Return a bearer token only for a strict two-part Authorization header."""
+    if not auth_header:
+        return None
+    parts = auth_header.strip().split()
+    if len(parts) != 2:
+        return None
+    scheme, token = parts
+    if scheme.lower() != "bearer":
+        return None
+    return token
+
+
+def _bearer_authentication_error_response() -> HttpResponse:
+    """Return the shared response for token-protected resource authentication failures."""
+    response = HttpResponse("authentication error", status=401)
+    response["Cache-Control"] = "no-store"
+    response["WWW-Authenticate"] = "Bearer"
+    return response
+
+
 class CSRFExemptMixin(View):
     """Mixin to exempt views from CSRF protection."""
 
@@ -576,25 +605,14 @@ class TokenAuthMixin(View):
     """
     Mixin for views that require token-based authentication.
 
-    Validates Bearer tokens from either the Authorization header or POST data
-    and enforces scope-based authorization.
+    Validates Bearer tokens from the Authorization header and enforces
+    scope-based authorization.
     """
 
     token: Token
 
     def authenticated(self, request: HttpRequest) -> bool:
-        key = None
-        # Check for Authorization header - Django prefixes HTTP headers with HTTP_
-        auth_header = request.headers.get("authorization")
-        # Also check without prefix for compatibility with some clients
-        if not auth_header:
-            auth_header = request.META.get("Authorization")
-        # Finally check POST data as fallback
-        auth_post = request.POST.get("Authorization")
-        auth_token = auth_header or auth_post
-
-        if auth_token is not None:
-            key = auth_token.split()[-1]
+        key = _parse_bearer_authorization_header(_authorization_header(request))
         if key is not None:
             try:
                 self.token = Token.objects.select_related("owner").get(key=key)
@@ -607,6 +625,9 @@ class TokenAuthMixin(View):
                 return True
             except Token.DoesNotExist:
                 logger.warning(f"Token not found: {key[:8]}...")
+                return False
+            except Token.MultipleObjectsReturned:
+                logger.warning(f"Multiple tokens found for bearer key: {key[:8]}...")
                 return False
         else:
             logger.warning("No authorization token provided in request")
@@ -628,7 +649,7 @@ class TokenAuthMixin(View):
 
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not self.authenticated(request):
-            return HttpResponse("authentication error", status=401)
+            return _bearer_authentication_error_response()
 
         if not _client_id_allowed(self.token.client_id):
             logger.warning(f"rejected disallowed client_id on resource server: {self.token.client_id!r}")
@@ -819,7 +840,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         logger.info(f"auth view post verification: {client_id}")
         try:
             auth = Auth.objects.get(key=auth_code, client_id=client_id)
-        except Auth.DoesNotExist:
+        except (Auth.DoesNotExist, Auth.MultipleObjectsReturned):
             return HttpResponse("Invalid authorization code", status=400)
         response_values = {"me": auth.me}
         if _prefers_json_response(request):
@@ -856,8 +877,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             defaults={"expires_at": expires_at},
         )
         if not created:
+            token.key = ""
             token.expires_at = expires_at
-            token.save(update_fields=["expires_at", "modified"])
+            token.save(update_fields=["key", "expires_at", "modified"])
         remaining = max(0, math.floor((expires_at - timezone.now()).total_seconds()))
         response_values: dict[str, str | int] = {
             "access_token": token.key,
@@ -889,6 +911,20 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             return self._consume_invalid_grant(auth, "PKCE verifier submitted without stored challenge")
         return None
 
+    def _get_auth_for_exchange(self, code: str, client_id: str) -> Auth | HttpResponse:
+        """Return the matched auth code or the existing invalid_grant response."""
+        try:
+            return Auth.objects.get(key=code, client_id=client_id)
+        except Auth.DoesNotExist:
+            logger.error(f"Auth not found for code={_redact_auth_code(code)}, client_id={client_id}")
+            return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+        except Auth.MultipleObjectsReturned:
+            logger.warning(
+                f"Multiple auth codes found for code={_redact_auth_code(code)}, client_id={client_id}; rejecting"
+            )
+            Auth.objects.filter(key=code, client_id=client_id).delete()
+            return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         # Get parameters from request
         code = request.POST.get("code")
@@ -914,60 +950,49 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.error("Rejected invalid redirect_uri on token exchange")
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
-        try:
-            # Find auth by code and client_id
-            auth = Auth.objects.get(key=code, client_id=client_id)
+        # Find auth by code and client_id
+        auth = self._get_auth_for_exchange(code, client_id)
+        if isinstance(auth, HttpResponse):
+            return auth
 
-            # Verify redirect_uri if provided. Already-stored values are not re-validated;
-            # they were validated when the auth code was issued (or pre-date validation).
-            if redirect_uri and auth.redirect_uri:
-                stored = _normalize_redirect_uri(auth.redirect_uri)
-                submitted = _normalize_redirect_uri(redirect_uri)
-                if stored != submitted:
-                    return self._consume_invalid_grant(auth, "Redirect URI mismatch on token exchange")
+        # Verify redirect_uri if provided. Already-stored values are not re-validated;
+        # they were validated when the auth code was issued (or pre-date validation).
+        if redirect_uri and auth.redirect_uri:
+            stored = _normalize_redirect_uri(auth.redirect_uri)
+            submitted = _normalize_redirect_uri(redirect_uri)
+            if stored != submitted:
+                return self._consume_invalid_grant(auth, "Redirect URI mismatch on token exchange")
 
-            pkce_error = self._check_pkce(auth, code_verifier)
-            if pkce_error is not None:
-                return pkce_error
+        pkce_error = self._check_pkce(auth, code_verifier)
+        if pkce_error is not None:
+            return pkce_error
 
-            stored_scope = _normalize_scope(auth.scope)
-            normalized_request_scope = _normalize_scope(requested_scope)
-            if requested_scope is not None and normalized_request_scope != stored_scope:
-                return self._consume_invalid_grant(auth, f"Scope mismatch on token exchange for client_id={client_id}")
+        stored_scope = _normalize_scope(auth.scope)
+        normalized_request_scope = _normalize_scope(requested_scope)
+        if requested_scope is not None and normalized_request_scope != stored_scope:
+            return self._consume_invalid_grant(auth, f"Scope mismatch on token exchange for client_id={client_id}")
 
-            # Use values from auth object if not provided in request
-            me = me or auth.me
-            scope = stored_scope
+        # Use values from auth object if not provided in request
+        me = me or auth.me
+        scope = stored_scope
 
-            logger.info(f"token view post: {client_id}, {me}, {_redact_auth_code(code)} {scope}")
+        logger.info(f"token view post: {client_id}, {me}, {_redact_auth_code(code)} {scope}")
 
-            # Check if auth code is still valid
-            timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
-            if (timezone.now() - auth.created).total_seconds() > timeout:
-                return self._consume_invalid_grant(auth, f"Auth code expired for client_id={client_id}")
+        # Check if auth code is still valid
+        timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
+        if (timezone.now() - auth.created).total_seconds() > timeout:
+            return self._consume_invalid_grant(auth, f"Auth code expired for client_id={client_id}")
 
-            # Delete auth code after use (one-time use)
-            auth.delete()
+        # Delete auth code after use (one-time use)
+        auth.delete()
 
-            # Create and return token
-            return self.send_token(request, me, client_id, scope, auth.owner)
-
-        except Auth.DoesNotExist:
-            logger.error(f"Auth not found for code={_redact_auth_code(code)}, client_id={client_id}")
-            return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+        # Create and return token
+        return self.send_token(request, me, client_id, scope, auth.owner)
 
 
 def _authorization_bearer_token(request: HttpRequest) -> str | None:
     """Return the bearer token from the Authorization header, if present."""
-    auth_header = request.headers.get("authorization")
-    if not auth_header:
-        auth_header = request.META.get("Authorization")
-    if not auth_header:
-        return None
-    parts = auth_header.strip().split()
-    if not parts:
-        return None
-    return parts[-1]
+    return _parse_bearer_authorization_header(_authorization_header(request))
 
 
 def _token_timestamp(value: datetime) -> int:
@@ -1010,6 +1035,9 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             token = Token.objects.select_related("owner").get(key=submitted_token)
         except Token.DoesNotExist:
             logger.info(f"introspection token not found: {submitted_token[:8]}...")
+            return self._inactive_response()
+        except Token.MultipleObjectsReturned:
+            logger.warning(f"introspection found multiple tokens for submitted key: {submitted_token[:8]}...")
             return self._inactive_response()
         if not token.owner.is_active:
             logger.info(f"introspection rejected inactive token owner: {token.owner}")

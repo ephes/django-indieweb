@@ -410,8 +410,10 @@ Both formats include ``token_type=Bearer``.
 The ``expires_in`` value is the remaining token lifetime in seconds. The
 default lifetime is 24 hours and can be tuned with the
 ``INDIEWEB_TOKEN_EXPIRES_IN`` setting (see :doc:`configuration`). Reissuing a
-token via the IndieAuth flow refreshes its expiration. Tokens whose
-``expires_at`` has passed are rejected with HTTP 401 by the Micropub endpoint.
+token via the IndieAuth flow refreshes its expiration and rotates the returned
+bearer key for the existing token row. The previous bearer key stops
+authenticating immediately. Tokens whose ``expires_at`` has passed are
+rejected with HTTP 401 by the Micropub endpoint.
 
 Token Introspection Endpoint
 ----------------------------
@@ -430,8 +432,9 @@ POST Request
 
 - ``token`` - Access token value to verify. This is normally sent as
   ``application/x-www-form-urlencoded``. If omitted, django-indieweb falls
-  back to the token from ``Authorization: Bearer <token>`` as the token being
-  checked.
+  back to a strictly parsed ``Authorization: Bearer <token>`` header as the
+  token being checked. The bearer scheme is case-insensitive, but the header
+  must contain exactly the scheme and one token value.
 
 **Example Request:**
 
@@ -510,6 +513,8 @@ foreign token IDs return ``404`` from the revoke view.
 
     HTTP/1.1 401 Unauthorized
     Content-Type: text/plain
+    Cache-Control: no-store
+    WWW-Authenticate: Bearer
 
     authentication error
 
@@ -524,10 +529,11 @@ a pluggable handler system. See :doc:`micropub` for detailed implementation guid
 Authentication
 ~~~~~~~~~~~~~~
 
-All Micropub requests require a valid access token provided either:
-
-1. In the ``Authorization`` header: ``Authorization: Bearer <token>``
-2. In the POST body: ``Authorization=Bearer <token>``
+All Micropub requests require a valid access token in the ``Authorization``
+header: ``Authorization: Bearer <token>``. The bearer scheme is
+case-insensitive, but the header must contain exactly the scheme and one token
+value. Tokens are not accepted from query strings or from a POST-body
+``Authorization`` field.
 
 GET Request
 ~~~~~~~~~~~
@@ -1278,7 +1284,8 @@ returns ``501 not_implemented``. django-indieweb never deletes
   when ``action=delete`` has a missing, empty, unknown, or rejected ``url``;
   or when a media hook raises ``ValueError``
 - ``401 Unauthorized`` body ``authentication error`` for missing, invalid, or
-  expired tokens, or inactive token owners
+  expired tokens, or inactive token owners. The response includes
+  ``Cache-Control: no-store`` and ``WWW-Authenticate: Bearer``.
 - ``413 Payload Too Large`` body ``invalid_request`` when the uploaded file
   exceeds ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``
 - ``415 Unsupported Media Type`` body ``invalid_request`` when the uploaded
@@ -1463,6 +1470,10 @@ All endpoints may return these error responses:
 - Missing or invalid access token
 - Expired access token
 - User account associated with the token is inactive
+
+Token-protected resource views return the plain-text body
+``authentication error`` and include ``Cache-Control: no-store`` and
+``WWW-Authenticate: Bearer`` on these 401 responses.
 
 **403 Forbidden**
 

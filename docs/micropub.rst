@@ -1067,7 +1067,8 @@ The Micropub endpoint returns the following HTTP status codes:
   Action, source-query, media-query, media-delete, and media-upload client
   failures use the plain-text body ``invalid_request``.
 - ``401 Unauthorized`` - Missing, expired, or invalid access token, or the
-  token's owner is inactive
+  token's owner is inactive. The response body is ``authentication error`` and
+  includes ``Cache-Control: no-store`` and ``WWW-Authenticate: Bearer``.
 - ``413 Payload Too Large`` - Media endpoint or multipart create upload exceeded
   ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``; body ``invalid_request``
 - ``415 Unsupported Media Type`` - Media endpoint or multipart create upload

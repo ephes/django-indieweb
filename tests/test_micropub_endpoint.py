@@ -58,6 +58,8 @@ def test_no_token(client, micropub_endpoint_url, micropub_payload):
     response = client.post(micropub_endpoint_url, data=micropub_payload)
     assert response.status_code == 401
     assert "error" in response.content.decode("utf-8")
+    assert response["Cache-Control"] == "no-store"
+    assert response["WWW-Authenticate"] == "Bearer"
 
 
 @pytest.mark.django_db
@@ -84,25 +86,24 @@ def test_correct_token_header(client, token, micropub_endpoint_url, micropub_pay
 @pytest.mark.django_db
 def test_correct_token_body(client, token, micropub_endpoint_url, micropub_payload):
     """
-    Assert we can post to the endpoint with the right token
-    submitted in the requests body.
+    Assert POST-body Authorization is not accepted as a bearer-token transport.
     """
     auth_body = f"Bearer {token.key}"
     micropub_payload["Authorization"] = auth_body
     response = client.post(micropub_endpoint_url, data=micropub_payload)
-    assert response.status_code == 201
-    assert "Location" in response  # Should return Location header
+    assert response.status_code == 401
+    assert response.content == b"authentication error"
+    assert response["Cache-Control"] == "no-store"
+    assert response["WWW-Authenticate"] == "Bearer"
 
 
 @pytest.mark.django_db
 def test_not_authorized(client, token, micropub_endpoint_url, micropub_payload):
     """Assure we cant post if we don't have the right scope."""
-    auth_body = f"Bearer {token.key}"
     old_scope = token.scope
     token.scope = "foo"
     token.save()
-    micropub_payload["Authorization"] = auth_body
-    response = client.post(micropub_endpoint_url, data=micropub_payload)
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=f"Bearer {token.key}")
     assert response.status_code == 403
     assert "error" in response.content.decode("utf-8")
     # Restore scope for cleanup
@@ -171,6 +172,44 @@ def test_http_authorization_header(client, token, micropub_endpoint_url, micropu
     response = client.post(micropub_endpoint_url, data=micropub_payload, HTTP_AUTHORIZATION=auth_header)
     assert response.status_code == 201
     assert "Location" in response
+
+
+@pytest.mark.django_db
+def test_bearer_scheme_is_case_insensitive(client, token, micropub_endpoint_url, micropub_payload):
+    """Bearer authentication accepts the scheme case-insensitively."""
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=f"bearer {token.key}")
+    assert response.status_code == 201
+
+
+@pytest.mark.django_db
+def test_bearer_header_with_extra_parts_is_rejected(client, token, micropub_endpoint_url, micropub_payload):
+    """A bearer header with extra parts must not authenticate by using the last fragment."""
+    response = client.post(
+        micropub_endpoint_url,
+        data=micropub_payload,
+        Authorization=f"Bearer {token.key} extra",
+    )
+
+    assert response.status_code == 401
+    assert response.content == b"authentication error"
+    assert response["Cache-Control"] == "no-store"
+    assert response["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.django_db
+def test_duplicate_token_lookup_is_rejected_without_500(client, monkeypatch, micropub_endpoint_url):
+    """Defensive duplicate Token-key handling rejects authentication instead of raising."""
+
+    class DuplicateTokenQuery:
+        def get(self, *args, **kwargs):
+            raise models.Token.MultipleObjectsReturned
+
+    monkeypatch.setattr(models.Token.objects, "select_related", lambda *args, **kwargs: DuplicateTokenQuery())
+
+    response = client.get(micropub_endpoint_url, Authorization="Bearer duplicatetokensecret")
+
+    assert response.status_code == 401
+    assert response.content == b"authentication error"
 
 
 @pytest.mark.django_db

@@ -18,6 +18,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from indieweb import models
+from indieweb.views import _authorization_bearer_token
 
 
 @pytest.fixture
@@ -176,7 +177,7 @@ def test_token_exchange_keeps_default_form_response_for_wildcard_accept(client, 
 def test_token_reissue_json_response_keeps_status_and_token_type(
     client, settings, token_endpoint_url, token_payload, user
 ):
-    """Reissued token JSON responses keep the existing 200 status semantics."""
+    """Reissued token JSON responses keep 200 semantics while rotating the bearer key."""
     settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
     existing = models.Token.objects.create(
         owner=user,
@@ -188,7 +189,7 @@ def test_token_reissue_json_response_keeps_status_and_token_type(
     response = client.post(token_endpoint_url, data=token_payload, HTTP_ACCEPT="application/json")
     assert response.status_code == 200
     assert response["Content-Type"] == "application/json"
-    assert response.json()["access_token"] == existing.key
+    assert response.json()["access_token"] != existing.key
     assert response.json()["token_type"] == "Bearer"
 
 
@@ -722,6 +723,55 @@ def test_token_reissue_resets_expires_at(client, settings, token_endpoint_url, t
 
 
 @pytest.mark.django_db
+def test_token_reissue_rotates_key_and_reuses_existing_row(client, settings, token_endpoint_url, token_payload, user):
+    """Reissuing the same token tuple rotates the bearer key without creating a second row."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    stale = models.Token.objects.create(
+        owner=user,
+        client_id=token_payload["client_id"],
+        me=token_payload["me"],
+        scope=token_payload["scope"],
+        expires_at=timezone.now() + timedelta(seconds=5),
+    )
+    old_key = stale.key
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 200
+    data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
+    new_key = data["access_token"][0]
+    assert new_key != old_key
+    stale.refresh_from_db()
+    assert stale.key == new_key
+    assert models.Token.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_reissued_old_token_stops_authenticating_and_new_token_authenticates(
+    client, settings, token_endpoint_url, token_payload, user
+):
+    """Only the rotated key should authenticate after a reissue."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    existing = models.Token.objects.create(
+        owner=user,
+        client_id=token_payload["client_id"],
+        me=token_payload["me"],
+        scope=token_payload["scope"],
+        expires_at=timezone.now() + timedelta(seconds=5),
+    )
+    old_key = existing.key
+
+    response = client.post(token_endpoint_url, data=token_payload)
+    new_key = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)["access_token"][0]
+
+    micropub_url = reverse("indieweb:micropub")
+    old_response = client.get(micropub_url, Authorization=f"Bearer {old_key}")
+    new_response = client.get(micropub_url, Authorization=f"Bearer {new_key}")
+    assert old_response.status_code == 401
+    assert new_response.status_code == 200
+
+
+@pytest.mark.django_db
 def test_token_introspection_returns_active_token_metadata(client, user, token_introspection_endpoint_url):
     """Valid tokens introspect to stable resource-server metadata without exposing secrets."""
     expires_at = timezone.now() + timedelta(hours=1)
@@ -770,6 +820,62 @@ def test_token_introspection_accepts_bearer_header_as_token_input(client, user, 
 
 
 @pytest.mark.django_db
+def test_token_introspection_accepts_case_insensitive_bearer_scheme(client, user, token_introspection_endpoint_url):
+    """Bearer scheme matching remains case-insensitive."""
+    token = models.Token.objects.create(
+        owner=user,
+        key="lowercasebearersecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope=None,
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(token_introspection_endpoint_url, HTTP_AUTHORIZATION=f"bearer {token.key}")
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
+
+
+@pytest.mark.parametrize(
+    "auth_header",
+    [
+        "Bearer one two",
+        "Basic token",
+        "Bearer",
+        "Bearer   ",
+        "   ",
+    ],
+)
+def test_authorization_bearer_token_rejects_malformed_headers(rf, auth_header):
+    """The shared bearer parser accepts only exactly two Bearer header parts."""
+    request = rf.post("/indieweb/token/introspect/", HTTP_AUTHORIZATION=auth_header)
+
+    assert _authorization_bearer_token(request) is None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "auth_header",
+    [
+        "Bearer one two",
+        "Basic token",
+        "Bearer",
+        "Bearer   ",
+        "   ",
+    ],
+)
+def test_token_introspection_returns_inactive_for_malformed_bearer_headers(
+    client, token_introspection_endpoint_url, auth_header
+):
+    """Malformed bearer headers are treated as absent token input."""
+    response = client.post(token_introspection_endpoint_url, HTTP_AUTHORIZATION=auth_header)
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     ("payload", "headers"),
     [
@@ -786,6 +892,44 @@ def test_token_introspection_returns_inactive_for_missing_or_unknown_token(
 
     assert response.status_code == 200
     assert response["Content-Type"] == "application/json"
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_exchange_rejects_duplicate_auth_code_lookup_without_issuing_token(
+    client, auth, monkeypatch, token_endpoint_url, token_payload
+):
+    """Defensive duplicate Auth-key handling returns invalid_grant instead of a 500."""
+
+    def duplicate_auth(*args, **kwargs):
+        raise models.Auth.MultipleObjectsReturned
+
+    monkeypatch.setattr(models.Auth.objects, "get", duplicate_auth)
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 400
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert response.content == b"invalid_grant"
+    assert models.Token.objects.count() == 0
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_token_introspection_rejects_duplicate_token_key_lookup_without_500(
+    client, monkeypatch, token_introspection_endpoint_url
+):
+    """Defensive duplicate Token-key handling returns the stable inactive response."""
+
+    class DuplicateTokenQuery:
+        def get(self, *args, **kwargs):
+            raise models.Token.MultipleObjectsReturned
+
+    monkeypatch.setattr(models.Token.objects, "select_related", lambda *args, **kwargs: DuplicateTokenQuery())
+
+    response = client.post(token_introspection_endpoint_url, data={"token": "duplicatetokensecret"})
+
+    assert response.status_code == 200
     assert response.json() == {"active": False}
 
 

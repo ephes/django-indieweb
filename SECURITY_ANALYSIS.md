@@ -161,8 +161,13 @@ Worse, the deny branch executes the redirect *before* the `request.user.is_authe
 `TokenView.post` now consumes a matched `Auth` row on PKCE failures,
 `redirect_uri` mismatches, scope mismatches, and expired-code failures before
 returning the existing `invalid_grant` response. Token endpoint logs now redact
-authorization codes. The related bearer parsing, key uniqueness, and token
-rotation issues listed below remain tracked as separate backlog items.
+authorization codes. Resolved 2026-05-06 for the adjacent bearer parsing,
+key uniqueness, duplicate-lookup handling, and token reissue rotation slice:
+bearer headers must now be strict two-part `Authorization: Bearer <token>`
+values, POST-body `Authorization` fallback is removed, token-protected 401
+responses include `Cache-Control: no-store` and `WWW-Authenticate: Bearer`,
+`Auth.key` and `Token.key` are unique, duplicate-key lookups fail closed, and
+token reissue rotates the existing row's bearer key.
 
 **References:**
 
@@ -174,10 +179,10 @@ Only PKCE failure and the happy path delete the authorization code. Mismatched `
 
 **Related issues found in the same review:**
 
-- Authorization codes are interpolated into log records cleartext (`views.py:873`); tokens are already truncated.
-- `Auth.key` and `Token.key` are not `unique=True` (`models.py:39, 68`). `TokenAuthMixin.authenticated` (`views.py:568`) and the auth-code lookup at `views.py:886` only catch `DoesNotExist`, so a key collision raises `MultipleObjectsReturned` and turns auth/token exchange into a 500.
-- `_authorization_bearer_token` and `TokenAuthMixin.authenticated` (`views.py:941`) use `parts[-1]`, accepting `Authorization: Bearer foo bar` and silently using `bar`.
-- Token reissuance via `get_or_create` (`views.py:820`) returns the same row, so the bearer key is never rotated for the lifetime of the `(me, client_id, scope, owner)` tuple.
+- Authorization codes were interpolated into log records cleartext (`views.py:873`); tokens were already truncated. Resolved 2026-05-06.
+- `Auth.key` and `Token.key` were not `unique=True` (`models.py:39, 68`), and duplicate-key lookups could raise `MultipleObjectsReturned`. Resolved 2026-05-06.
+- `_authorization_bearer_token` and `TokenAuthMixin.authenticated` (`views.py:941`) used `parts[-1]`, accepting `Authorization: Bearer foo bar` and silently using `bar`. Resolved 2026-05-06.
+- Token reissuance via `get_or_create` (`views.py:820`) returned the same row without rotating the bearer key. Resolved 2026-05-06.
 
 **Recommended fixes:**
 
@@ -271,11 +276,15 @@ The Micropub views pass `self.token.owner` to the adapter. The reference `InMemo
 
 **Severity:** Medium
 
+**Status:** Resolved 2026-05-06.
+
 **References:** `src/indieweb/views.py:562` (`TokenAuthMixin.authenticated`).
 
-`TokenAuthMixin.authenticated` reads `request.POST.get("Authorization")` as a fallback. Form bodies are written to proxy access logs and are replayable in CSRF-style attacks. RFC 6750 prohibits this transport; the spec-mandated alternative is the `access_token=` form parameter and only on `Content-Type: application/x-www-form-urlencoded`.
+Historical finding:
 
-**Recommendation:** Drop the `request.POST["Authorization"]` fallback. If RFC 6750 form-body transport is needed, switch to `access_token=` gated on form-encoded content type. Add `Cache-Control: no-store` and a `WWW-Authenticate` header to 401 responses.
+`TokenAuthMixin.authenticated` read `request.POST.get("Authorization")` as a fallback. Form bodies are written to proxy access logs and are replayable in CSRF-style attacks. RFC 6750 prohibits this transport; the spec-mandated alternative is the `access_token=` form parameter and only on `Content-Type: application/x-www-form-urlencoded`.
+
+The fallback is now removed. Token-protected resource views accept only strict bearer headers and return 401 failures with `Cache-Control: no-store` and `WWW-Authenticate: Bearer`.
 
 ### JSON Micropub Path Bypasses Property Allow-List
 
@@ -355,9 +364,9 @@ The authorisation request accepts and stores arbitrary `me` values; the consent 
 
 ### Access Tokens Are Stored in Plaintext
 
-`Token.key` is stored directly in the database. A database-read compromise yields live bearer tokens. `Auth.key` and `Token.key` are also not `unique=True`, so a (vanishingly unlikely) collision raises `MultipleObjectsReturned`.
+`Token.key` is stored directly in the database. A database-read compromise yields live bearer tokens. `Auth.key` and `Token.key` are now unique, and duplicate-key lookups fail closed, but token hashes at rest are still not implemented.
 
-**Recommendation:** Store only a hash; return the raw token at issuance only; authenticate by comparing derived hashes (with `hmac.compare_digest`). Add `unique=True` migrations for both keys.
+**Recommendation:** Store only a hash; return the raw token at issuance only; authenticate by comparing derived hashes (with `hmac.compare_digest`).
 
 ### Micropub Property Validation Gaps
 
@@ -403,15 +412,15 @@ The authorisation request accepts and stores arbitrary `me` values; the consent 
 1. Sanitise Webmention HTML; validate URL schemes on Webmention author fields and the templatetag `mark_safe` site.
 2. Add a single SSRF-safe HTTP helper and route every outbound HTTP path through it (Webmention receive, Webmention sender, WebSub subscribe, WebSub publish). Restrict source/target URL validators to http/https.
 3. Restore CSRF protection for IndieAuth consent approve/deny POSTs; move the authentication gate above the deny branch; add `xframe_options_deny` and `frame-ancestors 'none'`.
-4. Delete authorisation codes on every grant-validation failure; redact codes in logs; rotate token keys on reissue; require strict bearer-token parsing.
+4. Delete authorisation codes on every grant-validation failure; redact codes in logs; rotate token keys on reissue; require strict bearer-token parsing. (Resolved 2026-05-06.)
 5. Add Webmention/WebSub fetch size limits, response streaming, queue guidance, and rate-limit defaults; cap nested h-entry recursion; check `Content-Length` before reading WebSub body.
 6. Require token-exchange `redirect_uri` matching with full normalisation (default ports, IDNA, percent-encoding).
 7. Add Micropub media magic-byte validation, derive suffix from validated content-type, cap multipart counts, document safe serving headers.
 8. Authenticate the introspection endpoint per RFC 7662.
-9. Drop the POST-body `Authorization` fallback; apply the JSON-path Micropub property allow-list; gate `update` on server-managed properties.
+9. Apply the JSON-path Micropub property allow-list; gate `update` on server-managed properties. (The POST-body `Authorization` fallback is resolved.)
 10. Refuse CORS credentials when `Access-Control-Allow-Origin: *` is configured.
 11. Add stricter IndieAuth client/PKCE/`me` policy options (incl. consent-screen warning when `me` does not match the logged-in user's profile).
-12. Hash access tokens at rest; add `unique=True` to `Auth.key`/`Token.key`.
+12. Hash access tokens at rest. (`Auth.key`/`Token.key` uniqueness is resolved.)
 13. Mask WebSub subscription secrets, Token.key, and Auth.state in the admin; preserve delivery-attempt audit records; document Micropub adapter ownership responsibilities.
 14. Make Webmention status URLs non-enumerable or privacy-aware; harden source-link verification against non-rendered ancestors and plain-text-only matches.
 15. Require or strongly recommend signed WebSub deliveries; add replay protection, lease bounds, and signature-algorithm preference.

@@ -4,6 +4,62 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-06
 
+### Tighten IndieAuth bearer parsing and rotate unique token keys on reissue
+
+- Tightened shared bearer-token parsing so token-protected resource views and
+  token introspection accept only exactly two-part
+  ``Authorization: Bearer <token>`` headers with a case-insensitive bearer
+  scheme. Malformed bearer headers now fail closed instead of using the last
+  whitespace-delimited fragment.
+- Removed the Micropub/resource-server POST-body ``Authorization`` fallback.
+  Access tokens remain unsupported in query strings.
+- Added ``Cache-Control: no-store`` and ``WWW-Authenticate: Bearer`` to 401
+  authentication failures from token-protected resource views while preserving
+  the existing ``authentication error`` body and status.
+- Added model and migration-level uniqueness for ``Auth.key`` and
+  ``Token.key``. Migration ``0018_alter_auth_key_alter_token_key`` rotates
+  accidental duplicate historical keys before adding the unique constraints so
+  pathological existing databases can apply the migration.
+- Added defensive ``MultipleObjectsReturned`` handling for token
+  authentication, token introspection, token exchange auth-code lookup, and
+  legacy Auth verification so duplicate-key races or pre-constraint rows fail
+  as authentication/token-exchange failures instead of 500s.
+- Changed token reissue to reuse the existing ``Token`` row, refresh
+  ``expires_at``, rotate ``Token.key``, return HTTP 200, and return the new
+  bearer key. The old bearer key stops authenticating immediately.
+- Review follow-up: changed the defensive duplicate auth-code exchange path to
+  delete all rows matching the submitted ``code`` and ``client_id`` before
+  returning ``invalid_grant``, preserving one-time-use behavior for
+  pathological pre-constraint data.
+- Backlog: removed the completed Priority 1 bearer-parser/401-hygiene item and
+  the completed Priority 1 unique-key/token-rotation item from
+  ``BACKLOG.md``.
+- Documentation: updated ``docs/api.rst``, ``docs/indieauth.rst``, and
+  ``docs/micropub.rst`` for strict bearer headers, removal of POST-body
+  ``Authorization``, 401 response headers, and token reissue rotation.
+  ``SECURITY_ANALYSIS.md`` now marks the fixed bearer parsing, POST fallback,
+  key uniqueness, duplicate-lookup, and token reissue issues resolved while
+  leaving unrelated token hashing and admin-secret work open.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased security notes for
+  strict bearer parsing, 401 hygiene, key uniqueness, duplicate-key handling,
+  and token reissue rotation.
+- Validation: ``uv run pytest tests/test_token_endpoint.py -q --no-cov``
+  passed (81 passed); ``uv run pytest tests/test_auth_endpoint.py -q
+  --no-cov`` passed (81 passed); ``uv run pytest
+  tests/test_micropub_endpoint.py -q --no-cov`` passed (94 passed); ``uv run
+  pytest tests/test_token_management.py -q --no-cov`` passed (9 passed);
+  ``uv run ruff check src/indieweb/views.py src/indieweb/models.py
+  tests/test_token_endpoint.py tests/test_auth_endpoint.py
+  tests/test_micropub_endpoint.py tests/test_token_management.py`` passed;
+  ``uv run python manage.py makemigrations --check --dry-run
+  --settings=tests.settings`` passed with no changes detected; ``uv run
+  python manage.py migrate --settings=tests.settings`` applied all migrations
+  including ``0018`` successfully; ``uv run pytest`` passed (1046 passed,
+  coverage gate reached at 90.68%); ``uv run mypy`` passed; ``uv run ruff
+  check .`` passed; ``uv run ruff format . --check`` passed; ``uv run
+  prek run --all-files`` passed; ``uv run sphinx-build -W -b html docs
+  docs/_build/html`` passed; and ``git diff --check`` passed.
+
 ### Make IndieAuth authorization codes single-use on every failure path
 
 - Updated ``TokenView.post`` so once a submitted authorization code resolves to

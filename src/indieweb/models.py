@@ -36,7 +36,7 @@ class Auth(GenKeyMixin):
     before exchanging the auth code for an access token.
     """
 
-    key = models.CharField(max_length=32)
+    key = models.CharField(max_length=32, unique=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="indieweb_auth", on_delete=models.CASCADE)
     state = models.CharField(max_length=32)
     client_id = models.CharField(max_length=512)
@@ -65,7 +65,7 @@ class Token(GenKeyMixin):
     requests to the Micropub endpoint and other IndieWeb services.
     """
 
-    key = models.CharField(max_length=32, db_index=True)
+    key = models.CharField(max_length=32, unique=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="indieweb_token",

@@ -101,8 +101,10 @@ Token Introspection
 The bundled token introspection endpoint is available at
 ``/indieweb/token/introspect/``. It accepts ``POST`` requests with a
 form-encoded ``token`` field and returns JSON. If the ``token`` field is
-missing, the endpoint falls back to the bearer credential in
-``Authorization: Bearer <token>`` as the token being checked.
+missing, the endpoint falls back to a strictly parsed
+``Authorization: Bearer <token>`` header as the token being checked. The
+bearer scheme is case-insensitive, but the header must contain exactly the
+scheme and one token value.
 
 Active responses include only the token metadata needed by resource servers:
 
@@ -151,6 +153,10 @@ that ``Token`` row, so the bearer credential immediately stops authenticating
 Micropub and other token-protected requests. Users only see and revoke tokens
 owned by their own Django account; tokens for other users are not listed and
 cannot be revoked through this UI.
+
+When an existing token row is reissued through the IndieAuth token endpoint,
+django-indieweb refreshes its expiration and rotates the bearer key returned
+to the client. The previous bearer key stops authenticating immediately.
 
 Authentication vs Authorization
 -------------------------------

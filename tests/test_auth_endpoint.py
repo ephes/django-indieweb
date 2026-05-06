@@ -890,6 +890,27 @@ def test_post_verify_auth_code(client, user):
 
 
 @pytest.mark.django_db
+def test_post_verify_auth_code_rejects_duplicate_auth_lookup(client, monkeypatch):
+    """Duplicate auth-code lookup failures keep the legacy invalid-code response shape."""
+
+    def duplicate_auth(*args, **kwargs):
+        raise Auth.MultipleObjectsReturned
+
+    monkeypatch.setattr(Auth.objects, "get", duplicate_auth)
+
+    response = client.post(
+        reverse("indieweb:auth"),
+        data={
+            "code": "duplicateauthsecret",
+            "client_id": "https://webapp.example.org",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.content == b"Invalid authorization code"
+
+
+@pytest.mark.django_db
 def test_post_verify_auth_code_returns_json_when_requested(client, user):
     """Code verification returns JSON only when the client explicitly prefers it."""
     auth = Auth.objects.create(
