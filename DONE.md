@@ -4,6 +4,72 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Strengthen Micropub media upload validation and serving guidance
+
+- Sniffed Micropub media uploads with ``filetype`` before storage, compared
+  sniffed type, submitted part content type, and filename suffix, and rejected
+  unknown or mismatched uploads with the existing ``invalid_request`` media
+  responses before any storage write.
+- Changed stored media names to keep unguessable ``indieweb/media/`` keys
+  while deriving the filename suffix from the validated media type rather than
+  the client filename. Multipart create uploads still preserve URL-valued
+  ``photo`` properties and clean up already-saved files when a later save
+  fails.
+- Added ``INDIEWEB_MEDIA_MAX_UPLOAD_COUNT`` and
+  ``INDIEWEB_MEDIA_MAX_UPLOAD_TOTAL_BYTES`` so direct media uploads and
+  multipart ``photo`` create uploads enforce request-level count and aggregate
+  byte limits. Unknown-size uploads are rejected.
+- Backlog: removed the completed Priority 3 Micropub media upload validation
+  and serving guidance item from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/configuration.rst`` and ``docs/micropub.rst``
+  for content sniffing, suffix derivation, count/aggregate limits, disabled
+  allowlist semantics, and defensive serving guidance.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased Micropub input
+  hardening security note.
+- Review follow-up: documented the ``filetype`` sniff byte window and slug
+  sanitization boundary in code comments.
+- Validation: ``uv sync`` passed; ``uv run pytest
+  tests/test_micropub_media.py tests/test_micropub_create.py
+  tests/test_micropub_actions.py -q --no-cov`` passed (199 passed); ``uv run
+  pytest`` passed (1157 passed, coverage gate reached at 90.14%); ``uv run
+  mypy`` passed; ``uv run ruff check .`` passed; ``uv run ruff format .
+  --check`` passed; ``uv run prek run --all-files`` passed; and ``just docs``
+  passed.
+
+### Strengthen Micropub property validation
+
+- Validated URL-valued Micropub create properties before handler dispatch for
+  JSON and form requests: ``photo``, ``audio``, ``video``,
+  ``in-reply-to``, ``like-of``, ``repost-of``, ``bookmark-of``, and
+  ``syndication`` now require absolute HTTP(S) URLs while generated local
+  media URLs remain accepted.
+- Sanitized ``mp-slug`` values before forwarding them to handlers by stripping
+  path separators, control characters, and leading dots, omitting the property
+  when sanitization leaves no value.
+- Required update/delete/undelete action URLs to be relative/local or
+  same-host absolute URLs before handler dispatch, while keeping relative
+  in-memory handler URLs valid. JSON Micropub bodies with
+  ``application/json`` parameters such as ``charset=utf-8`` are now parsed as
+  JSON.
+- Backlog: removed the completed Priority 3 Micropub property validation item
+  from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/micropub.rst`` for create URL validation,
+  ``mp-slug`` sanitization, same-host action URLs, and JSON content-type
+  parameter handling. No separate configuration setting was added for this
+  item.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased Micropub input
+  hardening security note.
+- Review follow-up: preserved empty Microformats2 arrays for URL-valued create
+  properties instead of rejecting them, and normalized explicit default ports
+  when comparing same-host action URLs.
+- Validation: ``uv sync`` passed; ``uv run pytest
+  tests/test_micropub_media.py tests/test_micropub_create.py
+  tests/test_micropub_actions.py -q --no-cov`` passed (199 passed); ``uv run
+  pytest`` passed (1157 passed, coverage gate reached at 90.14%); ``uv run
+  mypy`` passed; ``uv run ruff check .`` passed; ``uv run ruff format .
+  --check`` passed; ``uv run prek run --all-files`` passed; and ``just docs``
+  passed.
+
 ### Refuse wildcard CORS credentials and harden CORS caching
 
 - Changed built-in CORS so ``INDIEWEB_CORS_ALLOWED_ORIGINS = "*"`` combined

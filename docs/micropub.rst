@@ -292,6 +292,13 @@ Common h-entry properties are supported:
 - ``post-status`` - Submitted publication status such as ``draft`` or
   ``published``
 
+URL-valued create properties are validated before handler dispatch. ``photo``,
+``audio``, ``video``, ``in-reply-to``, ``like-of``, ``repost-of``,
+``bookmark-of``, and ``syndication`` must contain absolute HTTP(S) URLs in
+both form and JSON requests; invalid values return ``400 invalid_request``.
+Multipart ``photo`` file uploads are stored first and the generated local
+absolute media URLs are allowed through this same gate.
+
 For h-event-style form requests, django-indieweb forwards event properties
 such as ``name``, ``summary``, ``description``, ``start``, ``end``,
 ``location``, ``category``, ``url``, and ``published`` unchanged as normalized
@@ -407,6 +414,9 @@ form, such as ``"delete": ["uid"]``, and the value-specific map form, such as
 Command and extension properties remain allowed and handler-owned:
 ``mp-slug``, ``mp-channel``, ``mp-photo-alt``, ``mp-syndicate-to``, and
 ``post-status`` are preserved for host code rather than denied by this gate.
+``mp-slug`` values are sanitized before they reach the handler: path
+separators, control characters, and leading dots are stripped, and an empty
+result is omitted.
 
 Media Endpoint
 ~~~~~~~~~~~~~~
@@ -455,9 +465,9 @@ include ``photo`` file parts. These are create requests, so they require
 ``create`` (or the legacy ``post`` alias), not ``media``. Each uploaded photo
 is validated and stored with the same policy as the direct media endpoint, and
 the resulting absolute media URL is appended to the entry's ``photo`` property
-before ``MicropubContentHandler.create_entry()`` is called. Existing URL-valued
-``photo`` form fields are preserved, so clients can send both referenced and
-uploaded photos in one create request:
+before ``MicropubContentHandler.create_entry()`` is called. Existing
+HTTP(S)-valued ``photo`` form fields are preserved, so clients can send both
+referenced and uploaded photos in one create request:
 
 .. code:: bash
 
@@ -480,19 +490,41 @@ The handler receives properties shaped like:
      ]
    }
 
-The media endpoint and multipart create uploads share two safety settings:
+The media endpoint and multipart create uploads share these safety settings:
 
 - ``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES`` defaults to 10 MiB. Larger uploads
   return ``413 invalid_request`` before storage is called.
+- ``INDIEWEB_MEDIA_MAX_UPLOAD_COUNT`` defaults to 10 uploaded files per
+  request. Requests over the count limit return ``413 invalid_request`` before
+  storage is called. Direct ``/indieweb/media/`` uploads still accept exactly
+  one ``file`` part.
+- ``INDIEWEB_MEDIA_MAX_UPLOAD_TOTAL_BYTES`` defaults to 50 MiB across all
+  uploaded files in one request. Requests over the aggregate limit, and
+  uploads whose size is unknown, return ``413 invalid_request`` before storage
+  is called.
 - ``INDIEWEB_MEDIA_ALLOWED_TYPES`` defaults to common image, audio, and video
   MIME types. Other content types return ``415 invalid_request`` before
   storage is called.
 
-Set either value to ``None`` to disable that built-in check, but only when your
-web server, CDN, storage backend, or application enforces equivalent limits.
-If you allow broad content types such as HTML or SVG, serve uploaded media
-from a separate origin or with defensive headers such as
-``Content-Disposition: attachment``.
+Media validation sniffs the actual file content before storage, compares the
+sniffed type with the submitted part ``Content-Type`` and filename suffix, and
+stores an unguessable key below ``indieweb/media/`` with a suffix derived from
+the validated media type. HTML, SVG, PHP-like filenames, and mismatched
+declared content are rejected before storage even when the configured allowlist
+is disabled.
+
+Set media limits to ``None`` only when your web server, CDN, storage backend,
+or application enforces equivalent limits. If you broaden accepted media
+types, serve uploads defensively:
+
+- Prefer a separate media origin so uploaded content cannot execute in the
+  same origin as your authenticated application.
+- Send ``X-Content-Type-Options: nosniff`` on media responses.
+- Use ``Content-Disposition: attachment`` for non-image media or any type you
+  do not intend browsers to render inline.
+- Keep Django ``DATA_UPLOAD_MAX_MEMORY_SIZE``, web-server body limits, reverse
+  proxy limits, CDN limits, and storage quotas tight enough for your
+  deployment.
 
 Media Source and Delete Hooks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -594,6 +626,11 @@ return an entry on delete, so a relocation response is not possible). All
 three return ``400 invalid_request`` when the entry is unknown to the
 handler or ``url`` is missing, and ``500`` when the handler raises an
 unexpected exception.
+Submitted action ``url`` values must be relative/local references or absolute
+HTTP(S) URLs on the same host as the incoming request; cross-host action URLs
+return ``400 invalid_request`` before the handler is called. JSON action
+requests may include parameters such as ``charset`` on the
+``application/json`` content type.
 
 **Update (replace, JSON):**
 

@@ -401,6 +401,41 @@ Set this to ``None`` to disable django-indieweb's media upload size check. If
 you do that, enforce an upload limit outside these views so authenticated
 clients cannot fill local or remote storage.
 
+INDIEWEB_MEDIA_MAX_UPLOAD_COUNT
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum number of uploaded files accepted in one Micropub media request. This
+applies to direct ``file`` uploads sent to ``/indieweb/media/`` and to
+multipart ``photo`` file parts sent to ``/indieweb/micropub/`` create
+requests.
+
+**Default:** ``10``
+
+Requests with more uploaded files than this limit are rejected with HTTP 413
+and body ``invalid_request`` before storage is called. Direct media endpoint
+uploads still accept exactly one ``file`` part; the count setting prevents
+clients from smuggling extra file parts into the same multipart request.
+
+Set this to ``None`` to disable django-indieweb's upload-count check. Keep a
+deployment-level multipart part limit in place when disabling it.
+
+INDIEWEB_MEDIA_MAX_UPLOAD_TOTAL_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum aggregate byte size accepted across all uploaded files in one
+Micropub media request. This complements
+``INDIEWEB_MEDIA_MAX_UPLOAD_BYTES``, which applies to each individual file.
+
+**Default:** ``52428800`` (50 MiB)
+
+Requests whose uploaded files exceed this aggregate limit are rejected with
+HTTP 413 and body ``invalid_request`` before storage is called. Uploads whose
+size is unknown are rejected instead of being counted as zero bytes.
+
+Set this to ``None`` to disable django-indieweb's aggregate upload-size check.
+If you do that, enforce total body limits with Django, your ASGI/WSGI server,
+reverse proxy, CDN, or storage backend.
+
 INDIEWEB_MEDIA_ALLOWED_TYPES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -429,12 +464,13 @@ Iterable of MIME content types accepted by the Micropub media endpoint and by
        "video/webm",
    )
 
-Uploads whose ``file`` or ``photo`` part reports a content type outside the
-allowlist are rejected with HTTP 415 and body ``invalid_request`` before
-storage is called.
-The value is based on the upload's submitted content type; if your deployment
-needs stronger guarantees, inspect files after upload or use storage/server
-policies that prevent active content from executing on your primary domain.
+Uploads are sniffed with the maintained ``filetype`` library before storage.
+django-indieweb compares the sniffed media type, the submitted part
+``Content-Type``, and the submitted filename suffix. Unknown formats,
+declared/sniffed mismatches, and suffix mismatches are rejected with HTTP 415
+and body ``invalid_request`` before storage is called. Stored object names are
+unguessable keys under ``indieweb/media/`` and use a suffix derived from the
+validated media type, not from the client filename.
 
 **Example:**
 
@@ -443,9 +479,13 @@ policies that prevent active content from executing on your primary domain.
    # settings.py
    INDIEWEB_MEDIA_ALLOWED_TYPES = ("image/jpeg", "image/png", "image/webp")
 
-Set this to ``None`` to disable django-indieweb's content-type check. If you
-allow broad uploads, serve media from a separate origin or with defensive
-headers such as ``Content-Disposition: attachment`` for risky types.
+Set this to ``None`` to disable only django-indieweb's configured allowlist.
+It does not make filenames or client headers trusted: uploads must still be a
+known sniffed format and must still match their declared content type and
+filename suffix. If you broaden accepted media types, serve uploads from a
+separate origin where possible and add defensive response headers such as
+``X-Content-Type-Options: nosniff`` and ``Content-Disposition: attachment``
+for non-image or otherwise risky media.
 
 Media Source and Delete Hooks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

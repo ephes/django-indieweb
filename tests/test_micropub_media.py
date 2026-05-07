@@ -12,6 +12,10 @@ from django.utils import timezone
 from indieweb import models
 from indieweb.handlers import InMemoryMicropubHandler, MicropubMediaItem, MicropubMediaList
 
+JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00jpeg"
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRpng"
+GIF_BYTES = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff"
+
 
 @pytest.fixture
 def user(db):
@@ -38,7 +42,7 @@ def _make_token(user, scope: str | None = "media") -> models.Token:
 
 
 def _upload(
-    name: str = "sunset.jpg", content: bytes = b"image bytes", content_type: str = "image/jpeg"
+    name: str = "sunset.jpg", content: bytes = JPEG_BYTES, content_type: str = "image/jpeg"
 ) -> SimpleUploadedFile:
     return SimpleUploadedFile(name, content, content_type=content_type)
 
@@ -111,7 +115,7 @@ def test_media_upload_stores_file_and_returns_absolute_location(client, settings
     assert "sunset" not in stored_name
     assert default_storage.exists(stored_name)
     with default_storage.open(stored_name, "rb") as stored_file:
-        assert stored_file.read() == b"image bytes"
+        assert stored_file.read() == JPEG_BYTES
 
 
 @pytest.mark.django_db
@@ -170,20 +174,22 @@ def test_media_upload_location_can_feed_json_micropub_create(
 
 
 @pytest.mark.django_db
-def test_media_upload_without_filename_suffix_stores_extensionless_name(client, settings, tmp_path, user, media_url):
+def test_media_upload_without_filename_suffix_uses_validated_content_type_suffix(
+    client, settings, tmp_path, user, media_url
+):
     settings.MEDIA_ROOT = str(tmp_path)
     token = _make_token(user, "media")
 
     response = client.post(
         media_url,
-        data={"file": _upload(name="upload", content_type="image/png")},
+        data={"file": _upload(name="upload", content=PNG_BYTES, content_type="image/png")},
         Authorization=f"Bearer {token.key}",
     )
 
     assert response.status_code == 201
     stored_name = urlparse(response["Location"]).path.removeprefix(settings.MEDIA_URL)
     assert stored_name.startswith("indieweb/media/")
-    assert "." not in stored_name.removeprefix("indieweb/media/")
+    assert stored_name.endswith(".png")
     assert default_storage.exists(stored_name)
 
 
@@ -613,12 +619,12 @@ def test_media_upload_rejects_files_over_configured_size(client, settings, user,
 @pytest.mark.django_db
 def test_media_upload_accepts_file_exactly_at_configured_size(client, settings, tmp_path, user, media_url):
     settings.MEDIA_ROOT = str(tmp_path)
-    settings.INDIEWEB_MEDIA_MAX_UPLOAD_BYTES = 5
+    settings.INDIEWEB_MEDIA_MAX_UPLOAD_BYTES = len(JPEG_BYTES)
     token = _make_token(user, "media")
 
     response = client.post(
         media_url,
-        data={"file": _upload(content=b"12345")},
+        data={"file": _upload()},
         Authorization=f"Bearer {token.key}",
     )
 
@@ -633,7 +639,7 @@ def test_media_upload_can_disable_size_limit(client, settings, tmp_path, user, m
 
     response = client.post(
         media_url,
-        data={"file": _upload(content=b"12345")},
+        data={"file": _upload()},
         Authorization=f"Bearer {token.key}",
     )
 
@@ -655,14 +661,115 @@ def test_media_upload_rejects_disallowed_content_type(client, user, media_url):
 
 
 @pytest.mark.django_db
-def test_media_upload_allows_configured_content_type(client, settings, tmp_path, user, media_url):
+def test_media_upload_rejects_declared_and_sniffed_mismatch(client, settings, tmp_path, user, media_url):
     settings.MEDIA_ROOT = str(tmp_path)
-    settings.INDIEWEB_MEDIA_ALLOWED_TYPES = ("text/plain",)
     token = _make_token(user, "media")
 
     response = client.post(
         media_url,
-        data={"file": _upload(name="note.txt", content_type="text/plain")},
+        data={"file": _upload(name="photo.png", content=JPEG_BYTES, content_type="image/png")},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 415
+    assert response.content.decode("utf-8") == "invalid_request"
+    assert not (tmp_path / "indieweb").exists()
+
+
+@pytest.mark.django_db
+def test_media_upload_rejects_filename_suffix_mismatch_before_storage(client, settings, tmp_path, user, media_url):
+    settings.MEDIA_ROOT = str(tmp_path)
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"file": _upload(name="photo.phtml", content=JPEG_BYTES, content_type="image/jpeg")},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 415
+    assert response.content.decode("utf-8") == "invalid_request"
+    assert not (tmp_path / "indieweb").exists()
+
+
+@pytest.mark.django_db
+def test_media_upload_rejects_svg_disguised_as_allowed_media(client, settings, tmp_path, user, media_url):
+    settings.MEDIA_ROOT = str(tmp_path)
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={
+            "file": _upload(
+                name="image.jpg",
+                content=b'<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+                content_type="image/jpeg",
+            )
+        },
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 415
+    assert response.content.decode("utf-8") == "invalid_request"
+    assert not (tmp_path / "indieweb").exists()
+
+
+@pytest.mark.django_db
+def test_media_upload_uses_preferred_suffix_from_validated_content_type(client, settings, tmp_path, user, media_url):
+    settings.MEDIA_ROOT = str(tmp_path)
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"file": _upload(name="photo.jpeg", content=JPEG_BYTES, content_type="image/jpeg")},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 201
+    stored_name = urlparse(response["Location"]).path.removeprefix(settings.MEDIA_URL)
+    assert stored_name.endswith(".jpg")
+    assert not stored_name.endswith(".jpeg")
+
+
+@pytest.mark.django_db
+def test_media_upload_rejects_upload_count_over_configured_limit(client, settings, user, media_url):
+    settings.INDIEWEB_MEDIA_MAX_UPLOAD_COUNT = 1
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"file": [_upload(name="one.jpg"), _upload(name="two.jpg")]},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 413
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_upload_rejects_aggregate_size_over_configured_limit(client, settings, user, media_url):
+    settings.INDIEWEB_MEDIA_MAX_UPLOAD_TOTAL_BYTES = len(JPEG_BYTES) - 1
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"file": _upload()},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 413
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_media_upload_allows_configured_sniffed_content_type(client, settings, tmp_path, user, media_url):
+    settings.MEDIA_ROOT = str(tmp_path)
+    settings.INDIEWEB_MEDIA_ALLOWED_TYPES = ("image/gif",)
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"file": _upload(name="note.gif", content=GIF_BYTES, content_type="image/gif")},
         Authorization=f"Bearer {token.key}",
     )
 
@@ -670,18 +777,35 @@ def test_media_upload_allows_configured_content_type(client, settings, tmp_path,
 
 
 @pytest.mark.django_db
-def test_media_upload_can_disable_content_type_check(client, settings, tmp_path, user, media_url):
+def test_media_upload_can_disable_allowlist_for_valid_sniffed_media(client, settings, tmp_path, user, media_url):
     settings.MEDIA_ROOT = str(tmp_path)
     settings.INDIEWEB_MEDIA_ALLOWED_TYPES = None
     token = _make_token(user, "media")
 
     response = client.post(
         media_url,
-        data={"file": _upload(name="page.html", content_type="text/html")},
+        data={"file": _upload()},
         Authorization=f"Bearer {token.key}",
     )
 
     assert response.status_code == 201
+
+
+@pytest.mark.django_db
+def test_media_upload_disabling_allowlist_still_rejects_unsniffable_html(client, settings, tmp_path, user, media_url):
+    settings.MEDIA_ROOT = str(tmp_path)
+    settings.INDIEWEB_MEDIA_ALLOWED_TYPES = None
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"file": _upload(name="page.html", content=b"<!doctype html><h1>x</h1>", content_type="text/html")},
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 415
+    assert response.content.decode("utf-8") == "invalid_request"
+    assert not (tmp_path / "indieweb").exists()
 
 
 @pytest.mark.django_db
@@ -796,8 +920,8 @@ def test_micropub_create_stores_multiple_photo_uploads(client, settings, tmp_pat
             "h": "entry",
             "content": "Multiple photos",
             "photo": [
-                _upload(name="first.jpg", content=b"first", content_type="image/jpeg"),
-                _upload(name="second.png", content=b"second", content_type="image/png"),
+                _upload(name="first.jpg", content=JPEG_BYTES, content_type="image/jpeg"),
+                _upload(name="second.png", content=PNG_BYTES, content_type="image/png"),
             ],
         },
         Authorization=f"Bearer {token.key}",
@@ -871,11 +995,65 @@ def test_micropub_create_rejects_oversized_photo_upload(client, settings, user, 
 
 
 @pytest.mark.django_db
+def test_micropub_create_rejects_photo_upload_count_over_configured_limit(
+    client, settings, user, micropub_url, monkeypatch
+):
+    settings.INDIEWEB_MEDIA_MAX_UPLOAD_COUNT = 1
+
+    class FailingHandler(InMemoryMicropubHandler):
+        def create_entry(self, properties, user):
+            raise AssertionError("create_entry must not run after upload validation fails")
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: FailingHandler())
+    token = _make_token(user, "create")
+
+    response = client.post(
+        micropub_url,
+        data={
+            "h": "entry",
+            "content": "Too many photos",
+            "photo": [_upload(name="one.jpg"), _upload(name="two.jpg")],
+        },
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 413
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_micropub_create_rejects_photo_aggregate_size_over_configured_limit(
+    client, settings, user, micropub_url, monkeypatch
+):
+    settings.INDIEWEB_MEDIA_MAX_UPLOAD_TOTAL_BYTES = (len(JPEG_BYTES) * 2) - 1
+
+    class FailingHandler(InMemoryMicropubHandler):
+        def create_entry(self, properties, user):
+            raise AssertionError("create_entry must not run after upload validation fails")
+
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: FailingHandler())
+    token = _make_token(user, "create")
+
+    response = client.post(
+        micropub_url,
+        data={
+            "h": "entry",
+            "content": "Too large together",
+            "photo": [_upload(name="one.jpg"), _upload(name="two.jpg")],
+        },
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 413
+    assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
 def test_micropub_create_validates_all_photo_uploads_before_storing(
     client, settings, tmp_path, user, micropub_url, monkeypatch
 ):
     settings.MEDIA_ROOT = str(tmp_path)
-    settings.INDIEWEB_MEDIA_MAX_UPLOAD_BYTES = 4
+    settings.INDIEWEB_MEDIA_MAX_UPLOAD_BYTES = len(JPEG_BYTES)
 
     class FailingHandler(InMemoryMicropubHandler):
         def create_entry(self, properties, user):
@@ -890,8 +1068,8 @@ def test_micropub_create_validates_all_photo_uploads_before_storing(
             "h": "entry",
             "content": "Partially invalid",
             "photo": [
-                _upload(name="valid.jpg", content=b"1234"),
-                _upload(name="too-large.jpg", content=b"12345"),
+                _upload(name="valid.jpg", content=JPEG_BYTES),
+                _upload(name="too-large.jpg", content=JPEG_BYTES + b"extra"),
             ],
         },
         Authorization=f"Bearer {token.key}",
@@ -974,8 +1152,8 @@ def test_micropub_create_cleans_up_saved_photo_when_later_save_fails(
             "h": "entry",
             "content": "Storage failure",
             "photo": [
-                _upload(name="first.jpg", content=b"first"),
-                _upload(name="second.jpg", content=b"second"),
+                _upload(name="first.jpg", content=JPEG_BYTES),
+                _upload(name="second.jpg", content=JPEG_BYTES),
             ],
         },
         Authorization=f"Bearer {token.key}",

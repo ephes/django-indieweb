@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.urls import reverse
 
 from indieweb import models
-from indieweb.handlers import InMemoryMicropubHandler
+from indieweb.handlers import InMemoryMicropubHandler, MicropubEntry
 
 
 @pytest.fixture
@@ -214,6 +214,72 @@ class TestMicropubUpdate:
         assert response.content.decode("utf-8") == "invalid_request"
         assert handler_called is False
 
+    def test_update_rejects_cross_host_url_before_handler(self, client, user, micropub_url, monkeypatch):
+        handler_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def update_entry(self, url, updates, user):
+                nonlocal handler_called
+                handler_called = True
+                return super().update_entry(url, updates, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        token = _make_token(user, "update")
+        payload = {
+            "action": "update",
+            "url": "https://remote.example/entries/1/",
+            "replace": {"content": ["x"]},
+        }
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert handler_called is False
+
+    @pytest.mark.parametrize("url", ["http://testserver/entries/1/", "http://testserver:80/entries/1/"])
+    def test_update_accepts_same_host_absolute_url(self, client, user, micropub_url, monkeypatch, url):
+        class SameHostHandler(InMemoryMicropubHandler):
+            def update_entry(self, url, updates, user):
+                return MicropubEntry(url=url, properties=updates["replace"])
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: SameHostHandler())
+
+        token = _make_token(user, "update")
+        payload = {
+            "action": "update",
+            "url": url,
+            "replace": {"content": ["x"]},
+        }
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 204
+
+    def test_update_json_action_accepts_content_type_with_charset(self, client, user, micropub_url, shared_handler):
+        entry = shared_handler.create_entry({"content": ["Original"]}, user)
+
+        token = _make_token(user, "update")
+        payload = {"action": "update", "url": entry.url, "replace": {"content": ["Updated"]}}
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json; charset=utf-8",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 204
+        assert shared_handler.get_entry(entry.url, user).properties["content"] == ["Updated"]
+
 
 @pytest.mark.django_db
 class TestMicropubDelete:
@@ -246,6 +312,21 @@ class TestMicropubDelete:
         assert response.status_code == 204
         assert shared_handler.get_entry(entry.url, user) is None
 
+    def test_delete_json_accepts_content_type_with_charset(self, client, user, micropub_url, shared_handler):
+        entry = shared_handler.create_entry({"content": ["Doomed"]}, user)
+
+        token = _make_token(user, "delete")
+        payload = {"action": "delete", "url": entry.url}
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json; charset=utf-8",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 204
+        assert shared_handler.get_entry(entry.url, user) is None
+
     def test_delete_unknown_url_returns_400_invalid_request(self, client, user, micropub_url, shared_handler):
         token = _make_token(user, "delete")
         response = client.post(
@@ -267,6 +348,47 @@ class TestMicropubDelete:
 
         assert response.status_code == 400
         assert response.content.decode("utf-8") == "invalid_request"
+
+    def test_delete_rejects_cross_host_url_before_handler(self, client, user, micropub_url, monkeypatch):
+        handler_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def delete_entry(self, url, user):
+                nonlocal handler_called
+                handler_called = True
+                return super().delete_entry(url, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        token = _make_token(user, "delete")
+        response = client.post(
+            micropub_url,
+            data={"action": "delete", "url": "https://remote.example/entries/1/"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert handler_called is False
+
+    def test_delete_accepts_same_host_absolute_url(self, client, user, micropub_url, monkeypatch):
+        deleted_urls = []
+
+        class SameHostHandler(InMemoryMicropubHandler):
+            def delete_entry(self, url, user):
+                deleted_urls.append(url)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: SameHostHandler())
+
+        token = _make_token(user, "delete")
+        response = client.post(
+            micropub_url,
+            data={"action": "delete", "url": "http://testserver/entries/1/"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 204
+        assert deleted_urls == ["http://testserver/entries/1/"]
 
 
 @pytest.mark.django_db
@@ -305,6 +427,22 @@ class TestMicropubUndelete:
         restored = shared_handler.get_entry(entry.url, user)
         assert restored is not None
 
+    def test_undelete_json_accepts_content_type_with_charset(self, client, user, micropub_url, shared_handler):
+        entry = shared_handler.create_entry({"content": ["Doomed"]}, user)
+        shared_handler.delete_entry(entry.url, user)
+
+        token = _make_token(user, "undelete")
+        payload = {"action": "undelete", "url": entry.url}
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json; charset=utf-8",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 204
+        assert shared_handler.get_entry(entry.url, user) is not None
+
     def test_undelete_url_not_in_deleted_set_returns_400_invalid_request(
         self, client, user, micropub_url, shared_handler
     ):
@@ -331,6 +469,44 @@ class TestMicropubUndelete:
 
         assert response.status_code == 400
         assert response.content.decode("utf-8") == "invalid_request"
+
+    def test_undelete_rejects_cross_host_url_before_handler(self, client, user, micropub_url, monkeypatch):
+        handler_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def undelete_entry(self, url, user):
+                nonlocal handler_called
+                handler_called = True
+                return super().undelete_entry(url, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        token = _make_token(user, "undelete")
+        response = client.post(
+            micropub_url,
+            data={"action": "undelete", "url": "https://remote.example/entries/1/"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert handler_called is False
+
+    def test_undelete_accepts_same_host_absolute_url(self, client, user, micropub_url, monkeypatch):
+        class SameHostHandler(InMemoryMicropubHandler):
+            def undelete_entry(self, url, user):
+                return MicropubEntry(url=url, properties={"content": ["Restored"]})
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: SameHostHandler())
+
+        token = _make_token(user, "undelete")
+        response = client.post(
+            micropub_url,
+            data={"action": "undelete", "url": "http://testserver/entries/1/"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 204
 
 
 @pytest.mark.django_db

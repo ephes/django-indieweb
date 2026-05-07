@@ -10,12 +10,15 @@ import math
 import re
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from email.message import Message
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qsl, urlparse, urlunparse
 from urllib.parse import urlencode as urllib_urlencode
 
+import filetype
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
@@ -118,6 +121,7 @@ MICROPUB_FORM_CREATE_PROPERTIES = (
     "photo",
     "audio",
     "video",
+    "syndication",
     "mp-slug",
     "mp-channel",
     "mp-photo-alt",
@@ -135,9 +139,14 @@ MICROPUB_FORM_CREATE_LIST_PROPERTIES = (
     "mp-syndicate-to",
 )
 MICROPUB_SERVER_MANAGED_PROPERTIES = frozenset({"uid", "author"})
+MICROPUB_URL_CREATE_PROPERTIES = frozenset(
+    {"photo", "audio", "video", "in-reply-to", "like-of", "repost-of", "bookmark-of", "syndication"}
+)
 DEFAULT_MICROPUB_SOURCE_LIST_LIMIT = 20
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_COUNT = 10
+DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024
 DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES = (
     "image/jpeg",
     "image/png",
@@ -155,6 +164,37 @@ DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES = (
     "video/ogg",
     "video/webm",
 )
+MICROPUB_MEDIA_TYPE_ALIASES = {
+    "audio/x-wav": "audio/wav",
+}
+MICROPUB_MEDIA_TYPE_EXTENSIONS = {
+    "image/jpeg": (".jpg", ".jpeg"),
+    "image/png": (".png",),
+    "image/gif": (".gif",),
+    "image/webp": (".webp",),
+    "image/heic": (".heic",),
+    "image/heif": (".heif",),
+    "audio/mpeg": (".mp3", ".mpeg", ".mpga"),
+    "audio/mp4": (".m4a", ".mp4"),
+    "audio/ogg": (".ogg", ".oga"),
+    "audio/wav": (".wav",),
+    "audio/webm": (".webm",),
+    "video/mp4": (".mp4", ".m4v"),
+    "video/quicktime": (".mov", ".qt"),
+    "video/ogg": (".ogv", ".ogg"),
+    "video/webm": (".webm",),
+}
+MICROPUB_MEDIA_TYPE_PREFERRED_SUFFIX = {
+    content_type: suffixes[0] for content_type, suffixes in MICROPUB_MEDIA_TYPE_EXTENSIONS.items()
+}
+MICROPUB_HTTP_URL_VALIDATOR = URLValidator(schemes=["http", "https"])
+
+
+@dataclass(frozen=True)
+class _ValidatedMicropubMediaUpload:
+    upload: UploadedFile
+    content_type: str
+    suffix: str
 
 
 class _MicropubMediaUploadError(Exception):
@@ -169,9 +209,28 @@ class _WebmentionEnqueueError(Exception):
     """Internal exception for configured Webmention enqueue failures."""
 
 
-def _micropub_media_storage_name(original_name: str) -> str:
-    """Return an unguessable storage key, preserving the lowercased final filename suffix."""
-    suffix = PurePath(original_name).suffix.lower()
+def _content_type_header_value(value: str | None) -> str:
+    """Return a lowercased media type from a Content-Type header value."""
+    if not value:
+        return ""
+    message = Message()
+    message["content-type"] = value
+    return message.get_content_type().lower()
+
+
+def _request_content_type(request: HttpRequest) -> str:
+    """Return the structured request Content-Type without parameters."""
+    return _content_type_header_value(request.headers.get("content-type") or request.content_type)
+
+
+def _canonical_upload_content_type(value: str | None) -> str:
+    """Return the canonical media type used for Micropub upload policy checks."""
+    content_type = _content_type_header_value(value)
+    return MICROPUB_MEDIA_TYPE_ALIASES.get(content_type, content_type)
+
+
+def _micropub_media_storage_name(suffix: str) -> str:
+    """Return an unguessable storage key using a server-selected filename suffix."""
     return f"{MICROPUB_MEDIA_STORAGE_PREFIX}/{uuid.uuid4().hex}{suffix}"
 
 
@@ -192,25 +251,92 @@ def _upload_size_allowed(upload: UploadedFile) -> bool:
     return upload.size <= int(max_bytes)
 
 
-def _upload_type_allowed(upload: UploadedFile) -> bool:
+def _upload_count_allowed(uploads: list[UploadedFile]) -> bool:
+    max_uploads = getattr(settings, "INDIEWEB_MEDIA_MAX_UPLOAD_COUNT", DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_COUNT)
+    if max_uploads is None:
+        return True
+    return len(uploads) <= int(max_uploads)
+
+
+def _upload_total_size_allowed(uploads: list[UploadedFile]) -> bool:
+    max_bytes = getattr(
+        settings, "INDIEWEB_MEDIA_MAX_UPLOAD_TOTAL_BYTES", DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_TOTAL_BYTES
+    )
+    if max_bytes is None:
+        return True
+    total_size = 0
+    for upload in uploads:
+        if upload.size is None:
+            return False
+        total_size += int(upload.size)
+    return total_size <= int(max_bytes)
+
+
+def _upload_type_allowed(content_type: str) -> bool:
     allowed_types = getattr(settings, "INDIEWEB_MEDIA_ALLOWED_TYPES", DEFAULT_MICROPUB_MEDIA_ALLOWED_TYPES)
     if allowed_types is None:
         return True
-    return upload.content_type in allowed_types
+    return content_type in {_canonical_upload_content_type(str(allowed_type)) for allowed_type in allowed_types}
 
 
-def _validate_micropub_media_upload(upload: UploadedFile) -> None:
+def _sniff_upload_content_type(upload: UploadedFile) -> str | None:
+    try:
+        position = upload.tell()
+    except (AttributeError, OSError):
+        position = None
+    try:
+        upload.seek(0)
+        # filetype inspects up to the first 261 bytes for supported signatures.
+        kind = filetype.guess(upload.read(261))
+    except (AttributeError, OSError):
+        return None
+    finally:
+        try:
+            upload.seek(0 if position is None else position)
+        except (AttributeError, OSError):
+            pass
+    if kind is None:
+        return None
+    return _canonical_upload_content_type(kind.mime)
+
+
+def _validate_micropub_media_upload(upload: UploadedFile) -> _ValidatedMicropubMediaUpload:
     """Validate a Micropub media upload before storage."""
     if not _upload_size_allowed(upload):
         raise _MicropubMediaUploadError(413)
-    if not _upload_type_allowed(upload):
+    sniffed_content_type = _sniff_upload_content_type(upload)
+    declared_content_type = _canonical_upload_content_type(upload.content_type)
+    if not sniffed_content_type or not declared_content_type:
         raise _MicropubMediaUploadError(415)
+    if sniffed_content_type != declared_content_type:
+        raise _MicropubMediaUploadError(415)
+    if sniffed_content_type not in MICROPUB_MEDIA_TYPE_EXTENSIONS:
+        raise _MicropubMediaUploadError(415)
+    submitted_suffix = PurePath(upload.name or "").suffix.lower()
+    if submitted_suffix and submitted_suffix not in MICROPUB_MEDIA_TYPE_EXTENSIONS[sniffed_content_type]:
+        raise _MicropubMediaUploadError(415)
+    if not _upload_type_allowed(sniffed_content_type):
+        raise _MicropubMediaUploadError(415)
+    return _ValidatedMicropubMediaUpload(
+        upload=upload,
+        content_type=sniffed_content_type,
+        suffix=MICROPUB_MEDIA_TYPE_PREFERRED_SUFFIX[sniffed_content_type],
+    )
 
 
-def _save_micropub_media_upload(upload: UploadedFile) -> str:
+def _validate_micropub_media_uploads(uploads: list[UploadedFile]) -> list[_ValidatedMicropubMediaUpload]:
+    if not _upload_count_allowed(uploads) or not _upload_total_size_allowed(uploads):
+        raise _MicropubMediaUploadError(413)
+    return [_validate_micropub_media_upload(upload) for upload in uploads]
+
+
+def _save_micropub_media_upload(validated_upload: _ValidatedMicropubMediaUpload) -> str:
     """Store a Micropub media upload and return the stored name."""
     try:
-        return default_storage.save(_micropub_media_storage_name(upload.name or ""), upload)
+        return default_storage.save(
+            _micropub_media_storage_name(validated_upload.suffix),
+            validated_upload.upload,
+        )
     except OSError as exc:
         logger.exception("Unexpected error storing Micropub media upload")
         raise _MicropubMediaUploadError(500) from exc
@@ -218,19 +344,18 @@ def _save_micropub_media_upload(upload: UploadedFile) -> str:
 
 def _store_micropub_media_upload(request: HttpRequest, upload: UploadedFile) -> str:
     """Validate and store a Micropub media upload, returning the absolute media URL."""
-    _validate_micropub_media_upload(upload)
-    return _absolute_storage_url(request, _save_micropub_media_upload(upload))
+    validated_upload = _validate_micropub_media_uploads([upload])[0]
+    return _absolute_storage_url(request, _save_micropub_media_upload(validated_upload))
 
 
 def _store_micropub_media_uploads(request: HttpRequest, uploads: list[UploadedFile]) -> list[str]:
     """Validate and store multiple uploads, cleaning up partial saves if storage fails."""
-    for upload in uploads:
-        _validate_micropub_media_upload(upload)
+    validated_uploads = _validate_micropub_media_uploads(uploads)
 
     stored_names: list[str] = []
     try:
-        for upload in uploads:
-            stored_names.append(_save_micropub_media_upload(upload))
+        for validated_upload in validated_uploads:
+            stored_names.append(_save_micropub_media_upload(validated_upload))
     except _MicropubMediaUploadError:
         for stored_name in stored_names:
             try:
@@ -1333,7 +1458,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
     def _create_server_managed_property_error(self, request: HttpRequest) -> HttpResponse | None:
         """Reject raw form creates that submit server-managed properties before parsing side effects."""
-        if request.content_type != "application/json" and self._form_create_has_server_managed_property(request):
+        if _request_content_type(request) != "application/json" and self._form_create_has_server_managed_property(
+            request
+        ):
             return self._invalid_request()
         return None
 
@@ -1395,7 +1522,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
     def parse_request_data(self, request: HttpRequest) -> dict[str, Any]:
         """Parse Micropub data from either form-encoded or JSON request."""
-        if request.content_type == "application/json":
+        if _request_content_type(request) == "application/json":
             return self._parse_json_request(request)
         else:
             return self._parse_form_request(request)
@@ -1405,7 +1532,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         action = request.POST.get("action")
         if action:
             return action
-        if request.content_type == "application/json":
+        if _request_content_type(request) == "application/json":
             try:
                 payload = json.loads(request.body)
             except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
@@ -1473,7 +1600,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         misbehaving middleware could substitute it). All three become ``400 invalid_request``
         rather than a ``500`` from the unhandled exception path.
         """
-        if request.content_type != "application/json":
+        if _request_content_type(request) != "application/json":
             return None
         try:
             payload = json.loads(request.body)
@@ -1492,7 +1619,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         so the ``json.loads`` call is expected to succeed; the defensive ``except`` mirrors
         the guard's catch list so this helper is safe to call independently.
         """
-        if request.content_type != "application/json":
+        if _request_content_type(request) != "application/json":
             return None
         try:
             payload = json.loads(request.body)
@@ -1514,6 +1641,43 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if isinstance(value, str) and value:
             return value
         return None
+
+    @staticmethod
+    def _normalized_host_port(netloc: str, scheme: str) -> tuple[str, int | None] | None:
+        """Return a comparable host/port tuple, ignoring explicit default ports."""
+        try:
+            parsed = urlparse(f"//{netloc}")
+            port = parsed.port
+        except ValueError:
+            return None
+        if not parsed.hostname:
+            return None
+        default_port = 443 if scheme == "https" else 80 if scheme == "http" else None
+        return parsed.hostname.lower(), None if port == default_port else port
+
+    def _absolute_url_is_same_request_host(self, request: HttpRequest, url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return False
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"} or not parsed.netloc:
+            return False
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        submitted = self._normalized_host_port(parsed.netloc, scheme)
+        request_host = self._normalized_host_port(request.get_host(), request.scheme or scheme)
+        return submitted is not None and submitted == request_host
+
+    def _action_url_is_same_host(self, request: HttpRequest, url: str) -> bool:
+        """Return whether an action URL is local to the current request host."""
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return False
+        if parsed.scheme or parsed.netloc:
+            return self._absolute_url_is_same_request_host(request, url)
+        return True
 
     def _invalid_request(self) -> HttpResponse:
         """Return the standard 400 plain-text body the action handlers use for client errors."""
@@ -1587,6 +1751,62 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return True
         return False
 
+    def _valid_http_url(self, value: Any, request: HttpRequest) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            MICROPUB_HTTP_URL_VALIDATOR(value)
+        except ValidationError:
+            return self._absolute_url_is_same_request_host(request, value)
+        return True
+
+    def _properties_have_invalid_url_property(self, request: HttpRequest, properties: dict[str, Any]) -> bool:
+        """Return whether URL-typed create properties contain non-HTTP(S) values."""
+        for property_name in MICROPUB_URL_CREATE_PROPERTIES:
+            if property_name not in properties:
+                continue
+            values = properties[property_name]
+            if not isinstance(values, list):
+                return True
+            if not values:
+                continue
+            if any(not self._valid_http_url(value, request) for value in values):
+                return True
+        return False
+
+    @staticmethod
+    def _sanitize_slug_value(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        # Keep slug semantics handler-owned while removing path/control tricks.
+        cleaned = re.sub(r"[\x00-\x1f\x7f/\\]+", "", value).strip().lstrip(".")
+        return cleaned or None
+
+    def _normalize_slug_property(self, properties: dict[str, Any]) -> bool:
+        """Sanitize ``mp-slug`` values in-place, omitting the property when all values empty out."""
+        if "mp-slug" not in properties:
+            return True
+        values = properties["mp-slug"]
+        if not isinstance(values, list):
+            return False
+        sanitized_values: list[str] = []
+        for value in values:
+            sanitized = self._sanitize_slug_value(value)
+            if sanitized is not None:
+                sanitized_values.append(sanitized)
+        if sanitized_values:
+            properties["mp-slug"] = sanitized_values
+        else:
+            properties.pop("mp-slug", None)
+        return True
+
+    def _create_properties_valid(self, request: HttpRequest, properties: dict[str, Any]) -> bool:
+        if self._properties_have_server_managed_property(properties):
+            return False
+        if self._properties_have_invalid_url_property(request, properties):
+            return False
+        return self._normalize_slug_property(properties)
+
     def _handle_update(self, request: HttpRequest) -> HttpResponse:
         """Dispatch ``action=update``. JSON-only; validates the body shape before forwarding.
 
@@ -1594,7 +1814,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         database error or handler bug does not surface as a non-retryable client error.
         """
         url = self._action_url(request)
-        if not url:
+        if not url or not self._action_url_is_same_host(request, url):
             return self._invalid_request()
         payload = self._action_payload(request)
         if payload is None:
@@ -1618,7 +1838,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
     def _handle_delete(self, request: HttpRequest) -> HttpResponse:
         """Dispatch ``action=delete``. Accepts form-encoded and JSON bodies; both need ``url``."""
         url = self._action_url(request)
-        if not url:
+        if not url or not self._action_url_is_same_host(request, url):
             return self._invalid_request()
         handler = get_micropub_handler()
         try:
@@ -1634,7 +1854,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
     def _handle_undelete(self, request: HttpRequest) -> HttpResponse:
         """Dispatch ``action=undelete``. Accepts form-encoded and JSON bodies; both need ``url``."""
         url = self._action_url(request)
-        if not url:
+        if not url or not self._action_url_is_same_host(request, url):
             return self._invalid_request()
         handler = get_micropub_handler()
         try:
@@ -1883,7 +2103,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             properties = self.parse_request_data(request)
         except _MicropubMediaUploadError as exc:
             return _micropub_media_upload_error_response(exc)
-        if self._properties_have_server_managed_property(properties):
+        if not self._create_properties_valid(request, properties):
             return self._invalid_request()
 
         # Get the content handler and create entry
@@ -1981,7 +2201,7 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         action = request.POST.get("action")
         if action:
             return action
-        if request.content_type == "application/json":
+        if _request_content_type(request) == "application/json":
             payload = self._json_payload(request)
             if payload is None:
                 return None
@@ -1991,7 +2211,7 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         return None
 
     def _json_payload(self, request: HttpRequest) -> dict[str, Any] | None:
-        if request.content_type != "application/json":
+        if _request_content_type(request) != "application/json":
             return None
         try:
             payload = json.loads(request.body)
@@ -2123,10 +2343,13 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         if self._delete_action(request) == "delete":
             return self._handle_delete(request)
 
-        if request.content_type != "multipart/form-data" or "file" not in request.FILES:
+        if _request_content_type(request) != "multipart/form-data" or "file" not in request.FILES:
             return self._invalid_request()
 
-        upload = cast("UploadedFile", request.FILES["file"])
+        uploads = cast("list[UploadedFile]", request.FILES.getlist("file"))
+        if len(uploads) != 1:
+            return _micropub_media_upload_error_response(_MicropubMediaUploadError(413))
+        upload = uploads[0]
         try:
             location = _store_micropub_media_upload(request, upload)
         except _MicropubMediaUploadError as exc:

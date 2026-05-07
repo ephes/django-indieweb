@@ -423,6 +423,107 @@ class TestMicropubCreate:
         assert "syndication" not in received_properties
 
     @pytest.mark.django_db
+    def test_form_create_sanitizes_mp_slug_before_handler(self, client, token, micropub_url, monkeypatch):
+        """Path separators, controls, and leading dots are stripped from submitted slug hints."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={"h": "entry", "content": "Slug test", "mp-slug": "../bad/path\x1fname"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties is not None
+        assert received_properties["mp-slug"] == ["badpathname"]
+
+    @pytest.mark.django_db
+    def test_form_create_omits_empty_sanitized_mp_slug(self, client, token, micropub_url, monkeypatch):
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={"h": "entry", "content": "Slug test", "mp-slug": "../\x1f"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties is not None
+        assert "mp-slug" not in received_properties
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "property_name",
+        ["photo", "audio", "video", "in-reply-to", "like-of", "repost-of", "bookmark-of", "syndication"],
+    )
+    def test_form_create_rejects_invalid_url_properties_before_handler(
+        self, client, token, micropub_url, monkeypatch, property_name
+    ):
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={"h": "entry", "content": "Bad URL", property_name: "javascript:alert(1)"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
+    def test_form_create_forwards_valid_url_properties(self, client, token, micropub_url, monkeypatch):
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {
+            "h": "entry",
+            "photo": "https://media.example/photo.jpg",
+            "audio": "https://media.example/audio.mp3",
+            "video": "https://media.example/video.mp4",
+            "in-reply-to": "https://example.com/reply",
+            "like-of": "https://example.com/liked",
+            "repost-of": "https://example.com/reposted",
+            "bookmark-of": "https://example.com/bookmarked",
+            "syndication": "https://social.example/post/1",
+        }
+
+        response = client.post(micropub_url, data=payload, Authorization=f"Bearer {token.key}")
+
+        assert response.status_code == 201
+        assert received_properties == {key: [value] for key, value in payload.items() if key != "h"}
+
+    @pytest.mark.django_db
     def test_form_create_forwards_array_command_properties(self, client, token, micropub_url, monkeypatch):
         """Test that array notation works for list-shaped command properties."""
         received_properties = None
@@ -521,6 +622,113 @@ class TestMicropubCreate:
         assert "slug" not in received_properties
         assert "channel" not in received_properties
         assert "syndication" not in received_properties
+
+    @pytest.mark.django_db
+    def test_json_create_accepts_content_type_with_charset(self, client, token, micropub_url, monkeypatch):
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {"type": ["h-entry"], "properties": {"content": ["JSON charset"]}}
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json; charset=utf-8",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == payload["properties"]
+
+    @pytest.mark.django_db
+    def test_json_create_sanitizes_mp_slug_before_handler(self, client, token, micropub_url, monkeypatch):
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {"type": ["h-entry"], "properties": {"content": ["Slug"], "mp-slug": ["../bad\\path"]}}
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties is not None
+        assert received_properties["mp-slug"] == ["badpath"]
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "property_name",
+        ["photo", "audio", "video", "in-reply-to", "like-of", "repost-of", "bookmark-of", "syndication"],
+    )
+    def test_json_create_rejects_invalid_url_properties_before_handler(
+        self, client, token, micropub_url, monkeypatch, property_name
+    ):
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {"type": ["h-entry"], "properties": {property_name: ["notaurl"]}}
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
+    def test_json_create_preserves_empty_url_property_arrays(self, client, token, micropub_url, monkeypatch):
+        """Empty Microformats2 arrays remain valid; only submitted URL values are validated."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {
+            "type": ["h-entry"],
+            "properties": {
+                "content": ["No photo yet"],
+                "photo": [],
+            },
+        }
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == payload["properties"]
 
     @pytest.mark.django_db
     @pytest.mark.parametrize("property_name", ["uid", "author"])

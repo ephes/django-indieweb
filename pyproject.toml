@@ -45,6 +45,7 @@ dependencies = [
     "beautifulsoup4",
     "httpx",
     "nh3>=0.3.5",
+    "filetype>=1.2.0",
 ]
 
 [dependency-groups]
@@ -161,6 +162,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "mf2py"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "filetype"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
