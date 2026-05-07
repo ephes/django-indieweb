@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Fixed Webmention ``dt-published`` parsing on Python 3.10 for microformats
+  timestamps that serialize UTC offsets without a colon, such as
+  ``2026-05-01T10:00:00+0000``. Nested Webmention responses now retain their
+  published timestamp across all supported Python versions.
 * Treated an empty ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` as the documented
   default rather than a silent disable. ``_delivery_max_bytes()`` now mirrors
   the ``_hub_response_max_bytes()`` and ``_delivery_replay_history_max()``

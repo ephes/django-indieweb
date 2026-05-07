@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -54,6 +55,7 @@ WRAPPING_TEXT_URL_PUNCTUATION = {
     ">": "<",
 }
 NON_RENDERED_LINK_ANCESTORS = {"noscript", "template"}
+ISO8601_OFFSET_WITHOUT_COLON_RE = re.compile(r"([+-]\d{2})(\d{2})$")
 
 
 def _positive_int_setting(name: str, default: int) -> int:
@@ -1243,9 +1245,12 @@ class WebmentionProcessor:
             try:
                 # Parse ISO format datetime
                 if isinstance(published, str):
+                    published = published.strip()
                     # Handle timezone-aware datetime strings
                     if published.endswith("Z"):
                         published = published[:-1] + "+00:00"
+                    else:
+                        published = ISO8601_OFFSET_WITHOUT_COLON_RE.sub(r"\1:\2", published)
                     return datetime.fromisoformat(published)
             except ValueError:
                 logger.warning(f"Failed to parse published date: {published}")

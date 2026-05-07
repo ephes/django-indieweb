@@ -4,6 +4,21 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Restore Python 3.10 Webmention published-date parsing
+
+- ``WebmentionProcessor._extract_published`` now normalizes ISO 8601 timezone
+  offsets such as ``+0000`` to ``+00:00`` before calling
+  ``datetime.fromisoformat``. This fixes nested Webmention response
+  ``dt-published`` parsing on Python 3.10, where the compact offset form raised
+  ``ValueError`` and left ``published`` empty.
+- Added regression test
+  ``tests/test_webmention_processor.py::TestWebmentionProcessor::test_extract_published_parses_compact_timezone_offset``.
+- Validation: ``uv run tox -e py310-django52`` (1288 passing); ``uv run ruff
+  check src/indieweb/processors.py tests/test_webmention_processor.py``;
+  ``just docs``.
+- Changelog: added an Unreleased bugfix entry. No additional documentation was
+  needed because no public API or configuration changed.
+
 ### Treat empty ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` as the default cap
 
 - ``_delivery_max_bytes()`` in ``src/indieweb/websub.py`` previously routed the

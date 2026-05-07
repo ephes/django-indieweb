@@ -1160,6 +1160,15 @@ class TestWebmentionProcessor:
             assert "Great article!" in webmention.content
             assert webmention.published is not None
 
+    def test_extract_published_parses_compact_timezone_offset(self, processor):
+        """Python 3.10 requires ISO offsets to include a colon."""
+        published = processor._extract_published(
+            {"properties": {"published": ["2026-05-01T10:00:00+0000"]}}
+        )
+
+        assert published is not None
+        assert published.isoformat() == "2026-05-01T10:00:00+00:00"
+
     def test_processor_creates_source_snapshot_after_verified_processing(self, processor):
         """Test verified processing stores the latest fetched source snapshot."""
         source_url = "https://example.com/post"
