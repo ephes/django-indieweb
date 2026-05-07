@@ -6,12 +6,7 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 1
 
-### Security Residuals
-
-- [ ] Pin SSRF-safe outbound HTTP connections to checked addresses.
-  - References: `SECURITY_ANALYSIS.md` finding 2; `src/indieweb/http_client.py`; `src/indieweb/processors.py`; `src/indieweb/senders.py`; `src/indieweb/websub.py`; `tests/test_http_client.py`; sender/Webmention/WebSub tests.
-  - Current state: the shared helper validates URL syntax, rejects blocked IP literals, rejects DNS names that resolve to blocked addresses, and re-checks redirect targets, but it then hands the original hostname to `httpx` for the actual connection. That allows DNS rebinding/time-of-check-time-of-use bypasses.
-  - Desired outcome: bind the safety check to the actual socket connection by connecting to a checked IP address while preserving the original Host header and TLS SNI semantics, re-apply the same rule on every redirect, keep explicit TLS verification, and cover public, private, DNS-to-private, redirect-to-private, and DNS-rebinding cases in tests.
+No current Priority 1 items.
 
 ## Priority 2
 
@@ -22,11 +17,6 @@ No current Priority 2 Security Residuals items.
 ## Priority 3
 
 ### API Hardening
-
-- [ ] Authenticate token introspection per RFC 7662 §2.1 with a same-`client_id` rule.
-  - References: `SECURITY_ANALYSIS.md` "Token Introspection" finding; `src/indieweb/views.py:1382-1394`; `tests/test_token_endpoint.py`.
-  - Current state: a same-owner caller token can introspect any other active token of the same Django user, including tokens issued to a different `client_id` / scope / `me`. The endpoint requires a caller token but does not restrict cross-client lookups.
-  - Desired outcome: gate introspection so a caller can only see tokens issued to its own `client_id`, or an explicit resource-server credential, with a configurable hook for hosts that need broader access. Add tests covering same-client, cross-client, and cross-owner cases.
 
 - [ ] Hash authorization codes at rest and mask them in admin.
   - References: `SECURITY_ANALYSIS.md` "Plaintext authorization codes" residual; `src/indieweb/models.py` (`Auth`, `GenKeyMixin`); `src/indieweb/admin.py` (`AuthAdmin`).
@@ -42,10 +32,10 @@ No current Priority 2 Security Residuals items.
 
 ### Housekeeping
 
-- [ ] Replace the `unittest.mock` module-name guard in `stream_with_safe_redirects` with an explicit kwarg.
-  - References: `src/indieweb/http_client.py:234-236`; `tests/test_http_client.py`; sender/WebSub tests using `Mock` clients.
-  - Current state: streaming is short-circuited when `client.__class__.__module__ == "unittest.mock"` so legacy mocks keep working, but a future caller wrapping a real `httpx.Client` could silently disable max-bytes enforcement.
-  - Desired outcome: introduce an explicit kwarg (e.g. `_skip_streaming=True`) used by the affected tests, drop the module-name guard, and verify all existing call sites still pass.
+- [ ] Replace the `unittest.mock` module-name guards in `request_with_safe_redirects` and `stream_with_safe_redirects` with explicit kwargs.
+  - References: `src/indieweb/http_client.py` (`request_with_safe_redirects`, `stream_with_safe_redirects`); `tests/test_http_client.py`; sender/WebSub tests using `Mock` clients.
+  - Current state: streaming is short-circuited (skipping size enforcement) and IP pinning is suppressed when `client.__class__.__module__ == "unittest.mock"` so legacy `unittest.mock.Mock` clients keep working. A future caller wrapping a real `httpx.Client` in a `unittest.mock.Mock` for tracing could silently disable max-bytes enforcement and/or IP pinning.
+  - Desired outcome: introduce explicit kwargs (e.g. `_skip_streaming=True` and `_skip_pinning=True`) used by the affected tests, drop both module-name guards, and verify all existing call sites still pass.
 
 - [ ] Treat empty `INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES` as the default cap, not "disabled".
   - References: `src/indieweb/websub.py` (`_delivery_max_bytes`); `tests/test_websub_subscriber.py`.

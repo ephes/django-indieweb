@@ -199,7 +199,11 @@ Incoming ``source``, ``target``, and optional ``vouch`` values must be absolute
 ``http`` or ``https`` URLs. Source and Vouch fetches use the shared outbound
 HTTP safety checks: loopback, private, link-local, multicast, reserved,
 metadata-service, and other non-global IP destinations are rejected after DNS
-resolution and again after each redirect. Redirects remain bounded.
+resolution and again after each redirect. Redirects remain bounded. The
+shared HTTP layer also pins each connection to the resolved IP address while
+preserving the original ``Host`` header and TLS SNI, so a DNS rebinding host
+that resolves to a public address during validation and to a private address
+during the connect cannot bypass the safety check.
 
 Synchronous receiving is still available for compatibility, but production
 deployments should use ``INDIEWEB_WEBMENTION_ENQUEUE`` so source fetching,

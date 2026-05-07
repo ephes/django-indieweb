@@ -5,6 +5,31 @@ Changelog
 
 Unreleased
 ----------
+* Pinned SSRF-safe outbound HTTP connections to checked IP addresses. The
+  shared ``request_with_safe_redirects`` and ``stream_with_safe_redirects``
+  helpers now resolve the URL host once with the configured address resolver,
+  validate every returned IP, and rewrite the request URL host to the chosen
+  safe IP literal before handing it to ``httpx``. The original hostname is
+  preserved as the ``Host`` header for HTTP correctness and forwarded as
+  ``extensions["sni_hostname"]`` for HTTPS, so TLS SNI and certificate
+  verification still target the original hostname. The pin is re-applied on
+  every redirect hop, closing the DNS rebinding / TOCTOU window that
+  previously existed between pre-flight validation and the actual ``httpx``
+  connect. Callers that need the legacy hostname-on-the-wire behavior (for
+  example, test code that asserts on the connected URL host) can pass
+  ``pin_to_resolved_ip=False``. New helper ``resolve_safe_http_url(url, *,
+  resolver) -> (host, port, ip)`` exposes the validate-and-resolve step for
+  hosts that integrate the IndieWeb safe-HTTP layer with their own clients.
+* Tightened token introspection per RFC 7662 §2.1 with a same-``client_id``
+  rule. ``/indieweb/token/introspect/`` now requires the caller and target
+  tokens to share a normalized ``client_id`` after scheme/host case and IDNA
+  normalization; cross-client lookups for the same owner return
+  ``{"active": false}`` without disclosing scope, ``me``, or expiry. The new
+  ``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER`` setting accepts a dotted path to
+  a ``(caller_token, target_token) -> bool`` callable for hosts that need a
+  broader policy (for example, a first-party resource-server credential that
+  introspects every token). Import failures, callable exceptions, non-callable
+  values, and non-bool return values fail closed.
 * Capped Webmention parser fallback traversals. The fallback ``h-entry``,
   ``h-card``, ``h-card``-by-id, and page-level h-card walks in
   ``WebmentionProcessor`` are now iterative and share the existing

@@ -14,9 +14,16 @@ The first pass identified five high-priority findings plus several supporting on
 
 The most urgent remaining production blockers are:
 
-1. **Residual SSRF DNS rebinding / TOCTOU risk**: outbound helpers now reject unsafe URL forms, private IP literals, DNS-to-private hosts, and redirect-to-private targets, but the checked hostname is still handed to `httpx` for connection. A rebinding host can resolve to a public address during validation and to a private address during the subsequent connect. The original "connect by checked IP with the original Host/SNI preserved" recommendation is not fully implemented.
-2. **Residual Webmention parser recursion DoS risk**: receive-side fetches now have decoded byte limits, streaming, timeouts, and capped primary nested-response scans, but fallback h-entry/h-card traversal paths remain recursive and uncapped.
-3. **Residual WebSub replay window gap**: WebSub now has signature hardening and a replay window, but it stores only the latest accepted delivery digest per subscription. Replaying payload A after a legitimate payload B is accepted within the replay window.
+1. (resolved 2026-05-07) ~~Residual SSRF DNS rebinding / TOCTOU risk~~. The
+   shared outbound helpers in ``http_client.py`` now resolve the URL host
+   once, validate every returned IP, and connect to the resolved IP literal
+   while the original ``Host`` header is preserved and the original hostname
+   is forwarded as ``extensions["sni_hostname"]`` for HTTPS. The pin is
+   re-applied on every redirect hop. A DNS rebinding host that resolves to a
+   public address during validation and to a private address during the
+   subsequent connect is now caught before the second connection is made.
+2. (resolved 2026-05-07) ~~Residual Webmention parser recursion DoS risk~~.
+3. (resolved 2026-05-07) ~~Residual WebSub replay window gap~~.
 
 Former production blockers that were verified fixed by 2026-05-07 include Webmention stored XSS/unsafe remote URL rendering, IndieAuth consent CSRF/open redirect, authorization-code one-time-use gaps, token exchange `redirect_uri` binding, token parsing/reissue hardening, Micropub media sniffing, introspection authentication, token hashing at rest, CORS wildcard credentials, and WebSub signature/lease/secret hardening.
 
@@ -99,15 +106,15 @@ Two related XSS surfaces on Webmention-derived data:
 
 **Severity:** High
 
-**Status:** Partially resolved 2026-05-07. A shared outbound HTTP helper now
-screens URL syntax, private/loopback/link-local/reserved IP literals, DNS names
-that resolve to blocked addresses, and unsafe redirects; direct receive,
-sender, WebSub subscribe, and WebSub publish paths now route through it with
-explicit TLS verification and bounded redirects. Remaining gap: the helper
-validates DNS results and then lets `httpx` connect to the original hostname,
-which performs a second resolution. This leaves a DNS rebinding/time-of-check
-time-of-use bypass until the connection is pinned to a checked IP while
-preserving the original Host header and TLS SNI.
+**Status:** Resolved 2026-05-07. The shared outbound HTTP helper screens URL
+syntax, private/loopback/link-local/reserved IP literals, DNS names that
+resolve to blocked addresses, and unsafe redirects; direct receive, sender,
+WebSub subscribe, and WebSub publish paths route through it with explicit
+TLS verification and bounded redirects. As of 2026-05-07 the helper resolves
+the URL host once, validates every returned IP, and connects to the resolved
+IP literal while preserving the original ``Host`` header and forwarding the
+original hostname as ``extensions["sni_hostname"]`` for HTTPS, closing the
+DNS rebinding / TOCTOU window. The pin is re-applied on every redirect hop.
 
 **References:**
 
@@ -280,11 +287,12 @@ In addition, `_normalize_redirect_uri` only lowercased scheme/host. It did not c
 
 **Severity:** High when the sender is run automatically against published content that may contain user-influenced HTML; Medium otherwise (operator-only manual runs against trusted-author content).
 
-**Status:** Partially resolved 2026-05-07. Sender target filtering now rejects
-unsafe HTTP(S) URL forms and private IP literals before discovery; discovery,
-content fetches, delivery, and Salmention resend paths use the shared safe HTTP
-helpers with size limits and retry/drop policies. Remaining risk inherits the
-SSRF helper's DNS rebinding/TOCTOU gap from finding 2.
+**Status:** Resolved 2026-05-07. Sender target filtering rejects unsafe
+HTTP(S) URL forms and private IP literals before discovery; discovery,
+content fetches, delivery, and Salmention resend paths use the shared safe
+HTTP helpers with size limits and retry/drop policies. As of 2026-05-07 the
+shared helpers also pin connections to the resolved IP, so the DNS
+rebinding / TOCTOU gap that previously inherited from finding 2 is closed.
 
 **References:**
 
@@ -333,10 +341,15 @@ Media uploads are filtered by `upload.content_type` (client-controlled) and the 
 
 **Severity:** Medium
 
-**Status:** Resolved and verified 2026-05-07. Introspection now requires a
-strict bearer caller credential, supports same-owner target-token
-introspection, supports self-introspection via the bearer header, and returns
-inactive for unrelated-owner target tokens.
+**Status:** Resolved and verified 2026-05-07; tightened 2026-05-07.
+Introspection now requires a strict bearer caller credential, supports
+self-introspection via the bearer header, returns inactive for unrelated-owner
+target tokens, and as of 2026-05-07 also restricts target tokens to the
+caller's own ``client_id`` after policy normalization. Hosts that need a
+broader policy can configure the new
+``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER`` callable, which fails closed on
+import errors, callable exceptions, non-callable values, and non-bool return
+values.
 
 **References:** `src/indieweb/views.py:949-994`, `src/indieweb/urls.py:23`.
 
@@ -572,18 +585,21 @@ compatibility.
 
 ## Remaining Fix Order
 
-1. **Pin SSRF-safe outbound connections to checked addresses.** Update the shared HTTP helper so the DNS/IP safety decision is bound to the actual socket connection, not just to a preflight hostname resolution. Preserve the original Host header and TLS SNI, re-apply the same policy on every redirect, and add DNS rebinding regression tests.
-2. **Cap all Webmention parser fallback traversals.** Apply the existing depth/item-count budget consistently to `_search_for_any_h_entry`, `_search_items_for_h_card`, `_search_items_for_h_card_id`, page-level h-card collection, and any future recursive microformats traversal helper. Add regression tests with wide/deep h-entry and h-card trees.
-3. **Track multiple recent WebSub delivery digests.** Replace the single latest accepted digest with a bounded replay cache/history per subscription, scoped to the configured replay window. Add tests proving A/B/A replay is rejected while old entries expire.
+The three production blockers identified in the 2026-05-07 verification pass
+were resolved on 2026-05-07:
+
+1. SSRF connection pinning landed (see finding 2 / 7); ``http_client.py`` now
+   resolves once and connects to a checked IP literal while preserving Host
+   header and TLS SNI.
+2. Webmention parser fallback traversals are now iterative and share the
+   primary-scan depth/breadth budgets.
+3. WebSub deliveries now retain a bounded multi-digest replay history per
+   subscription within the configured replay window.
 
 ## Documentation Impact
 
-Most historical documentation updates have landed with the corresponding fixes. The remaining fixes should update docs as follows:
-
-- **SSRF helper IP pinning**: document the exact guarantees and limitations of the safe outbound helper, including DNS rebinding protection and behavior when tests or callers inject custom clients.
-- **Webmention parser traversal caps**: document the relevant Webmention processing settings and their effect on pathological source pages.
-- **WebSub replay cache**: document the replay-window storage model, retention bounds, and migration implications if a new model/table is added.
-- **`AGENTS.md`**: no change needed.
+Documentation updates have landed alongside each fix. ``AGENTS.md`` did not
+need a change.
 
 ## Current Backlog Coverage
 

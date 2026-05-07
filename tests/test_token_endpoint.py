@@ -60,6 +60,31 @@ def token_introspection_endpoint_url():
     return reverse("indieweb:token-introspection")
 
 
+def allow_any_introspection(caller_token, target_token):
+    """Test hook: a permissive introspection authorizer that ignores client_id."""
+    return True
+
+
+def deny_all_introspection(caller_token, target_token):
+    """Test hook: deny every introspection request."""
+    return False
+
+
+def raising_introspection_authorizer(caller_token, target_token):
+    """Test hook: raise to exercise fail-closed semantics."""
+    raise RuntimeError("authorizer crashed")
+
+
+def truthy_non_bool_introspection_authorizer(caller_token, target_token):
+    """Test hook: return a truthy non-bool value (must NOT broaden access)."""
+    return "allow"
+
+
+def falsy_non_bool_introspection_authorizer(caller_token, target_token):
+    """Test hook: return a falsy non-bool value (must also fail closed)."""
+    return 0
+
+
 @pytest.mark.django_db
 def test_wrong_auth_code(client, token_endpoint_url, token_payload):
     """Assert we can't get a token with the wrong auth code."""
@@ -1116,11 +1141,11 @@ def test_authorization_bearer_token_rejects_malformed_headers(rf, auth_header):
 
 
 @pytest.mark.django_db
-def test_token_introspection_allows_same_owner_target_token(client, user, token_introspection_endpoint_url):
-    """A valid caller token may introspect another active token owned by the same Django user."""
+def test_token_introspection_allows_same_client_target_token(client, user, token_introspection_endpoint_url):
+    """A valid caller token may introspect another active token issued to the same client_id."""
     caller = models.Token.objects.create(
         owner=user,
-        key="sameownercallersecret",
+        key="sameclientcallersecret",
         client_id="https://client-one.example.org",
         me="https://example.org/",
         scope="create",
@@ -1128,7 +1153,102 @@ def test_token_introspection_allows_same_owner_target_token(client, user, token_
     )
     target = models.Token.objects.create(
         owner=user,
-        key="sameownertargetsecret",
+        key="sameclienttargetsecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
+    assert response.json()["client_id"] == "https://client-one.example.org"
+    assert response.json()["scope"] == "update"
+
+
+@pytest.mark.django_db
+def test_token_introspection_allows_same_client_after_normalization(client, user, token_introspection_endpoint_url):
+    """The same-client check normalizes scheme/host case and IDNA host form."""
+    caller = models.Token.objects.create(
+        owner=user,
+        key="normalizedcallersecret",
+        client_id="HTTPS://Client.Example.ORG/app",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="normalizedtargetsecret",
+        client_id="https://client.example.org/app",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
+
+
+@pytest.mark.django_db
+def test_token_introspection_hides_cross_client_target_token(client, user, token_introspection_endpoint_url):
+    """The default same-client policy hides tokens issued to a different client_id."""
+    caller = models.Token.objects.create(
+        owner=user,
+        key="crossclientcallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="crossclienttargetsecret",
+        client_id="https://client-two.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_authorizer_can_allow_cross_client(
+    client, settings, user, token_introspection_endpoint_url
+):
+    """A configured authorizer hook can broaden access beyond same-client_id."""
+    settings.INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = "tests.test_token_endpoint.allow_any_introspection"
+    caller = models.Token.objects.create(
+        owner=user,
+        key="hookallowcallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="hookallowtargetsecret",
         client_id="https://client-two.example.org",
         me="https://example.org/",
         scope="update",
@@ -1144,7 +1264,173 @@ def test_token_introspection_allows_same_owner_target_token(client, user, token_
     assert response.status_code == 200
     assert response.json()["active"] is True
     assert response.json()["client_id"] == "https://client-two.example.org"
-    assert response.json()["scope"] == "update"
+
+
+@pytest.mark.django_db
+def test_token_introspection_authorizer_can_deny_same_client(client, settings, user, token_introspection_endpoint_url):
+    """A configured authorizer hook can also tighten beyond the default same-client rule."""
+    settings.INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = "tests.test_token_endpoint.deny_all_introspection"
+    caller = models.Token.objects.create(
+        owner=user,
+        key="hookdenycallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="hookdenytargetsecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_authorizer_import_failure_fails_closed(
+    client, settings, user, token_introspection_endpoint_url
+):
+    """A misconfigured authorizer dotted path rejects target lookups (fail-closed)."""
+    settings.INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = "tests.does_not_exist.missing_callable"
+    caller = models.Token.objects.create(
+        owner=user,
+        key="hookmissingcallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="hookmissingtargetsecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_authorizer_truthy_non_bool_fails_closed(
+    client, settings, user, token_introspection_endpoint_url
+):
+    """A hook returning a truthy non-bool value (e.g. ``"allow"``) must not broaden access."""
+    settings.INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = (
+        "tests.test_token_endpoint.truthy_non_bool_introspection_authorizer"
+    )
+    caller = models.Token.objects.create(
+        owner=user,
+        key="hooktruthycallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="hooktruthytargetsecret",
+        client_id="https://client-two.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_authorizer_falsy_non_bool_fails_closed(
+    client, settings, user, token_introspection_endpoint_url
+):
+    """A hook returning a falsy non-bool value (e.g. ``0``) also fails closed."""
+    settings.INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = (
+        "tests.test_token_endpoint.falsy_non_bool_introspection_authorizer"
+    )
+    caller = models.Token.objects.create(
+        owner=user,
+        key="hookfalsycallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="hookfalsytargetsecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_authorizer_callable_exception_fails_closed(
+    client, settings, user, token_introspection_endpoint_url
+):
+    """An authorizer callable that raises rejects target lookups (fail-closed)."""
+    settings.INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = "tests.test_token_endpoint.raising_introspection_authorizer"
+    caller = models.Token.objects.create(
+        owner=user,
+        key="hookraisingcallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="hookraisingtargetsecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
 
 
 @pytest.mark.django_db

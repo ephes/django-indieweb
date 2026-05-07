@@ -573,6 +573,52 @@ def _client_id_allowed(client_id: str) -> bool:
         return False
 
 
+def _introspection_authorizer_allows(caller_token: Token, target_token: Token) -> bool:
+    """Return whether ``caller_token`` may introspect ``target_token``.
+
+    The default rule (RFC 7662 §2.1, narrow reading) restricts a caller to
+    introspecting tokens issued to its own ``client_id`` after policy
+    normalization, which prevents one client's leaked token from being used as a
+    validity oracle against another client's tokens for the same Django user.
+
+    Hosts that need a broader policy (for example, a single first-party
+    resource-server credential that introspects tokens for any client) can set
+    ``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER`` to a dotted path resolving to a
+    callable ``(caller_token, target_token) -> bool``. Import failures, callable
+    exceptions, and non-bool return values fail closed.
+    """
+    authorizer_path = getattr(settings, "INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER", None)
+    if authorizer_path:
+        try:
+            authorizer = import_string(authorizer_path)
+        except Exception as exc:
+            logger.error(f"Failed to load INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER {authorizer_path!r}: {exc}")
+            return False
+        if not callable(authorizer):
+            logger.error(f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER {authorizer_path!r} is not callable")
+            return False
+        try:
+            result = authorizer(caller_token, target_token)
+        except Exception as exc:
+            logger.error(f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER raised: {exc}")
+            return False
+        # Strict identity check: the docs and security guarantee promise that
+        # only an explicit ``True`` permits introspection. Truthy non-bool
+        # values (``"allow"``, ``1``, non-empty containers) fail closed so a
+        # hook returning a placeholder string or sentinel cannot accidentally
+        # broaden access.
+        if result is not True:
+            logger.error(
+                f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER returned non-True value of type {type(result).__name__}"
+            )
+            return False
+        return True
+
+    caller_client = _normalize_client_id_for_policy(caller_token.client_id)
+    target_client = _normalize_client_id_for_policy(target_token.client_id)
+    return caller_client == target_client
+
+
 def _get_webmention_enqueue() -> Callable[[int], None] | None:
     """Load the optional configured Webmention enqueue hook."""
     enqueue_path = getattr(settings, "INDIEWEB_WEBMENTION_ENQUEUE", None)
@@ -1412,6 +1458,9 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             return self._inactive_response()
         if token.owner_id != caller_token.owner_id:
             logger.info("introspection rejected target token owned by a different user")
+            return self._inactive_response()
+        if not _introspection_authorizer_allows(caller_token, token):
+            logger.info("introspection rejected target token under configured authorizer policy")
             return self._inactive_response()
         return self._active_response(token)
 

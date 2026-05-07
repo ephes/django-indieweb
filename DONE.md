@@ -2,7 +2,87 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
-## 2026-05-08
+## 2026-05-07
+
+### Pin SSRF-safe outbound HTTP connections to checked addresses
+
+- Bound the SSRF safety decision to the actual socket connection: outbound
+  helpers in ``http_client.py`` now resolve the URL host once with the
+  configured resolver, validate every returned IP, and rewrite the request
+  URL host to the chosen IP literal before handing it to ``httpx``. The
+  original hostname is preserved as the ``Host`` header for HTTP correctness
+  and forwarded as ``extensions["sni_hostname"]`` for HTTPS so TLS SNI and
+  certificate verification still target the original hostname. This closes
+  the DNS rebinding / TOCTOU bypass that allowed a host to resolve to a
+  public address during validation and to a private address during the
+  ``httpx`` connect.
+- New helper: ``resolve_safe_http_url(url, *, resolver) -> (host, port, ip)``.
+  ``request_with_safe_redirects`` and ``stream_with_safe_redirects`` gained a
+  ``pin_to_resolved_ip`` kwarg (default ``True``) that enables the rewrite;
+  callers that need the legacy hostname-on-the-wire behavior (for example
+  test setups that assert on URL host) can pass ``pin_to_resolved_ip=False``.
+  Pinning is reapplied on every redirect hop, and pin failures on redirect
+  iterations are surfaced as ``WebmentionRedirectError`` for parity with the
+  pre-flight ``validate_safe_http_url`` redirect-target check.
+- The existing ``unittest.mock`` short-circuit in ``stream_with_safe_redirects``
+  now also covers ``request_with_safe_redirects`` to keep the
+  ``unittest.mock.Mock`` based sender/WebSub unit tests passing without
+  rewriting URLs through them. The Priority 4 backlog item that tracks
+  replacing those guards with an explicit kwarg was extended to cover both
+  helpers.
+- Added regression coverage in ``tests/test_http_client.py`` for: public
+  resolver returning the safe IP; IP-literal URLs short-circuiting the
+  rewrite; private IP literals being rejected; DNS-to-private addresses
+  being rejected; redirect-to-private addresses being rejected on every
+  hop; HTTPS pinning forwarding ``sni_hostname``; HTTP requests skipping
+  the SNI override; the ``pin_to_resolved_ip=False`` opt-out preserving the
+  legacy URL; and a DNS-rebinding scenario where the resolver returns a
+  public address on the first call and a private address on a later call —
+  the redirect hop's pinning step rejects the private rebind before the
+  second connection is attempted.
+- Validation: ``uv run pytest`` (1270 passed, including added regression
+  tests for the strict authorizer return-type check, non-default-port Host
+  preservation, and tightened DNS-rebinding assertions); ``uv run mypy`` (no
+  issues found); ``uv run ruff check .`` (all checks passed); ``uv run prek
+  run --all-files`` (all hooks passed).
+- Documentation: noted the SSRF connection pinning + Host/SNI guarantees in
+  ``docs/webmention.rst`` and ``docs/websub.rst``. The ``pin_to_resolved_ip``
+  kwarg is described in the changelog and in ``http_client.py`` docstrings;
+  it is a code-level kwarg rather than a deployment setting, so
+  ``docs/configuration.rst`` was intentionally not changed for it.
+- Changelog: added an Unreleased entry describing connection pinning,
+  ``Host``/SNI preservation, and the ``pin_to_resolved_ip`` opt-out.
+
+### Tighten token introspection with a same-`client_id` rule and configurable authorizer
+
+- ``TokenIntrospectionView.post`` now applies an introspection authorization
+  policy after the existing caller-bearer authentication and same-owner check.
+  The default policy enforces RFC 7662 §2.1 narrowly: caller and target tokens
+  must share a ``_normalize_client_id_for_policy`` value (scheme/host case and
+  IDNA host normalization), so a same-owner caller can no longer introspect a
+  different client's token at the same Django user as a validity oracle.
+- Added ``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER``: a dotted path to a
+  callable ``(caller_token, target_token) -> bool``. When set, the hook
+  replaces the same-``client_id`` default and runs after target validity
+  checks. Import failures, callable exceptions, non-callable values, and
+  non-bool return values fail closed (``{"active": false}``), so a
+  misconfiguration cannot silently broaden access.
+- Refactored the existing
+  ``test_token_introspection_allows_same_owner_target_token`` test to cover
+  the new same-client positive path; added regression tests for the
+  case-/IDNA-normalized same-client match, the cross-client deny path, the
+  hook-allow broadening path, the hook-deny tightening path, the
+  truthy-non-bool fail-closed path, the falsy-non-bool fail-closed path,
+  and the import-failure / raising-callable fail-closed paths.
+- Validation: ``uv run pytest`` (1270 passed); ``uv run mypy`` (no issues
+  found); ``uv run ruff check .`` (all checks passed); ``uv run prek run
+  --all-files`` (all hooks passed).
+- Documentation: added the ``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER`` entry
+  to ``docs/configuration.rst``; tightened the introspection narrative in
+  ``docs/indieauth.rst`` to describe the same-``client_id`` default and the
+  hook escape hatch.
+- Changelog: added an Unreleased entry describing the same-``client_id``
+  default and the new authorizer hook.
 
 ### Cap Webmention parser fallback traversals and track WebSub multi-digest replay history
 
@@ -124,8 +204,6 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   -q --no-cov`` (199 passed), ``uv run pytest`` (1237 passed, coverage 90.25%),
   ``uv run mypy``, ``uv run ruff check .``, ``uv run ruff format . --check``,
   ``just docs``, and ``uv run prek run --all-files`` all passed.
-
-## 2026-05-07
 
 ### Harden WebSub subscriber delivery security
 

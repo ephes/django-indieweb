@@ -145,11 +145,20 @@ inactive-owner, or disallowed caller credentials return
 ``WWW-Authenticate: Bearer``.
 
 The form-encoded ``token`` field is the target token being checked. If the
-field is omitted, django-indieweb introspects the caller token itself. A
-caller may introspect another active token only when both tokens are owned by
-the same Django user. Authenticated callers checking a token owned by another
-Django user receive the stable inactive response rather than active metadata
-or a distinguishing error.
+field is omitted, django-indieweb introspects the caller token itself. By
+default, a caller may introspect another active token only when both tokens
+are owned by the same Django user **and** issued to the same ``client_id``
+after scheme/host case and IDNA normalization (RFC 7662 §2.1, narrow
+reading). Cross-owner and cross-client lookups return the stable inactive
+response rather than active metadata or a distinguishing error.
+
+Hosts that need a broader policy — for example, a single first-party
+resource-server credential that introspects tokens for any ``client_id`` —
+can configure ``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER`` (see
+:doc:`configuration`) with a callable
+``(caller_token, target_token) -> bool``. The hook runs after the existing
+caller authentication and target-token validity checks and fails closed on
+import errors, exceptions, non-callable values, and non-bool return values.
 
 Active responses include only the token metadata needed by resource servers:
 
@@ -177,8 +186,9 @@ Inactive responses are intentionally stable and non-specific:
 Unknown tokens, deleted/revoked token rows, expired tokens, tokens whose
 Django owner is inactive, tokens whose ``client_id`` no longer satisfies
 ``INDIEWEB_ALLOWED_CLIENT_IDS`` and ``INDIEWEB_CLIENT_ID_VALIDATOR`` policy,
-and cross-owner target tokens all return the same inactive shape to
-authenticated callers. Introspection does not create tokens, refresh
+cross-owner target tokens, and cross-client target tokens (under the default
+or a configured ``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER``) all return the
+same inactive shape to authenticated callers. Introspection does not create tokens, refresh
 expiration, delete rows, or otherwise mutate token state. It does not return
 full bearer token keys.
 

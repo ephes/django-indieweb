@@ -267,6 +267,47 @@ paths, and query strings remain significant.
    existed (or by an out-of-band script) keeps working as long as it satisfies
    configured client policy, or no client policy is configured.
 
+INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable
+``(caller_token, target_token) -> bool`` that gates which target tokens an
+authenticated introspection caller may see.
+
+**Default:** ``None`` (built-in same-``client_id`` rule applies)
+
+Without a configured authorizer the token introspection endpoint at
+``/indieweb/token/introspect/`` enforces RFC 7662 §2.1 narrowly: a caller may
+only introspect tokens issued to its own ``client_id``, after the same scheme,
+host, and IDNA host normalization that other ``client_id`` policy hooks use.
+Cross-client and cross-owner lookups return ``{"active": false}`` without
+disclosing scope, ``me``, or expiry.
+
+When set, the configured callable is invoked **after** the existing
+authentication, owner, and target-token validity checks. It receives the
+``Token`` instances for the caller and the proposed target. Only returning
+the literal ``True`` allows the active introspection response; any other
+return value (including ``False``, ``None``, truthy non-bool values such as
+``"allow"`` or ``1``, and falsy non-bool values such as ``0`` or ``""``)
+returns ``{"active": false}``. Import failures, callable exceptions, and
+non-callable values also fail closed.
+
+**Example:**
+
+.. code-block:: python
+
+   # myapp/indieauth.py
+   _RESOURCE_SERVER_CLIENT_IDS = {"https://resource-server.example.org/"}
+
+   def introspection_authorizer(caller_token, target_token) -> bool:
+       """Allow a single first-party resource server to introspect every token."""
+       return caller_token.client_id in _RESOURCE_SERVER_CLIENT_IDS
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = "myapp.indieauth.introspection_authorizer"
+
 INDIEWEB_RATE_LIMITS
 ~~~~~~~~~~~~~~~~~~~~
 
