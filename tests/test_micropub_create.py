@@ -523,6 +523,91 @@ class TestMicropubCreate:
         assert "syndication" not in received_properties
 
     @pytest.mark.django_db
+    @pytest.mark.parametrize("property_name", ["uid", "author"])
+    def test_json_create_rejects_server_managed_properties(
+        self, client, token, micropub_url, monkeypatch, property_name
+    ):
+        """JSON create must not let clients submit properties owned by the server."""
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {
+            "type": ["h-entry"],
+            "properties": {
+                "content": ["Client content"],
+                property_name: ["client-supplied"],
+            },
+        }
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
+    def test_json_flat_create_rejects_server_managed_property(self, client, token, micropub_url, monkeypatch):
+        """The simple JSON create shape gets the same server-managed property gate."""
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {"content": "Client content", "uid": "client-supplied"}
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize("property_name", ["uid", "author", "uid[]", "author[]"])
+    def test_form_create_rejects_server_managed_properties(
+        self, client, token, micropub_url, monkeypatch, property_name
+    ):
+        """Form creates cannot bypass the server-managed property deny-list."""
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={"h": "entry", "content": "Client content", property_name: "client-supplied"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
     def test_form_create_forwards_event_properties(self, client, token, micropub_url, monkeypatch):
         """Test that form-encoded h-event fields are forwarded as property arrays."""
         received_properties = None

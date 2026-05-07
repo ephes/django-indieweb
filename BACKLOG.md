@@ -12,14 +12,6 @@ No current Priority 1 items.
 
 ### API Hardening
 
-- [ ] Authenticate the IndieAuth token introspection endpoint per RFC 7662 §2.1.
-  References: `src/indieweb/views.py` (introspection view ~lines 949-994), `src/indieweb/urls.py:23`, `tests/test_token_endpoint.py`, `docs/`.
-  The endpoint currently accepts any request and returns `scope`, `me`, `client_id`, and expiry, turning a stolen token into a global validity oracle. Require a bearer credential (or HTTP Basic resource-server credential) and authorise the caller (token owner, or a configured resource-server credential). When the fix lands, document the new credential format in `docs/`; existing operators relying on the unauthenticated endpoint will need a migration note. Tests: unauthenticated POST → 401; unrelated token → no information leak; valid resource-server credential → introspection result.
-
-- [ ] Gate JSON Micropub create/update against server-managed properties.
-  References: `src/indieweb/views.py` (form allow-list ~lines 78-102; JSON path ~lines 1045-1046; `_handle_update`), `tests/test_micropub_create.py`, `tests/test_micropub_actions.py`, `tests/test_micropub_endpoint.py`.
-  The JSON Micropub create path passes `data["properties"]` verbatim, bypassing the form-path allow-list `MICROPUB_FORM_CREATE_PROPERTIES` for fields the form path never accepts (e.g. `uid`, `author`). Apply an explicit deny-list of server-managed keys on both JSON and form paths before invoking `create_entry`. Apply the same gating to `update`: deny `replace`/`add`/`delete` on server-managed properties.
-
 - [ ] Refuse CORS credentials when `Access-Control-Allow-Origin: *` is configured.
   References: `src/indieweb/cors.py`, `tests/test_cors.py`, `docs/configuration.rst`.
   When `INDIEWEB_CORS_ALLOWED_ORIGINS = "*"` and `INDIEWEB_CORS_ALLOW_CREDENTIALS = True`, the response echoes any `Origin` and sets `Access-Control-Allow-Credentials: true`. Refuse to emit credentials with wildcard origins (drop the credentials header or refuse to enable CORS), warn at startup, and document the combination as unsupported. Also: ensure `Vary: Origin` is set on rejection responses; guard against double-write of `Access-Control-Allow-Origin` if downstream middleware already set it.

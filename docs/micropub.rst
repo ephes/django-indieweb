@@ -359,8 +359,9 @@ properties are not comma-split. Array notation is meaningful only for the
 list-shaped command properties shown above: ``mp-channel``,
 ``mp-photo-alt``, and ``mp-syndicate-to``.
 
-Microformats2 JSON creates already pass the submitted ``properties`` object to
-the handler unchanged, including command properties and ``post-status``:
+Microformats2 JSON creates pass the submitted ``properties`` object to the
+handler unchanged, including command properties and ``post-status``, except
+for server-managed properties described below:
 
 .. code:: json
 
@@ -386,6 +387,26 @@ can create because ``create`` is present, while a token with only ``draft`` is
 rejected by the built-in Micropub resource-server scope gate. Hosts that want
 draft-only permissions should add their own policy around token issuance,
 handler behavior, or a custom resource-server layer.
+
+Server-Managed Properties
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+django-indieweb owns a small set of Micropub properties that clients cannot
+set or edit through the bundled resource server. Create requests that submit
+``uid`` or ``author`` are rejected with ``400 invalid_request`` before
+``MicropubContentHandler.create_entry()`` is called. This applies to
+Microformats2 JSON, simple JSON, and form-encoded creates, including array
+notation such as ``uid[]``.
+
+``action=update`` applies the same gate before
+``MicropubContentHandler.update_entry()`` is called. ``replace`` and ``add``
+reject maps containing ``uid`` or ``author``. ``delete`` rejects both the list
+form, such as ``"delete": ["uid"]``, and the value-specific map form, such as
+``"delete": {"author": [...]}``.
+
+Command and extension properties remain allowed and handler-owned:
+``mp-slug``, ``mp-channel``, ``mp-photo-alt``, ``mp-syndicate-to``, and
+``post-status`` are preserved for host code rather than denied by this gate.
 
 Media Endpoint
 ~~~~~~~~~~~~~~
@@ -1053,11 +1074,13 @@ The Micropub endpoint returns the following HTTP status codes:
 - ``204 No Content`` - Success on update/delete/undelete actions when the
   entry's URL did not change (delete always returns this on success)
 - ``400 Bad Request`` - Invalid request data: the configured handler raised
-  on entry creation; an action request had an unknown ``url`` (handler
+  on entry creation; a create request submitted server-managed ``uid`` or
+  ``author`` properties; an action request had an unknown ``url`` (handler
   raised ``ValueError``), missing ``url``, malformed JSON, a non-object
   JSON body, or — for ``action=update`` — a non-JSON body, an empty update
   payload (no ``replace``/``add``/``delete``), a non-array operation value,
-  or an otherwise spec-non-conformant operation shape; a ``GET ?q=source``
+  an attempt to mutate server-managed ``uid`` or ``author`` properties, or an
+  otherwise spec-non-conformant operation shape; a ``GET ?q=source``
   by-URL request had an empty ``url`` or a ``url`` unknown to the handler; a
   source-list request had malformed ``limit``/``offset`` or the handler raised
   ``ValueError``; a media endpoint ``q=source`` request had an empty or unknown

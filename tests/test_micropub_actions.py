@@ -175,6 +175,45 @@ class TestMicropubUpdate:
         assert response.status_code == 400
         assert response.content.decode("utf-8") == "invalid_request"
 
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            {"replace": {"uid": ["client-supplied"]}},
+            {"replace": {"author": [{"type": ["h-card"], "properties": {"name": ["Client"]}}]}},
+            {"add": {"uid": ["client-supplied"]}},
+            {"add": {"author": [{"type": ["h-card"], "properties": {"name": ["Client"]}}]}},
+            {"delete": ["uid"]},
+            {"delete": ["author"]},
+            {"delete": {"uid": ["client-supplied"]}},
+            {"delete": {"author": [{"type": ["h-card"], "properties": {"name": ["Client"]}}]}},
+        ],
+    )
+    def test_update_rejects_server_managed_properties_before_handler(
+        self, client, user, micropub_url, monkeypatch, operation
+    ):
+        """Update replace/add/delete cannot mutate server-managed properties."""
+        handler_called = False
+
+        def get_handler():
+            nonlocal handler_called
+            handler_called = True
+            return InMemoryMicropubHandler()
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", get_handler)
+
+        token = _make_token(user, "update")
+        payload = {"action": "update", "url": "/entries/1/", **operation}
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert handler_called is False
+
 
 @pytest.mark.django_db
 class TestMicropubDelete:

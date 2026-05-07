@@ -102,12 +102,12 @@ def test_successful_token_request_under_limit_keeps_existing_response(client, se
 
 
 @pytest.mark.django_db
-def test_configured_token_introspection_limit_returns_429(client, settings):
+def test_configured_token_introspection_limit_returns_429(client, settings, token):
     settings.INDIEWEB_RATE_LIMITS = {"token_introspection": {"limit": 1, "window": 60}}
     url = reverse("indieweb:token-introspection")
 
-    allowed = client.post(url, data={"token": "wrong"})
-    limited = client.post(url, data={"token": "wrong"})
+    allowed = client.post(url, data={"token": "wrong"}, Authorization=f"Bearer {token.key}")
+    limited = client.post(url, data={"token": "wrong"}, Authorization=f"Bearer {token.key}")
 
     assert allowed.status_code == 200
     assert allowed.json() == {"active": False}
@@ -127,7 +127,11 @@ def test_limits_are_scoped_by_endpoint_key(client, settings, token):
     micropub_url = reverse("indieweb:micropub")
 
     token_response = client.post(token_url, data={"code": "wrong", "client_id": "https://client.example.org"})
-    introspection_response = client.post(introspection_url, data={"token": token.key})
+    introspection_response = client.post(
+        introspection_url,
+        data={"token": token.key},
+        Authorization=f"Bearer {token.key}",
+    )
     micropub_response = client.get(micropub_url, Authorization=f"Bearer {token.key}")
     limited_token_response = client.post(
         token_url,

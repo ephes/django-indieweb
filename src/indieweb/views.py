@@ -134,6 +134,7 @@ MICROPUB_FORM_CREATE_LIST_PROPERTIES = (
     "mp-photo-alt",
     "mp-syndicate-to",
 )
+MICROPUB_SERVER_MANAGED_PROPERTIES = frozenset({"uid", "author"})
 DEFAULT_MICROPUB_SOURCE_LIST_LIMIT = 20
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -1077,11 +1078,42 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     def _inactive_response(self) -> JsonResponse:
         return JsonResponse({"active": False})
 
-    def _submitted_token(self, request: HttpRequest) -> str | None:
+    def _submitted_token(self, request: HttpRequest, caller_token: Token) -> str:
         value = request.POST.get("token")
         if value:
             return value
-        return _authorization_bearer_token(request)
+        return caller_token.key
+
+    def _token_for_key(self, key: str, *, log_prefix: str) -> Token | None:
+        try:
+            token = Token.objects.select_related("owner").get(key=key)
+        except Token.DoesNotExist:
+            logger.info(f"{log_prefix} token not found: {key[:8]}...")
+            return None
+        except Token.MultipleObjectsReturned:
+            logger.warning(f"{log_prefix} found multiple tokens for submitted key: {key[:8]}...")
+            return None
+        if not token.owner.is_active:
+            logger.info(f"{log_prefix} rejected inactive token owner: {token.owner}")
+            return None
+        if token.is_expired():
+            logger.info(f"{log_prefix} rejected expired token: {key[:8]}...")
+            return None
+        if not _client_id_allowed(token.client_id):
+            logger.warning(f"{log_prefix} rejected disallowed client_id: {token.client_id!r}")
+            return None
+        return token
+
+    def _caller_token(self, request: HttpRequest) -> Token | HttpResponse:
+        authorization = _authorization_header(request)
+        key = _parse_bearer_authorization_header(authorization)
+        if key is None:
+            logger.warning("No valid introspection caller bearer token provided")
+            return _bearer_authentication_error_response()
+        token = self._token_for_key(key, log_prefix="introspection caller")
+        if token is None:
+            return _bearer_authentication_error_response()
+        return token
 
     def _active_response(self, token: Token) -> JsonResponse:
         response_values: dict[str, bool | int | str] = {
@@ -1095,26 +1127,17 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             response_values["exp"] = _token_timestamp(token.expires_at)
         return JsonResponse(response_values)
 
-    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> JsonResponse:
-        submitted_token = self._submitted_token(request)
-        if not submitted_token:
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+        caller_token = self._caller_token(request)
+        if isinstance(caller_token, HttpResponse):
+            return caller_token
+
+        submitted_token = self._submitted_token(request, caller_token)
+        token = self._token_for_key(submitted_token, log_prefix="introspection target")
+        if token is None:
             return self._inactive_response()
-        try:
-            token = Token.objects.select_related("owner").get(key=submitted_token)
-        except Token.DoesNotExist:
-            logger.info(f"introspection token not found: {submitted_token[:8]}...")
-            return self._inactive_response()
-        except Token.MultipleObjectsReturned:
-            logger.warning(f"introspection found multiple tokens for submitted key: {submitted_token[:8]}...")
-            return self._inactive_response()
-        if not token.owner.is_active:
-            logger.info(f"introspection rejected inactive token owner: {token.owner}")
-            return self._inactive_response()
-        if token.is_expired():
-            logger.info(f"introspection rejected expired token: {submitted_token[:8]}...")
-            return self._inactive_response()
-        if not _client_id_allowed(token.client_id):
-            logger.warning(f"introspection rejected disallowed client_id: {token.client_id!r}")
+        if token.owner_id != caller_token.owner_id:
+            logger.info("introspection rejected target token owned by a different user")
             return self._inactive_response()
         return self._active_response(token)
 
@@ -1159,6 +1182,37 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
     request: HttpRequest
     rate_limit_key = "micropub"
     cors_allowed_methods = ("GET", "POST")
+
+    @staticmethod
+    def _normalized_property_name(name: str) -> str:
+        """Return the Micropub property name represented by a submitted field name."""
+        if name.endswith("[]"):
+            return name[:-2]
+        return name
+
+    @classmethod
+    def _has_server_managed_property(cls, property_names: object) -> bool:
+        """Return whether submitted property names include view/server-owned properties."""
+        if not isinstance(property_names, dict | list | tuple | set):
+            return False
+        return any(
+            isinstance(name, str) and cls._normalized_property_name(name) in MICROPUB_SERVER_MANAGED_PROPERTIES
+            for name in property_names
+        )
+
+    def _form_create_has_server_managed_property(self, request: HttpRequest) -> bool:
+        """Return whether raw form fields include server-managed create properties."""
+        return self._has_server_managed_property(request.POST)
+
+    def _properties_have_server_managed_property(self, properties: dict[str, Any]) -> bool:
+        """Return whether parsed create properties include server-managed properties."""
+        return self._has_server_managed_property(properties)
+
+    def _create_server_managed_property_error(self, request: HttpRequest) -> HttpResponse | None:
+        """Reject raw form creates that submit server-managed properties before parsing side effects."""
+        if request.content_type != "application/json" and self._form_create_has_server_managed_property(request):
+            return self._invalid_request()
+        return None
 
     def _parse_json_request(self, request: HttpRequest) -> dict[str, Any]:
         """Parse JSON formatted Micropub request."""
@@ -1399,6 +1453,17 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return None
         return updates
 
+    def _updates_have_server_managed_property(self, updates: dict[str, Any]) -> bool:
+        """Return whether update operations attempt to mutate server-managed properties."""
+        for key in ("replace", "add"):
+            operation = updates.get(key)
+            if isinstance(operation, dict) and self._has_server_managed_property(operation):
+                return True
+        delete = updates.get("delete")
+        if isinstance(delete, dict | list) and self._has_server_managed_property(delete):
+            return True
+        return False
+
     def _handle_update(self, request: HttpRequest) -> HttpResponse:
         """Dispatch ``action=update``. JSON-only; validates the body shape before forwarding.
 
@@ -1413,6 +1478,8 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return self._invalid_request()
         updates = self._validate_update_operations(payload)
         if updates is None:
+            return self._invalid_request()
+        if self._updates_have_server_managed_property(updates):
             return self._invalid_request()
         handler = get_micropub_handler()
         try:
@@ -1456,6 +1523,17 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             logger.exception(f"Unexpected error in undelete_entry for url={url!r}")
             return HttpResponse(status=500)
         return self._action_response(request, entry, url)
+
+    def _post_action_response(self, request: HttpRequest) -> HttpResponse | None:
+        """Dispatch a Micropub action POST, or return ``None`` for create requests."""
+        action = self._post_action(request)
+        if action == "update":
+            return self._handle_update(request)
+        if action == "delete":
+            return self._handle_delete(request)
+        if action == "undelete":
+            return self._handle_undelete(request)
+        return None
 
     @staticmethod
     def _parse_optional_non_negative_int(value: str | None) -> int | None:
@@ -1669,19 +1747,21 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if not self._scope_authorized(request):
             return HttpResponse("authorization error", status=403)
 
-        action = self._post_action(request)
-        if action == "update":
-            return self._handle_update(request)
-        if action == "delete":
-            return self._handle_delete(request)
-        if action == "undelete":
-            return self._handle_undelete(request)
+        action_response = self._post_action_response(request)
+        if action_response is not None:
+            return action_response
+
+        create_property_error = self._create_server_managed_property_error(request)
+        if create_property_error is not None:
+            return create_property_error
 
         # Parse properties from request
         try:
             properties = self.parse_request_data(request)
         except _MicropubMediaUploadError as exc:
             return _micropub_media_upload_error_response(exc)
+        if self._properties_have_server_managed_property(properties):
+            return self._invalid_request()
 
         # Get the content handler and create entry
         handler = get_micropub_handler()

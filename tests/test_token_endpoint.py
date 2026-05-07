@@ -947,6 +947,26 @@ def test_reissued_old_token_stops_authenticating_and_new_token_authenticates(
 
 
 @pytest.mark.django_db
+def test_token_introspection_requires_caller_authentication(client, user, token_introspection_endpoint_url):
+    """Unauthenticated callers cannot use introspection as a token validity oracle."""
+    token = models.Token.objects.create(
+        owner=user,
+        key="unauthenticatedtargetsecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+
+    assert response.status_code == 401
+    assert response.content == b"authentication error"
+    assert response["Cache-Control"] == "no-store"
+    assert response["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.django_db
 def test_token_introspection_returns_active_token_metadata(client, user, token_introspection_endpoint_url):
     """Valid tokens introspect to stable resource-server metadata without exposing secrets."""
     expires_at = timezone.now() + timedelta(hours=1)
@@ -959,7 +979,11 @@ def test_token_introspection_returns_active_token_metadata(client, user, token_i
         expires_at=expires_at,
     )
 
-    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": token.key},
+        HTTP_AUTHORIZATION=f"Bearer {token.key}",
+    )
 
     assert response.status_code == 200
     assert response["Content-Type"] == "application/json"
@@ -976,8 +1000,10 @@ def test_token_introspection_returns_active_token_metadata(client, user, token_i
 
 
 @pytest.mark.django_db
-def test_token_introspection_accepts_bearer_header_as_token_input(client, user, token_introspection_endpoint_url):
-    """The endpoint can introspect the bearer token supplied in the Authorization header."""
+def test_token_introspection_accepts_bearer_header_for_self_introspection(
+    client, user, token_introspection_endpoint_url
+):
+    """A valid caller token can introspect itself when no separate token field is sent."""
     token = models.Token.objects.create(
         owner=user,
         key="bearerintrospectionsecret",
@@ -996,7 +1022,7 @@ def test_token_introspection_accepts_bearer_header_as_token_input(client, user, 
 
 @pytest.mark.django_db
 def test_token_introspection_accepts_case_insensitive_bearer_scheme(client, user, token_introspection_endpoint_url):
-    """Bearer scheme matching remains case-insensitive."""
+    """Bearer scheme matching remains case-insensitive for caller authentication."""
     token = models.Token.objects.create(
         owner=user,
         key="lowercasebearersecret",
@@ -1030,6 +1056,69 @@ def test_authorization_bearer_token_rejects_malformed_headers(rf, auth_header):
 
 
 @pytest.mark.django_db
+def test_token_introspection_allows_same_owner_target_token(client, user, token_introspection_endpoint_url):
+    """A valid caller token may introspect another active token owned by the same Django user."""
+    caller = models.Token.objects.create(
+        owner=user,
+        key="sameownercallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=user,
+        key="sameownertargetsecret",
+        client_id="https://client-two.example.org",
+        me="https://example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
+    assert response.json()["client_id"] == "https://client-two.example.org"
+    assert response.json()["scope"] == "update"
+
+
+@pytest.mark.django_db
+def test_token_introspection_hides_other_owner_target_token(client, user, token_introspection_endpoint_url):
+    """A valid caller token gets inactive metadata for another user's token."""
+    other_user = User.objects.create_user(username="bar", email="bar@example.org", password="password")
+    caller = models.Token.objects.create(
+        owner=user,
+        key="crossownercallersecret",
+        client_id="https://client-one.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    target = models.Token.objects.create(
+        owner=other_user,
+        key="crossownertargetsecret",
+        client_id="https://client-two.example.org",
+        me="https://other.example.org/",
+        scope="update",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     "auth_header",
     [
@@ -1043,27 +1132,36 @@ def test_authorization_bearer_token_rejects_malformed_headers(rf, auth_header):
 def test_token_introspection_returns_inactive_for_malformed_bearer_headers(
     client, token_introspection_endpoint_url, auth_header
 ):
-    """Malformed bearer headers are treated as absent token input."""
-    response = client.post(token_introspection_endpoint_url, HTTP_AUTHORIZATION=auth_header)
+    """Malformed caller bearer headers are authentication failures."""
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": "submitted-target-token"},
+        HTTP_AUTHORIZATION=auth_header,
+    )
 
-    assert response.status_code == 200
-    assert response.json() == {"active": False}
+    assert response.status_code == 401
+    assert response.content == b"authentication error"
+    assert response["Cache-Control"] == "no-store"
+    assert response["WWW-Authenticate"] == "Bearer"
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-    ("payload", "headers"),
-    [
-        ({}, {}),
-        ({"token": ""}, {}),
-        ({"token": "unknown-token"}, {}),
-    ],
-)
-def test_token_introspection_returns_inactive_for_missing_or_unknown_token(
-    client, token_introspection_endpoint_url, payload, headers
-):
-    """Missing and unknown token inputs do not disclose detail."""
-    response = client.post(token_introspection_endpoint_url, data=payload, **headers)
+def test_token_introspection_returns_inactive_for_unknown_target_token(client, user, token_introspection_endpoint_url):
+    """Unknown target token inputs do not disclose detail to authenticated callers."""
+    caller = models.Token.objects.create(
+        owner=user,
+        key="unknowntargetcallersecret",
+        client_id="https://client.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": "unknown-token"},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
 
     assert response.status_code == 200
     assert response["Content-Type"] == "application/json"
@@ -1092,17 +1190,31 @@ def test_token_exchange_rejects_duplicate_auth_code_lookup_without_issuing_token
 
 @pytest.mark.django_db
 def test_token_introspection_rejects_duplicate_token_key_lookup_without_500(
-    client, monkeypatch, token_introspection_endpoint_url
+    client, monkeypatch, user, token_introspection_endpoint_url
 ):
     """Defensive duplicate Token-key handling returns the stable inactive response."""
+    caller = models.Token.objects.create(
+        owner=user,
+        key="duplicatecallersecret",
+        client_id="https://caller.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
 
     class DuplicateTokenQuery:
         def get(self, *args, **kwargs):
+            if kwargs.get("key") == caller.key:
+                return caller
             raise models.Token.MultipleObjectsReturned
 
     monkeypatch.setattr(models.Token.objects, "select_related", lambda *args, **kwargs: DuplicateTokenQuery())
 
-    response = client.post(token_introspection_endpoint_url, data={"token": "duplicatetokensecret"})
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": "duplicatetokensecret"},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
 
     assert response.status_code == 200
     assert response.json() == {"active": False}
@@ -1110,16 +1222,28 @@ def test_token_introspection_rejects_duplicate_token_key_lookup_without_500(
 
 @pytest.mark.django_db
 def test_token_introspection_returns_inactive_for_expired_token(client, user, token_introspection_endpoint_url):
+    caller = models.Token.objects.create(
+        owner=user,
+        key="expiredtargetcallersecret",
+        client_id="https://caller.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
     token = models.Token.objects.create(
         owner=user,
         key="expiredtokensecret",
-        client_id="https://webapp.example.org",
+        client_id="https://target.example.org",
         me="https://example.org/",
         scope="create",
         expires_at=timezone.now() - timedelta(seconds=1),
     )
 
-    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": token.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
 
     assert response.status_code == 200
     assert response.json() == {"active": False}
@@ -1127,10 +1251,18 @@ def test_token_introspection_returns_inactive_for_expired_token(client, user, to
 
 @pytest.mark.django_db
 def test_token_introspection_returns_inactive_for_deleted_token(client, user, token_introspection_endpoint_url):
+    caller = models.Token.objects.create(
+        owner=user,
+        key="deletedtargetcallersecret",
+        client_id="https://caller.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
     token = models.Token.objects.create(
         owner=user,
         key="deletedtokensecret",
-        client_id="https://webapp.example.org",
+        client_id="https://target.example.org",
         me="https://example.org/",
         scope="create",
         expires_at=timezone.now() + timedelta(hours=1),
@@ -1138,7 +1270,11 @@ def test_token_introspection_returns_inactive_for_deleted_token(client, user, to
     token_key = token.key
     token.delete()
 
-    response = client.post(token_introspection_endpoint_url, data={"token": token_key})
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": token_key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
 
     assert response.status_code == 200
     assert response.json() == {"active": False}
@@ -1146,18 +1282,31 @@ def test_token_introspection_returns_inactive_for_deleted_token(client, user, to
 
 @pytest.mark.django_db
 def test_token_introspection_returns_inactive_for_inactive_owner(client, user, token_introspection_endpoint_url):
-    user.is_active = False
-    user.save()
-    token = models.Token.objects.create(
+    inactive_user = User.objects.create_user(username="inactive", email="inactive@example.org", password="password")
+    inactive_user.is_active = False
+    inactive_user.save()
+    caller = models.Token.objects.create(
         owner=user,
-        key="inactiveownersecret",
-        client_id="https://webapp.example.org",
+        key="inactiveownercallersecret",
+        client_id="https://caller.example.org",
         me="https://example.org/",
         scope="create",
         expires_at=timezone.now() + timedelta(hours=1),
     )
+    token = models.Token.objects.create(
+        owner=inactive_user,
+        key="inactiveownersecret",
+        client_id="https://target.example.org",
+        me="https://inactive.example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
 
-    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": token.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
 
     assert response.status_code == 200
     assert response.json() == {"active": False}
@@ -1167,7 +1316,15 @@ def test_token_introspection_returns_inactive_for_inactive_owner(client, user, t
 def test_token_introspection_returns_inactive_for_disallowed_client_id(
     client, settings, user, token_introspection_endpoint_url
 ):
-    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.deny_all"
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_only_known"
+    caller = models.Token.objects.create(
+        owner=user,
+        key="disallowedclientcallersecret",
+        client_id="https://allowed.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
     token = models.Token.objects.create(
         owner=user,
         key="disallowedclientsecret",
@@ -1177,7 +1334,11 @@ def test_token_introspection_returns_inactive_for_disallowed_client_id(
         expires_at=timezone.now() + timedelta(hours=1),
     )
 
-    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": token.key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
 
     assert response.status_code == 200
     assert response.json() == {"active": False}
@@ -1197,7 +1358,11 @@ def test_token_introspection_does_not_mutate_token_rows(client, user, token_intr
     original_modified = token.modified
     original_count = models.Token.objects.count()
 
-    response = client.post(token_introspection_endpoint_url, data={"token": token.key})
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": token.key},
+        HTTP_AUTHORIZATION=f"Bearer {token.key}",
+    )
 
     assert response.status_code == 200
     token.refresh_from_db()

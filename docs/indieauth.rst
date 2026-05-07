@@ -104,12 +104,22 @@ Token Introspection
 -------------------
 
 The bundled token introspection endpoint is available at
-``/indieweb/token/introspect/``. It accepts ``POST`` requests with a
-form-encoded ``token`` field and returns JSON. If the ``token`` field is
-missing, the endpoint falls back to a strictly parsed
-``Authorization: Bearer <token>`` header as the token being checked. The
-bearer scheme is case-insensitive, but the header must contain exactly the
-scheme and one token value.
+``/indieweb/token/introspect/``. It accepts ``POST`` requests and returns
+JSON. Every request must authenticate the caller with a strictly parsed
+``Authorization: Bearer <caller-token>`` header. The bearer scheme is
+case-insensitive, but the header must contain exactly the scheme and one token
+value. The caller token must be active, unexpired, owned by an active Django
+user, and still allowed by ``INDIEWEB_CLIENT_ID_VALIDATOR``; missing,
+malformed, unknown, expired, inactive-owner, or disallowed caller credentials
+return ``401 authentication error`` with ``Cache-Control: no-store`` and
+``WWW-Authenticate: Bearer``.
+
+The form-encoded ``token`` field is the target token being checked. If the
+field is omitted, django-indieweb introspects the caller token itself. A
+caller may introspect another active token only when both tokens are owned by
+the same Django user. Authenticated callers checking a token owned by another
+Django user receive the stable inactive response rather than active metadata
+or a distinguishing error.
 
 Active responses include only the token metadata needed by resource servers:
 
@@ -134,11 +144,12 @@ Inactive responses are intentionally stable and non-specific:
 
    {"active": false}
 
-Missing tokens, unknown tokens, deleted/revoked token rows, expired tokens,
-tokens whose Django owner is inactive, and tokens whose ``client_id`` no
-longer satisfies ``INDIEWEB_CLIENT_ID_VALIDATOR`` all return the same inactive
-shape. Introspection does not create tokens, refresh expiration, delete rows,
-or otherwise mutate token state. It does not return full bearer token keys.
+Unknown tokens, deleted/revoked token rows, expired tokens, tokens whose
+Django owner is inactive, tokens whose ``client_id`` no longer satisfies
+``INDIEWEB_CLIENT_ID_VALIDATOR``, and cross-owner target tokens all return the
+same inactive shape to authenticated callers. Introspection does not create
+tokens, refresh expiration, delete rows, or otherwise mutate token state. It
+does not return full bearer token keys.
 
 The endpoint is a token-verification surface only. It does not implement a
 separate OAuth token revocation endpoint, refresh tokens, or user-info/profile

@@ -2,6 +2,54 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-07
+
+### Authenticate token introspection and gate server-managed Micropub properties
+
+- Hardened ``POST /indieweb/token/introspect/`` so callers must authenticate
+  with a strict ``Authorization: Bearer <caller-token>`` header before active
+  token metadata can be returned. Caller tokens must be active, unexpired,
+  owned by an active Django user, and accepted by
+  ``INDIEWEB_CLIENT_ID_VALIDATOR``.
+- Preserved bearer-header self-introspection when no form ``token`` field is
+  submitted. A valid caller token can introspect itself or another active
+  token owned by the same Django user; cross-owner, unknown, deleted, expired,
+  inactive-owner, disallowed-client, and duplicate target-token lookups return
+  the stable inactive JSON response to authenticated callers.
+- Added Micropub server-managed property gating for ``uid`` and ``author``.
+  JSON, simple JSON, and form-encoded creates now reject those properties with
+  ``400 invalid_request`` before ``create_entry()`` is called. ``action=update``
+  rejects ``replace``, ``add``, delete-list, and delete-map operations naming
+  those properties before ``update_entry()`` is called.
+- Preserved ordinary Micropub properties and command/extension properties such
+  as ``mp-slug``, ``mp-channel``, ``mp-photo-alt``, ``mp-syndicate-to``, and
+  ``post-status`` as handler-owned values.
+- Backlog: removed the completed Priority 2 token introspection
+  authentication item and the completed Priority 2 Micropub server-managed
+  property gating item from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/api.rst`` and ``docs/indieauth.rst`` for
+  authenticated token introspection, self-introspection, same-owner target
+  authorization, inactive no-leak semantics, and 401 response headers. Updated
+  ``docs/api.rst`` and ``docs/micropub.rst`` for create/update rejection of
+  ``uid`` and ``author`` while preserving command properties. No
+  ``docs/configuration.rst`` update was needed because no new operator setting
+  was added. Searched ``README.rst`` and docs for stale introspection and
+  Micropub property wording.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased security notes for
+  authenticated introspection and Micropub server-managed property rejection.
+- Validation: ``uv run pytest tests/test_token_endpoint.py -q --no-cov``
+  passed (92 passed); ``uv run pytest tests/test_micropub_create.py -q
+  --no-cov`` passed (39 passed); ``uv run pytest tests/test_micropub_actions.py
+  -q --no-cov`` passed (40 passed); ``uv run pytest
+  tests/test_micropub_endpoint.py -q --no-cov`` passed (94 passed);
+  targeted ``uv run ruff check`` passed; ``uv run pytest
+  tests/test_rate_limiting.py -q --no-cov`` passed (12 passed); ``uv run
+  pytest`` passed (1094 passed, coverage gate reached at 90.49%); ``uv run
+  mypy`` passed; ``uv run ruff check .`` passed; ``uv run ruff format .
+  --check`` passed; ``uv run sphinx-build -W -b html docs docs/_build/html``
+  passed; ``uv run prek run --all-files`` passed; and ``git diff --check``
+  passed.
+
 ## 2026-05-06
 
 ### Harden Webmention source verification and Salmention resend policy

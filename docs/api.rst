@@ -441,16 +441,32 @@ need token metadata. The endpoint is CSRF-exempt, returns JSON for all
 successful requests, and is advertised from the IndieAuth metadata response as
 ``introspection_endpoint``.
 
+Introspection requires caller authentication. Send a strict
+``Authorization: Bearer <caller-token>`` header with every request. The caller
+token must be an active django-indieweb ``Token`` row, its Django owner must be
+active, it must not be expired, and its ``client_id`` must still satisfy
+``INDIEWEB_CLIENT_ID_VALIDATOR``. Malformed, missing, unknown, expired,
+inactive-owner, or disallowed caller credentials return ``401 Unauthorized``
+with ``Cache-Control: no-store`` and ``WWW-Authenticate: Bearer``.
+
+The form ``token`` field is the target token being checked. If ``token`` is
+omitted, django-indieweb checks the caller bearer token itself, allowing a
+token to introspect itself. A caller token may introspect another token only
+when both tokens are owned by the same Django user. Authenticated callers that
+submit an unknown token, an inactive target token, or a token owned by a
+different user receive the same inactive JSON response.
+
 POST Request
 ~~~~~~~~~~~~
 
 **Request Fields:**
 
-- ``token`` - Access token value to verify. This is normally sent as
-  ``application/x-www-form-urlencoded``. If omitted, django-indieweb falls
-  back to a strictly parsed ``Authorization: Bearer <token>`` header as the
-  token being checked. The bearer scheme is case-insensitive, but the header
-  must contain exactly the scheme and one token value.
+- ``Authorization: Bearer <caller-token>`` - Required caller credential. The
+  bearer scheme is case-insensitive, but the header must contain exactly the
+  scheme and one token value.
+- ``token`` - Optional access token value to verify, normally sent as
+  ``application/x-www-form-urlencoded``. If omitted, django-indieweb
+  introspects the caller bearer token itself.
 
 **Example Request:**
 
@@ -458,6 +474,7 @@ POST Request
 
     POST /indieweb/token/introspect/ HTTP/1.1
     Host: yoursite.com
+    Authorization: Bearer caller-token
     Content-Type: application/x-www-form-urlencoded
     Accept: application/json
 
@@ -492,12 +509,24 @@ legacy non-expiring rows where ``Token.expires_at`` is ``NULL``.
 
     {"active": false}
 
-Missing token input, unknown token values, deleted token rows, expired tokens,
-tokens whose owner is inactive, and tokens whose ``client_id`` no longer
-satisfies ``INDIEWEB_CLIENT_ID_VALIDATOR`` all return the same inactive
-response. The endpoint does not disclose which inactive condition applied.
-It does not create tokens, refresh expiration, delete token rows, or expose
-the full bearer token value in the response.
+Unknown token values, deleted token rows, expired tokens, tokens whose owner
+is inactive, and tokens whose ``client_id`` no longer satisfies
+``INDIEWEB_CLIENT_ID_VALIDATOR`` all return the same inactive response to
+authenticated callers. Authenticated callers checking a token owned by a
+different Django user also receive this inactive response. The endpoint does
+not disclose which inactive condition applied. It does not create tokens,
+refresh expiration, delete token rows, or expose the full bearer token value
+in the response.
+
+**Unauthorized Response:**
+
+.. code-block:: http
+
+    HTTP/1.1 401 Unauthorized
+    Cache-Control: no-store
+    WWW-Authenticate: Bearer
+
+    authentication error
 
 This endpoint is only token introspection. django-indieweb does not implement
 refresh tokens, a separate OAuth/IndieAuth token revocation endpoint, or
@@ -693,13 +722,29 @@ properties are not comma-split.
 
 Microformats2 JSON create requests pass the submitted ``properties`` object to
 ``MicropubContentHandler.create_entry()`` unchanged, including command
-properties and ``post-status``.
+properties and ``post-status``, except that server-managed properties are
+rejected before the handler is called.
 
 These values are preserved, not executed. django-indieweb does not generate
 slugs from ``mp-slug``, choose or route publication by ``mp-channel``, attach
 ``mp-photo-alt`` to stored files or media metadata, cross-post or enqueue
 syndication from ``mp-syndicate-to``, or implement draft storage from
 ``post-status``. Host code owns those behaviors.
+
+Server-managed properties
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+django-indieweb rejects client-submitted ``uid`` and ``author`` properties on
+Micropub creates and updates because those values are server-owned in bundled
+resource-server behavior. Rejected create requests return ``400 invalid_request``
+before ``MicropubContentHandler.create_entry()`` is called. Rejected
+``action=update`` requests return ``400 invalid_request`` before
+``MicropubContentHandler.update_entry()`` is called when ``replace``, ``add``,
+or either ``delete`` shape names one of these properties.
+
+Command and extension properties such as ``mp-slug``, ``mp-channel``,
+``mp-photo-alt``, ``mp-syndicate-to``, and ``post-status`` remain handler-owned
+and are not part of this deny-list.
 
 **Response:**
 
@@ -767,8 +812,9 @@ Update an existing post via ``action=update``. Per the Micropub specification
   the handler, ``url`` is missing, the body is not JSON or not a JSON object,
   the body contains none of ``replace``/``add``/``delete`` (§3.4 requires at
   least one), values inside ``replace``/``add`` are not arrays (§3.4 requires
-  arrays), or ``delete`` is neither a list of strings nor a map of property
-  names to arrays
+  arrays), ``replace``/``add``/``delete`` attempts to mutate a server-managed
+  property such as ``uid`` or ``author``, or ``delete`` is neither a list of
+  strings nor a map of property names to arrays
 - ``500 Internal Server Error`` when the configured handler raises an
   exception other than ``ValueError`` (logged via ``logger.exception``)
 
@@ -1491,10 +1537,13 @@ All endpoints may return these error responses:
 - Missing or invalid access token
 - Expired access token
 - User account associated with the token is inactive
+- Missing, malformed, unknown, expired, inactive-owner, or disallowed caller
+  bearer credential on token introspection
 
 Token-protected resource views return the plain-text body
 ``authentication error`` and include ``Cache-Control: no-store`` and
-``WWW-Authenticate: Bearer`` on these 401 responses.
+``WWW-Authenticate: Bearer`` on these 401 responses. Token introspection
+caller authentication failures use the same body and headers.
 
 **403 Forbidden**
 
