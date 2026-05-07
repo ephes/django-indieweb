@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +11,7 @@ from django.core.cache import cache
 from django.urls import reverse
 
 from indieweb import models
-from indieweb.rate_limit import get_rate_limit_config
+from indieweb.rate_limit import _cache_key, _retry_after, get_rate_limit_config
 from indieweb.views import TokenAuthMixin
 
 
@@ -80,6 +82,26 @@ def test_configured_token_limit_returns_429_with_retry_after(client, settings):
     assert limited.status_code == 429
     assert limited.content.decode("utf-8") == "rate limit exceeded"
     assert 1 <= int(limited["Retry-After"]) <= 60
+
+
+def test_rate_limit_retry_after_falls_back_to_window_when_reset_key_is_missing():
+    counter_key = "indieweb:rate-limit:test:missing-reset"
+    cache.delete(f"{counter_key}:reset")
+
+    assert _retry_after(counter_key, time.time(), fallback_window=60) == 60
+
+
+def test_rate_limit_cache_key_uses_secret_keyed_hmac(settings):
+    settings.SECRET_KEY = "first-secret"
+    key = _cache_key("token", "POST", "203.0.113.7")
+    bare_digest = hashlib.sha256(b"203.0.113.7").hexdigest()
+
+    settings.SECRET_KEY = "second-secret"
+    changed_secret_key = _cache_key("token", "POST", "203.0.113.7")
+
+    assert bare_digest not in key
+    assert ":v2:" in key
+    assert key != changed_secret_key
 
 
 @pytest.mark.django_db

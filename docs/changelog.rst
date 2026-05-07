@@ -5,6 +5,18 @@ Changelog
 
 Unreleased
 ----------
+* Hardened optional endpoint rate limiting. Client identities in rate-limit
+  cache keys are now HMAC-digested with Django's ``SECRET_KEY`` instead of
+  bare SHA-256, exceeded limits now fall back to the configured window for
+  ``Retry-After`` when the reset marker has been evicted, and the documentation
+  now calls out recommended production endpoint budgets, proxy-aware
+  ``REMOTE_ADDR`` configuration, and best-effort cache primitive semantics.
+* Clarified Micropub adapter ownership requirements. The
+  ``MicropubContentHandler`` base class now documents that host handlers must
+  enforce user ownership for create/update/delete/undelete/source/media
+  operations and raises ``NotImplementedError`` in abstract operation bodies;
+  the bundled in-memory handler is documented as an unsafe development/testing
+  example that performs no ownership checks.
 * Hardened Micropub media and create/action input validation. Media uploads are now sniffed with ``filetype`` before storage, declared content type and filename suffix must match the sniffed media type, stored object suffixes are derived from the validated type, and upload count plus aggregate byte limits reject oversized multipart requests with ``413 invalid_request``. URL-valued create properties now require absolute HTTP(S) URLs before ``create_entry()`` dispatch, ``mp-slug`` values are sanitized before handler dispatch, update/delete/undelete action URLs must stay on the request host, and ``application/json`` requests with parameters such as ``charset=utf-8`` are parsed as JSON.
 * Stored IndieAuth/Micropub bearer tokens as HMAC digests at rest. ``Token.key`` now contains a ``hmac-sha256$`` digest keyed by Django's ``SECRET_KEY`` instead of the raw bearer value; the raw token is returned only when issued or reissued, existing plaintext rows are hashed by migration, token authentication and introspection compare derived hashes with constant-time comparison, and token/admin-management surfaces do not expose raw token values.
 * Made Webmention status URLs non-enumerable and reduced public status metadata. New and existing ``Webmention`` rows have opaque ``status_token`` values, receive responses now publish ``/indieweb/webmention/<status-token>/`` ``Location`` URLs instead of primary-key URLs, guessed sequential IDs return ``404``, and public status JSON no longer includes stored Vouch URLs or Vouch verification timestamps.

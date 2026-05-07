@@ -1720,9 +1720,11 @@ Endpoint keys:
 Counters are scoped by endpoint key, HTTP method, and the client identity from
 ``REMOTE_ADDR``. ``GET`` and ``POST`` requests to the same endpoint use
 independent counters, so set each endpoint limit as a per-method budget.
-django-indieweb does not trust ``X-Forwarded-For`` directly. Deployments
-behind a proxy should configure trusted upstream middleware or infrastructure
-so Django receives the intended client address in ``REMOTE_ADDR``.
+The client identity is HMAC-digested with Django's ``SECRET_KEY`` before it is
+used in cache keys. django-indieweb does not trust ``X-Forwarded-For``
+directly. Deployments behind a proxy should configure trusted upstream
+middleware or infrastructure so Django receives the intended client address in
+``REMOTE_ADDR``.
 
 When a configured limit is exceeded, the endpoint returns:
 
@@ -1734,11 +1736,14 @@ When a configured limit is exceeded, the endpoint returns:
 
     rate limit exceeded
 
-``Retry-After`` is included when the cache-backed window reset time is
-available. Requests below the limit keep the same response bodies, status
-codes, authentication behavior, scope checks, and processing flow as before.
-The browser token-management pages are not covered by these protocol endpoint
-rate-limit keys.
+``Retry-After`` uses the cache-backed window reset time, or the configured
+window when the reset marker has been evicted. The built-in limiter uses
+Django's portable cache primitives and is best-effort rather than a hard atomic
+limit on every backend; use a deployment-level limiter when strict adversarial
+rate limiting is required. Requests below the limit keep the same response
+bodies, status codes, authentication behavior, scope checks, and processing
+flow as before. The browser token-management pages are not covered by these
+protocol endpoint rate-limit keys.
 
 CORS Support
 ------------

@@ -61,7 +61,11 @@ class MicropubContentHandler(ABC):
     Abstract base class for Micropub content handlers.
 
     Implementations should handle the storage and retrieval of content
-    created through the Micropub API.
+    created through the Micropub API. Host applications own all content and
+    media authorization decisions: before returning, listing, mutating,
+    deleting, or undeleting an entry or media item, handlers must verify that
+    the authenticated ``user`` is allowed to perform that operation on the
+    submitted URL or storage object.
     """
 
     @abstractmethod
@@ -76,7 +80,7 @@ class MicropubContentHandler(ABC):
         Returns:
             MicropubEntry with the URL of the created content
         """
-        pass
+        raise NotImplementedError("Micropub handlers must create entries for the authenticated user")
 
     @abstractmethod
     def update_entry(self, url: str, updates: dict[str, Any], user: "AbstractBaseUser") -> MicropubEntry:
@@ -94,7 +98,7 @@ class MicropubContentHandler(ABC):
         Raises:
             ValueError: If the entry doesn't exist or user lacks permission
         """
-        pass
+        raise NotImplementedError("Micropub handlers must enforce ownership before updating entries")
 
     @abstractmethod
     def delete_entry(self, url: str, user: "AbstractBaseUser") -> None:
@@ -108,7 +112,7 @@ class MicropubContentHandler(ABC):
         Raises:
             ValueError: If the entry doesn't exist or user lacks permission
         """
-        pass
+        raise NotImplementedError("Micropub handlers must enforce ownership before deleting entries")
 
     @abstractmethod
     def undelete_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry:
@@ -125,7 +129,7 @@ class MicropubContentHandler(ABC):
         Raises:
             ValueError: If the entry doesn't exist or user lacks permission
         """
-        pass
+        raise NotImplementedError("Micropub handlers must enforce ownership before undeleting entries")
 
     @abstractmethod
     def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
@@ -139,7 +143,7 @@ class MicropubContentHandler(ABC):
         Returns:
             MicropubEntry if found and user has permission, None otherwise
         """
-        pass
+        raise NotImplementedError("Micropub handlers must enforce ownership before returning source entries")
 
     def list_entries(
         self,
@@ -248,7 +252,7 @@ class MicropubContentHandler(ABC):
 
 class InMemoryMicropubHandler(MicropubContentHandler):
     """
-    Simple in-memory implementation for testing.
+    Simple in-memory implementation for testing and examples.
 
     Stores entries in memory, useful for development and testing.
     """
@@ -259,6 +263,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         self.counter = 0
 
     def create_entry(self, properties: dict[str, list[Any]], user: "AbstractBaseUser") -> MicropubEntry:
+        # UNSAFE: example only - performs no ownership check.
         self.counter += 1
         url = f"/entries/{self.counter}/"
 
@@ -308,6 +313,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
                     del entry.properties[key]
 
     def update_entry(self, url: str, updates: dict[str, Any], user: "AbstractBaseUser") -> MicropubEntry:
+        # UNSAFE: example only - performs no ownership check.
         if url not in self.entries:
             raise ValueError(f"Entry not found: {url}")
 
@@ -331,12 +337,14 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         return entry
 
     def delete_entry(self, url: str, user: "AbstractBaseUser") -> None:
+        # UNSAFE: example only - performs no ownership check.
         if url not in self.entries:
             raise ValueError(f"Entry not found: {url}")
 
         self.deleted_entries[url] = self.entries.pop(url)
 
     def undelete_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry:
+        # UNSAFE: example only - performs no ownership check.
         if url not in self.deleted_entries:
             raise ValueError(f"Deleted entry not found: {url}")
 
@@ -345,6 +353,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         return entry
 
     def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
+        # UNSAFE: example only - performs no ownership check.
         return self.entries.get(url)
 
     @staticmethod
@@ -366,6 +375,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         offset: int = 0,
         filter: str | None = None,
     ) -> MicropubEntryList:
+        # UNSAFE: example only - performs no ownership check.
         entries = list(self.entries.values())
         if filter:
             needle = filter.lower()

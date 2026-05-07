@@ -1156,7 +1156,9 @@ error-response listing across all IndieWeb endpoints.
 Security Considerations
 -----------------------
 
-1. **Always validate user permissions** in your handler
+1. **Always validate user permissions and ownership** in your handler. The
+   authenticated ``user`` argument must be checked before returning, updating,
+   deleting, undeleting, listing, or deleting media for a submitted URL.
 2. **Sanitize content** before storing
 3. **Validate URLs** for properties like photo and in-reply-to
 4. **Rate limiting** is recommended for production use

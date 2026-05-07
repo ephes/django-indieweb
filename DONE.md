@@ -4,6 +4,44 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Harden rate-limit keys and document Micropub adapter ownership
+
+- Changed endpoint rate-limit cache keys to HMAC-digest client identities with
+  Django's ``SECRET_KEY`` instead of storing bare SHA-256 digests of
+  ``REMOTE_ADDR`` values. Cache-key versioning moved to ``v2`` so existing
+  deployments naturally start fresh windows after upgrade.
+- Kept the optional built-in limiter disabled by default, but made exceeded
+  limits fall back to the configured ``window`` for ``Retry-After`` when the
+  cache reset marker has been evicted.
+- Clarified that ``MicropubContentHandler`` implementations must enforce
+  host-owned user/content/media ownership before source, update, delete,
+  undelete, list, and media operations. Abstract operation bodies now raise
+  ``NotImplementedError`` and the bundled in-memory handler is marked as an
+  unsafe development/testing example that performs no ownership checks.
+- Backlog: removed the completed Priority 3 Micropub adapter ownership and
+  rate-limit hardening items from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``README.rst``, ``docs/index.rst``,
+  ``docs/configuration.rst``, ``docs/api.rst``, and ``docs/micropub.rst`` for
+  adapter responsibilities, production rate-limit starting points,
+  proxy-aware ``REMOTE_ADDR`` guidance, HMAC cache keying, best-effort cache
+  primitive semantics, and ``Retry-After`` fallback behavior.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased notes for the
+  rate-limit hardening and Micropub adapter ownership clarification.
+- Review follow-up: aligned README, docs index, and handler docstring wording
+  to explicitly include content/media listing in the host-owned ownership
+  boundary; tightened the ``Retry-After`` fallback regression test to call the
+  fallback helper with a known-missing reset key instead of patching the shared
+  cache ``get`` method or relying on request-path cache eviction.
+- Validation: ``uv run pytest tests/test_rate_limiting.py -q --no-cov`` passed
+  (14 passed); targeted ``uv run ruff check`` passed; targeted ``uv run ruff
+  format --check`` passed; ``uv run pytest`` passed (1163 passed, coverage
+  gate reached at 90.29%); ``uv run mypy`` passed; ``uv run ruff check .``
+  passed; ``uv run ruff format . --check`` passed; ``just docs`` passed; and
+  ``uv run prek run --all-files`` passed; ``git diff --check`` passed.
+  Post-review targeted checks also passed: ``uv run pytest
+  tests/test_rate_limiting.py -q --no-cov``, targeted ``uv run ruff check``,
+  targeted ``uv run ruff format --check``, and ``just docs``.
+
 ### Store bearer tokens hashed at rest and privatize Webmention status URLs
 
 - Changed ``Token.key`` to store ``hmac-sha256$`` HMAC digests instead of raw

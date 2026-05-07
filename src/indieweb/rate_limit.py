@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import math
 import time
@@ -11,6 +12,7 @@ from typing import Any
 from django.conf import settings
 from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
+from django.utils.encoding import force_bytes
 from django.views.generic import View
 
 logger = logging.getLogger(__name__)
@@ -84,14 +86,18 @@ def _client_identity(request: HttpRequest) -> str:
 
 
 def _cache_key(endpoint_key: str, method: str, identity: str) -> str:
-    identity_digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    return f"indieweb:rate-limit:v1:{endpoint_key}:{method}:{identity_digest}"
+    identity_digest = hmac.new(
+        force_bytes(settings.SECRET_KEY),
+        identity.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"indieweb:rate-limit:v2:{endpoint_key}:{method}:{identity_digest}"
 
 
-def _retry_after(counter_key: str, now: float) -> int | None:
+def _retry_after(counter_key: str, now: float, fallback_window: int) -> int:
     reset_at = cache.get(f"{counter_key}:reset")
     if not isinstance(reset_at, int | float):
-        return None
+        return fallback_window
     return max(1, math.ceil(reset_at - now))
 
 
@@ -118,7 +124,7 @@ def check_rate_limit(request: HttpRequest, endpoint_key: str) -> RateLimitResult
 
     if count <= config.limit:
         return RateLimitResult(allowed=True)
-    return RateLimitResult(allowed=False, retry_after=_retry_after(counter_key, now))
+    return RateLimitResult(allowed=False, retry_after=_retry_after(counter_key, now, config.window))
 
 
 def rate_limit_response(result: RateLimitResult) -> HttpResponse:

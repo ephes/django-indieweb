@@ -284,6 +284,10 @@ Each configured endpoint key accepts a mapping with:
 
 **Example:**
 
+The following is a hardened production starting point. Tune it for your
+traffic patterns, trusted clients, queue capacity, and upstream deployment
+limits:
+
 .. code-block:: python
 
    # settings.py
@@ -312,26 +316,30 @@ Supported endpoint keys:
 Counters are isolated by endpoint key, HTTP method, and client identity, so
 ``GET`` and ``POST`` requests to the same endpoint use independent counters.
 Set each endpoint limit as a per-method budget. The client identity is
-``request.META["REMOTE_ADDR"]`` by default, and the value is hashed before it
-is used in cache keys. django-indieweb does not read or trust
-``X-Forwarded-For`` directly. If your site runs behind a reverse proxy, load
-balancer, CDN, or platform router, configure that trusted infrastructure so
-Django receives the correct client address in ``REMOTE_ADDR`` before enabling
-IP-based limits.
+``request.META["REMOTE_ADDR"]`` by default, and the value is HMAC-digested with
+Django's ``SECRET_KEY`` before it is used in cache keys. django-indieweb does
+not read or trust ``X-Forwarded-For`` directly. If your site runs behind a
+reverse proxy, load balancer, CDN, or platform router, configure that trusted
+infrastructure so Django receives the correct client address in
+``REMOTE_ADDR`` before enabling IP-based limits.
 
 Cache backend choice affects the strength of the limit. Django's default
 ``LocMemCache`` is local to one process, so multi-worker deployments can allow
 roughly ``limit`` requests per worker during each window. Use a shared cache
 backend such as Redis or Memcached when you need deployment-wide counters.
 ``DummyCache`` does not persist counters and effectively disables built-in
-rate limiting.
+rate limiting. The built-in limiter uses Django's portable cache primitives,
+so its ``add``/``incr`` sequence is best-effort rather than a hard atomic
+primitive on every backend. For adversarial environments that need strict
+single-counter semantics, put a purpose-built limiter in front of Django, such
+as a reverse proxy rule or a Redis Lua-script-based limiter.
 
 When a limit is exceeded, the endpoint returns HTTP ``429`` with a plain-text
-``rate limit exceeded`` body. A ``Retry-After`` header is included when the
-cache-backed window reset time is available. Requests under the limit continue
-through the existing view code unchanged, including authentication,
-authorization, Micropub handler calls, media storage, Webmention processing,
-and async Webmention enqueueing.
+``rate limit exceeded`` body. A ``Retry-After`` header is included using the
+cache-backed window reset time, or the configured ``window`` when the reset
+marker has been evicted. Requests under the limit continue through the existing
+view code unchanged, including authentication, authorization, Micropub handler
+calls, media storage, Webmention processing, and async Webmention enqueueing.
 
 Malformed endpoint entries, non-mapping values, or non-positive ``limit`` /
 ``window`` values are ignored and logged, leaving that endpoint unlimited.
@@ -371,6 +379,14 @@ django-indieweb does not add a content-store plugin system, static-site
 generator preset system, repository credential setting, commit/push workflow,
 build command, deployment hook, media database, or media deletion policy for
 this setting. Host code remains responsible for those concerns.
+
+Handlers are also the host-owned authorization boundary for content and media
+ownership. After django-indieweb authenticates the bearer token and checks the
+requested scope, the configured handler must verify that the authenticated
+``user`` may create, update, delete, undelete, read source content, list
+content or media, and delete media for the submitted URL or storage object. The
+bundled ``InMemoryMicropubHandler`` is an unsafe development/testing example
+only and performs no ownership checks.
 
 INDIEWEB_MEDIA_MAX_UPLOAD_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

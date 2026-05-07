@@ -104,6 +104,17 @@ Quick Start
    discovery links to your topic responses, and call ``notify_hubs()`` after
    content changes. See :doc:`websub`.
 
+Adapter Responsibilities
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Micropub handlers are host-owned authorization boundaries. After
+django-indieweb authenticates the bearer token and checks the requested scope,
+your ``MicropubContentHandler`` must verify that the authenticated ``user`` is
+allowed to create, update, delete, undelete, read source content, list content
+or media, and manage media for the submitted URL or storage object. The bundled
+``InMemoryMicropubHandler`` is an unsafe development/testing example only; it
+keeps entries in process memory and performs no ownership checks.
+
 Indices and tables
 ==================
 
