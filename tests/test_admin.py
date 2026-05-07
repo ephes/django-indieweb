@@ -133,8 +133,18 @@ def test_token_readonly_fields(token):
     readonly_fields = modeladmin.get_readonly_fields(None, token)
 
     # Most fields should be read-only for security
-    expected_readonly = {"key", "owner", "client_id", "me", "scope", "created", "modified"}
+    expected_readonly = {"masked_key", "owner", "client_id", "me", "scope", "created", "modified"}
     assert expected_readonly.issubset(set(readonly_fields))
+
+
+def test_token_admin_masks_key(token):
+    """Test that token admin exposes only a masked key representation."""
+    modeladmin = admin.site._registry[Token]
+    raw_key = token.key
+    token.refresh_from_db()
+
+    assert modeladmin.masked_key(token) == "hmac-sha256$..."
+    assert raw_key not in modeladmin.masked_key(token)
 
 
 def test_token_no_add_permission():
@@ -161,6 +171,13 @@ def test_auth_readonly_all_fields(auth):
     # All fields should be read-only
     model_fields = [f.name for f in Auth._meta.fields]
     assert set(readonly_fields) == set(model_fields)
+
+
+def test_auth_admin_does_not_search_state():
+    """Test that transient auth state is not part of admin search fields."""
+    modeladmin = admin.site._registry[Auth]
+
+    assert "state" not in modeladmin.search_fields
 
 
 def test_auth_no_add_permission():

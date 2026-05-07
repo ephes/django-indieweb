@@ -307,7 +307,7 @@ Supported endpoint keys:
 - ``media`` - ``/indieweb/media/``
 - ``websub_callback`` - ``/indieweb/websub/<token>/``
 - ``webmention`` - ``/indieweb/webmention/``
-- ``webmention_status`` - ``/indieweb/webmention/<pk>/``
+- ``webmention_status`` - ``/indieweb/webmention/<status-token>/``
 
 Counters are isolated by endpoint key, HTTP method, and client identity, so
 ``GET`` and ``POST`` requests to the same endpoint use independent counters.
@@ -729,7 +729,7 @@ When set, the receive endpoint validates the request and target domain, creates
 or reuses the ``Webmention`` row for the submitted ``source``/``target`` pair,
 calls the configured enqueue hook with that row's primary key, and returns
 ``202 Accepted`` with a ``Location`` header for
-``/indieweb/webmention/<pk>/``. Source fetching, target-link verification,
+``/indieweb/webmention/<status-token>/``. Source fetching, target-link verification,
 microformats2 parsing, spam checks, final status transitions, and
 ``webmention_received`` signal emission happen later when a worker processes
 the queued row.
@@ -997,7 +997,7 @@ this package. Do not configure ``WEBMENTION_IO_TOKEN`` or a similar value as a
 django-indieweb core setting.
 
 The built-in Webmention URLs remain ``/indieweb/webmention/`` and
-``/indieweb/webmention/<pk>/``. A host may choose to advertise Webmention.io's
+``/indieweb/webmention/<status-token>/``. A host may choose to advertise Webmention.io's
 external endpoint on selected pages instead of django-indieweb's endpoint, or
 may fetch Webmention.io JF2 from host code and display/import it alongside
 built-in ``Webmention`` rows. See :doc:`webmention` for mapping and HTML
@@ -1033,7 +1033,7 @@ This creates the following endpoints:
   host-owned media source/delete hooks
 - ``/indieweb/websub/<token>/`` - WebSub subscriber callback endpoint
 - ``/indieweb/webmention/`` - Webmention receive endpoint
-- ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
+- ``/indieweb/webmention/<status-token>/`` - Webmention status endpoint
 
 The bundled URLconf does not create a Microsub endpoint, reader feed endpoint,
 reader timeline, following/muting/blocking endpoint, reader UI, or
@@ -1064,7 +1064,7 @@ You can customize the URL paths:
        path('api/media/', views.MicropubMediaView.as_view(), name='media'),
        path('websub/<str:token>/', views.WebSubCallbackView.as_view(), name='websub-callback'),
        path('webmention/', views.WebmentionEndpoint.as_view(), name='webmention'),
-       path('webmention/<int:pk>/', views.WebmentionStatusView.as_view(), name='webmention-status'),
+       path('webmention/<str:status_token>/', views.WebmentionStatusView.as_view(), name='webmention-status'),
    ]
 
 Middleware Configuration
@@ -1288,7 +1288,7 @@ disabled by default and applies only to:
 - ``/indieweb/micropub/``
 - ``/indieweb/media/``
 - ``/indieweb/webmention/``
-- ``/indieweb/webmention/<pk>/``
+- ``/indieweb/webmention/<status-token>/``
 
 The browser token-management pages at ``/indieweb/tokens/`` and
 ``/indieweb/tokens/<pk>/revoke/`` are intentionally excluded because they are

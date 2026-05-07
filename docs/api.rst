@@ -27,7 +27,7 @@ django-indieweb provides these endpoints and browser views:
 - ``/indieweb/media/`` - Micropub media endpoint for direct uploads and optional host-owned media source/delete hooks
 - ``/indieweb/websub/<token>/`` - WebSub subscriber callback for one subscription token
 - ``/indieweb/webmention/`` - Webmention endpoint for receiving webmentions
-- ``/indieweb/webmention/<pk>/`` - Webmention status endpoint
+- ``/indieweb/webmention/<status-token>/`` - Webmention status endpoint
 
 There is no bundled Microsub endpoint, reader feed endpoint, reader timeline,
 following/muting/blocking endpoint, or reader UI. Host applications that need
@@ -438,7 +438,12 @@ default lifetime is 24 hours and can be tuned with the
 token via the IndieAuth flow refreshes its expiration and rotates the returned
 bearer key for the existing token row. The previous bearer key stops
 authenticating immediately. Tokens whose ``expires_at`` has passed are
-rejected with HTTP 401 by the Micropub endpoint.
+rejected with HTTP 401 by the Micropub endpoint. Raw bearer token values are
+returned only in the token endpoint response; ``Token.key`` stores an HMAC
+digest derived from the raw value, and legacy plaintext token rows are hashed
+by the migration that introduces this storage format. Token hashes are keyed
+with Django's ``SECRET_KEY``, so changing ``SECRET_KEY`` invalidates existing
+bearer tokens.
 
 Token Introspection Endpoint
 ----------------------------
@@ -1412,7 +1417,7 @@ header pointing to the status endpoint:
 .. code-block:: http
 
     HTTP/1.1 201 Created
-    Location: https://yoursite.com/indieweb/webmention/123/
+    Location: https://yoursite.com/indieweb/webmention/WbH8aUEs3WkT2V6vYcU6r2kNfT4mP9bQd7xR5sLaJz0p/
 
 **Queued Response:**
 
@@ -1423,7 +1428,7 @@ primary key, and returns ``202 Accepted`` with a status ``Location``:
 .. code-block:: http
 
     HTTP/1.1 202 Accepted
-    Location: https://yoursite.com/indieweb/webmention/123/
+    Location: https://yoursite.com/indieweb/webmention/WbH8aUEs3WkT2V6vYcU6r2kNfT4mP9bQd7xR5sLaJz0p/
 
 In queued mode, the request path does not fetch or verify the source URL.
 It also does not fetch or verify a submitted ``vouch`` URL. Workers should call
@@ -1442,21 +1447,22 @@ processor and update the row status.
 Webmention Status Endpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**URL:** ``/indieweb/webmention/<pk>/``
+**URL:** ``/indieweb/webmention/<status-token>/``
 
-Returns the stored status for a received Webmention:
+Returns public status details for a received Webmention. Status URLs use an
+opaque token stored on the ``Webmention`` row rather than the row's sequential
+primary key:
 
 .. code-block:: http
 
     HTTP/1.1 200 OK
     Content-Type: application/json
 
-    {"source": "https://source.example/post", "target": "https://yoursite.com/post", "status": "pending", "vouch": "https://trusted.example/vouch"}
+    {"source": "https://source.example/post", "target": "https://yoursite.com/post", "status": "pending"}
 
-The response includes ``vouch`` when the Webmention has stored Vouch metadata,
-``verified_at`` when the Webmention has been verified, and
-``vouch_verified_at`` when configured Vouch verification has succeeded. Missing
-IDs return ``404``.
+The response includes ``verified_at`` when the Webmention has been verified.
+It does not expose stored Vouch URLs or Vouch verification timestamps. Missing
+or guessed status tokens return ``404``.
 
 Error Responses
 ---------------
@@ -1709,7 +1715,7 @@ Endpoint keys:
   ``/indieweb/websub/<token>/``
 - ``webmention`` - ``GET`` and ``POST`` requests to ``/indieweb/webmention/``
 - ``webmention_status`` - ``GET`` requests to
-  ``/indieweb/webmention/<pk>/``
+  ``/indieweb/webmention/<status-token>/``
 
 Counters are scoped by endpoint key, HTTP method, and the client identity from
 ``REMOTE_ADDR``. ``GET`` and ``POST`` requests to the same endpoint use
@@ -1792,7 +1798,7 @@ Endpoint method coverage:
 - ``media`` - ``POST`` requests to ``/indieweb/media/``
 - ``webmention`` - ``GET`` and ``POST`` requests to ``/indieweb/webmention/``
 - ``webmention_status`` - ``GET`` requests to
-  ``/indieweb/webmention/<pk>/``
+  ``/indieweb/webmention/<status-token>/``
 
 Disallowed origins receive no permissive CORS headers. The browser
 token-management pages at ``/indieweb/tokens/`` and

@@ -152,9 +152,10 @@ check before any persistence or enqueueing happens. For a valid request, it
 creates or reuses the ``Webmention`` row for the submitted ``source`` and
 ``target`` pair, calls the configured enqueue hook with that row's primary key,
 and returns ``202 Accepted`` with a ``Location`` header pointing to
-``/indieweb/webmention/<pk>/``. The request path does not fetch the source URL,
-parse microformats2, run spam checks, or send ``webmention_received``; those
-steps remain owned by ``WebmentionProcessor`` in the worker process.
+``/indieweb/webmention/<status-token>/``. The request path does not fetch the
+source URL, parse microformats2, run spam checks, or send
+``webmention_received``; those steps remain owned by ``WebmentionProcessor``
+in the worker process.
 
 Queue integrations should call ``process_queued_webmention()`` from the worker:
 
@@ -240,8 +241,9 @@ whose value is an ``http`` or ``https`` URL on a site the receiver trusts. The
 voucher page should link to the source page's domain.
 
 django-indieweb accepts ``vouch`` on incoming Webmention POSTs, validates it as
-a URL when present, stores it on ``Webmention.vouch_url``, and exposes it from
-the status endpoint. Missing ``vouch`` values do not affect ordinary
+a URL when present, and stores it on ``Webmention.vouch_url`` for processor and
+admin use. Public status endpoint responses do not expose stored Vouch URLs or
+Vouch verification timestamps. Missing ``vouch`` values do not affect ordinary
 Webmentions unless ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED`` is enabled.
 
 Queued receiving preserves the async boundary: the request path validates and

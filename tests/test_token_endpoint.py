@@ -79,7 +79,28 @@ def test_correct_auth_code(client, auth, token_endpoint_url, token_payload):
     data = parse_qs(unquote(response.content.decode("utf-8")))
     assert "access_token" in data
     assert data["token_type"] == ["Bearer"]
+    token = models.Token.get_for_raw_key(data["access_token"][0])
+    assert token.key == models.Token.hash_key(data["access_token"][0])
+    assert token.key != data["access_token"][0]
     assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_stored_token_hash_does_not_authenticate_as_bearer(client, user):
+    """A leaked at-rest token digest is not accepted as the bearer credential."""
+    token = models.Token.objects.create(
+        owner=user,
+        key="rawtokenvalue",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    stored_hash = models.Token.objects.get(pk=token.pk).key
+
+    response = client.get(reverse("indieweb:micropub"), Authorization=f"Bearer {stored_hash}")
+
+    assert response.status_code == 401
 
 
 @pytest.mark.django_db
@@ -128,7 +149,7 @@ def test_token_exchange_without_scope_uses_stored_auth_scope(client, auth, token
     assert response.status_code == 201
     data = parse_qs(unquote(response.content.decode("utf-8")))
     assert data["scope"] == ["create update"]
-    token = models.Token.objects.get(key=data["access_token"][0])
+    token = models.Token.get_for_raw_key(data["access_token"][0])
     assert token.scope == "create update"
 
 
@@ -208,7 +229,7 @@ def test_token_exchange_without_scope_allows_no_scope_auth_code(client, auth, to
     assert response.status_code == 201
     data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
     assert data["scope"] == [""]
-    token = models.Token.objects.get(key=data["access_token"][0])
+    token = models.Token.get_for_raw_key(data["access_token"][0])
     assert token.scope is None
 
 
@@ -345,7 +366,7 @@ def test_token_exchange_accepts_empty_scope_parameter_for_no_scope_auth_code(cli
     assert response.status_code == 201
     data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
     assert data["scope"] == [""]
-    token = models.Token.objects.get(key=data["access_token"][0])
+    token = models.Token.get_for_raw_key(data["access_token"][0])
     assert token.scope is None
 
 
@@ -429,7 +450,7 @@ def test_token_row_gets_expires_at(client, settings, token_endpoint_url, token_p
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 201
     data = parse_qs(unquote(response.content.decode("utf-8")))
-    token = models.Token.objects.get(key=data["access_token"][0])
+    token = models.Token.get_for_raw_key(data["access_token"][0])
     assert token.expires_at is not None
     delta = token.expires_at - timezone.now()
     # Allow tiny clock drift in the round trip.
@@ -954,7 +975,9 @@ def test_token_reissue_rotates_key_and_reuses_existing_row(client, settings, tok
     new_key = data["access_token"][0]
     assert new_key != old_key
     stale.refresh_from_db()
-    assert stale.key == new_key
+    assert stale.key == models.Token.hash_key(new_key)
+    assert stale.key != new_key
+    assert models.Token.get_for_raw_key(new_key).pk == stale.pk
     assert models.Token.objects.count() == 1
 
 
@@ -1241,7 +1264,7 @@ def test_token_introspection_rejects_duplicate_token_key_lookup_without_500(
 
     class DuplicateTokenQuery:
         def get(self, *args, **kwargs):
-            if kwargs.get("key") == caller.key:
+            if kwargs.get("key") == models.Token.hash_key(caller.key):
                 return caller
             raise models.Token.MultipleObjectsReturned
 

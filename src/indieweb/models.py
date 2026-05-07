@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 from typing import Any
 
 from django.conf import settings
@@ -8,6 +10,15 @@ from django.core.validators import EmailValidator, URLValidator
 from django.db import models
 from django.utils import timezone
 from django.utils.crypto import get_random_string
+
+TOKEN_KEY_HASH_PREFIX = "hmac-sha256$"
+TOKEN_KEY_LENGTH = 32
+WEBMENTION_STATUS_TOKEN_LENGTH = 48
+
+
+def generate_webmention_status_token() -> str:
+    """Return an unguessable token for public Webmention status URLs."""
+    return get_random_string(length=WEBMENTION_STATUS_TOKEN_LENGTH)
 
 
 class GenKeyMixin(models.Model):
@@ -65,7 +76,7 @@ class Token(GenKeyMixin):
     requests to the Micropub endpoint and other IndieWeb services.
     """
 
-    key = models.CharField(max_length=32, unique=True)
+    key = models.CharField(max_length=80, unique=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="indieweb_token",
@@ -81,6 +92,80 @@ class Token(GenKeyMixin):
 
     def __str__(self) -> str:
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        key_changed = False
+        raw_key = self.raw_key
+        if not self.key:
+            self.set_key()
+            key_changed = True
+        elif not self.is_hashed_key(self.key):
+            self.set_key(self.key)
+            key_changed = True
+        if key_changed:
+            raw_key = self.raw_key
+        if key_changed and kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = set(kwargs["update_fields"]) | {"key"}
+        super().save(*args, **kwargs)
+        if raw_key is not None:
+            self.key = raw_key
+
+    @classmethod
+    def make_raw_key(cls) -> str:
+        """Return a new raw bearer token value for one-time display."""
+        return get_random_string(length=TOKEN_KEY_LENGTH)
+
+    @classmethod
+    def hash_key(cls, raw_key: str) -> str:
+        """Return the stable at-rest HMAC digest for a raw bearer token."""
+        digest = hmac.new(
+            str(settings.SECRET_KEY).encode("utf-8"),
+            raw_key.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return f"{TOKEN_KEY_HASH_PREFIX}{digest}"
+
+    @classmethod
+    def is_hashed_key(cls, value: str) -> bool:
+        """Return whether ``value`` begins with the reserved at-rest hash prefix."""
+        return value.startswith(TOKEN_KEY_HASH_PREFIX)
+
+    @classmethod
+    def get_for_raw_key(cls, raw_key: str) -> Token:
+        """Return the token matching ``raw_key`` without storing the raw value."""
+        if cls.is_hashed_key(raw_key):
+            raise cls.DoesNotExist
+        queryset = cls.objects.select_related("owner")
+        hashed_key = cls.hash_key(raw_key)
+        try:
+            token = queryset.get(key=hashed_key)
+        except cls.DoesNotExist:
+            token = queryset.get(key=raw_key)
+        # Keep the final secret comparison constant-time even though the indexed
+        # lookup should already have constrained the candidate row.
+        if not hmac.compare_digest(token.key, hashed_key) and not hmac.compare_digest(token.key, raw_key):
+            raise cls.DoesNotExist
+        return token
+
+    def set_key(self, raw_key: str | None = None) -> str:
+        """Set a new bearer token hash and return the raw value for issuance."""
+        raw_key = raw_key or self.make_raw_key()
+        self.key = self.hash_key(raw_key)
+        self._raw_key = raw_key
+        return raw_key
+
+    @property
+    def raw_key(self) -> str | None:
+        """Return the one-time raw key when this instance just generated one."""
+        return getattr(self, "_raw_key", None)
+
+    def masked_key(self) -> str:
+        """Return a non-secret display form for the stored token hash."""
+        if not self.key:
+            return ""
+        if self.is_hashed_key(self.key):
+            return f"{TOKEN_KEY_HASH_PREFIX}..."
+        return "legacy-plaintext-token-hidden"
 
     def is_expired(self) -> bool:
         """Return True if the token has an expires_at in the past.
@@ -144,6 +229,12 @@ class Webmention(models.Model):
 
     # Optional spam check result
     spam_check_result = models.JSONField(null=True, blank=True)
+    status_token = models.CharField(
+        max_length=WEBMENTION_STATUS_TOKEN_LENGTH,
+        unique=True,
+        db_index=True,
+        default=generate_webmention_status_token,
+    )
 
     class Meta:
         unique_together = ["source_url", "target_url"]

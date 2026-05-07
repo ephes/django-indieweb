@@ -16,10 +16,6 @@ No current Priority 2 items.
 
 ### API Hardening
 
-- [ ] Store access tokens hashed at rest.
-  References: `src/indieweb/models.py`, `src/indieweb/views.py`, migrations, `tests/test_token_endpoint.py`, `tests/test_token_management.py`, `docs/`.
-  `Token.key` is stored as a bearer secret in plaintext. Add a hashed-token storage path that returns the raw token only at issuance, authenticates by comparing a derived hash (with `hmac.compare_digest`), and provides a migration plan for existing plaintext tokens. Update admin/token-management displays so raw token values are not exposed; mask `Token.key` in `TokenAdmin` and drop `state` from `AuthAdmin.search_fields`. Land after the unique-keys task in P1.
-
 - [ ] Document Micropub adapter ownership responsibilities and mark in-memory handler unsafe.
   References: `src/indieweb/handlers.py` (`InMemoryMicropubHandler` ~lines 310-348), `src/indieweb/interfaces.py`, `README.rst:75`, `docs/index.rst:92`.
   The reference `InMemoryMicropubHandler` ignores the `user` argument that the views pass in. Docs already point hosts at `MicropubContentHandler`, so the in-memory class is an example, not a recommended base — but it stands as a misleading example. Make the abstract base raise `NotImplementedError` with an explicit ownership requirement in the docstring; add a `# UNSAFE: example only — performs no ownership check` comment in the in-memory handler; add an "Adapter responsibilities" section to README and docs/index calling out the host's ownership-check duty for update/delete/undelete/source/media.
@@ -27,10 +23,6 @@ No current Priority 2 items.
 - [ ] Add hardened default rate-limit guidance and fix limiter primitives for public protocol endpoints.
   References: `src/indieweb/rate_limit.py`, `src/indieweb/views.py`, `docs/`, `tests/test_rate_limiting.py`.
   Built-in rate limiting is disabled unless `INDIEWEB_RATE_LIMITS` is configured; document recommended production limits for auth, token, introspection, Micropub, media, Webmention, Webmention status, and WebSub callback endpoints. Cover proxy-aware client IP guidance (the limiter intentionally ignores `X-Forwarded-For`). Replace `sha256(REMOTE_ADDR)` keying with HMAC keyed by `SECRET_KEY` (the bare digest of an IPv4 is trivially reversible). The `cache.add` + `cache.incr` pair is not atomic with redis/memcached — document best-effort behaviour and recommend a Lua-script-based limiter for hardening; fall back `Retry-After` to `config.window` when the reset key was evicted.
-
-- [ ] Make Webmention status URLs non-enumerable or privacy-aware.
-  References: `src/indieweb/views.py` (`WebmentionStatusView` ~line 2025), `src/indieweb/models.py`, migrations if needed, `tests/test_webmention_endpoint.py`.
-  `WebmentionStatusView` is unauthenticated and exposes sequential integer IDs returning `source_url`, `target_url`, `vouch_url`, status, and verification timestamps. Replace integer URLs with opaque tokens, gate access on ownership/staff, or restrict the response to public-safe states (verified only) and fields (no `vouch_url`). Add tests proving unrelated Webmention records cannot be enumerated for private metadata.
 
 - [ ] Require or strongly encourage signed WebSub deliveries; add replay protection, lease bounds, and signature-algorithm preference.
   References: `src/indieweb/websub.py`, `src/indieweb/views.py`, `src/indieweb/admin.py`, `tests/test_websub.py`, `tests/test_websub_subscriber.py`, `docs/`.

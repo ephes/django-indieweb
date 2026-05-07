@@ -27,5 +27,5 @@ urlpatterns = [
     path("media/", views.MicropubMediaView.as_view(), name="media"),
     path("websub/<str:token>/", views.WebSubCallbackView.as_view(), name="websub-callback"),
     path("webmention/", views.WebmentionEndpoint.as_view(), name="webmention"),
-    path("webmention/<int:pk>/", views.WebmentionStatusView.as_view(), name="webmention-status"),
+    path("webmention/<str:status_token>/", views.WebmentionStatusView.as_view(), name="webmention-status"),
 ]

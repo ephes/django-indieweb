@@ -892,7 +892,7 @@ class TokenAuthMixin(View):
         key = _parse_bearer_authorization_header(_authorization_header(request))
         if key is not None:
             try:
-                self.token = Token.objects.select_related("owner").get(key=key)
+                self.token = Token.get_for_raw_key(key)
                 if not self.token.owner.is_active:
                     logger.warning(f"Token owner is not active: {self.token.owner}")
                     return False
@@ -1185,12 +1185,15 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             defaults={"expires_at": expires_at},
         )
         if not created:
-            token.key = ""
+            token.set_key()
             token.expires_at = expires_at
             token.save(update_fields=["key", "expires_at", "modified"])
+        raw_key = token.raw_key
+        if raw_key is None:
+            raise RuntimeError("token issuance did not produce a raw bearer key")
         remaining = max(0, math.floor((expires_at - timezone.now()).total_seconds()))
         response_values: dict[str, str | int] = {
-            "access_token": token.key,
+            "access_token": raw_key,
             "token_type": "Bearer",
             "expires_in": remaining,
             "scope": token.scope or "",
@@ -1326,15 +1329,15 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     def _inactive_response(self) -> JsonResponse:
         return JsonResponse({"active": False})
 
-    def _submitted_token(self, request: HttpRequest, caller_token: Token) -> str:
+    def _submitted_token(self, request: HttpRequest) -> str:
         value = request.POST.get("token")
         if value:
             return value
-        return caller_token.key
+        return _authorization_bearer_token(request) or ""
 
     def _token_for_key(self, key: str, *, log_prefix: str) -> Token | None:
         try:
-            token = Token.objects.select_related("owner").get(key=key)
+            token = Token.get_for_raw_key(key)
         except Token.DoesNotExist:
             logger.info(f"{log_prefix} token not found: {key[:8]}...")
             return None
@@ -1380,7 +1383,7 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         if isinstance(caller_token, HttpResponse):
             return caller_token
 
-        submitted_token = self._submitted_token(request, caller_token)
+        submitted_token = self._submitted_token(request)
         token = self._token_for_key(submitted_token, log_prefix="introspection target")
         if token is None:
             return self._inactive_response()
@@ -2523,7 +2526,7 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
             response = HttpResponse(status=202)  # Accepted for queued processing
             response["Location"] = request.build_absolute_uri(
-                reverse("indieweb:webmention-status", args=[webmention.pk])
+                reverse("indieweb:webmention-status", args=[webmention.status_token])
             )
             return response
 
@@ -2533,7 +2536,7 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             webmention = processor.process_webmention(source, target, vouch_url=vouch)
             response = HttpResponse(status=201)  # Created
             response["Location"] = request.build_absolute_uri(
-                reverse("indieweb:webmention-status", args=[webmention.pk])
+                reverse("indieweb:webmention-status", args=[webmention.status_token])
             )
             return response
         except Exception as e:
@@ -2565,15 +2568,15 @@ class WebmentionStatusView(CorsMixin, RateLimitMixin, View):
     """
     Webmention status endpoint.
 
-    Returns the status of a specific webmention by ID.
+    Returns the status of a specific webmention by opaque status token.
     """
 
     rate_limit_key = "webmention_status"
     cors_allowed_methods = ("GET",)
 
-    def get(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponse:
+    def get(self, request: HttpRequest, status_token: str, *args: object, **kwargs: object) -> HttpResponse:
         """Return status of a webmention."""
-        webmention = get_object_or_404(Webmention, pk=pk)
+        webmention = get_object_or_404(Webmention, status_token=status_token)
 
         # Return JSON response with webmention status
         status_data = {
@@ -2582,14 +2585,8 @@ class WebmentionStatusView(CorsMixin, RateLimitMixin, View):
             "status": webmention.status,
         }
 
-        if webmention.vouch_url:
-            status_data["vouch"] = webmention.vouch_url
-
         if webmention.verified_at:
             status_data["verified_at"] = webmention.verified_at.isoformat()
-
-        if webmention.vouch_verified_at:
-            status_data["vouch_verified_at"] = webmention.vouch_verified_at.isoformat()
 
         return HttpResponse(
             json.dumps(status_data),

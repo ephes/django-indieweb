@@ -204,6 +204,11 @@ cannot be revoked through this UI.
 When an existing token row is reissued through the IndieAuth token endpoint,
 django-indieweb refreshes its expiration and rotates the bearer key returned
 to the client. The previous bearer key stops authenticating immediately.
+Raw bearer token values are returned only when the token endpoint issues or
+reissues a token. At rest, ``Token.key`` stores an HMAC digest derived from the
+raw bearer value; the migration that introduces this format hashes legacy
+plaintext token rows. Token hashes are keyed with Django's ``SECRET_KEY``, so
+changing ``SECRET_KEY`` invalidates existing bearer tokens.
 
 Authentication vs Authorization
 -------------------------------

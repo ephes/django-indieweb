@@ -4,6 +4,40 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Store bearer tokens hashed at rest and privatize Webmention status URLs
+
+- Changed ``Token.key`` to store ``hmac-sha256$`` HMAC digests instead of raw
+  bearer values. The token endpoint now returns the raw token only at issuance
+  or reissue, authentication and introspection look up the derived digest and
+  compare with ``hmac.compare_digest``, and migration ``0020`` hashes existing
+  plaintext token rows in place.
+- Masked token secrets in Django admin through ``TokenAdmin.masked_key`` and
+  removed transient ``Auth.state`` values from ``AuthAdmin.search_fields``.
+  The browser token-management UI continues to show only token metadata.
+- Added opaque ``Webmention.status_token`` values via migration ``0020`` and
+  changed Webmention receive ``Location`` headers plus the named status route
+  to use ``/indieweb/webmention/<status-token>/`` instead of sequential
+  primary-key URLs.
+- Removed Vouch URLs and Vouch verification timestamps from public Webmention
+  status JSON while preserving source, target, status, and ``verified_at``.
+- Backlog: removed the completed Priority 3 token-at-rest and Webmention
+  status privacy items from ``BACKLOG.md``.
+- Documentation: updated ``docs/api.rst``, ``docs/indieauth.rst``,
+  ``docs/webmention.rst``, ``docs/configuration.rst``, and ``docs/tutorial.rst``
+  for hashed token storage, the ``SECRET_KEY`` token-hash dependency, opaque
+  status URLs, and Vouch metadata no longer being exposed by status responses.
+- Changelog: updated ``docs/changelog.rst`` with Unreleased security notes for
+  hashed bearer-token storage and non-enumerable Webmention status URLs.
+- Validation: ``uv run pytest tests/test_token_endpoint.py
+  tests/test_token_management.py tests/test_admin.py
+  tests/test_webmention_endpoint.py tests/test_rate_limiting.py -q --no-cov``
+  passed (169 passed); ``uv run pytest`` passed (1161 passed, coverage gate
+  reached at 90.12%); ``uv run mypy`` passed; ``uv run ruff check .`` passed;
+  ``uv run ruff format . --check`` passed; ``just docs`` passed; ``uv run
+  python manage.py makemigrations --check --dry-run`` passed; ``uv run prek
+  run --all-files`` passed on rerun after hooks normalized files; and ``git
+  diff --check`` passed.
+
 ### Strengthen Micropub media upload validation and serving guidance
 
 - Sniffed Micropub media uploads with ``filetype`` before storage, compared

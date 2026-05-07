@@ -161,8 +161,12 @@ class TokenAdmin(admin.ModelAdmin):
     list_display = ("client_id", "owner", "scope", "created")
     list_filter = ("owner", "created")
     search_fields = ("client_id", "me")
-    readonly_fields = ("key", "owner", "client_id", "me", "scope", "created", "modified")
+    readonly_fields = ("masked_key", "owner", "client_id", "me", "scope", "created", "modified")
     ordering = ("-created",)
+
+    @admin.display(description="Token")
+    def masked_key(self, obj: Token) -> str:
+        return obj.masked_key()
 
     def has_add_permission(self, request: HttpRequest) -> bool:
         return False
@@ -171,7 +175,7 @@ class TokenAdmin(admin.ModelAdmin):
         (
             "Token Information",
             {
-                "fields": ("key", "client_id", "me", "scope"),
+                "fields": ("masked_key", "client_id", "me", "scope"),
             },
         ),
         (
@@ -193,7 +197,7 @@ class TokenAdmin(admin.ModelAdmin):
 class AuthAdmin(admin.ModelAdmin):
     list_display = ("client_id", "owner", "state", "created")
     list_filter = ("owner", "created")
-    search_fields = ("client_id", "me", "state")
+    search_fields = ("client_id", "me")
     ordering = ("-created",)
 
     def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> list[str]:

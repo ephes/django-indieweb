@@ -246,7 +246,7 @@ def test_auth_media_and_webmention_status_endpoint_keys_are_limited(client, sett
     }
     auth_url = reverse("indieweb:auth")
     media_url = reverse("indieweb:media")
-    status_url = reverse("indieweb:webmention-status", args=[webmention.pk])
+    status_url = reverse("indieweb:webmention-status", args=[webmention.status_token])
 
     assert client.get(auth_url).status_code == 302
     assert client.get(auth_url).status_code == 429

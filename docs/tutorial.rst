@@ -60,7 +60,7 @@ After installation, you'll have these endpoints available:
 - ``/indieweb/micropub/`` - Micropub content creation and editing (uses configured handler)
 - ``/indieweb/media/`` - Micropub media uploads (uses Django storage)
 - ``/indieweb/webmention/`` - Webmention receive endpoint (Link rel="webmention" is advertised)
-- ``/indieweb/webmention/<pk>/`` - Webmention status lookup
+- ``/indieweb/webmention/<status-token>/`` - Webmention status lookup
 
 Implementing IndieAuth Login
 ----------------------------

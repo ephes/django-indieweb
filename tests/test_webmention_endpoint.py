@@ -282,7 +282,7 @@ class TestWebmentionEndpoint:
         assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [webmention.pk]
         assert WebmentionSourceSnapshot.objects.count() == 0
         assert WebmentionNestedResponse.objects.count() == 0
-        status_url = reverse("indieweb:webmention-status", args=[webmention.pk])
+        status_url = reverse("indieweb:webmention-status", args=[webmention.status_token])
         assert response["Location"] == f"http://testserver{status_url}"
         mock_processor_class.assert_not_called()
 
@@ -366,7 +366,7 @@ class TestWebmentionEndpoint:
         assert response.status_code == 202
         assert Webmention.objects.filter(source_url=source, target_url=target).count() == 1
         assert webmention_enqueue_hooks.ENQUEUED_WEBMENTION_IDS == [existing.pk]
-        status_url = reverse("indieweb:webmention-status", args=[existing.pk])
+        status_url = reverse("indieweb:webmention-status", args=[existing.status_token])
         assert response["Location"] == f"http://testserver{status_url}"
         assert existing.status == "verified"
         assert existing.verified_at == verified_at
@@ -586,7 +586,7 @@ class TestWebmentionEndpoint:
         assert response.status_code == 201
         assert "Location" in response
         # Should contain webmention ID in the URL
-        assert str(mock_webmention.id) in response["Location"]
+        assert str(mock_webmention.status_token) in response["Location"]
 
     @pytest.mark.django_db
     def test_webmention_status_view(self, client):
@@ -598,7 +598,7 @@ class TestWebmentionEndpoint:
             status="verified",
         )
 
-        url = reverse("indieweb:webmention-status", args=[webmention.pk])
+        url = reverse("indieweb:webmention-status", args=[webmention.status_token])
         response = client.get(url)
 
         assert response.status_code == 200
@@ -609,8 +609,8 @@ class TestWebmentionEndpoint:
         assert data["target"] == webmention.target_url
         assert data["status"] == webmention.status
 
-    def test_webmention_status_view_includes_vouch_metadata(self, client):
-        """Test the status endpoint includes stored Vouch metadata."""
+    def test_webmention_status_view_omits_vouch_metadata(self, client):
+        """Test the status endpoint does not expose stored Vouch metadata."""
         vouch_verified_at = timezone.now()
         webmention = Webmention.objects.create(
             source_url="https://other.com/reply",
@@ -620,12 +620,29 @@ class TestWebmentionEndpoint:
             vouch_verified_at=vouch_verified_at,
         )
 
-        url = reverse("indieweb:webmention-status", args=[webmention.pk])
+        url = reverse("indieweb:webmention-status", args=[webmention.status_token])
         response = client.get(url)
 
         data = json.loads(response.content)
-        assert data["vouch"] == webmention.vouch_url
-        assert data["vouch_verified_at"] == vouch_verified_at.isoformat()
+        assert "vouch" not in data
+        assert "vouch_verified_at" not in data
+
+    def test_webmention_status_view_does_not_allow_pk_enumeration(self, client):
+        """Test sequential primary keys cannot enumerate private status metadata."""
+        webmention = Webmention.objects.create(
+            source_url="https://other.com/private-reply",
+            target_url="https://example.com/private-post",
+            status="pending",
+            vouch_url="https://trusted.example/private-vouch",
+        )
+
+        response = client.get(reverse("indieweb:webmention-status", args=[webmention.pk]))
+
+        assert response.status_code == 404
+        body = response.content.decode()
+        assert webmention.source_url not in body
+        assert webmention.target_url not in body
+        assert webmention.vouch_url not in body
 
     def test_webmention_status_view_not_found(self, client):
         """Test that non-existent webmention returns 404."""
