@@ -4,6 +4,62 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### Cap Webmention parser fallback traversals and track WebSub multi-digest replay history
+
+- Slice 1: converted the four fallback microformats walks in
+  ``WebmentionProcessor`` (``_search_for_any_h_entry``,
+  ``_search_items_for_h_card``, ``_search_items_for_h_card_id``, and
+  ``_collect_page_level_h_cards``) from recursion into iterative depth-first
+  walks that share the existing
+  ``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH`` and
+  ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS`` budgets with the primary scans, so
+  a maliciously deep ``children`` chain or oversized microformats tree no
+  longer reaches Python's recursion limit or starves the request worker. The
+  walks return whatever they have found within the budget instead of raising,
+  preserving authorship/source-selection behavior on normal pages.
+- Slice 2: added a bounded per-subscription history of recently accepted
+  WebSub delivery digests on ``WebSubSubscription`` (JSON field
+  ``recent_accepted_delivery_digests``) and updated ``delivery_is_replay()`` to
+  reject a captured payload that matches any retained digest within the
+  configured replay window. This closes the A/B/A replay gap that the
+  single-row ``last_accepted_delivery_digest`` field could not detect.
+  ``record_websub_delivery()`` appends to the history, prunes entries older
+  than ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS``, and caps the list at
+  the new ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` setting (default 64).
+  An empty environment variable falls back to the default cap rather than
+  silently disabling pruning, mirroring the recent
+  ``_hub_response_max_bytes()`` fix.
+- Storage decision (slice 2): the history is stored as a JSON list of
+  ``{"digest", "accepted_at"}`` entries on ``WebSubSubscription`` rather than
+  as a separate ``WebSubAcceptedDeliveryDigest`` related model. Rationale:
+  the existing model already denormalizes per-subscription delivery
+  diagnostics (``last_*_delivery_*`` fields), pruning is straightforward in
+  Python on every record, and a JSON column requires only a single
+  forward-only ``AddField`` migration with an empty default rather than a
+  second migration plus FK index management. The single-row
+  ``last_accepted_delivery_at`` / ``last_accepted_delivery_digest`` fields
+  stay for backwards-compatible diagnostics.
+- Backlog: removed the two completed Priority 2 security residuals from
+  ``BACKLOG.md`` and added a Priority 4 housekeeping follow-up to treat empty
+  ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` as the default rather than disabled,
+  the same pattern as the recently-fixed ``_hub_response_max_bytes()`` /
+  ``_delivery_replay_history_max()`` helpers. Migration ``0022`` adds the
+  replay-history JSON field with an empty default.
+- Documentation: updated ``docs/configuration.rst`` to describe the new
+  ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` setting and to broaden the
+  ``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH`` /
+  ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS`` entries to cover the fallback
+  walks; updated ``docs/websub.rst`` to describe the replay history cache and
+  A/B/A protection.
+- Changelog: added two distinct Unreleased entries — one for the Webmention
+  fallback traversal caps, one for the WebSub multi-digest replay history.
+- Validation: ``uv run pytest tests/test_webmention_processor.py
+  tests/test_websub_subscriber.py tests/test_websub.py -q --no-cov`` passed;
+  ``uv run pytest`` passed with the configured coverage gate; ``uv run
+  mypy``, ``uv run ruff check .``, ``uv run ruff format . --check``, ``just
+  docs``, ``uv run python manage.py makemigrations --check --dry-run``, and
+  ``uv run prek run --all-files`` all passed.
+
 ### Harden Micropub action input validation and bound WebSub hub responses
 
 - Applied URL-property validation on Micropub ``action=update`` ``replace`` /

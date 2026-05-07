@@ -1,6 +1,7 @@
 """Test cases for WebmentionProcessor."""
 
 import hashlib
+import sys
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
@@ -295,6 +296,94 @@ class TestWebmentionProcessor:
         }
 
         assert len(processor._nested_h_entries(item)) == 2
+
+    def test_search_for_any_h_entry_handles_deeply_nested_children(self, processor):
+        """Deep ``children`` chains do not crash the fallback h-entry walk.
+
+        Lowering ``sys.setrecursionlimit`` confirms the walk is iterative: the original
+        recursive implementation would blow the stack on a 200-level chain at this limit.
+        """
+        leaf = {"type": ["h-entry"], "properties": {"uid": ["https://example.com/leaf"]}}
+        node: dict = leaf
+        for _ in range(200):
+            node = {"type": ["h-feed"], "children": [node]}
+
+        previous_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(100)
+        try:
+            result = processor._search_for_any_h_entry([node])
+        finally:
+            sys.setrecursionlimit(previous_limit)
+        # Fallback returns None when the leaf is past the depth cap; the key contract is
+        # "does not raise RecursionError".
+        assert result is None or result is leaf
+
+    def test_search_for_any_h_entry_terminates_within_item_budget(self, processor):
+        """A wide tree of non-matching items terminates within the configured item budget."""
+        siblings = [{"type": ["h-something"], "properties": {"name": [f"item-{index}"]}} for index in range(5000)]
+        # No h-entry exists; the fallback must terminate (does not loop or crash).
+        assert processor._search_for_any_h_entry(siblings) is None
+
+    def test_collect_page_level_h_cards_handles_deeply_nested_children(self, processor):
+        """Deeply nested non-h-entry children do not blow the recursion limit."""
+        leaf = {"type": ["h-card"], "properties": {"name": ["leaf"]}}
+        node: dict = leaf
+        for _ in range(200):
+            node = {"type": ["h-feed"], "children": [node]}
+
+        previous_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(100)
+        try:
+            cards = processor._collect_page_level_h_cards([node])
+        finally:
+            sys.setrecursionlimit(previous_limit)
+        assert isinstance(cards, list)
+
+    def test_search_items_for_h_card_id_handles_deeply_nested_children(self, processor):
+        """Deeply nested h-card-by-id lookups do not blow the recursion limit."""
+        leaf = {"type": ["h-card"], "id": "leaf", "properties": {"name": ["leaf"]}}
+        node: dict = leaf
+        for _ in range(200):
+            node = {"type": ["h-feed"], "children": [node]}
+
+        previous_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(100)
+        try:
+            result = processor._search_items_for_h_card_id([node], "leaf")
+        finally:
+            sys.setrecursionlimit(previous_limit)
+        assert result is None or result is leaf
+
+    def test_fallback_authorship_finds_page_level_h_card_on_typical_page(self, processor):
+        """Normal-shaped pages still surface a single page-level h-card as the fallback author."""
+        parsed = {
+            "items": [
+                {
+                    "type": ["h-card"],
+                    "properties": {
+                        "name": ["Alice"],
+                        "url": ["https://example.com/"],
+                        "photo": ["https://example.com/avatar.jpg"],
+                    },
+                },
+                {
+                    "type": ["h-feed"],
+                    "children": [
+                        {
+                            "type": ["h-entry"],
+                            "properties": {"name": ["First post"]},
+                        }
+                    ],
+                },
+            ]
+        }
+        author = processor._find_page_h_card_author(parsed, "https://example.com/")
+
+        assert author == {
+            "name": "Alice",
+            "url": "https://example.com/",
+            "photo": "https://example.com/avatar.jpg",
+        }
 
     def test_processor_stores_vouch_without_verification_when_policy_unset(self, processor):
         """Test submitted Vouch metadata is stored without extra fetching by default."""

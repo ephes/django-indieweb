@@ -35,6 +35,7 @@ DEFAULT_WEBSUB_TIMEOUT = 10.0
 DEFAULT_WEBSUB_DELIVERY_MAX_BYTES = 1024 * 1024
 DEFAULT_WEBSUB_HUB_RESPONSE_MAX_BYTES = 256 * 1024
 DEFAULT_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 300
+DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 64
 DEFAULT_WEBSUB_MIN_LEASE_SECONDS = 5 * 60
 DEFAULT_WEBSUB_MAX_LEASE_SECONDS = 30 * 24 * 60 * 60
 WEBSUB_SECRET_MIN_BYTES = 20
@@ -289,6 +290,91 @@ def _clamp_confirmed_lease_seconds(lease_seconds: int | None) -> int | None:
         return None
     minimum, maximum = _confirmed_lease_bounds()
     return min(max(lease_seconds, minimum), maximum)
+
+
+def _delivery_replay_history_max() -> int | None:
+    """Return the per-subscription replay history cap, or ``None`` to disable pruning.
+
+    ``None`` is the explicit "disable cap" sentinel. Any other malformed value —
+    including the empty string that ``_positive_int`` translates back to ``None`` —
+    falls back to the default so an empty environment variable does not silently
+    weaken the protection by allowing the cache to grow without bound.
+    """
+    configured = getattr(
+        settings,
+        "INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX",
+        DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX,
+    )
+    if configured is None:
+        return None
+    try:
+        parsed = _positive_int(configured, label="WebSub delivery replay history max")
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX value; using the default cap",
+        )
+        return DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX
+    if parsed is None:
+        logger.warning(
+            "Ignoring empty INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX value; using the default cap",
+        )
+        return DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX
+    return parsed
+
+
+def _coerce_recent_accepted_entries(value: Any) -> list[dict[str, str]]:
+    """Return a sanitized list of replay-history entries from arbitrary stored data."""
+    if not isinstance(value, list):
+        return []
+    cleaned: list[dict[str, str]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        digest = entry.get("digest")
+        accepted_at = entry.get("accepted_at")
+        if isinstance(digest, str) and digest and isinstance(accepted_at, str) and accepted_at:
+            cleaned.append({"digest": digest, "accepted_at": accepted_at})
+    return cleaned
+
+
+def _parse_recent_accepted_at(value: str) -> datetime | None:
+    """Return an aware datetime from a stored ``accepted_at`` value, or ``None`` on failure.
+
+    A corrupted or legacy JSON column may contain offset-naive ISO timestamps that
+    ``datetime.fromisoformat`` will parse but cannot be compared to the aware
+    ``timezone.now()`` cutoff without raising ``TypeError``. Treat any naive value as
+    invalid and drop it rather than crashing the replay check.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
+        return None
+    return parsed
+
+
+def _prune_recent_accepted_entries(
+    entries: list[dict[str, str]],
+    *,
+    received_at: datetime,
+    replay_window_seconds: int | None,
+) -> list[dict[str, str]]:
+    """Drop replay-history entries older than the configured replay window."""
+    if replay_window_seconds is None:
+        return entries
+    cutoff = received_at - timedelta(seconds=replay_window_seconds)
+    pruned: list[dict[str, str]] = []
+    for entry in entries:
+        accepted_at = entry.get("accepted_at")
+        if not isinstance(accepted_at, str):
+            continue
+        entry_at = _parse_recent_accepted_at(accepted_at)
+        if entry_at is None:
+            continue
+        if entry_at >= cutoff:
+            pruned.append(entry)
+    return pruned
 
 
 def _delivery_replay_window_seconds() -> int | None:
@@ -830,16 +916,30 @@ def delivery_is_replay(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Return whether ``body`` duplicates a recent accepted delivery."""
+    """Return whether ``body`` duplicates any retained accepted delivery in the window."""
     replay_window_seconds = _delivery_replay_window_seconds()
     if replay_window_seconds is None:
         return False
+    received_at = now or timezone.now()
+    cutoff = received_at - timedelta(seconds=replay_window_seconds)
+    body_digest = hashlib.sha256(body).hexdigest()
+
+    entries = _coerce_recent_accepted_entries(subscription.recent_accepted_delivery_digests)
+    for entry in entries:
+        entry_at = _parse_recent_accepted_at(entry["accepted_at"])
+        if entry_at is None or entry_at < cutoff:
+            continue
+        if hmac.compare_digest(entry["digest"], body_digest):
+            return True
+
+    # Fall back to the single-row diagnostics for rows written before the history cache
+    # was introduced; entries written by ``record_websub_delivery`` make this check
+    # redundant but harmless on upgraded subscriptions.
     if subscription.last_accepted_delivery_at is None or not subscription.last_accepted_delivery_digest:
         return False
-    received_at = now or timezone.now()
-    if subscription.last_accepted_delivery_at < received_at - timedelta(seconds=replay_window_seconds):
+    if subscription.last_accepted_delivery_at < cutoff:
         return False
-    return hmac.compare_digest(subscription.last_accepted_delivery_digest, hashlib.sha256(body).hexdigest())
+    return hmac.compare_digest(subscription.last_accepted_delivery_digest, body_digest)
 
 
 def record_websub_delivery(
@@ -878,6 +978,18 @@ def record_websub_delivery(
         subscription.last_accepted_delivery_at = received_at
         subscription.last_accepted_delivery_digest = delivery_digest
         update_fields.extend(["last_accepted_delivery_at", "last_accepted_delivery_digest"])
+
+        replay_window_seconds = _delivery_replay_window_seconds()
+        history_max = _delivery_replay_history_max()
+        history = _coerce_recent_accepted_entries(subscription.recent_accepted_delivery_digests)
+        history = _prune_recent_accepted_entries(
+            history, received_at=received_at, replay_window_seconds=replay_window_seconds
+        )
+        history.append({"digest": delivery_digest, "accepted_at": received_at.isoformat()})
+        if history_max is not None and len(history) > history_max:
+            history = history[-history_max:]
+        subscription.recent_accepted_delivery_digests = history
+        update_fields.append("recent_accepted_delivery_digests")
     subscription.save(update_fields=update_fields)
     WebSubDeliveryAttempt.objects.create(
         subscription=subscription,

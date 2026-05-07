@@ -731,10 +731,22 @@ headers are present. ``sha1`` signatures are rejected by default; set
 ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True`` only for a hub that cannot
 send SHA-256 signatures.
 
-Accepted delivery bodies are replay-checked for 300 seconds by default using
-the most recent accepted SHA-256 digest on the subscription. Set
-``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to a non-negative integer,
-or to ``None`` or ``0`` to disable this in-process replay window.
+Accepted delivery bodies are replay-checked for 300 seconds by default against
+every retained accepted SHA-256 digest on the subscription, so a captured
+payload A cannot be replayed after a different legitimate payload B has been
+accepted. Set ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to a
+non-negative integer, or to ``None`` or ``0`` to disable this in-process
+replay window. The history is bounded by
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` (default 64) so a hub that
+accepts many distinct payloads inside the window cannot grow the cache without
+bound. When the cap is reached, the oldest accepted digest is evicted: a
+sufficiently old replay against a high-volume subscription may slip past the
+check. Tune the cap to match your hubs' burst rate. Set this to ``None`` to
+disable history pruning. Malformed values, including an empty environment
+variable that resolves to ``""``, are ignored and logged; the helper falls
+back to the default cap rather than disabling it. Entries older than the
+replay window are pruned on every accepted delivery regardless of the history
+cap.
 Subscribe verification clamps confirmed lease durations to the configured
 ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` and
 ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` bounds. Defaults are 300 seconds and 30
@@ -874,8 +886,12 @@ boundary enforces an equivalent limit.
 INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Maximum nested ``h-entry`` child depth inspected when extracting nested
-Webmention/Salmention response candidates.
+Maximum nested ``h-entry``/``h-card`` child depth inspected when extracting
+Webmention/Salmention response candidates and when running the fallback
+``h-entry``/``h-card``/page-level-author traversals on a parsed source
+document. The microformats walks are iterative and bail out once the depth
+cap is reached, so a maliciously deep ``children`` chain cannot exhaust the
+Python recursion limit.
 
 **Default:** ``8``
 
@@ -890,7 +906,10 @@ INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Maximum parsed microformats items scanned while looking for the ``h-entry``
-that mentions the submitted target.
+that mentions the submitted target, and while running the fallback
+``h-entry``/``h-card``/page-level-author traversals on the same document.
+The walks return whatever they have found so far when the budget is exhausted
+rather than scanning unbounded.
 
 **Default:** ``1000``
 

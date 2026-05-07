@@ -989,18 +989,20 @@ class WebmentionProcessor:
         return False
 
     def _search_for_any_h_entry(self, items: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Recursively search for any h-entry (fallback)."""
-        for item in items:
+        """Iteratively search for any h-entry (fallback)."""
+        max_depth = _webmention_nested_max_depth()
+        max_items = _webmention_search_max_items()
+        stack: list[tuple[dict[str, Any], int]] = [(item, 0) for item in reversed(items) if isinstance(item, dict)]
+        visited = 0
+        while stack and visited < max_items:
+            item, depth = stack.pop()
+            visited += 1
             if "h-entry" in item.get("type", []):
                 return item
-
-            # Recursively search children
+            if depth >= max_depth:
+                continue
             children = item.get("children", [])
-            if children:
-                result = self._search_for_any_h_entry(children)
-                if result:
-                    return result
-
+            stack.extend((child, depth + 1) for child in reversed(children) if isinstance(child, dict))
         return None
 
     def _find_h_card_by_url(self, parsed: dict[str, Any], url: str) -> dict[str, Any] | None:
@@ -1014,9 +1016,14 @@ class WebmentionProcessor:
         return self._search_items_for_h_card(items, url)
 
     def _search_items_for_h_card(self, items: list[dict[str, Any]], url: str) -> dict[str, Any] | None:
-        """Recursively search through items and their children for a matching h-card."""
-        for item in items:
-            # Check if this item is an h-card with matching URL
+        """Iteratively search through items and their children for a matching h-card."""
+        max_depth = _webmention_nested_max_depth()
+        max_items = _webmention_search_max_items()
+        stack: list[tuple[dict[str, Any], int]] = [(item, 0) for item in reversed(items) if isinstance(item, dict)]
+        visited = 0
+        while stack and visited < max_items:
+            item, depth = stack.pop()
+            visited += 1
             if "h-card" in item.get("type", []):
                 properties = item.get("properties", {})
                 urls = properties.get("url", [])
@@ -1025,14 +1032,10 @@ class WebmentionProcessor:
                 for candidate_url in urls:
                     if isinstance(candidate_url, str) and _urls_match(candidate_url, url):
                         return item
-
-            # Recursively search children
+            if depth >= max_depth:
+                continue
             children = item.get("children", [])
-            if children:
-                result = self._search_items_for_h_card(children, url)
-                if result:
-                    return result
-
+            stack.extend((child, depth + 1) for child in reversed(children) if isinstance(child, dict))
         return None
 
     def _find_h_card_by_author_reference(
@@ -1055,17 +1058,20 @@ class WebmentionProcessor:
         return self._search_items_for_h_card_id(items, element_id)
 
     def _search_items_for_h_card_id(self, items: list[dict[str, Any]], element_id: str) -> dict[str, Any] | None:
-        """Recursively search through items and their children for an h-card with a matching id."""
-        for item in items:
+        """Iteratively search through items and their children for an h-card with a matching id."""
+        max_depth = _webmention_nested_max_depth()
+        max_items = _webmention_search_max_items()
+        stack: list[tuple[dict[str, Any], int]] = [(item, 0) for item in reversed(items) if isinstance(item, dict)]
+        visited = 0
+        while stack and visited < max_items:
+            item, depth = stack.pop()
+            visited += 1
             if "h-card" in item.get("type", []) and item.get("id") == element_id:
                 return item
-
+            if depth >= max_depth:
+                continue
             children = item.get("children", [])
-            if children:
-                result = self._search_items_for_h_card_id(children, element_id)
-                if result:
-                    return result
-
+            stack.extend((child, depth + 1) for child in reversed(children) if isinstance(child, dict))
         return None
 
     def _extract_author(self, h_entry: dict[str, Any], parsed: dict[str, Any], base_url: str) -> dict[str, str]:
@@ -1162,18 +1168,27 @@ class WebmentionProcessor:
     def _collect_page_level_h_cards(
         self, items: list[dict[str, Any]], inside_h_entry: bool = False
     ) -> list[dict[str, Any]]:
-        """Collect h-cards that are not descendants of an h-entry."""
-        h_cards = []
-        for item in items:
+        """Iteratively collect h-cards that are not descendants of an h-entry."""
+        max_depth = _webmention_nested_max_depth()
+        max_items = _webmention_search_max_items()
+        h_cards: list[dict[str, Any]] = []
+        stack: list[tuple[dict[str, Any], int, bool]] = [
+            (item, 0, inside_h_entry) for item in reversed(items) if isinstance(item, dict)
+        ]
+        visited = 0
+        while stack and visited < max_items:
+            item, depth, current_inside = stack.pop()
+            visited += 1
             item_types = item.get("type", [])
-            item_inside_h_entry = inside_h_entry or "h-entry" in item_types
+            item_inside_h_entry = current_inside or "h-entry" in item_types
             if "h-card" in item_types and not item_inside_h_entry:
                 h_cards.append(item)
-
+            if depth >= max_depth:
+                continue
             children = item.get("children", [])
-            if children:
-                h_cards.extend(self._collect_page_level_h_cards(children, item_inside_h_entry))
-
+            stack.extend(
+                (child, depth + 1, item_inside_h_entry) for child in reversed(children) if isinstance(child, dict)
+            )
         return h_cards
 
     def _extract_h_card_author(self, h_card: dict[str, Any], base_url: str) -> dict[str, str]:

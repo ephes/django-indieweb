@@ -5,6 +5,25 @@ Changelog
 
 Unreleased
 ----------
+* Capped Webmention parser fallback traversals. The fallback ``h-entry``,
+  ``h-card``, ``h-card``-by-id, and page-level h-card walks in
+  ``WebmentionProcessor`` are now iterative and share the existing
+  ``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH`` and
+  ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS`` budgets with the primary scans.
+  Maliciously deep ``children`` chains and oversized microformats trees no
+  longer reach Python's recursion limit or starve the request worker; the
+  walks return whatever they have found so far when the budget is exhausted
+  and preserve existing authorship/source-selection behavior on normal pages.
+* Tracked multiple recent WebSub delivery digests for replay protection.
+  ``WebSubSubscription`` now stores a bounded list of recently accepted SHA-256
+  delivery digests and ``delivery_is_replay()`` rejects any captured payload
+  that matches a retained digest within the configured replay window, closing
+  the A/B/A replay gap that the single-row ``last_accepted_delivery_digest``
+  field could not detect. The history is bounded by the new
+  ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` setting (default 64) so the
+  cache cannot grow unbounded; an empty environment variable falls back to
+  the default rather than disabling the cap. Migration ``0022`` adds the
+  storage field with an empty default.
 * Hardened Micropub action input validation and bounded outbound WebSub hub
   responses. ``action=update`` now rejects non-HTTP(S) values inside ``replace``
   and ``add`` operations for URL-typed properties (``photo``, ``audio``,

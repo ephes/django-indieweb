@@ -256,14 +256,20 @@ Content Distribution
 
 The callback ``POST`` accepts deliveries for active subscriptions only. It
 records latest-delivery metadata including content type, byte size, SHA-256
-digest, status code, delivery time, signature algorithm, and the latest
-accepted delivery digest used for replay checks. Each recorded delivery
-attempt also creates a ``WebSubDeliveryAttempt`` row with the same bounded
-metadata for operator diagnostics. Duplicate bodies matching the latest
-accepted delivery are rejected with HTTP ``409`` for 300 seconds by default;
-set ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to tune or disable the
-window. django-indieweb deliberately does not parse feeds or persist delivered
-content; host applications own those semantics.
+digest, status code, delivery time, signature algorithm, the latest accepted
+delivery digest, and a bounded list of recently accepted SHA-256 digests used
+for replay checks. Each recorded delivery attempt also creates a
+``WebSubDeliveryAttempt`` row with the same bounded metadata for operator
+diagnostics. Duplicate bodies matching any retained accepted digest within the
+replay window are rejected with HTTP ``409`` for 300 seconds by default, so a
+captured payload A is rejected even after a different legitimate payload B
+has been accepted in between. Set
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to tune or disable the
+window and ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` to bound the
+history (default 64 entries; the oldest digest is evicted once the cap is
+reached). Entries older than the replay window are pruned on every accepted
+delivery. django-indieweb deliberately does not parse feeds or persist
+delivered content; host applications own those semantics.
 
 Subscribe with a strong ``hub.secret`` whenever possible. Deliveries for rows
 with a stored secret must include a valid SHA-256-or-stronger HMAC signature.

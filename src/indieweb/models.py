@@ -439,6 +439,7 @@ class WebSubSubscription(models.Model):
     last_delivery_error = models.TextField(blank=True)
     last_accepted_delivery_at = models.DateTimeField(null=True, blank=True)
     last_accepted_delivery_digest = models.CharField(max_length=64, blank=True)
+    recent_accepted_delivery_digests = models.JSONField(default=list, blank=True)
 
     created = models.DateTimeField(auto_now_add=True)
     modified = models.DateTimeField(auto_now=True)

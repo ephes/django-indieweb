@@ -17,15 +17,7 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Cap all Webmention parser fallback traversals.
-  - References: `SECURITY_ANALYSIS.md` finding 3; `src/indieweb/processors.py` (`_search_for_any_h_entry`, `_search_items_for_h_card`, `_search_items_for_h_card_id`, `_collect_page_level_h_cards`, existing traversal limit helpers); `tests/test_webmention_processor.py`.
-  - Current state: source/vouch fetches and primary nested-response/mentioning-entry scans have byte, depth, and item-count limits, but several fallback microformats traversal paths are still recursive and uncapped.
-  - Desired outcome: apply a single traversal budget consistently across primary and fallback h-entry/h-card searches, avoid recursion-limit crashes on deep input, preserve existing authorship/source-selection behavior for normal pages, and add regression tests with deep and wide trees.
-
-- [ ] Track multiple recent WebSub delivery digests for replay protection.
-  - References: `SECURITY_ANALYSIS.md` WebSub replay residual; `src/indieweb/websub.py` (`delivery_is_replay`, `record_websub_delivery`); `src/indieweb/models.py` (`WebSubSubscription`, `WebSubDeliveryAttempt`); `tests/test_websub_subscriber.py`.
-  - Current state: WebSub rejects an immediate duplicate body within the replay window, but only the latest accepted delivery digest is remembered. Payload A can be replayed after a legitimate payload B.
-  - Desired outcome: keep a bounded replay cache/history per subscription across the configured replay window, reject A/B/A replays, expire old digests predictably, and document any migration or retention implications.
+No current Priority 2 Security Residuals items.
 
 ## Priority 3
 
@@ -54,6 +46,11 @@ When adding or completing items, keep each entry specific enough for an agent or
   - References: `src/indieweb/http_client.py:234-236`; `tests/test_http_client.py`; sender/WebSub tests using `Mock` clients.
   - Current state: streaming is short-circuited when `client.__class__.__module__ == "unittest.mock"` so legacy mocks keep working, but a future caller wrapping a real `httpx.Client` could silently disable max-bytes enforcement.
   - Desired outcome: introduce an explicit kwarg (e.g. `_skip_streaming=True`) used by the affected tests, drop the module-name guard, and verify all existing call sites still pass.
+
+- [ ] Treat empty `INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES` as the default cap, not "disabled".
+  - References: `src/indieweb/websub.py` (`_delivery_max_bytes`); `tests/test_websub_subscriber.py`.
+  - Current state: `_delivery_max_bytes()` calls `_positive_int(configured, ...)` which translates an empty string to `None`, so an empty environment variable silently disables the per-callback delivery body cap. This is the same pattern that was tightened for `_hub_response_max_bytes()` and `_delivery_replay_history_max()` in earlier hardening passes.
+  - Desired outcome: distinguish `None` (explicit disable) from malformed/empty configuration, fall back to `DEFAULT_WEBSUB_DELIVERY_MAX_BYTES` for malformed/empty values with a logged warning, and add a regression test mirroring `test_notify_hubs_treats_empty_string_max_bytes_as_default` for the callback path.
 
 - [ ] Add `xframe_options_deny` to the token management view.
   - References: `SECURITY_ANALYSIS.md` "tokens.html clickjacking" residual; `src/indieweb/views.py` (`TokenManagementView`); `src/indieweb/templates/indieweb/tokens.html`.
