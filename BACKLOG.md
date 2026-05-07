@@ -6,10 +6,7 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 1
 
-- [ ] Restore CI by pinning `astral-sh/setup-uv` to an existing ref.
-  - References: `.github/workflows/ci.yml` (`astral-sh/setup-uv@v8` on the quality/docs and tox jobs); failing CI runs `25504308984` and `25510840053` on `develop`.
-  - Current state: every CI job fails during GitHub Actions setup before project commands run with `Unable to resolve action 'astral-sh/setup-uv@v8', unable to find version 'v8'`. The upstream repository has concrete `v8.0.0`/`v8.1.0` tags but no floating `v8` ref.
-  - Desired outcome: update both workflow references to a resolvable `setup-uv` ref (prefer a concrete semver tag or commit SHA), rerun the CI workflow, and then address any real project-level failures that become visible after Actions setup succeeds.
+No current Priority 1 items.
 
 ## Priority 2
 

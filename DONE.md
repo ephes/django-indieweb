@@ -4,6 +4,22 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Restore CI by pinning ``astral-sh/setup-uv`` to an existing tag
+
+- ``.github/workflows/ci.yml`` previously pinned ``astral-sh/setup-uv@v8`` on
+  both the ``tox`` matrix and the ``quality`` jobs. The upstream repository has
+  no floating ``v8`` ref, only concrete ``v8.0.0`` / ``v8.1.0`` tags, so every
+  CI job failed during GitHub Actions setup with ``Unable to resolve action
+  'astral-sh/setup-uv@v8', unable to find version 'v8'`` before any project
+  command could run.
+- Both ``setup-uv`` references now pin to the concrete ``v8.1.0`` semver tag
+  (latest available). No other workflow pins were touched.
+- Validation: the change is workflow-only and exercised on the next CI run;
+  YAML parses cleanly and there is no local equivalent to reproduce GitHub
+  Actions resolver behavior.
+- Documentation: no user-facing docs update needed for a workflow-only CI pin.
+- Changelog: not updated; no package behavior changed.
+
 ### Hash IndieAuth authorization codes at rest and mask them in admin
 
 - ``Auth.key`` is now stored as the same HMAC-SHA256 digest format used for
