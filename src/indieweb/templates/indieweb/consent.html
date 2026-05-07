@@ -12,6 +12,12 @@
 
       <div class="consent-info">
         <p><strong>Your identity URL:</strong> {{ me }}</p>
+        {% if expected_me %}
+          <p><strong>Configured identity URL:</strong> {{ expected_me }}</p>
+          {% if me_mismatch %}
+            <p class="consent-warning">The requested identity URL does not match your configured identity URL.</p>
+          {% endif %}
+        {% endif %}
 
         {% if scope %}
           <p><strong>Requested permissions:</strong></p>

@@ -10,19 +10,11 @@ No current Priority 1 items.
 
 ## Priority 2
 
-### API Hardening
-
-- [ ] Refuse CORS credentials when `Access-Control-Allow-Origin: *` is configured.
-  References: `src/indieweb/cors.py`, `tests/test_cors.py`, `docs/configuration.rst`.
-  When `INDIEWEB_CORS_ALLOWED_ORIGINS = "*"` and `INDIEWEB_CORS_ALLOW_CREDENTIALS = True`, the response echoes any `Origin` and sets `Access-Control-Allow-Credentials: true`. Refuse to emit credentials with wildcard origins (drop the credentials header or refuse to enable CORS), warn at startup, and document the combination as unsupported. Also: ensure `Vary: Origin` is set on rejection responses; guard against double-write of `Access-Control-Allow-Origin` if downstream middleware already set it.
+No current Priority 2 items.
 
 ## Priority 3
 
 ### API Hardening
-
-- [ ] Add production client identity, `me`-binding, and PKCE hardening options for IndieAuth.
-  References: `src/indieweb/views.py` (`_client_id_allowed` ~line 315), `src/indieweb/templates/indieweb/consent.html`, `tests/test_auth_endpoint.py`, `tests/test_token_endpoint.py`, `docs/`.
-  Default `client_id` validation is permissive; the validator hook receives the raw URL with no normalisation, so allow-lists by exact match miss case-only variants. Normalise `client_id` (lowercase scheme/host, IDNA) before invoking the validator. Add/document settings for stricter client validation, requiring PKCE for public clients, and optionally requiring `S256` only. The consent screen displays the client-supplied `me` value verbatim — bind `me` to the logged-in user's configured profile or, at minimum, render the resolved profile URL alongside the request and warn on mismatch. (Note: `_client_id_allowed` already fails closed when the configured validator is unimportable — that aspect is correct and does not need changing.)
 
 - [ ] Store access tokens hashed at rest.
   References: `src/indieweb/models.py`, `src/indieweb/views.py`, migrations, `tests/test_token_endpoint.py`, `tests/test_token_management.py`, `docs/`.

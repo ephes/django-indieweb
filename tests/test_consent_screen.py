@@ -11,7 +11,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.urls import reverse
 
-from indieweb.models import Auth
+from indieweb.models import Auth, Profile
 
 
 @pytest.fixture
@@ -148,6 +148,28 @@ class TestConsentScreenDisplay:
         assert response.context["state"] == "complex-state-123"
         assert response.context["me"] == "https://example.com"
         assert response.context["scope"] == "create"
+
+    def test_consent_screen_shows_expected_profile_url_and_mismatch(self, client, user, auth_url):
+        """Consent context and template warn when submitted me differs from the local profile URL."""
+        Profile.objects.create(user=user, h_card={"url": ["https://profile.example.com/"]})
+        client.login(username=user.username, password="testpass")
+
+        response = client.get(
+            auth_url,
+            {
+                "me": "https://example.com",
+                "client_id": "https://app.example.com",
+                "redirect_uri": "https://app.example.com/callback",
+                "state": "test123",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.context["expected_me"] == "https://profile.example.com/"
+        assert response.context["me_mismatch"] is True
+        content = response.content.decode("utf-8")
+        assert "Configured identity URL" in content
+        assert "does not match your configured identity URL" in content
 
     def test_consent_screen_blocks_framing(self, client, user, auth_url):
         """Consent GET emits frame protections."""
@@ -406,6 +428,40 @@ class TestConsentSecurity:
         assert response.status_code == 401
         assert "Location" not in response
         assert b"User not authenticated" in response.content
+
+    def test_strict_me_binding_rejects_mismatch(self, client, settings, user, auth_url):
+        """Strict me binding blocks a mismatched submitted identity before issuing a code."""
+        settings.INDIEWEB_BIND_ME_TO_USER = True
+        Profile.objects.create(user=user, h_card={"url": ["https://profile.example.com/"]})
+        client.login(username=user.username, password="testpass")
+
+        response = client.post(auth_url, _consent_data("approve"))
+
+        assert response.status_code == 400
+        assert response.content == b"invalid me"
+        assert Auth.objects.count() == 0
+
+    def test_strict_me_binding_accepts_matching_identity(self, client, settings, user, auth_url):
+        """Strict me binding accepts equivalent configured and submitted identity URLs."""
+        settings.INDIEWEB_BIND_ME_TO_USER = True
+        Profile.objects.create(user=user, h_card={"url": ["https://example.com/"]})
+        client.login(username=user.username, password="testpass")
+
+        response = client.post(auth_url, _consent_data("approve"))
+
+        assert response.status_code == 302
+        assert Auth.objects.get(client_id="https://app.example.com").me == "https://example.com"
+
+    def test_strict_me_binding_without_profile_url_fails_closed(self, client, settings, user, auth_url):
+        """Strict me binding has deterministic fail-closed behavior when no local profile URL exists."""
+        settings.INDIEWEB_BIND_ME_TO_USER = True
+        client.login(username=user.username, password="testpass")
+
+        response = client.post(auth_url, _consent_data("approve"))
+
+        assert response.status_code == 400
+        assert response.content == b"invalid me"
+        assert Auth.objects.count() == 0
 
     def test_code_verification_post_remains_csrf_exempt(self, user, auth_url):
         """Legacy IndieAuth code verification POST remains a protocol POST."""

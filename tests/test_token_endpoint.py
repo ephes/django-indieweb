@@ -869,6 +869,43 @@ def test_token_accepts_allowed_client_id_via_validator(client, settings, token_e
 
 
 @pytest.mark.django_db
+def test_token_passes_normalized_client_id_to_validator(client, settings, auth, token_endpoint_url, token_payload):
+    """Token endpoint policy sees normalized scheme/host and IDNA client IDs."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_only_normalized"
+    auth.client_id = "HTTPS://Bücher.Example/Client?A=1"
+    auth.save()
+    token_payload["client_id"] = auth.client_id
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+
+
+@pytest.mark.django_db
+def test_token_allowed_client_ids_setting_blocks_untrusted_client(client, settings, token_endpoint_url, token_payload):
+    settings.INDIEWEB_ALLOWED_CLIENT_IDS = ("https://trusted.example.org",)
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_request"
+
+
+@pytest.mark.django_db
+def test_token_allowed_client_ids_setting_accepts_normalized_client(
+    client, settings, auth, token_endpoint_url, token_payload
+):
+    settings.INDIEWEB_ALLOWED_CLIENT_IDS = ("https://xn--bcher-kva.example/Client?A=1",)
+    auth.client_id = "HTTPS://Bücher.Example/Client?A=1"
+    auth.save()
+    token_payload["client_id"] = auth.client_id
+
+    response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+
+
+@pytest.mark.django_db
 def test_token_rejects_when_validator_misconfigured(client, settings, token_endpoint_url, token_payload):
     """A dotted path that fails to import is fail-closed at the token endpoint."""
     settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.does_not_exist.nope"
@@ -1342,6 +1379,26 @@ def test_token_introspection_returns_inactive_for_disallowed_client_id(
 
     assert response.status_code == 200
     assert response.json() == {"active": False}
+
+
+@pytest.mark.django_db
+def test_token_introspection_normalizes_client_id_for_validator(
+    client, settings, user, token_introspection_endpoint_url
+):
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_only_known"
+    caller = models.Token.objects.create(
+        owner=user,
+        key="normalizedcallersecret",
+        client_id="HTTPS://Allowed.Example.Org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(token_introspection_endpoint_url, HTTP_AUTHORIZATION=f"Bearer {caller.key}")
+
+    assert response.status_code == 200
+    assert response.json()["active"] is True
 
 
 @pytest.mark.django_db

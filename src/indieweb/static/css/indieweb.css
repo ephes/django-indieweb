@@ -16,6 +16,11 @@
   margin: 1.5rem 0;
 }
 
+.consent-warning {
+  color: #842029;
+  font-weight: 600;
+}
+
 .scope-list {
   margin-left: 1.5rem;
 }

@@ -20,6 +20,7 @@ from django.utils.http import urlencode
 
 from indieweb.models import Auth
 from indieweb.views import IndieAuthMetadataView
+from tests import client_id_validators
 
 
 @pytest.fixture
@@ -58,6 +59,15 @@ def test_indieauth_metadata_endpoint_returns_public_json(client):
         "scopes_supported": ["create", "update", "delete", "undelete", "media"],
         "service_documentation": "https://django-indieweb.readthedocs.io/en/latest/indieauth.html",
     }
+
+
+def test_indieauth_metadata_reflects_s256_only_pkce_policy(client, settings):
+    settings.INDIEWEB_REQUIRE_PKCE_S256 = True
+
+    response = client.get(reverse("indieweb:auth-metadata"))
+
+    assert response.status_code == 200
+    assert response.json()["code_challenge_methods_supported"] == ["S256"]
 
 
 def test_indieauth_metadata_omits_unimplemented_endpoints(client):
@@ -529,6 +539,80 @@ def test_get_accepts_no_pkce_legacy(client, user, auth_endpoint_url):
 
 
 @pytest.mark.django_db
+def test_get_rejects_missing_pkce_when_required(client, settings, user, auth_endpoint_url):
+    settings.INDIEWEB_REQUIRE_PKCE = True
+    client.login(username=user.username, password="password")
+
+    response = client.get(auth_endpoint_url)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_request"
+
+
+@pytest.mark.django_db
+def test_get_accepts_plain_pkce_when_pkce_required(client, settings, user):
+    settings.INDIEWEB_REQUIRE_PKCE = True
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": PKCE_VERIFIER,
+        "code_challenge_method": "plain",
+    }
+
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+
+    assert response.status_code == 200
+    assert response.context["code_challenge_method"] == "plain"
+
+
+@pytest.mark.django_db
+def test_get_rejects_plain_pkce_when_s256_required(client, settings, user):
+    settings.INDIEWEB_REQUIRE_PKCE_S256 = True
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": PKCE_VERIFIER,
+        "code_challenge_method": "plain",
+    }
+
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_request"
+
+
+@pytest.mark.django_db
+def test_get_accepts_s256_pkce_when_s256_required(client, settings, user):
+    settings.INDIEWEB_REQUIRE_PKCE_S256 = True
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "scope": "post",
+        "code_challenge": PKCE_S256_CHALLENGE,
+        "code_challenge_method": "S256",
+    }
+
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+
+    assert response.status_code == 200
+    assert response.context["code_challenge_method"] == "S256"
+
+
+@pytest.mark.django_db
 def test_get_defaults_method_to_plain(client, user):
     """When only code_challenge is sent, the default method is ``plain`` per RFC 7636 §4.3."""
     client.login(username=user.username, password="password")
@@ -605,6 +689,27 @@ def test_consent_approval_rejects_bad_pkce(client, user):
     }
     response = client.post(base_url, data=form_data)
     assert response.status_code == 400
+    assert Auth.objects.filter(client_id="https://webapp.example.org").count() == 0
+
+
+@pytest.mark.django_db
+def test_consent_approval_rejects_missing_pkce_when_required(client, settings, user):
+    settings.INDIEWEB_REQUIRE_PKCE = True
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    form_data = {
+        "action": "approve",
+        "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+        "me": "http://example.org",
+        "scope": "post",
+    }
+
+    response = client.post(base_url, data=form_data)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_request"
     assert Auth.objects.filter(client_id="https://webapp.example.org").count() == 0
 
 
@@ -780,6 +885,72 @@ def test_get_accepts_allowed_client_id_via_validator(client, settings, user, aut
     client.login(username=user.username, password="password")
     response = client.get(auth_endpoint_url)
     assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_get_passes_normalized_client_id_to_validator(client, settings, user):
+    """Validator allowlists see normalized scheme/host and IDNA client IDs."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_only_normalized"
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "HTTPS://Bücher.Example/Client?A=1",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+    }
+
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+
+    assert response.status_code == 200
+    assert response.context["client_id"] == "HTTPS://Bücher.Example/Client?A=1"
+
+
+@pytest.mark.django_db
+def test_get_allowed_client_ids_setting_blocks_untrusted_client(client, settings, user, auth_endpoint_url):
+    settings.INDIEWEB_ALLOWED_CLIENT_IDS = ("https://trusted.example.org",)
+    client.login(username=user.username, password="password")
+
+    response = client.get(auth_endpoint_url)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_client"
+
+
+@pytest.mark.django_db
+def test_get_allowed_client_ids_setting_accepts_normalized_client(client, settings, user):
+    settings.INDIEWEB_ALLOWED_CLIENT_IDS = ("https://xn--bcher-kva.example/Client?A=1",)
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "HTTPS://Bücher.Example/Client?A=1",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+    }
+
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_get_client_id_validator_receives_normalized_value(client, settings, user):
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.capture_and_allow"
+    client_id_validators.seen_client_ids.clear()
+    client.login(username=user.username, password="password")
+    base_url = reverse("indieweb:auth")
+    url_params = {
+        "me": "http://example.org",
+        "client_id": "HTTPS://Bücher.Example/Client?A=1",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
+        "state": "1234567890",
+    }
+
+    response = client.get(f"{base_url}?{urlencode(url_params)}")
+
+    assert response.status_code == 200
+    assert client_id_validators.seen_client_ids == ["https://xn--bcher-kva.example/Client?A=1"]
 
 
 @pytest.mark.django_db

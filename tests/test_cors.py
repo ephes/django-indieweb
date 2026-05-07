@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 from django.contrib.auth.models import User
 from django.contrib.sites.models import Site
+from django.http import HttpResponse
 from django.urls import reverse
 
 from indieweb import models
@@ -131,7 +132,7 @@ def test_disallowed_origin_gets_no_cors_headers_on_actual_response(client, setti
 
     assert response.status_code == 200
     assert "Access-Control-Allow-Origin" not in response
-    assert "Vary" not in response
+    assert response["Vary"] == "Origin"
 
 
 @pytest.mark.django_db
@@ -195,8 +196,38 @@ def test_wildcard_origin_uses_star_without_credentials(client, settings, token):
 
 
 @pytest.mark.django_db
-def test_wildcard_with_credentials_echoes_origin(client, settings, token):
+def test_wildcard_with_credentials_uses_star_without_credentials(client, settings, token, caplog):
     settings.INDIEWEB_CORS_ALLOWED_ORIGINS = "*"
+    settings.INDIEWEB_CORS_ALLOW_CREDENTIALS = True
+    url = reverse("indieweb:micropub")
+
+    with caplog.at_level("WARNING", logger="indieweb.cors"):
+        response = client.get(url, Authorization=f"Bearer {token.key}", HTTP_ORIGIN=ALLOWED_ORIGIN)
+
+    assert response.status_code == 200
+    assert response["Access-Control-Allow-Origin"] == "*"
+    assert "Access-Control-Allow-Credentials" not in response
+    assert "Vary" not in response
+    assert "wildcard CORS credentials are unsupported" in caplog.text
+
+
+@pytest.mark.django_db
+def test_wildcard_with_credentials_preflight_uses_star_without_credentials(client, settings):
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = "*"
+    settings.INDIEWEB_CORS_ALLOW_CREDENTIALS = True
+    url = reverse("indieweb:token")
+
+    response = _preflight(client, url, method="POST")
+
+    assert response.status_code == 204
+    assert response["Access-Control-Allow-Origin"] == "*"
+    assert "Access-Control-Allow-Credentials" not in response
+    assert "Vary" not in response
+
+
+@pytest.mark.django_db
+def test_explicit_allowlist_with_credentials_echoes_origin(client, settings, token):
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
     settings.INDIEWEB_CORS_ALLOW_CREDENTIALS = True
     url = reverse("indieweb:micropub")
 
@@ -254,6 +285,31 @@ def test_disallowed_origin_preflight_gets_no_cors_headers(client, settings):
 
     assert response.status_code == 405
     assert "Access-Control-Allow-Origin" not in response
+    assert response["Vary"] == "Origin"
+
+
+@pytest.mark.django_db
+def test_cors_does_not_overwrite_existing_allow_origin(client, settings, auth):
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
+    settings.INDIEWEB_CORS_ALLOW_CREDENTIALS = True
+    url = reverse("indieweb:token")
+
+    def response_with_cors(*args, **kwargs):
+        response = HttpResponse("ok")
+        response["Access-Control-Allow-Origin"] = "https://host-middleware.example"
+        return response
+
+    with patch("indieweb.views.TokenView.post", response_with_cors):
+        response = client.post(
+            url,
+            data={"code": auth.key, "client_id": auth.client_id, "redirect_uri": auth.redirect_uri},
+            HTTP_ORIGIN=ALLOWED_ORIGIN,
+        )
+
+    assert response.status_code == 200
+    assert response["Access-Control-Allow-Origin"] == "https://host-middleware.example"
+    assert "Access-Control-Allow-Credentials" not in response
+    assert response["Vary"] == "Origin"
 
 
 @pytest.mark.django_db

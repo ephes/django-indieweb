@@ -1099,8 +1099,8 @@ The Micropub endpoint returns the following HTTP status codes:
   ``invalid_request``
 - ``403 Forbidden`` - body ``authorization error`` when the token lacks the
   scope required for the requested operation; body ``invalid_client`` when
-  the token's ``client_id`` is rejected by the configured
-  ``INDIEWEB_CLIENT_ID_VALIDATOR``
+  the token's ``client_id`` is rejected by ``INDIEWEB_ALLOWED_CLIENT_IDS`` or
+  the configured ``INDIEWEB_CLIENT_ID_VALIDATOR``
 - ``501 Not Implemented`` - ``GET ?q=source`` without ``url`` reached a
   configured handler that does not support the optional ``list_entries()`` hook;
   or ``GET /indieweb/media/?q=source`` / media ``action=delete`` reached a

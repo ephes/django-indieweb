@@ -79,10 +79,18 @@ def get_cors_config() -> CorsConfig | None:
     if allowed_headers is None:
         allowed_headers = DEFAULT_CORS_ALLOWED_HEADERS
 
+    allow_credentials = bool(getattr(settings, "INDIEWEB_CORS_ALLOW_CREDENTIALS", False))
+    if allow_all_origins and allow_credentials:
+        logger.warning(
+            "Ignoring INDIEWEB_CORS_ALLOW_CREDENTIALS=True because "
+            'INDIEWEB_CORS_ALLOWED_ORIGINS includes "*"; wildcard CORS credentials are unsupported'
+        )
+        allow_credentials = False
+
     return CorsConfig(
         allowed_origins=allowed_origins,
         allow_all_origins=allow_all_origins,
-        allow_credentials=bool(getattr(settings, "INDIEWEB_CORS_ALLOW_CREDENTIALS", False)),
+        allow_credentials=allow_credentials,
         allowed_headers=allowed_headers,
         max_age=_max_age(getattr(settings, "INDIEWEB_CORS_MAX_AGE", DEFAULT_CORS_MAX_AGE)),
     )
@@ -101,10 +109,16 @@ def _allow_origin_value(config: CorsConfig, origin: str) -> str:
 
 
 def _add_cors_headers(response: HttpResponseBase, config: CorsConfig, origin: str) -> HttpResponseBase:
-    response["Access-Control-Allow-Origin"] = _allow_origin_value(config, origin)
-    if config.allow_credentials:
+    if "Access-Control-Allow-Origin" in response:
+        if response["Access-Control-Allow-Origin"] != "*":
+            patch_vary_headers(response, ("Origin",))
+        return response
+
+    allow_origin = _allow_origin_value(config, origin)
+    response["Access-Control-Allow-Origin"] = allow_origin
+    if config.allow_credentials and allow_origin != "*":
         response["Access-Control-Allow-Credentials"] = "true"
-    if response["Access-Control-Allow-Origin"] != "*":
+    if allow_origin != "*":
         patch_vary_headers(response, ("Origin",))
     return response
 
@@ -125,11 +139,16 @@ class CorsMixin(View):
             if preflight_response is not None:
                 return preflight_response
             if origin and not _origin_allowed(config, origin):
-                return HttpResponse(status=405)
+                rejection_response = HttpResponse(status=405)
+                if not config.allow_all_origins:
+                    patch_vary_headers(rejection_response, ("Origin",))
+                return rejection_response
 
         response = super().dispatch(request, *args, **kwargs)
         if _origin_allowed(config, origin):
             return _add_cors_headers(response, config, origin or "")
+        if origin and not config.allow_all_origins:
+            patch_vary_headers(response, ("Origin",))
         return response
 
     def _cors_preflight_response(

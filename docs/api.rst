@@ -182,8 +182,9 @@ Response fields:
 - ``response_types_supported`` - ``["code"]``.
 - ``grant_types_supported`` - ``["authorization_code"]``, matching the token
   endpoint's authorization-code exchange behavior.
-- ``code_challenge_methods_supported`` - ``["plain", "S256"]``, matching the
-  PKCE methods accepted by the authorization and token endpoints.
+- ``code_challenge_methods_supported`` - ``["plain", "S256"]`` by default,
+  matching the PKCE methods accepted by the authorization and token endpoints.
+  When ``INDIEWEB_REQUIRE_PKCE_S256`` is enabled, this is ``["S256"]``.
 - ``scopes_supported`` - Built-in Micropub resource-server scopes advertised by
   django-indieweb: ``create``, ``update``, ``delete``, ``undelete``, and
   ``media``. Unknown extension scopes can still be requested and stored, and
@@ -245,6 +246,12 @@ Initiates the authorization flow.
 - ``state`` - Random string to prevent CSRF attacks
 - ``me`` - The user's profile URL
 
+``client_id`` must be an absolute ``http``/``https`` URL with no userinfo and
+no fragment delimiter. Operator policy checks through
+``INDIEWEB_ALLOWED_CLIENT_IDS`` or ``INDIEWEB_CLIENT_ID_VALIDATOR`` receive a
+normalized comparison value with lowercased scheme/host and IDNA host form;
+the original submitted value is still shown, stored, and returned.
+
 **Optional Parameters:**
 
 - ``response_type`` - Current IndieAuth clients send ``code``. django-indieweb
@@ -275,7 +282,9 @@ Initiates the authorization flow.
 - If user is not authenticated: Redirects to Django login
 - If user is authenticated: Returns the consent screen with
   ``X-Frame-Options: DENY`` and ``Content-Security-Policy: frame-ancestors
-  'none'`` to prevent framing
+  'none'`` to prevent framing. When the logged-in user has a configured
+  h-card profile URL, the consent screen also shows that local identity URL
+  and warns if it differs from the submitted ``me`` value.
 - If user is authenticated and approves: Redirects to ``redirect_uri`` with
   ``code``, ``state``, ``iss``, and the legacy ``me`` parameter
 - If user denies: Redirects to ``redirect_uri`` with ``error=access_denied``
@@ -445,9 +454,10 @@ Introspection requires caller authentication. Send a strict
 ``Authorization: Bearer <caller-token>`` header with every request. The caller
 token must be an active django-indieweb ``Token`` row, its Django owner must be
 active, it must not be expired, and its ``client_id`` must still satisfy
-``INDIEWEB_CLIENT_ID_VALIDATOR``. Malformed, missing, unknown, expired,
-inactive-owner, or disallowed caller credentials return ``401 Unauthorized``
-with ``Cache-Control: no-store`` and ``WWW-Authenticate: Bearer``.
+``INDIEWEB_ALLOWED_CLIENT_IDS`` and ``INDIEWEB_CLIENT_ID_VALIDATOR`` policy.
+Malformed, missing, unknown, expired, inactive-owner, or disallowed caller
+credentials return ``401 Unauthorized`` with ``Cache-Control: no-store`` and
+``WWW-Authenticate: Bearer``.
 
 The form ``token`` field is the target token being checked. If ``token`` is
 omitted, django-indieweb checks the caller bearer token itself, allowing a
@@ -511,12 +521,12 @@ legacy non-expiring rows where ``Token.expires_at`` is ``NULL``.
 
 Unknown token values, deleted token rows, expired tokens, tokens whose owner
 is inactive, and tokens whose ``client_id`` no longer satisfies
-``INDIEWEB_CLIENT_ID_VALIDATOR`` all return the same inactive response to
-authenticated callers. Authenticated callers checking a token owned by a
-different Django user also receive this inactive response. The endpoint does
-not disclose which inactive condition applied. It does not create tokens,
-refresh expiration, delete token rows, or expose the full bearer token value
-in the response.
+``INDIEWEB_ALLOWED_CLIENT_IDS`` and ``INDIEWEB_CLIENT_ID_VALIDATOR`` policy all
+return the same inactive response to authenticated callers. Authenticated
+callers checking a token owned by a different Django user also receive this
+inactive response. The endpoint does not disclose which inactive condition
+applied. It does not create tokens, refresh expiration, delete token rows, or
+expose the full bearer token value in the response.
 
 **Unauthorized Response:**
 
@@ -1208,7 +1218,8 @@ The Micropub media endpoint accepts direct file uploads for clients that
 discover ``media-endpoint`` through ``GET /indieweb/micropub/?q=config``.
 It uses the same bearer-token authentication path as the Micropub endpoint,
 including token expiration, inactive-owner rejection, and the configured
-``INDIEWEB_CLIENT_ID_VALIDATOR`` resource-server policy.
+``INDIEWEB_ALLOWED_CLIENT_IDS`` / ``INDIEWEB_CLIENT_ID_VALIDATOR``
+resource-server policy.
 
 Uploads, source queries, and media delete actions require the exact ``media``
 scope. This follows the convention used by Quill and similar Micropub clients,
@@ -1355,7 +1366,8 @@ returns ``501 not_implemented``. django-indieweb never deletes
 - ``403 Forbidden`` body ``authorization error`` when the token lacks the
   ``media`` scope
 - ``403 Forbidden`` body ``invalid_client`` when the stored token's
-  ``client_id`` is rejected by ``INDIEWEB_CLIENT_ID_VALIDATOR``
+  ``client_id`` is rejected by ``INDIEWEB_ALLOWED_CLIENT_IDS`` or
+  ``INDIEWEB_CLIENT_ID_VALIDATOR``
 - ``501 Not Implemented`` body ``not_implemented`` when the requested source
   or delete hook is not configured on the handler
 - ``500 Internal Server Error`` if the configured Django storage backend raises
@@ -1478,6 +1490,7 @@ All endpoints may return these error responses:
 - ``client_id`` on token exchange is malformed (invalid URL, contains a ``#``
   delimiter, includes userinfo, or uses a disallowed scheme)
 - ``client_id`` on token exchange is rejected by the configured
+  ``INDIEWEB_ALLOWED_CLIENT_IDS`` setting or
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (fail-closed)
 - Micropub ``POST`` with ``Content-Type: application/json`` whose body
@@ -1563,6 +1576,7 @@ caller authentication failures use the same body and headers.
   and matched as an exact token, so ``createXYZ`` does not satisfy ``create``
   and ``mediaXYZ`` does not satisfy ``media``.
 - The stored token's ``client_id`` is rejected by the configured
+  ``INDIEWEB_ALLOWED_CLIENT_IDS`` setting or
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (``invalid_client``)
 
@@ -1579,6 +1593,7 @@ caller authentication failures use the same body and headers.
 **400 Bad Request — ``invalid_client`` (authorization endpoint)**
 
 - ``client_id`` on the authorization endpoint is rejected by the configured
+  ``INDIEWEB_ALLOWED_CLIENT_IDS`` setting or
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` callable, or that callable cannot be
   imported (fail-closed)
 
@@ -1587,6 +1602,16 @@ caller authentication failures use the same body and headers.
 - ``code_challenge`` on the authorization endpoint is malformed (length
   outside 43-128 or characters outside the unreserved set ``[A-Za-z0-9._~-]``)
 - ``code_challenge_method`` is not one of ``S256`` or ``plain``
+- ``code_challenge`` is omitted while ``INDIEWEB_REQUIRE_PKCE`` or
+  ``INDIEWEB_REQUIRE_PKCE_S256`` is enabled
+- ``code_challenge_method=plain`` is used while
+  ``INDIEWEB_REQUIRE_PKCE_S256`` is enabled
+
+**400 Bad Request — invalid me**
+
+- ``me`` does not match the logged-in user's configured h-card profile URL
+  while ``INDIEWEB_BIND_ME_TO_USER`` is enabled, or no profile URL is
+  configured in that mode
 
 **404 Not Found**
 
@@ -1726,8 +1751,14 @@ add:
 - ``Access-Control-Allow-Origin`` with the matching origin, or ``*`` for
   allow-all without credentials
 - ``Access-Control-Allow-Credentials: true`` when
-  ``INDIEWEB_CORS_ALLOW_CREDENTIALS`` is enabled
+  ``INDIEWEB_CORS_ALLOW_CREDENTIALS`` is enabled for an explicit origin
+  allowlist
 - ``Vary: Origin`` whenever the response echoes a specific request origin
+
+The combination ``INDIEWEB_CORS_ALLOWED_ORIGINS = "*"`` and
+``INDIEWEB_CORS_ALLOW_CREDENTIALS = True`` is unsupported. django-indieweb logs
+a warning, keeps ``Access-Control-Allow-Origin: *``, and does not emit
+``Access-Control-Allow-Credentials: true``.
 
 Configured preflight ``OPTIONS`` requests short-circuit before rate limiting,
 token authentication, Micropub handler work, media storage, Webmention
@@ -1735,6 +1766,10 @@ processing, and async enqueue hooks. WebSub subscriber callbacks are excluded
 from built-in CORS because they are server-to-server hub callbacks. A valid
 preflight needs an allowed ``Origin`` plus an
 ``Access-Control-Request-Method`` that is supported by the target endpoint.
+Disallowed-origin responses and preflight rejections include ``Vary: Origin``
+for explicit allowlists and do not receive permissive CORS headers. Existing
+``Access-Control-Allow-Origin`` headers set by downstream middleware are not
+overwritten.
 Successful preflights return:
 
 .. code-block:: http

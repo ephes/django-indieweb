@@ -4,6 +4,65 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Refuse wildcard CORS credentials and harden CORS caching
+
+- Changed built-in CORS so ``INDIEWEB_CORS_ALLOWED_ORIGINS = "*"`` combined
+  with ``INDIEWEB_CORS_ALLOW_CREDENTIALS = True`` logs a warning, keeps
+  ``Access-Control-Allow-Origin: *``, and never emits
+  ``Access-Control-Allow-Credentials: true``.
+- Added ``Vary: Origin`` for origin-dependent explicit-allowlist decisions,
+  including disallowed-origin actual responses and rejected preflights, while
+  preserving true wildcard responses without ``Vary``.
+- Preserved downstream ``Access-Control-Allow-Origin`` headers instead of
+  overwriting them, and avoided adding incoherent credential headers when a
+  downstream CORS decision already exists.
+- Backlog: removed the completed Priority 2 CORS wildcard-credentials item
+  from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/configuration.rst`` and ``docs/api.rst`` for
+  unsupported wildcard credentials, rejection ``Vary`` behavior, and
+  downstream-header preservation.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased CORS hardening
+  note.
+- Validation: ``uv run pytest tests/test_cors.py -q --no-cov`` passed (32
+  passed); targeted ``uv run ruff check`` passed; and final full-gate results
+  are recorded below in this session's IndieAuth hardening entry.
+
+### Add IndieAuth client identity, me-binding, and PKCE hardening options
+
+- Normalized ``client_id`` policy inputs before
+  ``INDIEWEB_CLIENT_ID_VALIDATOR`` and resource-server policy checks by
+  lowercasing scheme/host and converting Unicode hostnames to IDNA ASCII form
+  while preserving stored submitted values, path, query, and port semantics.
+- Added ``INDIEWEB_ALLOWED_CLIENT_IDS`` as an exact normalized client allowlist
+  for production deployments. Misconfigured allowlist entries fail closed.
+- Added opt-in PKCE policy settings:
+  ``INDIEWEB_REQUIRE_PKCE`` rejects omitted PKCE before issuing authorization
+  codes, and ``INDIEWEB_REQUIRE_PKCE_S256`` rejects omitted or ``plain`` PKCE
+  and updates metadata to advertise only ``S256``.
+- Added consent-screen local identity context from
+  ``user.indieweb_profile.url`` and a mismatch warning. Added
+  ``INDIEWEB_BIND_ME_TO_USER`` to fail closed when submitted ``me`` does not
+  match the configured profile URL or when strict binding is enabled without a
+  profile URL.
+- Backlog: removed the completed Priority 3 IndieAuth client identity /
+  ``me`` / PKCE hardening item from ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``docs/configuration.rst``, ``docs/api.rst``, and
+  ``docs/indieauth.rst`` for normalized client policy inputs, the new
+  allowlist, PKCE policy settings, metadata behavior, consent context, and
+  strict ``me`` binding.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased IndieAuth
+  hardening note.
+- Validation: ``uv run pytest tests/test_auth_endpoint.py -q --no-cov``
+  passed (91 passed); ``uv run pytest tests/test_consent_screen.py -q
+  --no-cov`` passed (25 passed); ``uv run pytest
+  tests/test_token_endpoint.py -q --no-cov`` passed (96 passed); ``uv run
+  pytest tests/test_micropub_endpoint.py -q --no-cov`` passed (95 passed);
+  targeted ``uv run ruff check`` passed; ``uv run pytest`` passed (1116
+  passed, coverage gate reached at 90.34%); ``uv run mypy`` passed; ``uv run
+  ruff check .`` passed; ``uv run ruff format . --check`` passed; ``uv run
+  prek run --all-files`` passed; ``uv run sphinx-build -W -b html docs
+  docs/_build/html`` passed; and ``git diff --check`` passed.
+
 ### Authenticate token introspection and gate server-managed Micropub properties
 
 - Hardened ``POST /indieweb/token/introspect/`` so callers must authenticate

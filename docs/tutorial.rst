@@ -340,7 +340,8 @@ Security Considerations
 4. **Tune token lifetime** via the ``INDIEWEB_TOKEN_EXPIRES_IN`` setting
    (default 86400 seconds); see :doc:`configuration`
 5. **Validate redirect_uri and client_id** values; use
-   ``INDIEWEB_CLIENT_ID_VALIDATOR`` if only specific clients should be allowed
+   ``INDIEWEB_ALLOWED_CLIENT_IDS`` or ``INDIEWEB_CLIENT_ID_VALIDATOR`` if only
+   specific clients should be allowed
 
 Debugging Tips
 --------------

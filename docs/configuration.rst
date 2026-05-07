@@ -144,13 +144,18 @@ Optional dotted path to a callable ``(client_id: str) -> bool`` that gates which
 **Default:** ``None`` (every structurally-valid ``client_id`` is permitted)
 
 When set, the configured callable is invoked **on top of** structural validation
-(an ``http``/``https`` URL with no userinfo and no fragment) at four
+(an ``http``/``https`` URL with no userinfo and no fragment) at the
 authorization/token paths — the authorization GET, the consent approval POST,
 the consent denial POST, the code-verification POST, and the token endpoint
 POST — and again on the resource-server path inside ``TokenAuthMixin``. The
 latter is intentional:
 operator policy may evolve and revoke a previously-allowed ``client_id``, in
 which case existing tokens for that client must stop working immediately.
+Before the callable is invoked, django-indieweb normalizes the policy input by
+lowercasing the URL scheme and host, converting Unicode hostnames to IDNA ASCII
+form, and preserving path, parameters, query string, fragment, and port
+semantics. The submitted value is still displayed, stored on ``Auth``/``Token``
+rows, and returned in protocol responses unchanged.
 
 **Example:**
 
@@ -167,9 +172,85 @@ which case existing tokens for that client must stop working immediately.
    # settings.py
    INDIEWEB_CLIENT_ID_VALIDATOR = "myapp.indieauth.is_allowed_client"
 
+INDIEWEB_ALLOWED_CLIENT_IDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional exact allowlist for production deployments that do not need a custom
+``INDIEWEB_CLIENT_ID_VALIDATOR`` callable.
+
+**Default:** ``None`` (no built-in allowlist restriction)
+
+When set to a string or iterable of strings, every submitted or stored
+``client_id`` must match one normalized allowlist entry. Entries use the same
+comparison form as ``INDIEWEB_CLIENT_ID_VALIDATOR``: scheme/host case and IDNA
+host forms are normalized, while path, parameters, query string, and ports
+remain significant. Invalid allowlist entries fail closed and reject clients
+until the setting is fixed.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_ALLOWED_CLIENT_IDS = (
+       "https://quill.p3k.io/",
+       "https://micropublish.net/",
+   )
+
+``INDIEWEB_ALLOWED_CLIENT_IDS`` and ``INDIEWEB_CLIENT_ID_VALIDATOR`` can be
+combined. In that case the client must pass the allowlist first and the custom
+validator second.
+
+INDIEWEB_REQUIRE_PKCE
+~~~~~~~~~~~~~~~~~~~~~
+
+Require authorization requests and consent approvals to include valid PKCE
+parameters before an authorization code can be issued.
+
+**Default:** ``False`` (legacy clients without PKCE remain accepted)
+
+When enabled, omitted ``code_challenge`` values are rejected with HTTP 400
+``invalid_request`` on both authorization GET and consent approval POST.
+Both ``plain`` and ``S256`` remain accepted unless
+``INDIEWEB_REQUIRE_PKCE_S256`` is also enabled. Token exchange behavior is
+unchanged: when a challenge was stored with the authorization code, a matching
+``code_verifier`` is required.
+
+INDIEWEB_REQUIRE_PKCE_S256
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Require PKCE and allow only the ``S256`` challenge method for newly issued
+authorization codes.
+
+**Default:** ``False``
+
+When enabled, omitted PKCE and ``plain`` challenges are rejected with HTTP 400
+``invalid_request`` before an authorization code is issued. The public
+IndieAuth metadata response advertises only ``["S256"]`` in
+``code_challenge_methods_supported`` while this policy is active.
+
+INDIEWEB_BIND_ME_TO_USER
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Bind the requested IndieAuth ``me`` URL to the logged-in Django user's
+configured h-card profile URL.
+
+**Default:** ``False``
+
+When disabled, the bundled consent screen still shows the logged-in user's
+configured profile URL from ``user.indieweb_profile.url`` when one exists, and
+warns when the submitted ``me`` differs. When enabled, authorization GET and
+consent POST requests fail closed with HTTP 400 ``invalid me`` if the user has
+no configured profile URL or if the submitted ``me`` does not match it. Matching
+uses the same URL comparison policy as redirect URI binding: scheme/host case,
+IDNA host form, default ports, percent-encoded triplet case, and root
+empty-path/``/`` equivalence are normalized while non-default ports, non-root
+paths, and query strings remain significant.
+
 .. note::
-   If the configured dotted path fails to import, or the callable raises, the
-   request is rejected (fail-closed). Misconfiguration cannot silently weaken
+   If ``INDIEWEB_ALLOWED_CLIENT_IDS`` is invalid, the configured validator
+   dotted path fails to import, or the validator callable raises, client policy
+   rejects the request (fail-closed). Misconfiguration cannot silently weaken
    access control. The exact response shape depends on the call site: the
    authorization endpoint and the code-verification POST return HTTP 400 with
    a plain-text ``invalid_client`` body; the token endpoint returns HTTP 400
@@ -180,12 +261,11 @@ which case existing tokens for that client must stop working immediately.
 
 .. note::
    Stored ``client_id`` values are not re-validated *structurally* on use,
-   matching the ``redirect_uri`` rule. The configured validator callable
-   IS re-applied on use, so revoking a previously-allowed client takes
-   effect immediately for existing tokens. A token issued before
-   ``client_id`` access control existed (or by an out-of-band script) keeps
-   working as long as it satisfies the configured validator (or the
-   validator is unset).
+   matching the ``redirect_uri`` rule. Configured client policy IS re-applied
+   on use, so revoking a previously-allowed client takes effect immediately
+   for existing tokens. A token issued before ``client_id`` access control
+   existed (or by an out-of-band script) keeps working as long as it satisfies
+   configured client policy, or no client policy is configured.
 
 INDIEWEB_RATE_LIMITS
 ~~~~~~~~~~~~~~~~~~~~
@@ -1200,7 +1280,9 @@ Actual endpoint responses with an allowed ``Origin`` receive
 ``Access-Control-Allow-Origin`` without changing the existing status code,
 body, content type, authentication behavior, scope checks, rate limiting, or
 protocol processing. Responses that echo a specific request origin also
-receive ``Vary: Origin``. Disallowed origins receive no CORS headers.
+receive ``Vary: Origin``. Disallowed origins receive no permissive CORS
+headers, and origin-dependent responses include ``Vary: Origin`` so shared
+caches do not reuse an origin-specific decision for another browser origin.
 
 For allow-all deployments:
 
@@ -1211,8 +1293,9 @@ For allow-all deployments:
 When allow-all is used without credentials, responses send
 ``Access-Control-Allow-Origin: *`` and do not vary by origin. When allow-all is
 combined with ``INDIEWEB_CORS_ALLOW_CREDENTIALS = True``, django-indieweb
-echoes the request origin and sends ``Vary: Origin`` because browsers reject
-``Access-Control-Allow-Origin: *`` on credentialed CORS responses.
+logs a warning, ignores the credential setting, and keeps the non-credential
+wildcard behavior. It never emits ``Access-Control-Allow-Credentials: true``
+with wildcard origins.
 
 INDIEWEB_CORS_ALLOW_CREDENTIALS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1225,6 +1308,8 @@ responses.
 Enable this only when browser clients need credentialed CORS semantics. Bearer
 token authentication remains unchanged; CORS does not authorize requests and
 does not replace endpoint authentication, authorization, or scope checks.
+This setting is unsupported with ``INDIEWEB_CORS_ALLOWED_ORIGINS = "*"`` and
+is ignored for that combination.
 
 INDIEWEB_CORS_ALLOWED_HEADERS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1274,6 +1359,10 @@ production operators should monitor logs after changing CORS configuration.
 
 If you need site-wide CORS behavior for views outside django-indieweb's public
 protocol endpoints, configure deployment-level middleware separately.
+If another middleware or view has already set ``Access-Control-Allow-Origin``
+on a response, django-indieweb does not overwrite it. It preserves the
+downstream CORS decision and adds ``Vary: Origin`` only when the existing value
+is origin-specific rather than ``*``.
 
 Testing Configuration
 ---------------------

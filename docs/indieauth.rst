@@ -23,6 +23,8 @@ The consent screen shows:
 
 * The client application requesting access (client_id)
 * The user's identity URL (me)
+* The logged-in user's configured h-card profile URL, when available
+* A warning if the submitted ``me`` differs from that configured profile URL
 * Requested permissions/scopes (if any)
 * Approve and Deny buttons
 
@@ -38,6 +40,7 @@ Example consent screen::
     https://quill.p3k.io is requesting access to your site.
 
     Your identity URL: https://example.com
+    Configured identity URL: https://example.com
 
     Requested permissions:
     • create
@@ -72,8 +75,10 @@ The endpoint is public: it does not require a logged-in Django user or a bearer
 token. The advertised capabilities match django-indieweb's current built-in
 behavior. The authorization-code grant and ``code`` response type are listed
 because the token endpoint exchanges authorization codes. ``plain`` and
-``S256`` are both listed because both PKCE challenge methods are accepted
-today. The scope list advertises the built-in Micropub resource-server scopes;
+``S256`` are both listed by default because both PKCE challenge methods are
+accepted today. If ``INDIEWEB_REQUIRE_PKCE_S256`` is enabled, metadata lists
+only ``S256``. The scope list advertises the built-in Micropub
+resource-server scopes;
 the legacy ``post`` alias is still accepted for create requests but is not
 advertised as a preferred scope. The extension ``draft`` scope is not
 advertised because django-indieweb does not implement built-in draft-only
@@ -100,6 +105,30 @@ When built-in CORS is configured with ``INDIEWEB_CORS_ALLOWED_ORIGINS``, the
 metadata endpoint participates as a public read-only ``GET`` endpoint. It is
 not rate limited by django-indieweb's optional protocol rate limiter.
 
+Production Client and Identity Hardening
+----------------------------------------
+
+By default, django-indieweb remains compatible with legacy IndieAuth clients:
+structurally valid ``client_id`` URLs are accepted, PKCE is optional, and the
+submitted ``me`` value is shown on the consent screen. Production deployments
+can tighten those defaults with settings:
+
+* ``INDIEWEB_ALLOWED_CLIENT_IDS`` restricts clients to an exact normalized
+  allowlist.
+* ``INDIEWEB_CLIENT_ID_VALIDATOR`` can enforce custom client policy. The
+  callable receives normalized ``client_id`` values: lowercased scheme/host
+  and IDNA host form, with path/query/port semantics preserved.
+* ``INDIEWEB_REQUIRE_PKCE`` requires a valid ``code_challenge`` before an
+  authorization code can be issued.
+* ``INDIEWEB_REQUIRE_PKCE_S256`` requires PKCE and rejects ``plain``
+  challenges.
+* ``INDIEWEB_BIND_ME_TO_USER`` requires the requested ``me`` to match
+  ``user.indieweb_profile.url``. If enabled and no profile URL is configured,
+  authorization requests fail closed.
+
+The original submitted ``client_id`` is still stored and returned. Normalized
+values are used only for operator policy decisions.
+
 Token Introspection
 -------------------
 
@@ -109,9 +138,10 @@ JSON. Every request must authenticate the caller with a strictly parsed
 ``Authorization: Bearer <caller-token>`` header. The bearer scheme is
 case-insensitive, but the header must contain exactly the scheme and one token
 value. The caller token must be active, unexpired, owned by an active Django
-user, and still allowed by ``INDIEWEB_CLIENT_ID_VALIDATOR``; missing,
-malformed, unknown, expired, inactive-owner, or disallowed caller credentials
-return ``401 authentication error`` with ``Cache-Control: no-store`` and
+user, and still allowed by ``INDIEWEB_ALLOWED_CLIENT_IDS`` and
+``INDIEWEB_CLIENT_ID_VALIDATOR`` policy; missing, malformed, unknown, expired,
+inactive-owner, or disallowed caller credentials return
+``401 authentication error`` with ``Cache-Control: no-store`` and
 ``WWW-Authenticate: Bearer``.
 
 The form-encoded ``token`` field is the target token being checked. If the
@@ -146,10 +176,11 @@ Inactive responses are intentionally stable and non-specific:
 
 Unknown tokens, deleted/revoked token rows, expired tokens, tokens whose
 Django owner is inactive, tokens whose ``client_id`` no longer satisfies
-``INDIEWEB_CLIENT_ID_VALIDATOR``, and cross-owner target tokens all return the
-same inactive shape to authenticated callers. Introspection does not create
-tokens, refresh expiration, delete rows, or otherwise mutate token state. It
-does not return full bearer token keys.
+``INDIEWEB_ALLOWED_CLIENT_IDS`` and ``INDIEWEB_CLIENT_ID_VALIDATOR`` policy,
+and cross-owner target tokens all return the same inactive shape to
+authenticated callers. Introspection does not create tokens, refresh
+expiration, delete rows, or otherwise mutate token state. It does not return
+full bearer token keys.
 
 The endpoint is a token-verification surface only. It does not implement a
 separate OAuth token revocation endpoint, refresh tokens, or user-info/profile
@@ -356,14 +387,14 @@ Security Considerations
    malformed submissions with HTTP 400 ``invalid_request`` and content type
    ``application/x-www-form-urlencoded`` (matching the existing missing-
    ``code`` case). Operators can additionally restrict which clients are
-   allowed by setting ``INDIEWEB_CLIENT_ID_VALIDATOR`` (see
-   :doc:`configuration`); the configured callable runs at every
-   authorization/token path and on every Micropub request, so revoking a
+   allowed by setting ``INDIEWEB_ALLOWED_CLIENT_IDS`` or
+   ``INDIEWEB_CLIENT_ID_VALIDATOR`` (see :doc:`configuration`); policy runs at
+   every authorization/token path and on every Micropub request, so revoking a
    client takes effect immediately for previously-issued tokens. A
    misconfigured validator (the dotted path fails to import or the callable
    raises) fails closed at every call site. Stored ``client_id`` values are
    not re-validated *structurally* on use, matching the ``redirect_uri``
-   rule; the configured validator, however, IS re-applied on use, so
+   rule; configured client policy, however, IS re-applied on use, so
    pre-existing tokens whose ``client_id`` no longer satisfies operator
    policy are rejected with HTTP 403 ``invalid_client`` on the Micropub
    endpoint.

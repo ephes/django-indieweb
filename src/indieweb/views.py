@@ -18,7 +18,7 @@ from urllib.parse import urlencode as urllib_urlencode
 
 from django.conf import settings
 from django.contrib.sites.models import Site
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
@@ -296,6 +296,64 @@ def _validate_client_id(value: str | None) -> str | None:
     return value
 
 
+def _normalize_client_id_for_policy(value: str) -> str:
+    """Return the comparison form passed to client_id policy hooks.
+
+    This lowercases scheme and host, IDNA-encodes domain hosts, and keeps path,
+    params, query, fragment, and non-default ports unchanged. It is used for
+    policy comparison only; stored request values remain the submitted strings.
+    """
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return value
+    if parsed.username is not None or parsed.password is not None:
+        return value
+
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname or ""
+    try:
+        ipaddress.ip_address(hostname)
+        normalized_host = hostname.lower()
+    except ValueError:
+        try:
+            normalized_host = hostname.encode("idna").decode("ascii").lower()
+        except UnicodeError:
+            return value
+    if ":" in normalized_host and not normalized_host.startswith("["):
+        normalized_host = f"[{normalized_host}]"
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return value
+    netloc = normalized_host
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return parsed._replace(scheme=scheme, netloc=netloc).geturl()
+
+
+def _configured_allowed_client_ids() -> frozenset[str] | None:
+    """Return normalized ``INDIEWEB_ALLOWED_CLIENT_IDS`` values, or ``None`` when unset."""
+    configured = getattr(settings, "INDIEWEB_ALLOWED_CLIENT_IDS", None)
+    if not configured:
+        return None
+    values = (configured,) if isinstance(configured, str) else configured
+    try:
+        parsed_values = tuple(values)
+    except TypeError:
+        logger.error("Rejecting clients because INDIEWEB_ALLOWED_CLIENT_IDS is not a string or iterable of strings")
+        return frozenset()
+
+    normalized: set[str] = set()
+    for client_id in parsed_values:
+        if not isinstance(client_id, str) or _validate_client_id(client_id) is None:
+            logger.error("Rejecting clients because INDIEWEB_ALLOWED_CLIENT_IDS contains an invalid client_id URL")
+            return frozenset()
+        normalized.add(_normalize_client_id_for_policy(client_id))
+    return frozenset(normalized)
+
+
 def _normalize_scope(value: str | None) -> str | None:
     """Normalize a scope string for display, storage, and token issuance.
 
@@ -338,15 +396,20 @@ def _token_grant_type_error(grant_type: str | None) -> HttpResponse | None:
 
 
 def _client_id_allowed(client_id: str) -> bool:
-    """Return whether ``client_id`` passes the optional operator policy hook.
+    """Return whether ``client_id`` passes optional operator client policy.
 
-    When ``INDIEWEB_CLIENT_ID_VALIDATOR`` is unset, every ``client_id`` is
-    permitted (preserving backwards compatibility for deployments that have
-    not opted in to client allowlisting). When the setting is configured but
-    the dotted path cannot be imported, or the callable raises, this fails
-    closed and returns ``False`` so a misconfiguration cannot silently weaken
-    access control.
+    When ``INDIEWEB_ALLOWED_CLIENT_IDS`` and ``INDIEWEB_CLIENT_ID_VALIDATOR``
+    are unset, every ``client_id`` is permitted (preserving backwards
+    compatibility for deployments that have not opted in to client
+    allowlisting). Misconfigured allowlists, validator import failures, and
+    callable exceptions fail closed so a misconfiguration cannot silently
+    weaken access control.
     """
+    normalized_client_id = _normalize_client_id_for_policy(client_id)
+    allowed_client_ids = _configured_allowed_client_ids()
+    if allowed_client_ids is not None and normalized_client_id not in allowed_client_ids:
+        return False
+
     validator_path = getattr(settings, "INDIEWEB_CLIENT_ID_VALIDATOR", None)
     if not validator_path:
         return True
@@ -356,9 +419,9 @@ def _client_id_allowed(client_id: str) -> bool:
         logger.error(f"Failed to load INDIEWEB_CLIENT_ID_VALIDATOR {validator_path}: {exc}")
         return False
     try:
-        return bool(validator(client_id))
+        return bool(validator(normalized_client_id))
     except Exception as exc:
-        logger.error(f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={client_id!r}: {exc}")
+        logger.error(f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={normalized_client_id!r}: {exc}")
         return False
 
 
@@ -458,6 +521,28 @@ def _validate_pkce_request(challenge: str | None, method: str | None) -> tuple[s
     return challenge, effective_method
 
 
+def _pkce_methods_supported() -> tuple[str, ...]:
+    """Return the PKCE methods accepted under the current deployment policy."""
+    if bool(getattr(settings, "INDIEWEB_REQUIRE_PKCE_S256", False)):
+        return ("S256",)
+    return ALLOWED_PKCE_METHODS
+
+
+def _validate_authorization_pkce(challenge: str | None, method: str | None) -> tuple[bool, str | None, str | None]:
+    """Validate authorization-request PKCE under opt-in deployment policy."""
+    require_s256 = bool(getattr(settings, "INDIEWEB_REQUIRE_PKCE_S256", False))
+    require_pkce = require_s256 or bool(getattr(settings, "INDIEWEB_REQUIRE_PKCE", False))
+    if challenge is None and method is None:
+        return (not require_pkce, None, None)
+    pkce = _validate_pkce_request(challenge, method)
+    if pkce is None:
+        return (False, None, None)
+    normalized_challenge, normalized_method = pkce
+    if require_s256 and normalized_method != "S256":
+        return (False, None, None)
+    return (True, normalized_challenge, normalized_method)
+
+
 def _verify_pkce(stored_challenge: str, stored_method: str, submitted_verifier: str) -> bool:
     """Verify a submitted ``code_verifier`` against a stored challenge.
 
@@ -477,6 +562,35 @@ def _verify_pkce(stored_challenge: str, stored_method: str, submitted_verifier: 
         computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         return hmac.compare_digest(stored_challenge, computed)
     return False
+
+
+def _expected_me_for_user(user: AbstractBaseUser) -> str | None:
+    """Return the logged-in user's configured IndieWeb profile URL, if available."""
+    try:
+        profile = user.indieweb_profile  # type: ignore[attr-defined]
+    except ObjectDoesNotExist:
+        return None
+    profile_url = getattr(profile, "url", "")
+    return profile_url or None
+
+
+def _me_matches_expected(submitted_me: str, expected_me: str) -> bool:
+    """Return whether submitted ``me`` matches the configured profile URL."""
+    return _normalize_redirect_uri(submitted_me) == _normalize_redirect_uri(expected_me)
+
+
+def _me_binding_error(user: AbstractBaseUser, submitted_me: str) -> HttpResponse | None:
+    """Return a strict me-binding error response when configured policy rejects the request."""
+    if not bool(getattr(settings, "INDIEWEB_BIND_ME_TO_USER", False)):
+        return None
+    expected_me = _expected_me_for_user(user)
+    if expected_me is None:
+        logger.warning("rejected IndieAuth request because INDIEWEB_BIND_ME_TO_USER is enabled without profile URL")
+        return HttpResponse("invalid me", status=400)
+    if not _me_matches_expected(submitted_me, expected_me):
+        logger.warning(f"rejected IndieAuth request with mismatched me={submitted_me!r}, expected={expected_me!r}")
+        return HttpResponse("invalid me", status=400)
+    return None
 
 
 def _append_redirect_params(redirect_uri: str, params: dict[str, str]) -> str:
@@ -632,7 +746,7 @@ class IndieAuthMetadataView(CorsMixin, View):
             "introspection_endpoint": request.build_absolute_uri(introspection_path),
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code"],
-            "code_challenge_methods_supported": list(ALLOWED_PKCE_METHODS),
+            "code_challenge_methods_supported": list(_pkce_methods_supported()),
             "scopes_supported": list(INDIEAUTH_METADATA_SCOPES_SUPPORTED),
             "service_documentation": INDIEAUTH_SERVICE_DOCUMENTATION_URL,
         }
@@ -770,18 +884,23 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.warning(f"rejected disallowed client_id on auth get: {client_id!r}")
             return HttpResponse("invalid_client", status=400)
 
+        me_binding_error = _me_binding_error(request.user, me)
+        if me_binding_error is not None:
+            return me_binding_error
+
         code_challenge = request.GET.get("code_challenge")
         code_challenge_method = request.GET.get("code_challenge_method")
-        effective_method: str | None = None
-        if code_challenge is not None or code_challenge_method is not None:
-            pkce = _validate_pkce_request(code_challenge, code_challenge_method)
-            if pkce is None:
-                logger.info("rejected invalid PKCE parameters on auth get")
-                return HttpResponse("invalid_request", status=400)
-            code_challenge, effective_method = pkce
+        pkce_valid, code_challenge, effective_method = _validate_authorization_pkce(
+            code_challenge, code_challenge_method
+        )
+        if not pkce_valid:
+            logger.info("rejected invalid PKCE parameters on auth get")
+            return HttpResponse("invalid_request", status=400)
 
         # Parse scope into list for display
         scope_list = scope.split() if scope else []
+        expected_me = _expected_me_for_user(request.user)
+        me_mismatch = expected_me is not None and not _me_matches_expected(me, expected_me)
 
         # Render consent screen
         context = {
@@ -793,6 +912,8 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             "scope_list": scope_list,
             "code_challenge": code_challenge,
             "code_challenge_method": effective_method,
+            "expected_me": expected_me,
+            "me_mismatch": me_mismatch,
         }
         response = render(request, "indieweb/consent.html", context)
         response["X-Frame-Options"] = "DENY"
@@ -837,16 +958,18 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.warning(f"rejected disallowed client_id on auth consent: {client_id!r}")
             return HttpResponse("invalid_client", status=400)
 
+        me_binding_error = _me_binding_error(request.user, me)
+        if me_binding_error is not None:
+            return me_binding_error
+
         code_challenge = request.POST.get("code_challenge")
         code_challenge_method = request.POST.get("code_challenge_method")
-        stored_challenge: str | None = None
-        stored_method: str | None = None
-        if code_challenge is not None or code_challenge_method is not None:
-            pkce = _validate_pkce_request(code_challenge, code_challenge_method)
-            if pkce is None:
-                logger.info("rejected invalid PKCE parameters on auth consent")
-                return HttpResponse("invalid_request", status=400)
-            stored_challenge, stored_method = pkce
+        pkce_valid, stored_challenge, stored_method = _validate_authorization_pkce(
+            code_challenge, code_challenge_method
+        )
+        if not pkce_valid:
+            logger.info("rejected invalid PKCE parameters on auth consent")
+            return HttpResponse("invalid_request", status=400)
 
         if action == "deny":
             deny_params: dict[str, str] = {"error": "access_denied", "state": state}

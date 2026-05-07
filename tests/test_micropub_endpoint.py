@@ -275,6 +275,19 @@ def test_micropub_accepts_allowed_client_id_via_validator(
 
 
 @pytest.mark.django_db
+def test_micropub_normalizes_client_id_for_validator(client, settings, token, micropub_endpoint_url, micropub_payload):
+    """Resource-server client policy receives normalized stored token client IDs."""
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_only_normalized"
+    token.client_id = "HTTPS://Bücher.Example/Client?A=1"
+    token.save()
+    auth_header = f"Bearer {token.key}"
+
+    response = client.post(micropub_endpoint_url, data=micropub_payload, Authorization=auth_header)
+
+    assert response.status_code == 201
+
+
+@pytest.mark.django_db
 def test_micropub_rejects_when_validator_misconfigured(
     client, settings, token, micropub_endpoint_url, micropub_payload
 ):
