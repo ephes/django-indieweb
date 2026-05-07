@@ -29,11 +29,6 @@ No current Priority 3 API Hardening items.
   - Current state: streaming is short-circuited (skipping size enforcement) and IP pinning is suppressed when `client.__class__.__module__ == "unittest.mock"` so legacy `unittest.mock.Mock` clients keep working. A future caller wrapping a real `httpx.Client` in a `unittest.mock.Mock` for tracing could silently disable max-bytes enforcement and/or IP pinning.
   - Desired outcome: introduce explicit kwargs (e.g. `_skip_streaming=True` and `_skip_pinning=True`) used by the affected tests, drop both module-name guards, and verify all existing call sites still pass.
 
-- [ ] Treat empty `INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES` as the default cap, not "disabled".
-  - References: `src/indieweb/websub.py` (`_delivery_max_bytes`); `tests/test_websub_subscriber.py`.
-  - Current state: `_delivery_max_bytes()` calls `_positive_int(configured, ...)` which translates an empty string to `None`, so an empty environment variable silently disables the per-callback delivery body cap. This is the same pattern that was tightened for `_hub_response_max_bytes()` and `_delivery_replay_history_max()` in earlier hardening passes.
-  - Desired outcome: distinguish `None` (explicit disable) from malformed/empty configuration, fall back to `DEFAULT_WEBSUB_DELIVERY_MAX_BYTES` for malformed/empty values with a logged warning, and add a regression test mirroring `test_notify_hubs_treats_empty_string_max_bytes_as_default` for the callback path.
-
 - [ ] Add `xframe_options_deny` to the token management view.
   - References: `SECURITY_ANALYSIS.md` "tokens.html clickjacking" residual; `src/indieweb/views.py` (`TokenManagementView`); `src/indieweb/templates/indieweb/tokens.html`.
   - Current state: Django's default middleware sets `X-Frame-Options: SAMEORIGIN` on the revoke page; the consent screen already enforces `DENY`.
@@ -45,11 +40,6 @@ No current Priority 3 API Hardening items.
   - References: `SECURITY_ANALYSIS.md` WebSub sync-hook finding; `src/indieweb/websub.py` (`process_websub_delivery`); `src/indieweb/views.py` (WebSub callback view).
   - Current state: the configured `INDIEWEB_WEBSUB_DELIVERY_HOOK` runs synchronously inside the request thread, mirroring the pre-`INDIEWEB_WEBMENTION_ENQUEUE` Webmention design.
   - Desired outcome: add `INDIEWEB_WEBSUB_DELIVERY_ENQUEUE` analogous to the Webmention enqueue setting, with documentation and tests for the queued path.
-
-- [ ] Clamp `INDIEWEB_WEBSUB_MIN_LEASE_SECONDS` / `_MAX_LEASE_SECONDS` to a sane range.
-  - References: `SECURITY_ANALYSIS.md` "WebSub lease bounds" residual; `src/indieweb/websub.py` (`_confirmed_lease_bounds`).
-  - Current state: each setting falls back to its default when `_positive_int` returns `None`, but the configured pair is not range-checked, so `min=1, max=10**12` is accepted.
-  - Desired outcome: clamp confirmed-lease bounds to a documented sane range (e.g. 60 seconds to 90 days), warn on out-of-range configuration, and add tests.
 
 ### Micropub Enhancements and Extensions
 

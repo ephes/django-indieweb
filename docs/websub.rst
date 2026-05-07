@@ -234,6 +234,12 @@ records ``hub.lease_seconds`` when supplied by the hub, and computes
 ``lease_expires_at``. Confirmed lease durations are clamped to
 ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` and
 ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` (defaults: 300 seconds and 30 days).
+Both bounds are themselves clamped to a sane range of 60 seconds to 90 days:
+out-of-range configuration is logged and pulled to the nearest in-range
+value, so a misconfigured ``min=1`` cannot accept one-second leases and a
+misconfigured ``max=10**12`` cannot accept multi-thousand-year leases. If
+the configured pair would invert after parsing, the helper falls back to
+the defaults.
 For ``unsubscribe`` verification, it marks the row ``unsubscribed`` and clears
 active lease fields. Missing, mismatched, or out-of-state verification
 requests are rejected and do not mutate the row.

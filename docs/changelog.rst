@@ -5,6 +5,18 @@ Changelog
 
 Unreleased
 ----------
+* Treated an empty ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` as the documented
+  default rather than a silent disable. ``_delivery_max_bytes()`` now mirrors
+  the ``_hub_response_max_bytes()`` and ``_delivery_replay_history_max()``
+  posture: ``None`` is the explicit "disable cap" sentinel, while malformed or
+  empty values fall back to the 1 MiB default with a logged warning.
+* Clamped ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` and
+  ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` to a documented sane range of 60
+  seconds to 90 days. Out-of-range configuration is logged and pulled to the
+  nearest in-range value, so a misconfigured ``min=1`` no longer accepts
+  one-second leases and a misconfigured ``max=10**12`` no longer accepts
+  multi-thousand-year leases. If the configured pair would invert after
+  parsing, the helper falls back to the defaults.
 * Hashed IndieAuth authorization codes at rest. ``Auth.key`` is now stored as an
   HMAC-SHA256 digest of the issued raw code (using ``settings.SECRET_KEY``),
   mirroring the existing ``Token.key`` posture. The raw code is returned to the

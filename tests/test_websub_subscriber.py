@@ -434,6 +434,71 @@ def test_callback_verification_confirms_subscribe_and_echoes_challenge(client):
 
 
 @pytest.mark.django_db
+def test_confirmed_lease_bounds_clamps_min_below_floor(settings, client):
+    """An ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` below the documented floor is pulled up.
+
+    Regression: previously any positive integer was accepted, so a misconfiguration of
+    ``min=1`` would let a hub-supplied 30-second lease pass through the
+    ``min(max(...), ...)`` clamp untouched.
+    """
+    settings.INDIEWEB_WEBSUB_MIN_LEASE_SECONDS = 1
+
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed-floor",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "subscribe",
+            "hub.topic": subscription.topic_url,
+            "hub.challenge": "abc123",
+            "hub.lease_seconds": "30",
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    # 30s below the 60s floor → clamped up to the floor (not to the unsafe min=1).
+    assert subscription.confirmed_lease_seconds == 60
+
+
+@pytest.mark.django_db
+def test_confirmed_lease_bounds_clamps_max_above_ceiling(settings, client):
+    """An ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` above the documented ceiling is pulled down.
+
+    Regression: previously a misconfigured ``max=10**12`` would let a hub-supplied
+    multi-thousand-year lease pass through the clamp unchanged.
+    """
+    settings.INDIEWEB_WEBSUB_MAX_LEASE_SECONDS = 10**12
+
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed-ceiling",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "subscribe",
+            "hub.topic": subscription.topic_url,
+            "hub.challenge": "abc123",
+            "hub.lease_seconds": str(10**11),
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    # 10**11s above the 90-day ceiling (7,776,000s) → clamped down to the ceiling.
+    assert subscription.confirmed_lease_seconds == 90 * 24 * 60 * 60
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     ("lease_seconds", "expected_confirmed"),
     [
@@ -1062,6 +1127,33 @@ def test_callback_post_uses_default_delivery_size_limit_when_setting_is_invalid(
     subscription.refresh_from_db()
     assert response.status_code == 204
     assert subscription.last_delivery_status_code == 204
+
+
+@pytest.mark.django_db
+def test_callback_post_treats_empty_string_max_bytes_as_default(client, settings, subscription):
+    """An empty ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` falls back to the 1 MiB default.
+
+    Regression: ``_positive_int`` translates the empty string to ``None``; without an
+    explicit fallback ``_delivery_max_bytes()`` would have returned ``None`` and
+    silently disabled the per-callback delivery body cap. The body is one byte over
+    the default cap, so a "cap disabled" regression would let the request succeed
+    (204) instead of failing closed (413). Mirrors
+    ``test_notify_hubs_treats_empty_string_max_bytes_as_default`` for the hub-response
+    cap and ``test_record_websub_delivery_treats_empty_history_max_as_default`` for
+    the replay-history cap.
+    """
+    settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = ""
+    oversized_body = b"x" * (1024 * 1024 + 1)
+
+    response = client.post(
+        _callback_url(subscription),
+        data=oversized_body,
+        content_type="application/atom+xml",
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 413
+    assert subscription.last_delivery_status_code == 413
 
 
 @pytest.mark.django_db

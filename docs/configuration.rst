@@ -650,8 +650,9 @@ Requests above this limit return HTTP ``413`` and update the subscription's
 latest-delivery diagnostics without invoking the host delivery hook. Set this
 to ``None`` to disable django-indieweb's built-in size check only when your
 server, proxy, or worker queue enforces an equivalent limit.
-Malformed values are ignored and logged; the callback falls back to the
-default 1 MiB limit instead of failing every delivery.
+Malformed values, including an empty environment variable that resolves to
+``""``, are ignored and logged; the callback falls back to the default 1 MiB
+limit rather than disabling the cap.
 The callback rejects an oversized ``Content-Length`` before reading the body
 when the header is present. Also configure a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching reverse-proxy request-body limit
@@ -791,7 +792,12 @@ cap.
 Subscribe verification clamps confirmed lease durations to the configured
 ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` and
 ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` bounds. Defaults are 300 seconds and 30
-days.
+days. Both bounds are themselves clamped to a sane range of 60 seconds to 90
+days: out-of-range configuration is logged and pulled to the nearest in-range
+value so a misconfigured ``min=1`` cannot accept one-second leases and a
+misconfigured ``max=10**12`` cannot accept multi-thousand-year leases. If the
+configured pair would invert after parsing, the helper falls back to the
+defaults.
 
 See :doc:`websub` and ``examples/websub_workflows.py`` for tested
 copy-and-adapt delivery hook examples that enqueue a compact payload for a

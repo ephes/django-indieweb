@@ -4,6 +4,62 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Treat empty ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` as the default cap
+
+- ``_delivery_max_bytes()`` in ``src/indieweb/websub.py`` previously routed the
+  configured value through ``_positive_int(...)``, which translated an empty
+  string back to ``None``. Because ``None`` is the documented "disable cap"
+  sentinel, an empty environment variable silently disabled the per-callback
+  delivery body cap. The helper now mirrors the
+  ``_hub_response_max_bytes()`` and ``_delivery_replay_history_max()``
+  posture: ``None`` remains the explicit disable, and any malformed/empty
+  value falls back to ``DEFAULT_WEBSUB_DELIVERY_MAX_BYTES`` (1 MiB) with a
+  logged warning.
+- Added a regression test
+  ``test_callback_post_treats_empty_string_max_bytes_as_default`` that posts
+  one byte over the default to the WebSub callback with
+  ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES=""`` and asserts the request fails
+  closed with HTTP 413, mirroring
+  ``test_notify_hubs_treats_empty_string_max_bytes_as_default`` for the
+  hub-response cap and
+  ``test_record_websub_delivery_treats_empty_history_max_as_default`` for the
+  replay-history cap.
+- Validation: ``uv run pytest`` (full suite); ``uv run mypy``; ``uv run ruff
+  check .``.
+- Documentation: tightened the
+  ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` entry in ``docs/configuration.rst``
+  to describe the empty-string fallback explicitly.
+- Changelog: added an Unreleased entry describing the empty/malformed
+  fallback alignment.
+
+### Clamp WebSub lease bounds to 60 seconds .. 90 days
+
+- ``_confirmed_lease_bounds()`` in ``src/indieweb/websub.py`` validated each
+  configured value individually but did not range-check the configured pair,
+  so ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS=1`` and
+  ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS=10**12`` were both accepted. New
+  module-level constants ``WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS`` (60) and
+  ``WEBSUB_LEASE_BOUNDS_CEILING_SECONDS`` (90 days) bound the documented
+  sane range. A new ``_clamp_to_lease_range`` helper pulls out-of-range
+  values to the nearest in-range bound and logs a warning naming the
+  setting and the original value. The existing inverted-pair fallback to
+  defaults is preserved.
+- Added integration tests in ``tests/test_websub_subscriber.py``
+  (``test_confirmed_lease_bounds_clamps_min_below_floor``,
+  ``test_confirmed_lease_bounds_clamps_max_above_ceiling``) that drive the
+  callback verification path with out-of-range settings and assert the
+  ``confirmed_lease_seconds`` is clamped to the floor / ceiling rather than
+  to the unsafe configured value. The pre-existing
+  ``test_callback_verification_clamps_confirmed_lease`` continues to cover
+  the in-range default behavior.
+- Validation: ``uv run pytest`` (full suite); ``uv run mypy``; ``uv run ruff
+  check .``.
+- Documentation: extended the lease-bounds paragraph in
+  ``docs/configuration.rst`` to describe the floor/ceiling clamp and the
+  inverted-pair fallback.
+- Changelog: added an Unreleased entry describing the new clamp range and
+  the warning behavior.
+
 ### Restore CI by pinning ``astral-sh/setup-uv`` to an existing tag
 
 - ``.github/workflows/ci.yml`` previously pinned ``astral-sh/setup-uv@v8`` on

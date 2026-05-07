@@ -38,6 +38,8 @@ DEFAULT_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 300
 DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 64
 DEFAULT_WEBSUB_MIN_LEASE_SECONDS = 5 * 60
 DEFAULT_WEBSUB_MAX_LEASE_SECONDS = 30 * 24 * 60 * 60
+WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS = 60
+WEBSUB_LEASE_BOUNDS_CEILING_SECONDS = 90 * 24 * 60 * 60
 WEBSUB_SECRET_MIN_BYTES = 20
 WEBSUB_SECRET_MAX_BYTES = 200
 WEBSUB_ALLOWED_SCHEMES = ("http", "https")
@@ -203,14 +205,25 @@ def _validate_subscription_mode(mode: str) -> str:
 
 
 def _delivery_max_bytes() -> int | None:
+    """Return the per-callback delivery body cap, or ``None`` to disable.
+
+    ``None`` is the explicit "disable cap" sentinel. Any other malformed value —
+    including the empty string that ``_positive_int`` translates back to ``None`` —
+    falls back to the default cap so an empty environment variable does not silently
+    weaken the protection.
+    """
     configured = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES", DEFAULT_WEBSUB_DELIVERY_MAX_BYTES)
     if configured is None:
         return None
     try:
-        return _positive_int(configured, label="WebSub delivery max bytes")
+        parsed = _positive_int(configured, label="WebSub delivery max bytes")
     except ValueError:
         logger.warning("Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES value; using the default limit")
         return DEFAULT_WEBSUB_DELIVERY_MAX_BYTES
+    if parsed is None:
+        logger.warning("Ignoring empty INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES value; using the default limit")
+        return DEFAULT_WEBSUB_DELIVERY_MAX_BYTES
+    return parsed
 
 
 def _hub_response_max_bytes() -> int | None:
@@ -268,16 +281,49 @@ def _configured_positive_int(name: str, *, default: int, label: str) -> int:
     return parsed if parsed is not None else default
 
 
+def _clamp_to_lease_range(value: int, *, setting_name: str) -> int:
+    """Clamp ``value`` to ``[WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS, WEBSUB_LEASE_BOUNDS_CEILING_SECONDS]``.
+
+    Out-of-range values produce a warning and are pulled to the nearest in-range bound so a
+    misconfigured ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` / ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS``
+    cannot disable the documented protection (e.g. accepting one-second leases or thousand-year
+    leases).
+    """
+    if value < WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS:
+        logger.warning(
+            "Clamping %s=%d to WebSub lease floor of %d seconds",
+            setting_name,
+            value,
+            WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS,
+        )
+        return WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS
+    if value > WEBSUB_LEASE_BOUNDS_CEILING_SECONDS:
+        logger.warning(
+            "Clamping %s=%d to WebSub lease ceiling of %d seconds",
+            setting_name,
+            value,
+            WEBSUB_LEASE_BOUNDS_CEILING_SECONDS,
+        )
+        return WEBSUB_LEASE_BOUNDS_CEILING_SECONDS
+    return value
+
+
 def _confirmed_lease_bounds() -> tuple[int, int]:
-    minimum = _configured_positive_int(
-        "INDIEWEB_WEBSUB_MIN_LEASE_SECONDS",
-        default=DEFAULT_WEBSUB_MIN_LEASE_SECONDS,
-        label="WebSub minimum lease seconds",
+    minimum = _clamp_to_lease_range(
+        _configured_positive_int(
+            "INDIEWEB_WEBSUB_MIN_LEASE_SECONDS",
+            default=DEFAULT_WEBSUB_MIN_LEASE_SECONDS,
+            label="WebSub minimum lease seconds",
+        ),
+        setting_name="INDIEWEB_WEBSUB_MIN_LEASE_SECONDS",
     )
-    maximum = _configured_positive_int(
-        "INDIEWEB_WEBSUB_MAX_LEASE_SECONDS",
-        default=DEFAULT_WEBSUB_MAX_LEASE_SECONDS,
-        label="WebSub maximum lease seconds",
+    maximum = _clamp_to_lease_range(
+        _configured_positive_int(
+            "INDIEWEB_WEBSUB_MAX_LEASE_SECONDS",
+            default=DEFAULT_WEBSUB_MAX_LEASE_SECONDS,
+            label="WebSub maximum lease seconds",
+        ),
+        setting_name="INDIEWEB_WEBSUB_MAX_LEASE_SECONDS",
     )
     if minimum > maximum:
         logger.warning("Ignoring invalid WebSub lease bounds; using the defaults")
