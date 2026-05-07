@@ -4,6 +4,42 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Harden WebSub subscriber delivery security
+
+- Encrypted ``WebSubSubscription.secret`` and ``pending_secret`` at rest with
+  key material derived from Django's ``SECRET_KEY`` via the new
+  ``cryptography`` runtime dependency and added a migration for existing
+  plaintext rows. New ``hub.secret`` values must be non-empty, at least 20
+  bytes, and at most 200 bytes.
+- Added optional signed-delivery enforcement, disabled legacy ``sha1``
+  signatures by default, preferred the strongest supplied signature algorithm,
+  rejected duplicate accepted delivery bodies within the configurable replay
+  window, and clamped confirmed WebSub leases to configurable minimum/maximum
+  bounds.
+- Masked callback tokens and WebSub secrets in Django admin and disabled
+  admin deletion for ``WebSubDeliveryAttempt`` audit rows.
+- Backlog: removed the completed Priority 3 API hardening item from
+  ``BACKLOG.md``. Migration ``0021_encrypt_websub_secrets`` adds encrypted
+  secret storage width and accepted-delivery replay metadata.
+- Documentation: updated ``docs/api.rst``, ``docs/configuration.rst``, and
+  ``docs/websub.rst`` for WebSub secret requirements, encryption,
+  signature/replay/lease settings, and admin audit behavior.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the
+  WebSub hardening behavior.
+- Validation: ``uv run pytest tests/test_websub_subscriber.py tests/test_admin.py
+  tests/test_project_metadata.py -q --no-cov`` passed (71 passed);
+  ``uv run pytest`` passed (1180 passed, coverage gate reached at 90.28%);
+  ``uv run mypy`` passed; ``uv run ruff check .`` passed;
+  ``uv run ruff format . --check`` passed; ``just docs`` passed;
+  ``uv run python manage.py makemigrations --check --dry-run`` passed;
+  ``uv lock --check`` passed; ``uv run prek run --all-files`` passed; and
+  ``git diff --check`` passed.
+- Post-review follow-up: changed the secret upper bound from 200 characters to
+  200 UTF-8 bytes, rejected the encrypted-storage prefix as raw input, recorded
+  local decryption failures distinctly from invalid hub signatures, and added
+  a reverse-migration warning when encrypted values cannot be decrypted. The
+  validation commands above were rerun after this follow-up.
+
 ### Tighten test/dev settings and dependency pinning
 
 - Changed ``tests.settings`` to load ``SECRET_KEY`` from

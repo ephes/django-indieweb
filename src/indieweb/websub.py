@@ -26,12 +26,17 @@ from .http_client import (
     request_with_safe_redirects,
     validate_safe_http_url,
 )
-from .models import WebSubDeliveryAttempt, WebSubSubscription
+from .models import WEBSUB_SECRET_ENCRYPTED_PREFIX, WebSubDeliveryAttempt, WebSubSubscription
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEBSUB_TIMEOUT = 10.0
 DEFAULT_WEBSUB_DELIVERY_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 300
+DEFAULT_WEBSUB_MIN_LEASE_SECONDS = 5 * 60
+DEFAULT_WEBSUB_MAX_LEASE_SECONDS = 30 * 24 * 60 * 60
+WEBSUB_SECRET_MIN_BYTES = 20
+WEBSUB_SECRET_MAX_BYTES = 200
 WEBSUB_ALLOWED_SCHEMES = ("http", "https")
 WEBSUB_SUBSCRIPTION_MODES = (WebSubSubscription.MODE_SUBSCRIBE, WebSubSubscription.MODE_UNSUBSCRIBE)
 WEBSUB_SIGNATURE_ALGORITHMS = {
@@ -40,6 +45,7 @@ WEBSUB_SIGNATURE_ALGORITHMS = {
     "sha384": hashlib.sha384,
     "sha512": hashlib.sha512,
 }
+WEBSUB_SIGNATURE_STRENGTH = {"sha1": 1, "sha256": 2, "sha384": 3, "sha512": 4}
 
 
 @dataclass(frozen=True)
@@ -175,6 +181,18 @@ def _positive_int(value: int | str | None, *, label: str) -> int | None:
     return parsed
 
 
+def _non_negative_int(value: int | str | None, *, label: str) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a non-negative integer") from exc
+    if parsed < 0:
+        raise ValueError(f"{label} must be a non-negative integer")
+    return parsed
+
+
 def _validate_subscription_mode(mode: str) -> str:
     if mode not in WEBSUB_SUBSCRIPTION_MODES:
         raise ValueError("WebSub subscription mode must be 'subscribe' or 'unsubscribe'")
@@ -205,6 +223,79 @@ def _delivery_content_type_allowed(content_type: str) -> bool:
         return True
     base_content_type = content_type.split(";", 1)[0].strip().lower()
     return base_content_type in {allowed.lower() for allowed in allowed_types}
+
+
+def _setting_enabled(name: str, *, default: bool = False) -> bool:
+    return bool(getattr(settings, name, default))
+
+
+def _configured_positive_int(name: str, *, default: int, label: str) -> int:
+    configured = getattr(settings, name, default)
+    try:
+        parsed = _positive_int(configured, label=label)
+    except ValueError:
+        logger.warning("Ignoring invalid %s value; using the default", name)
+        return default
+    return parsed if parsed is not None else default
+
+
+def _confirmed_lease_bounds() -> tuple[int, int]:
+    minimum = _configured_positive_int(
+        "INDIEWEB_WEBSUB_MIN_LEASE_SECONDS",
+        default=DEFAULT_WEBSUB_MIN_LEASE_SECONDS,
+        label="WebSub minimum lease seconds",
+    )
+    maximum = _configured_positive_int(
+        "INDIEWEB_WEBSUB_MAX_LEASE_SECONDS",
+        default=DEFAULT_WEBSUB_MAX_LEASE_SECONDS,
+        label="WebSub maximum lease seconds",
+    )
+    if minimum > maximum:
+        logger.warning("Ignoring invalid WebSub lease bounds; using the defaults")
+        return DEFAULT_WEBSUB_MIN_LEASE_SECONDS, DEFAULT_WEBSUB_MAX_LEASE_SECONDS
+    return minimum, maximum
+
+
+def _clamp_confirmed_lease_seconds(lease_seconds: int | None) -> int | None:
+    if lease_seconds is None:
+        return None
+    minimum, maximum = _confirmed_lease_bounds()
+    return min(max(lease_seconds, minimum), maximum)
+
+
+def _delivery_replay_window_seconds() -> int | None:
+    configured = getattr(
+        settings,
+        "INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS",
+        DEFAULT_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS,
+    )
+    if configured is None:
+        return None
+    try:
+        parsed = _non_negative_int(configured, label="WebSub delivery replay window seconds")
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS value; using the default window"
+        )
+        return DEFAULT_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS
+    if parsed == 0:
+        return None
+    return parsed
+
+
+def _validate_websub_secret(secret: str | None) -> str | None:
+    if secret is None:
+        return None
+    if secret == "":
+        raise ValueError("WebSub secret must not be empty; pass None to omit hub.secret")
+    if secret.startswith(WEBSUB_SECRET_ENCRYPTED_PREFIX):
+        raise ValueError("WebSub secret uses a reserved prefix")
+    secret_bytes = secret.encode("utf-8")
+    if len(secret_bytes) > WEBSUB_SECRET_MAX_BYTES:
+        raise ValueError("WebSub secret must be at most 200 bytes")
+    if len(secret_bytes) < WEBSUB_SECRET_MIN_BYTES:
+        raise ValueError("WebSub secret must be at least 20 bytes")
+    return secret
 
 
 def build_websub_callback_url(
@@ -294,9 +385,7 @@ def _prepare_subscription_request(
     validated_hub_url = _validate_url(hub_url, label="hub URL")
     validated_mode = _validate_subscription_mode(mode)
     validated_lease_seconds = _positive_int(lease_seconds, label="lease seconds")
-    secret_max_length = WebSubSubscription._meta.get_field("secret").max_length or 0
-    if secret is not None and len(secret) > secret_max_length:
-        raise ValueError("WebSub secret must be at most 200 characters")
+    validated_secret = _validate_websub_secret(secret) if validated_mode == WebSubSubscription.MODE_SUBSCRIBE else None
 
     if validated_mode == WebSubSubscription.MODE_UNSUBSCRIBE:
         try:
@@ -322,8 +411,8 @@ def _prepare_subscription_request(
     subscription.pending_mode = validated_mode
     subscription.requested_lease_seconds = validated_lease_seconds
     if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
-        subscription.pending_secret = secret or ""
-        subscription.pending_secret_set = secret is not None
+        subscription.set_pending_secret(validated_secret or "")
+        subscription.pending_secret_set = validated_secret is not None
     subscription.save(
         update_fields=[
             "state",
@@ -382,7 +471,7 @@ def request_websub_subscription(
     }
     if lease_seconds is not None:
         data["hub.lease_seconds"] = lease_seconds
-    if secret and validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
+    if secret is not None and validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
         data["hub.secret"] = secret
 
     close_client = client is None
@@ -474,13 +563,14 @@ def confirm_websub_verification(
         confirmed_lease = _positive_int(lease_seconds, label="lease seconds")
         if confirmed_lease is None:
             confirmed_lease = subscription.requested_lease_seconds
+        confirmed_lease = _clamp_confirmed_lease_seconds(confirmed_lease)
         subscription.state = WebSubSubscription.STATE_ACTIVE
         subscription.confirmed_lease_seconds = confirmed_lease
         subscription.lease_expires_at = (
             timezone.now() + timedelta(seconds=confirmed_lease) if confirmed_lease is not None else None
         )
         if subscription.pending_secret_set:
-            subscription.secret = subscription.pending_secret
+            subscription.set_secret(subscription.get_pending_secret())
     else:
         if subscription.state != WebSubSubscription.STATE_PENDING_UNSUBSCRIBE:
             raise ValueError("WebSub subscription is not pending unsubscribe verification")
@@ -651,12 +741,15 @@ def delivery_content_type_allowed(content_type: str) -> bool:
     return _delivery_content_type_allowed(content_type)
 
 
-def _signature_headers(headers: Mapping[str, str]) -> list[str]:
-    values: list[str] = []
+def _signature_headers(headers: Mapping[str, str]) -> list[tuple[str, str]]:
+    values: list[tuple[str, str]] = []
     for header_name in ("X-Hub-Signature-256", "X-Hub-Signature"):
         value = headers.get(header_name)
         if value:
-            values.extend(part.strip() for part in value.split(",") if part.strip())
+            for part in (part.strip() for part in value.split(",") if part.strip()):
+                algorithm, separator, received_digest = part.partition("=")
+                if separator == "=" and received_digest:
+                    values.append((algorithm.lower(), received_digest))
     return values
 
 
@@ -671,19 +764,53 @@ def validate_websub_delivery_signature(
     no secret and no validation is required. Raises ``ValueError`` for missing,
     malformed, unsupported, or mismatched signatures.
     """
-    if not subscription.secret:
+    secret = subscription.get_secret()
+    if not secret:
+        if _setting_enabled("INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES"):
+            raise ValueError("WebSub delivery signature is required but the subscription has no secret")
         return None
 
-    for signature in _signature_headers(headers):
-        algorithm, separator, received_digest = signature.partition("=")
-        algorithm = algorithm.lower()
-        if separator != "=" or algorithm not in WEBSUB_SIGNATURE_ALGORITHMS or not received_digest:
+    signatures = _signature_headers(headers)
+    allowed_algorithms = set(WEBSUB_SIGNATURE_ALGORITHMS)
+    if not _setting_enabled("INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES"):
+        allowed_algorithms.discard("sha1")
+    supported_signatures = [
+        (algorithm, received_digest)
+        for algorithm, received_digest in signatures
+        if algorithm in allowed_algorithms and algorithm in WEBSUB_SIGNATURE_ALGORITHMS
+    ]
+    if not supported_signatures:
+        raise ValueError("WebSub delivery signature did not include a supported algorithm")
+
+    strongest = max(WEBSUB_SIGNATURE_STRENGTH[algorithm] for algorithm, _received_digest in supported_signatures)
+    for algorithm, received_digest in supported_signatures:
+        if WEBSUB_SIGNATURE_STRENGTH[algorithm] != strongest:
             continue
+        # Multiple signatures for the strongest algorithm are allowed; any valid
+        # digest for that strongest algorithm authenticates the delivery.
         digestmod = WEBSUB_SIGNATURE_ALGORITHMS[algorithm]
-        expected = hmac.new(subscription.secret.encode("utf-8"), body, digestmod).hexdigest()
+        expected = hmac.new(secret.encode("utf-8"), body, digestmod).hexdigest()
         if hmac.compare_digest(expected, received_digest):
             return algorithm
     raise ValueError("WebSub delivery signature did not validate")
+
+
+def delivery_is_replay(
+    subscription: WebSubSubscription,
+    body: bytes,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether ``body`` duplicates a recent accepted delivery."""
+    replay_window_seconds = _delivery_replay_window_seconds()
+    if replay_window_seconds is None:
+        return False
+    if subscription.last_accepted_delivery_at is None or not subscription.last_accepted_delivery_digest:
+        return False
+    received_at = now or timezone.now()
+    if subscription.last_accepted_delivery_at < received_at - timedelta(seconds=replay_window_seconds):
+        return False
+    return hmac.compare_digest(subscription.last_accepted_delivery_digest, hashlib.sha256(body).hexdigest())
 
 
 def record_websub_delivery(
@@ -708,18 +835,21 @@ def record_websub_delivery(
     subscription.last_delivery_signature_algorithm = signature_algorithm or ""
     subscription.last_delivery_status_code = status_code
     subscription.last_delivery_error = clipped_error
-    subscription.save(
-        update_fields=[
-            "last_delivery_at",
-            "last_delivery_content_type",
-            "last_delivery_size",
-            "last_delivery_digest",
-            "last_delivery_signature_algorithm",
-            "last_delivery_status_code",
-            "last_delivery_error",
-            "modified",
-        ]
-    )
+    update_fields = [
+        "last_delivery_at",
+        "last_delivery_content_type",
+        "last_delivery_size",
+        "last_delivery_digest",
+        "last_delivery_signature_algorithm",
+        "last_delivery_status_code",
+        "last_delivery_error",
+        "modified",
+    ]
+    if status_code == 204:
+        subscription.last_accepted_delivery_at = received_at
+        subscription.last_accepted_delivery_digest = delivery_digest
+        update_fields.extend(["last_accepted_delivery_at", "last_accepted_delivery_digest"])
+    subscription.save(update_fields=update_fields)
     WebSubDeliveryAttempt.objects.create(
         subscription=subscription,
         received_at=received_at,

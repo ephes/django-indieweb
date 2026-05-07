@@ -127,8 +127,12 @@ content. Metadata for each recorded attempt is also available in
 ``WebSubDeliveryAttempt`` rows linked to the subscription.
 
 If the subscription has a stored ``hub.secret``, delivery must include a valid
-``X-Hub-Signature-256`` or ``X-Hub-Signature`` HMAC header. Invalid signatures
-return HTTP ``403`` and do not call the host hook.
+SHA-256-or-stronger HMAC header. ``X-Hub-Signature-256`` is preferred over
+legacy ``X-Hub-Signature`` when both are present, and ``sha1`` signatures are
+disabled unless ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES`` is enabled. Invalid
+signatures return HTTP ``403`` and do not call the host hook. Duplicate bodies
+matching the latest accepted delivery are rejected within the configured replay
+window.
 
 IndieAuth Server Metadata
 -------------------------

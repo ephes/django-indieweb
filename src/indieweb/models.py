@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 from typing import Any
 
+from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator, URLValidator
@@ -14,11 +16,27 @@ from django.utils.crypto import get_random_string
 TOKEN_KEY_HASH_PREFIX = "hmac-sha256$"
 TOKEN_KEY_LENGTH = 32
 WEBMENTION_STATUS_TOKEN_LENGTH = 48
+WEBSUB_SECRET_ENCRYPTED_PREFIX = "fernet$"
+WEBSUB_SECRET_KEY_SALT = b"django-indieweb-websub-secret-v1"
+WEBSUB_SECRET_STORAGE_MAX_LENGTH = 512
 
 
 def generate_webmention_status_token() -> str:
     """Return an unguessable token for public Webmention status URLs."""
     return get_random_string(length=WEBMENTION_STATUS_TOKEN_LENGTH)
+
+
+def _websub_secret_fernet() -> Fernet:
+    key_material = hmac.new(
+        str(settings.SECRET_KEY).encode("utf-8"),
+        WEBSUB_SECRET_KEY_SALT,
+        hashlib.sha256,
+    ).digest()
+    return Fernet(base64.urlsafe_b64encode(key_material))
+
+
+class WebSubSecretDecryptionError(ValueError):
+    """Stored WebSub shared secret could not be decrypted."""
 
 
 class GenKeyMixin(models.Model):
@@ -398,8 +416,8 @@ class WebSubSubscription(models.Model):
     requested_lease_seconds = models.PositiveIntegerField(null=True, blank=True)
     confirmed_lease_seconds = models.PositiveIntegerField(null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)
-    secret = models.CharField(max_length=200, blank=True)
-    pending_secret = models.CharField(max_length=200, blank=True)
+    secret = models.CharField(max_length=WEBSUB_SECRET_STORAGE_MAX_LENGTH, blank=True)
+    pending_secret = models.CharField(max_length=WEBSUB_SECRET_STORAGE_MAX_LENGTH, blank=True)
     pending_secret_set = models.BooleanField(default=False)
 
     last_challenge = models.CharField(max_length=200, blank=True)
@@ -419,6 +437,8 @@ class WebSubSubscription(models.Model):
     last_delivery_signature_algorithm = models.CharField(max_length=32, blank=True)
     last_delivery_status_code = models.PositiveIntegerField(null=True, blank=True)
     last_delivery_error = models.TextField(blank=True)
+    last_accepted_delivery_at = models.DateTimeField(null=True, blank=True)
+    last_accepted_delivery_digest = models.CharField(max_length=64, blank=True)
 
     created = models.DateTimeField(auto_now_add=True)
     modified = models.DateTimeField(auto_now=True)
@@ -434,6 +454,67 @@ class WebSubSubscription(models.Model):
 
     def __str__(self) -> str:
         return f"WebSub {self.state}: {self.topic_url} via {self.hub_url}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.secret and not self.is_encrypted_secret(self.secret):
+            self.secret = self.encrypt_secret(self.secret)
+        if self.pending_secret and not self.is_encrypted_secret(self.pending_secret):
+            self.pending_secret = self.encrypt_secret(self.pending_secret)
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def is_encrypted_secret(cls, value: str) -> bool:
+        """Return whether ``value`` is stored in encrypted-at-rest form."""
+        return value.startswith(WEBSUB_SECRET_ENCRYPTED_PREFIX)
+
+    @classmethod
+    def encrypt_secret(cls, raw_secret: str) -> str:
+        """Return encrypted-at-rest storage for a raw WebSub shared secret."""
+        token = _websub_secret_fernet().encrypt(raw_secret.encode("utf-8")).decode("ascii")
+        return f"{WEBSUB_SECRET_ENCRYPTED_PREFIX}{token}"
+
+    @classmethod
+    def decrypt_secret(cls, stored_secret: str) -> str:
+        """Return the raw WebSub shared secret from storage."""
+        if not stored_secret:
+            return ""
+        if not cls.is_encrypted_secret(stored_secret):
+            return stored_secret
+        token = stored_secret.removeprefix(WEBSUB_SECRET_ENCRYPTED_PREFIX)
+        try:
+            return _websub_secret_fernet().decrypt(token.encode("ascii")).decode("utf-8")
+        except (InvalidToken, UnicodeDecodeError) as exc:
+            raise WebSubSecretDecryptionError("WebSub secret could not be decrypted") from exc
+
+    def get_secret(self) -> str:
+        """Return the active raw WebSub shared secret for HMAC validation."""
+        return self.decrypt_secret(self.secret)
+
+    def set_secret(self, raw_secret: str) -> None:
+        """Stage a raw active WebSub shared secret for encrypted storage."""
+        self.secret = self.encrypt_secret(raw_secret) if raw_secret else ""
+
+    def get_pending_secret(self) -> str:
+        """Return the pending raw WebSub shared secret for verification."""
+        return self.decrypt_secret(self.pending_secret)
+
+    def set_pending_secret(self, raw_secret: str) -> None:
+        """Stage a raw pending WebSub shared secret for encrypted storage."""
+        self.pending_secret = self.encrypt_secret(raw_secret) if raw_secret else ""
+
+    def masked_callback_token(self) -> str:
+        """Return a non-secret display form for the callback token."""
+        if not self.callback_token:
+            return ""
+        return f"{self.callback_token[:6]}...{self.callback_token[-6:]}"
+
+    def masked_secret(self) -> str:
+        """Return a non-secret display form for the active WebSub secret."""
+        return "configured" if self.secret else ""
+
+    def masked_pending_secret(self) -> str:
+        """Return a non-secret display form for the pending WebSub secret."""
+        return "configured" if self.pending_secret else ""
 
 
 class WebSubDeliveryAttempt(models.Model):

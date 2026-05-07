@@ -177,7 +177,7 @@ to subscribe or unsubscribe from a topic:
        "https://hub.example/sub",
        callback_base_url="https://example.com/indieweb/websub",
        lease_seconds=86400,
-       secret="shared-delivery-secret",
+       secret="shared-delivery-secret-32-bytes",
    )
 
    if result.success:
@@ -200,9 +200,10 @@ until the hub verifies the renewal. If you pass a new ``secret`` value, it is
 staged and only replaces the current delivery secret after successful
 ``subscribe`` verification; rejected or failed renewal requests keep the
 previously stored secret. Omit ``secret`` on renewal when you want to keep the
-current delivery secret and clear any earlier unverified staged secret. Pass
-``secret=""`` when you want the verified renewal to drop a stored secret and
-accept unsigned deliveries.
+current delivery secret and clear any earlier unverified staged secret.
+Secrets must be non-empty, at least 20 bytes when UTF-8 encoded, and at most
+200 bytes when UTF-8 encoded. Stored active and pending secrets are encrypted
+at rest.
 
 Set ``mode=WebSubSubscription.MODE_UNSUBSCRIBE`` to ask the hub to cancel an
 existing subscription. Unknown subscriptions are rejected before any network
@@ -217,9 +218,12 @@ verification requests echo ``hub.challenge`` with HTTP ``200``.
 
 For ``subscribe`` verification, django-indieweb marks the row ``active``,
 records ``hub.lease_seconds`` when supplied by the hub, and computes
-``lease_expires_at``. For ``unsubscribe`` verification, it marks the row
-``unsubscribed`` and clears active lease fields. Missing, mismatched, or
-out-of-state verification requests are rejected and do not mutate the row.
+``lease_expires_at``. Confirmed lease durations are clamped to
+``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` and
+``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` (defaults: 300 seconds and 30 days).
+For ``unsubscribe`` verification, it marks the row ``unsubscribed`` and clears
+active lease fields. Missing, mismatched, or out-of-state verification
+requests are rejected and do not mutate the row.
 
 The callback also accepts WebSub denial callbacks with ``hub.mode=denied``
 and a matching ``hub.topic``. ``hub.challenge`` is not required for denial.
@@ -239,11 +243,22 @@ Content Distribution
 
 The callback ``POST`` accepts deliveries for active subscriptions only. It
 records latest-delivery metadata including content type, byte size, SHA-256
-digest, status code, delivery time, and signature algorithm. Each recorded
-delivery attempt also creates a ``WebSubDeliveryAttempt`` row with the same
-bounded metadata for operator diagnostics. django-indieweb deliberately does
-not parse feeds or persist delivered content; host applications own those
-semantics.
+digest, status code, delivery time, signature algorithm, and the latest
+accepted delivery digest used for replay checks. Each recorded delivery
+attempt also creates a ``WebSubDeliveryAttempt`` row with the same bounded
+metadata for operator diagnostics. Duplicate bodies matching the latest
+accepted delivery are rejected with HTTP ``409`` for 300 seconds by default;
+set ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to tune or disable the
+window. django-indieweb deliberately does not parse feeds or persist delivered
+content; host applications own those semantics.
+
+Subscribe with a strong ``hub.secret`` whenever possible. Deliveries for rows
+with a stored secret must include a valid SHA-256-or-stronger HMAC signature.
+``X-Hub-Signature-256`` is preferred over legacy ``X-Hub-Signature`` when both
+are present. Legacy ``sha1`` signatures are rejected by default; enable
+``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES`` only for hubs that cannot send
+SHA-256. Set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` to reject unsigned
+deliveries for rows that still have no stored secret.
 
 Configure ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` to receive accepted deliveries:
 
@@ -376,14 +391,18 @@ Signed Deliveries
 
 If a subscription was initiated with ``hub.secret``, the callback requires a
 valid HMAC signature before accepting delivery. It supports
-``X-Hub-Signature-256`` and ``X-Hub-Signature`` headers with
-``sha1``, ``sha256``, ``sha384``, or ``sha512`` digest labels. Missing,
-malformed, unsupported, or mismatched signatures return HTTP ``403`` and are
-recorded without invoking the host hook.
+``X-Hub-Signature-256`` and ``X-Hub-Signature`` headers with SHA-256 or
+stronger digest labels by default. ``sha1`` is accepted only when
+``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES`` is enabled. When multiple supported
+signatures are present, the strongest supplied algorithm must validate.
+Missing, malformed, unsupported, or mismatched signatures return HTTP ``403``
+and are recorded without invoking the host hook.
 
 Unsigned deliveries remain accepted for subscriptions without a stored secret.
-Secrets longer than 200 characters are rejected before a subscription request
-is sent to the hub.
+Set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` to reject them.
+Empty secrets, secrets shorter than 20 bytes, and secrets longer than 200
+bytes when UTF-8 encoded are rejected before a subscription request is sent to
+the hub.
 
 Security and Compatibility Notes
 --------------------------------
@@ -416,6 +435,13 @@ Production deployments should also set a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching proxy/CDN body-size limit. Keep
 ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` small and enqueue accepted deliveries for
 host-owned workers when feed parsing or persistence is non-trivial.
+
+Raw ``hub.secret`` values are encrypted at rest with key material derived from
+Django's ``SECRET_KEY``. Rotating ``SECRET_KEY`` requires re-subscribing with
+fresh WebSub secrets so future deliveries can still be validated. Rolling the
+migration back after rotating ``SECRET_KEY`` may leave encrypted values in
+place; the reverse migration logs a warning when it cannot decrypt a stored
+secret.
 
 django-indieweb does not auto-discover feeds, auto-subscribe to arbitrary
 topics, renew leases in the background, parse delivered feeds, create calendar

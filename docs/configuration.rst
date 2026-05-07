@@ -664,14 +664,37 @@ For production, keep this hook short and hand accepted deliveries to a
 host-owned queue or job table; feed parsing and persistence should not run
 inline in the callback request.
 
-``hub.secret`` values stored on ``WebSubSubscription`` are limited to 200
-characters. Renewal requests preserve the existing stored secret when
+``hub.secret`` values stored on ``WebSubSubscription`` are encrypted at rest
+with key material derived from Django's ``SECRET_KEY``. Raw secrets are still
+needed briefly at runtime to validate hub HMAC signatures, so rotating
+``SECRET_KEY`` requires re-subscribing with fresh secrets. Secrets passed to
+``request_websub_subscription()`` must be non-empty, at least 20 bytes when
+UTF-8 encoded, and at most 200 bytes when UTF-8 encoded. Renewal requests
+preserve the existing stored secret when
 ``request_websub_subscription()`` is called with ``secret=None`` and clear any
 earlier unverified staged secret. When a renewal request provides a new secret,
 that value is staged and only becomes the active delivery secret after the hub
-verifies the renewal; failed renewal requests keep the previous secret. Passing
-``secret=""`` stages removal of the stored secret, so a verified renewal can
-switch the subscription back to unsigned deliveries.
+verifies the renewal; failed renewal requests keep the previous secret.
+If the encryption key material is no longer available during migration
+rollback, the reverse migration leaves encrypted values in place and logs a
+warning before the schema narrows the storage columns.
+
+For production, subscribe with a strong ``hub.secret`` for every topic. Set
+``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = True`` if unsigned deliveries
+should be rejected even for legacy rows without stored secrets.
+``X-Hub-Signature-256`` is preferred over legacy ``X-Hub-Signature`` when both
+headers are present. ``sha1`` signatures are rejected by default; set
+``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True`` only for a hub that cannot
+send SHA-256 signatures.
+
+Accepted delivery bodies are replay-checked for 300 seconds by default using
+the most recent accepted SHA-256 digest on the subscription. Set
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to a non-negative integer,
+or to ``None`` or ``0`` to disable this in-process replay window.
+Subscribe verification clamps confirmed lease durations to the configured
+``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` and
+``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` bounds. Defaults are 300 seconds and 30
+days.
 
 See :doc:`websub` and ``examples/websub_workflows.py`` for tested
 copy-and-adapt delivery hook examples that enqueue a compact payload for a
@@ -684,17 +707,16 @@ WebSub Subscriber Models and Commands
 
 ``WebSubSubscription`` stores host-level subscriber state for a hub/topic pair,
 including tokenized callback identity, pending verification mode, lease
-metadata, staged ``hub.secret`` values, latest request diagnostics, latest
+metadata, encrypted staged ``hub.secret`` values, latest request diagnostics, latest
 denial diagnostics, and latest delivery diagnostics.
 
 ``WebSubDeliveryAttempt`` stores metadata-only delivery history linked to a
 subscription. It records received time, content type, byte size, SHA-256
 digest, signature algorithm, HTTP status code, and bounded error text. It does
 not store raw hub delivery bodies or parsed feed content. The table is
-append-only from the callback path, so high-volume subscribers should choose a
-retention policy that matches their operational needs. Operators can delete
-old attempts from Django admin or from a host-owned maintenance command, for
-example:
+append-only from the callback path and Django admin does not allow deleting
+attempt rows, so high-volume subscribers should choose an explicit host-owned
+retention policy that matches their operational needs, for example:
 
 .. code-block:: python
 
@@ -1129,7 +1151,7 @@ Database Configuration
 Models
 ~~~~~~
 
-django-indieweb currently creates eight models:
+django-indieweb currently creates nine models:
 
 1. **Auth** - Stores authorization codes temporarily
 2. **Token** - Stores access tokens
@@ -1147,9 +1169,11 @@ django-indieweb currently creates eight models:
    fields, latest Vouch URL, and diagnostic current-content last-seen tracking
 7. **WebSubSubscription** - Stores host-level subscriber state for a hub/topic
    pair, including an unguessable callback token, pending verification mode,
-   lease metadata, optional delivery secret, latest request diagnostics, and
-   latest delivery metadata
-8. **Profile** - Stores user h-card data
+   lease metadata, encrypted delivery secrets, latest request diagnostics,
+   latest delivery metadata, and accepted-delivery replay metadata
+8. **WebSubDeliveryAttempt** - Stores metadata-only WebSub delivery-attempt
+   audit rows linked to a ``WebSubSubscription``
+9. **Profile** - Stores user h-card data
 
 ``Auth``, ``Token``, and ``Profile`` use ``settings.AUTH_USER_MODEL`` for their
 user relationships. ``WebmentionSourceSnapshot`` is tied one-to-one to a parent

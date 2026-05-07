@@ -3,7 +3,7 @@ from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 
-from indieweb.models import Auth, Token, Webmention
+from indieweb.models import Auth, Token, Webmention, WebSubDeliveryAttempt, WebSubSubscription
 
 User = get_user_model()
 pytestmark = pytest.mark.django_db
@@ -185,3 +185,32 @@ def test_auth_no_add_permission():
     modeladmin = admin.site._registry[Auth]
 
     assert not modeladmin.has_add_permission(None)
+
+
+def test_websub_subscription_admin_masks_secrets():
+    """Test that WebSub subscription admin exposes only masked secret fields."""
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        secret="shared-secret-value-20",
+        pending_secret="pending-secret-value-20",
+        pending_secret_set=True,
+    )
+    modeladmin = admin.site._registry[WebSubSubscription]
+    readonly_fields = modeladmin.get_readonly_fields(None, subscription)
+
+    assert "secret" not in readonly_fields
+    assert "pending_secret" not in readonly_fields
+    assert modeladmin.masked_secret(subscription) == "configured"
+    assert modeladmin.masked_pending_secret(subscription) == "configured"
+    assert "shared-secret-value-20" not in modeladmin.masked_secret(subscription)
+    assert subscription.callback_token not in modeladmin.masked_callback_token(subscription)
+
+
+def test_websub_delivery_attempt_admin_preserves_audit_rows():
+    """Test that WebSub delivery attempts cannot be added, changed, or deleted via admin."""
+    modeladmin = admin.site._registry[WebSubDeliveryAttempt]
+
+    assert not modeladmin.has_add_permission(None)
+    assert not modeladmin.has_change_permission(None)
+    assert not modeladmin.has_delete_permission(None)

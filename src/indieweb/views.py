@@ -37,7 +37,7 @@ from django.views.generic import View
 
 from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
-from .models import Auth, Token, Webmention, WebSubSubscription
+from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
 from .processors import WebmentionProcessor
 from .rate_limit import RateLimitMixin
 from .websub import (
@@ -46,6 +46,7 @@ from .websub import (
     delivery_body_too_large,
     delivery_content_length_too_large,
     delivery_content_type_allowed,
+    delivery_is_replay,
     delivery_max_bytes,
     process_websub_delivery,
     record_websub_delivery,
@@ -2442,6 +2443,16 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
 
         try:
             signature_algorithm = validate_websub_delivery_signature(subscription, body, request.headers)
+        except WebSubSecretDecryptionError as exc:
+            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {exc}")
+            record_websub_delivery(
+                subscription,
+                body,
+                content_type=content_type,
+                status_code=403,
+                error="secret decryption failed",
+            )
+            return HttpResponse(status=403)
         except ValueError as exc:
             logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {exc}")
             record_websub_delivery(
@@ -2452,6 +2463,17 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
                 error="invalid signature",
             )
             return HttpResponse(status=403)
+
+        if delivery_is_replay(subscription, body):
+            record_websub_delivery(
+                subscription,
+                body,
+                content_type=content_type,
+                status_code=409,
+                error="replay detected",
+                signature_algorithm=signature_algorithm,
+            )
+            return HttpResponse(status=409)
 
         try:
             process_websub_delivery(subscription, body, request.headers)

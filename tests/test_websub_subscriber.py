@@ -24,6 +24,12 @@ from indieweb.websub import (
 )
 from tests import websub_hooks
 
+ACTIVE_SECRET = "active-secret-value-20x"
+NEW_SECRET = "new-secret-value-20x"
+OLD_SECRET = "old-secret-value-20x"
+SHARED_SECRET = "shared-secret-value-20x"
+STORED_SECRET = "stored-secret-value-20x"
+
 
 @pytest.fixture(autouse=True)
 def reset_websub_hooks():
@@ -61,7 +67,7 @@ def test_request_websub_subscription_posts_subscribe_form(settings):
         "https://hub.example/sub",
         callback_base_url="https://example.org/indieweb/websub",
         lease_seconds=3600,
-        secret="shared-secret",
+        secret=SHARED_SECRET,
         client=http_client,
     )
 
@@ -73,14 +79,15 @@ def test_request_websub_subscription_posts_subscribe_form(settings):
     assert result.subscription.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
     assert result.subscription.requested_lease_seconds == 3600
     assert result.subscription.secret == ""
-    assert result.subscription.pending_secret == "shared-secret"
+    assert result.subscription.pending_secret != SHARED_SECRET
+    assert result.subscription.get_pending_secret() == SHARED_SECRET
     assert result.subscription.pending_secret_set is True
     assert body == {
         "hub.mode": ["subscribe"],
         "hub.callback": [f"https://example.org/indieweb/websub/{result.subscription.callback_token}/"],
         "hub.topic": ["https://source.example/feed"],
         "hub.lease_seconds": ["3600"],
-        "hub.secret": ["shared-secret"],
+        "hub.secret": [SHARED_SECRET],
     }
 
 
@@ -132,7 +139,7 @@ def test_request_websub_subscription_records_hub_rejection():
 
 @pytest.mark.django_db
 def test_request_websub_subscription_preserves_active_subscription_on_renewal_failure(subscription):
-    subscription.secret = "stored-secret"
+    subscription.secret = STORED_SECRET
     subscription.confirmed_lease_seconds = 3600
     subscription.lease_expires_at = timezone.now() + timedelta(seconds=3600)
     subscription.save()
@@ -153,7 +160,7 @@ def test_request_websub_subscription_preserves_active_subscription_on_renewal_fa
     assert result.success is False
     assert result.subscription.state == WebSubSubscription.STATE_ACTIVE
     assert result.subscription.pending_mode == ""
-    assert result.subscription.secret == "stored-secret"
+    assert result.subscription.get_secret() == STORED_SECRET
     assert result.subscription.confirmed_lease_seconds == 3600
     assert result.subscription.lease_expires_at is not None
     assert result.subscription.last_request_status_code == 503
@@ -162,7 +169,7 @@ def test_request_websub_subscription_preserves_active_subscription_on_renewal_fa
 
 @pytest.mark.django_db
 def test_request_websub_subscription_restores_pending_secret_on_renewal_failure(subscription):
-    subscription.secret = "old-secret"
+    subscription.secret = OLD_SECRET
     subscription.confirmed_lease_seconds = 3600
     subscription.lease_expires_at = timezone.now() + timedelta(seconds=3600)
     subscription.save()
@@ -176,7 +183,7 @@ def test_request_websub_subscription_restores_pending_secret_on_renewal_failure(
         subscription.topic_url,
         subscription.hub_url,
         callback_base_url="https://example.org/indieweb/websub",
-        secret="new-secret",
+        secret=NEW_SECRET,
         client=http_client,
     )
 
@@ -184,14 +191,14 @@ def test_request_websub_subscription_restores_pending_secret_on_renewal_failure(
     assert result.success is False
     assert result.subscription.state == WebSubSubscription.STATE_ACTIVE
     assert result.subscription.pending_mode == ""
-    assert result.subscription.secret == "old-secret"
+    assert result.subscription.get_secret() == OLD_SECRET
     assert result.subscription.pending_secret == ""
     assert result.subscription.pending_secret_set is False
 
 
 @pytest.mark.django_db
 def test_request_websub_subscription_keeps_old_secret_until_renewal_verification(subscription):
-    subscription.secret = "old-secret"
+    subscription.secret = OLD_SECRET
     subscription.confirmed_lease_seconds = 3600
     subscription.lease_expires_at = timezone.now() + timedelta(seconds=3600)
     subscription.save()
@@ -205,7 +212,7 @@ def test_request_websub_subscription_keeps_old_secret_until_renewal_verification
         subscription.topic_url,
         subscription.hub_url,
         callback_base_url="https://example.org/indieweb/websub",
-        secret="new-secret",
+        secret=NEW_SECRET,
         client=http_client,
     )
 
@@ -213,14 +220,14 @@ def test_request_websub_subscription_keeps_old_secret_until_renewal_verification
     assert result.success is True
     assert result.subscription.state == WebSubSubscription.STATE_ACTIVE
     assert result.subscription.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
-    assert result.subscription.secret == "old-secret"
-    assert result.subscription.pending_secret == "new-secret"
+    assert result.subscription.get_secret() == OLD_SECRET
+    assert result.subscription.get_pending_secret() == NEW_SECRET
     assert result.subscription.pending_secret_set is True
 
 
 @pytest.mark.django_db
 def test_request_websub_subscription_preserves_stored_secret_when_renewal_omits_secret(subscription):
-    subscription.secret = "stored-secret"
+    subscription.secret = STORED_SECRET
     subscription.save()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -239,15 +246,15 @@ def test_request_websub_subscription_preserves_stored_secret_when_renewal_omits_
     assert result.success is True
     assert result.subscription.state == WebSubSubscription.STATE_ACTIVE
     assert result.subscription.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
-    assert result.subscription.secret == "stored-secret"
+    assert result.subscription.get_secret() == STORED_SECRET
     assert result.subscription.pending_secret == ""
     assert result.subscription.pending_secret_set is False
 
 
 @pytest.mark.django_db
 def test_request_websub_subscription_clears_stale_pending_secret_when_renewal_omits_secret(subscription):
-    subscription.secret = "active-secret"
-    subscription.pending_secret = "stale-secret"
+    subscription.secret = ACTIVE_SECRET
+    subscription.pending_secret = "stale-secret-value-20"
     subscription.pending_secret_set = True
     subscription.save()
 
@@ -265,45 +272,87 @@ def test_request_websub_subscription_clears_stale_pending_secret_when_renewal_om
 
     result.subscription.refresh_from_db()
     assert result.success is True
-    assert result.subscription.secret == "active-secret"
+    assert result.subscription.get_secret() == ACTIVE_SECRET
     assert result.subscription.pending_secret == ""
     assert result.subscription.pending_secret_set is False
 
 
 @pytest.mark.django_db
-def test_request_websub_subscription_can_stage_empty_secret_to_drop_signed_delivery(subscription):
-    subscription.secret = "active-secret"
+def test_request_websub_subscription_rejects_empty_secret(subscription):
+    subscription.secret = ACTIVE_SECRET
     subscription.save()
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(202)
+    with pytest.raises(ValueError, match="secret must not be empty"):
+        request_websub_subscription(
+            subscription.topic_url,
+            subscription.hub_url,
+            callback_base_url="https://example.org/indieweb/websub",
+            secret="",
+        )
 
-    http_client = httpx.Client(transport=httpx.MockTransport(handler))
-
-    result = request_websub_subscription(
-        subscription.topic_url,
-        subscription.hub_url,
-        callback_base_url="https://example.org/indieweb/websub",
-        secret="",
-        client=http_client,
-    )
-
-    result.subscription.refresh_from_db()
-    assert result.success is True
-    assert result.subscription.secret == "active-secret"
-    assert result.subscription.pending_secret == ""
-    assert result.subscription.pending_secret_set is True
+    subscription.refresh_from_db()
+    assert subscription.get_secret() == ACTIVE_SECRET
+    assert subscription.pending_secret == ""
+    assert subscription.pending_secret_set is False
 
 
 @pytest.mark.django_db
 def test_request_websub_subscription_rejects_overlong_secret():
-    with pytest.raises(ValueError, match="secret must be at most 200 characters"):
+    with pytest.raises(ValueError, match="secret must be at most 200 bytes"):
         request_websub_subscription(
             "https://source.example/feed",
             "https://hub.example/sub",
             callback_base_url="https://example.org/indieweb/websub",
             secret="s" * 201,
         )
+    assert not WebSubSubscription.objects.filter(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_request_websub_subscription_rejects_multibyte_secret_over_byte_limit():
+    with pytest.raises(ValueError, match="secret must be at most 200 bytes"):
+        request_websub_subscription(
+            "https://source.example/feed",
+            "https://hub.example/sub",
+            callback_base_url="https://example.org/indieweb/websub",
+            secret="🙂" * 51,
+        )
+
+    assert not WebSubSubscription.objects.filter(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_request_websub_subscription_rejects_reserved_secret_prefix():
+    with pytest.raises(ValueError, match="reserved prefix"):
+        request_websub_subscription(
+            "https://source.example/feed",
+            "https://hub.example/sub",
+            callback_base_url="https://example.org/indieweb/websub",
+            secret="fernet$secret-value-20x",
+        )
+
+    assert not WebSubSubscription.objects.filter(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_request_websub_subscription_rejects_short_secret():
+    with pytest.raises(ValueError, match="secret must be at least 20 bytes"):
+        request_websub_subscription(
+            "https://source.example/feed",
+            "https://hub.example/sub",
+            callback_base_url="https://example.org/indieweb/websub",
+            secret="too-short",
+        )
+
     assert not WebSubSubscription.objects.filter(
         hub_url="https://hub.example/sub",
         topic_url="https://source.example/feed",
@@ -383,14 +432,45 @@ def test_callback_verification_confirms_subscribe_and_echoes_challenge(client):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("lease_seconds", "expected_confirmed"),
+    [
+        ("60", 300),
+        ("9999999", 2592000),
+    ],
+)
+def test_callback_verification_clamps_confirmed_lease(client, lease_seconds, expected_confirmed):
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url=f"https://source.example/feed-{lease_seconds}",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "subscribe",
+            "hub.topic": subscription.topic_url,
+            "hub.challenge": "abc123",
+            "hub.lease_seconds": lease_seconds,
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert subscription.confirmed_lease_seconds == expected_confirmed
+
+
+@pytest.mark.django_db
 def test_callback_verification_applies_pending_secret(client):
     subscription = WebSubSubscription.objects.create(
         hub_url="https://hub.example/sub",
         topic_url="https://source.example/feed",
         state=WebSubSubscription.STATE_ACTIVE,
         pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
-        secret="old-secret",
-        pending_secret="new-secret",
+        secret=OLD_SECRET,
+        pending_secret=NEW_SECRET,
         pending_secret_set=True,
     )
 
@@ -406,7 +486,7 @@ def test_callback_verification_applies_pending_secret(client):
     subscription.refresh_from_db()
     assert response.status_code == 200
     assert subscription.state == WebSubSubscription.STATE_ACTIVE
-    assert subscription.secret == "new-secret"
+    assert subscription.get_secret() == NEW_SECRET
     assert subscription.pending_secret == ""
     assert subscription.pending_secret_set is False
     assert subscription.pending_mode == ""
@@ -419,7 +499,7 @@ def test_callback_verification_applies_empty_pending_secret(client):
         topic_url="https://source.example/feed",
         state=WebSubSubscription.STATE_ACTIVE,
         pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
-        secret="old-secret",
+        secret=OLD_SECRET,
         pending_secret="",
         pending_secret_set=True,
     )
@@ -475,7 +555,7 @@ def test_callback_denial_records_pending_subscribe_reason(client):
         state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
         pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
         requested_lease_seconds=3600,
-        pending_secret="new-secret",
+        pending_secret=NEW_SECRET,
         pending_secret_set=True,
         last_request_error="previous outbound diagnostic",
     )
@@ -534,8 +614,8 @@ def test_callback_denial_for_active_renewal_preserves_current_subscription(clien
     lease_expires_at = timezone.now() + timedelta(seconds=3600)
     subscription.state = WebSubSubscription.STATE_ACTIVE
     subscription.pending_mode = WebSubSubscription.MODE_SUBSCRIBE
-    subscription.secret = "active-secret"
-    subscription.pending_secret = "new-secret"
+    subscription.secret = ACTIVE_SECRET
+    subscription.pending_secret = NEW_SECRET
     subscription.pending_secret_set = True
     subscription.confirmed_lease_seconds = 3600
     subscription.lease_expires_at = lease_expires_at
@@ -553,7 +633,7 @@ def test_callback_denial_for_active_renewal_preserves_current_subscription(clien
     subscription.refresh_from_db()
     assert response.status_code == 204
     assert subscription.state == WebSubSubscription.STATE_ACTIVE
-    assert subscription.secret == "active-secret"
+    assert subscription.get_secret() == ACTIVE_SECRET
     assert subscription.pending_secret == ""
     assert subscription.pending_secret_set is False
     assert subscription.confirmed_lease_seconds == 3600
@@ -647,6 +727,8 @@ def test_callback_post_records_delivery_and_calls_hook(client, settings, subscri
     assert subscription.last_delivery_content_type == "application/atom+xml"
     assert subscription.last_delivery_size == len(body)
     assert subscription.last_delivery_digest == hashlib.sha256(body).hexdigest()
+    assert subscription.last_accepted_delivery_digest == subscription.last_delivery_digest
+    assert subscription.last_accepted_delivery_at is not None
     attempt = WebSubDeliveryAttempt.objects.get(subscription=subscription)
     assert attempt.content_type == "application/atom+xml"
     assert attempt.size == len(body)
@@ -671,10 +753,10 @@ def test_callback_post_is_csrf_exempt(settings, subscription):
 
 @pytest.mark.django_db
 def test_callback_post_validates_signed_delivery(client, subscription):
-    subscription.secret = "shared-secret"
+    subscription.secret = SHARED_SECRET
     subscription.save()
     body = b'{"items":[]}'
-    digest = hmac.new(subscription.secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    digest = hmac.new(SHARED_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
     response = client.post(
         _callback_url(subscription),
@@ -689,9 +771,21 @@ def test_callback_post_validates_signed_delivery(client, subscription):
 
 
 @pytest.mark.django_db
+def test_callback_post_requires_signature_when_configured(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = True
+
+    response = client.post(_callback_url(subscription), data=b'{"items":[]}', content_type="application/json")
+
+    subscription.refresh_from_db()
+    assert response.status_code == 403
+    assert subscription.last_delivery_status_code == 403
+    assert subscription.last_delivery_error == "invalid signature"
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("signature_header", [None, "sha256=bad"])
 def test_callback_post_rejects_missing_or_bad_signature(client, subscription, signature_header):
-    subscription.secret = "shared-secret"
+    subscription.secret = SHARED_SECRET
     subscription.save()
     headers = {}
     if signature_header is not None:
@@ -716,14 +810,81 @@ def test_callback_post_rejects_missing_or_bad_signature(client, subscription, si
 
 
 @pytest.mark.django_db
-def test_validate_websub_delivery_signature_accepts_legacy_signature_header(subscription):
-    subscription.secret = "shared-secret"
+def test_callback_post_reports_secret_decryption_failure(client, settings, subscription):
+    subscription.secret = SHARED_SECRET
+    subscription.save()
+    settings.SECRET_KEY = "rotated-secret-key"
+
+    response = client.post(
+        _callback_url(subscription),
+        data=b'{"items":[]}',
+        content_type="application/json",
+        HTTP_X_HUB_SIGNATURE_256="sha256=bad",
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 403
+    assert subscription.last_delivery_status_code == 403
+    assert subscription.last_delivery_error == "secret decryption failed"
+
+
+@pytest.mark.django_db
+def test_validate_websub_delivery_signature_accepts_legacy_signature_header_when_enabled(settings, subscription):
+    settings.INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True
+    subscription.secret = SHARED_SECRET
     body = b"<feed/>"
-    digest = hmac.new(subscription.secret.encode("utf-8"), body, hashlib.sha1).hexdigest()
+    digest = hmac.new(SHARED_SECRET.encode("utf-8"), body, hashlib.sha1).hexdigest()
 
     algorithm = validate_websub_delivery_signature(subscription, body, {"X-Hub-Signature": f"sha1={digest}"})
 
     assert algorithm == "sha1"
+
+
+@pytest.mark.django_db
+def test_validate_websub_delivery_signature_rejects_legacy_signature_header_by_default(subscription):
+    subscription.secret = SHARED_SECRET
+    body = b"<feed/>"
+    digest = hmac.new(SHARED_SECRET.encode("utf-8"), body, hashlib.sha1).hexdigest()
+
+    with pytest.raises(ValueError, match="supported algorithm"):
+        validate_websub_delivery_signature(subscription, body, {"X-Hub-Signature": f"sha1={digest}"})
+
+
+@pytest.mark.django_db
+def test_validate_websub_delivery_signature_prefers_strongest_header(settings, subscription):
+    settings.INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True
+    subscription.secret = SHARED_SECRET
+    body = b"<feed/>"
+    sha1_digest = hmac.new(SHARED_SECRET.encode("utf-8"), body, hashlib.sha1).hexdigest()
+
+    with pytest.raises(ValueError, match="did not validate"):
+        validate_websub_delivery_signature(
+            subscription,
+            body,
+            {
+                "X-Hub-Signature-256": "sha256=bad",
+                "X-Hub-Signature": f"sha1={sha1_digest}",
+            },
+        )
+
+
+@pytest.mark.django_db
+def test_callback_post_rejects_duplicate_delivery_within_replay_window(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+    body = b"<feed><id>1</id></feed>"
+
+    first_response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    second_response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+
+    subscription.refresh_from_db()
+    assert first_response.status_code == 204
+    assert second_response.status_code == 409
+    assert subscription.last_delivery_status_code == 409
+    assert subscription.last_delivery_error == "replay detected"
+    assert subscription.last_accepted_delivery_digest == hashlib.sha256(body).hexdigest()
+    assert len(websub_hooks.DELIVERIES) == 1
+    assert WebSubDeliveryAttempt.objects.filter(subscription=subscription, status_code=204).count() == 1
+    assert WebSubDeliveryAttempt.objects.filter(subscription=subscription, status_code=409).count() == 1
 
 
 @pytest.mark.django_db

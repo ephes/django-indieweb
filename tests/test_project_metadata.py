@@ -19,6 +19,7 @@ MINIMUM_RUNTIME_FLOORS = {
     "httpx": Version("0.28.1"),
     "beautifulsoup4": Version("4.14.2"),
     "mf2py": Version("2.0.1"),
+    "cryptography": Version("48.0.0"),
 }
 
 

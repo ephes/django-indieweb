@@ -67,7 +67,9 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
     list_filter = ("state", "created", "last_denied_at", "last_delivery_at")
     search_fields = ("topic_url", "hub_url")
     readonly_fields = (
-        "callback_token",
+        "masked_callback_token",
+        "masked_secret",
+        "masked_pending_secret",
         "last_challenge",
         "last_verified_at",
         "last_request_at",
@@ -84,18 +86,32 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
         "last_delivery_signature_algorithm",
         "last_delivery_status_code",
         "last_delivery_error",
+        "last_accepted_delivery_at",
+        "last_accepted_delivery_digest",
         "created",
         "modified",
     )
     ordering = ("-modified",)
 
+    @admin.display(description="Callback token")
+    def masked_callback_token(self, obj: WebSubSubscription) -> str:
+        return obj.masked_callback_token()
+
+    @admin.display(description="Active secret")
+    def masked_secret(self, obj: WebSubSubscription) -> str:
+        return obj.masked_secret()
+
+    @admin.display(description="Pending secret")
+    def masked_pending_secret(self, obj: WebSubSubscription) -> str:
+        return obj.masked_pending_secret()
+
     fieldsets = (
-        ("Subscription", {"fields": ("hub_url", "topic_url", "callback_token", "state", "pending_mode")}),
+        ("Subscription", {"fields": ("hub_url", "topic_url", "masked_callback_token", "state", "pending_mode")}),
         (
             "Lease",
             {"fields": ("requested_lease_seconds", "confirmed_lease_seconds", "lease_expires_at")},
         ),
-        ("Secret", {"fields": ("secret", "pending_secret", "pending_secret_set")}),
+        ("Secret", {"fields": ("masked_secret", "masked_pending_secret", "pending_secret_set")}),
         (
             "Latest Request",
             {
@@ -123,6 +139,8 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
                     "last_delivery_signature_algorithm",
                     "last_delivery_status_code",
                     "last_delivery_error",
+                    "last_accepted_delivery_at",
+                    "last_accepted_delivery_digest",
                 ),
             },
         ),
@@ -153,6 +171,9 @@ class WebSubDeliveryAttemptAdmin(admin.ModelAdmin):
         return False
 
     def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         return False
 
 

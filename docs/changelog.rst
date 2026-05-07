@@ -5,6 +5,18 @@ Changelog
 
 Unreleased
 ----------
+* Hardened WebSub subscriber delivery handling. ``hub.secret`` and staged
+  renewal secrets are now encrypted at rest with key material derived from
+  Django's ``SECRET_KEY`` using the new ``cryptography`` runtime dependency;
+  new secrets must be non-empty, at least 20 bytes, and at most 200 bytes.
+  Subscriber delivery signatures now prefer the strongest supplied
+  algorithm, reject legacy ``sha1`` unless
+  ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES`` is enabled, can require signed
+  deliveries through ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES``, and reject
+  duplicate accepted bodies within the configurable replay window. Subscribe
+  verification now clamps confirmed lease durations to configurable minimum and
+  maximum bounds, and Django admin masks callback tokens/secrets while keeping
+  delivery-attempt audit rows non-deletable.
 * Tightened test and release metadata. The test settings now load
   ``SECRET_KEY`` from ``DJANGO_INDIEWEB_TEST_SECRET_KEY`` with an explicit
   insecure sentinel default, runtime dependency floors are declared for
