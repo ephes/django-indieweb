@@ -6,7 +6,10 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 1
 
-No current Priority 1 items.
+- [ ] Restore CI by pinning `astral-sh/setup-uv` to an existing ref.
+  - References: `.github/workflows/ci.yml` (`astral-sh/setup-uv@v8` on the quality/docs and tox jobs); failing CI runs `25504308984` and `25510840053` on `develop`.
+  - Current state: every CI job fails during GitHub Actions setup before project commands run with `Unable to resolve action 'astral-sh/setup-uv@v8', unable to find version 'v8'`. The upstream repository has concrete `v8.0.0`/`v8.1.0` tags but no floating `v8` ref.
+  - Desired outcome: update both workflow references to a resolvable `setup-uv` ref (prefer a concrete semver tag or commit SHA), rerun the CI workflow, and then address any real project-level failures that become visible after Actions setup succeeds.
 
 ## Priority 2
 
@@ -18,15 +21,7 @@ No current Priority 2 Security Residuals items.
 
 ### API Hardening
 
-- [ ] Hash authorization codes at rest and mask them in admin.
-  - References: `SECURITY_ANALYSIS.md` "Plaintext authorization codes" residual; `src/indieweb/models.py` (`Auth`, `GenKeyMixin`); `src/indieweb/admin.py` (`AuthAdmin`).
-  - Current state: `Auth.key` is stored plaintext. The 60-second TTL bounds exposure but a DB-read attacker within that window can issue tokens, and the admin change form exposes the plaintext code.
-  - Desired outcome: hash `Auth.key` analogously to `Token.key` (HMAC-SHA256 with `SECRET_KEY`), expose only a `masked_key` in `AuthAdmin`, add a data migration for any in-flight rows, and keep all token-exchange paths working. Add regression tests for issuance + lookup + introspection.
-
-- [ ] Cap response size on the Webmention sender's outbound POST helper.
-  - References: `SECURITY_ANALYSIS.md` finding 7 / response-size residual; `src/indieweb/senders.py` (`request_with_webmention_redirects` callers); `src/indieweb/http_client.py`; `tests/test_webmention_sender.py`.
-  - Current state: the WebSub hub callers now pass `max_bytes` to `request_with_safe_redirects`, but the Webmention sender still uses `request_with_webmention_redirects` without a body cap, so a hostile webmention endpoint can return an unbounded response and force the sender to buffer it.
-  - Desired outcome: thread `max_bytes` through `request_with_webmention_redirects` (defaulting to a configurable cap) and add tests that an oversized response is surfaced as a delivery failure rather than buffered.
+No current Priority 3 API Hardening items.
 
 ## Priority 4
 

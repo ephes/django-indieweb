@@ -226,6 +226,8 @@ def request_with_webmention_redirects(
     client: httpx.Client,
     method: str,
     url: str,
+    *,
+    max_bytes: int | None = None,
     **request_kwargs: Any,
 ) -> RedirectedResponse:
     """Run a safe HTTP request with explicit bounded Webmention redirect handling.
@@ -235,8 +237,13 @@ def request_with_webmention_redirects(
     redirect. The original method and request body are preserved across all
     followed redirects, including Webmention endpoint ``POST`` delivery. Each
     request URL and redirect target is screened with the shared SSRF checks.
+
+    When ``max_bytes`` is provided the response is streamed and decoded bytes are
+    bounded so a hostile Webmention endpoint cannot force the sender to buffer
+    an unbounded reply; oversized responses surface as
+    :class:`HTTPResponseTooLarge`.
     """
-    return request_with_safe_redirects(client, method, url, **request_kwargs)
+    return request_with_safe_redirects(client, method, url, max_bytes=max_bytes, **request_kwargs)
 
 
 def request_with_safe_redirects(

@@ -6,6 +6,7 @@ from indieweb.http_client import (
     UnsafeHTTPUrlError,
     WebmentionRedirectError,
     request_with_safe_redirects,
+    request_with_webmention_redirects,
     resolve_safe_http_url,
     response_text_with_limit,
     stream_with_safe_redirects,
@@ -116,6 +117,44 @@ def test_response_text_with_limit_counts_decoded_bytes():
 
     with pytest.raises(HTTPResponseTooLarge):
         response_text_with_limit(response, max_bytes=4)
+
+
+def test_request_with_webmention_redirects_enforces_max_bytes():
+    """Webmention POST helper bounds decoded response bytes when max_bytes is set."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 4096)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(HTTPResponseTooLarge):
+        request_with_webmention_redirects(
+            client,
+            "POST",
+            "https://example.com/webmention",
+            data={"source": "https://src/", "target": "https://dst/"},
+            max_bytes=64,
+            resolver=public_resolver,
+        )
+
+
+def test_request_with_webmention_redirects_allows_small_response():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202, content=b"ok")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = request_with_webmention_redirects(
+        client,
+        "POST",
+        "https://example.com/webmention",
+        data={"source": "https://src/", "target": "https://dst/"},
+        max_bytes=4096,
+        resolver=public_resolver,
+    )
+
+    assert result.response.status_code == 202
+    assert result.response.content == b"ok"
 
 
 def test_stream_with_safe_redirects_aborts_while_reading_chunks():

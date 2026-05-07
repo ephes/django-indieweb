@@ -5,6 +5,24 @@ Changelog
 
 Unreleased
 ----------
+* Hashed IndieAuth authorization codes at rest. ``Auth.key`` is now stored as an
+  HMAC-SHA256 digest of the issued raw code (using ``settings.SECRET_KEY``),
+  mirroring the existing ``Token.key`` posture. The raw code is returned to the
+  client only at issuance and surfaced through ``Auth.raw_key``; lookups go
+  through ``Auth.get_for_raw_key()`` and at-rest digests are not accepted as the
+  submitted code. The Django admin replaces the ``key`` field with a non-secret
+  ``masked_key`` accessor (``hmac-sha256$...``). Migration ``0023`` widens the
+  storage column and rehashes any in-flight rows. Hosts that previously ran raw
+  database queries against ``Auth.key`` should switch to ``Auth.hash_key(raw)``.
+* Capped the outbound Webmention sender's POST response body. The
+  ``request_with_webmention_redirects`` helper now accepts a ``max_bytes``
+  keyword that routes through the streaming path with the existing decoded-bytes
+  budget, and ``WebmentionSender.send_webmention()`` threads the new
+  ``INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES`` setting (default 1 MB; ``None``
+  disables the cap, malformed values fall back to the default) through to that
+  helper. Hostile Webmention endpoints returning oversized bodies surface as
+  delivery failures with ``status_code=None`` and a ``response too large`` error
+  rather than buffered into memory.
 * Pinned SSRF-safe outbound HTTP connections to checked IP addresses. The
   shared ``request_with_safe_redirects`` and ``stream_with_safe_redirects``
   helpers now resolve the URL host once with the configured address resolver,

@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from .http_client import (
     SAFE_HTTP_DEFAULT_TIMEOUT,
+    HTTPResponseTooLarge,
     is_safe_http_url,
     request_with_webmention_redirects,
     stream_with_safe_redirects,
@@ -19,6 +20,7 @@ from .http_client import (
 from .models import WebmentionOutboundTarget
 
 DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES = 1024 * 1024
 DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS = 24 * 60 * 60
 DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
@@ -33,6 +35,25 @@ def _sender_fetch_max_bytes() -> int | None:
     except (TypeError, ValueError):
         return DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
     return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
+
+
+def _sender_response_max_bytes() -> int | None:
+    """Return the decoded byte cap applied to Webmention endpoint POST responses.
+
+    ``None`` is the explicit "disable cap" sentinel. Any malformed value falls
+    back to the default cap so an invalid setting does not silently let a
+    hostile endpoint return an unbounded body.
+    """
+    configured = getattr(
+        settings, "INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
+    )
+    if configured is None:
+        return None
+    try:
+        parsed = int(configured)
+    except (TypeError, ValueError):
+        return DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
+    return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
 
 
 def _positive_int_setting(name: str, default: int) -> int:
@@ -227,6 +248,7 @@ class WebmentionSender:
                     endpoint,
                     data=payload,
                     timeout=self.post_timeout,
+                    max_bytes=_sender_response_max_bytes(),
                 )
                 response = delivered.response
 
@@ -241,6 +263,8 @@ class WebmentionSender:
                         "error": f"HTTP {response.status_code}",
                     }
 
+        except HTTPResponseTooLarge as e:
+            return {"success": False, "status_code": None, "error": f"response too large: {e}"}
         except httpx.RequestError as e:
             # Handle httpx exceptions (network errors, timeouts, etc.)
             status_code = None

@@ -92,7 +92,7 @@ def test_wrong_auth_code(client, token_endpoint_url, token_payload):
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
-    assert models.Auth.objects.filter(key="authkey").exists()
+    assert models.Auth.objects.filter(key=models.Auth.hash_key("authkey")).exists()
     assert models.Token.objects.count() == 0
 
 
@@ -500,7 +500,7 @@ def test_token_rejects_invalid_redirect_uri(client, token_endpoint_url, token_pa
     response = client.post(token_endpoint_url, data=token_payload)
     assert response.status_code == 400
     assert "invalid_grant" in response.content.decode("utf-8")
-    assert models.Auth.objects.filter(key=token_payload["code"]).exists()
+    assert models.Auth.objects.filter(key=models.Auth.hash_key(token_payload["code"])).exists()
     assert models.Token.objects.count() == 0
 
 

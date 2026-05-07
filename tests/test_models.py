@@ -29,3 +29,98 @@ def test_auth_and_token_keys_are_model_unique():
     """Auth and Token bearer/code keys must be unique in model state."""
     assert Auth._meta.get_field("key").unique is True
     assert Token._meta.get_field("key").unique is True
+
+
+@pytest.mark.django_db
+def test_auth_save_hashes_provided_key_at_rest():
+    """Saving an Auth with a raw key persists the HMAC hash and exposes the raw value once."""
+    user = User.objects.create_user(username="hashed-auth", email="h@example.com", password="x")
+    auth = Auth.objects.create(
+        owner=user,
+        key="rawauthsecret",
+        state="state",
+        me="http://example.org",
+        scope="post",
+        client_id="https://webapp.example.org",
+    )
+
+    # In-memory instance still exposes the raw value to the issuance flow.
+    assert auth.key == "rawauthsecret"
+
+    stored_key = Auth.objects.values_list("key", flat=True).get(pk=auth.pk)
+    assert stored_key.startswith("hmac-sha256$")
+    assert stored_key == Auth.hash_key("rawauthsecret")
+    assert stored_key != "rawauthsecret"
+
+
+@pytest.mark.django_db
+def test_auth_save_generates_random_hashed_key_when_blank():
+    """Saving an Auth without a key generates a fresh raw code and stores its hash."""
+    user = User.objects.create_user(username="auto-auth", email="a@example.com", password="x")
+    auth = Auth(
+        owner=user,
+        state="state",
+        me="http://example.org",
+        scope="post",
+        client_id="https://webapp.example.org",
+    )
+    auth.save()
+
+    assert auth.raw_key is not None
+    assert auth.key == auth.raw_key
+
+    stored_key = Auth.objects.values_list("key", flat=True).get(pk=auth.pk)
+    assert stored_key == Auth.hash_key(auth.raw_key)
+    assert stored_key != auth.raw_key
+
+
+@pytest.mark.django_db
+def test_auth_get_for_raw_key_finds_hashed_row():
+    """Auth.get_for_raw_key looks up the row by HMAC of the submitted raw value."""
+    user = User.objects.create_user(username="lookup-auth", email="l@example.com", password="x")
+    auth = Auth.objects.create(
+        owner=user,
+        key="lookmeup",
+        state="state",
+        me="http://example.org",
+        scope="post",
+        client_id="https://webapp.example.org",
+    )
+
+    found = Auth.get_for_raw_key("lookmeup", client_id="https://webapp.example.org")
+    assert found.pk == auth.pk
+
+    with pytest.raises(Auth.DoesNotExist):
+        Auth.get_for_raw_key("wrong", client_id="https://webapp.example.org")
+
+
+@pytest.mark.django_db
+def test_auth_get_for_raw_key_rejects_hashed_input():
+    """Submitting the at-rest hash as a raw key must not authenticate."""
+    user = User.objects.create_user(username="hash-input", email="hi@example.com", password="x")
+    Auth.objects.create(
+        owner=user,
+        key="rawvalue",
+        state="state",
+        me="http://example.org",
+        scope="post",
+        client_id="https://webapp.example.org",
+    )
+    hashed = Auth.hash_key("rawvalue")
+    with pytest.raises(Auth.DoesNotExist):
+        Auth.get_for_raw_key(hashed, client_id="https://webapp.example.org")
+
+
+def test_auth_masked_key_does_not_disclose_raw_value():
+    """Auth.masked_key returns a non-secret display form."""
+    auth = Auth(key=Auth.hash_key("rawvalue"))
+    masked = auth.masked_key()
+    assert masked == "hmac-sha256$..."
+    assert "rawvalue" not in masked
+
+    legacy = Auth(key="legacycode")
+    legacy_masked = legacy.masked_key()
+    assert "legacycode" not in legacy_masked
+
+    empty = Auth(key="")
+    assert empty.masked_key() == ""

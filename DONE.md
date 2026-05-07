@@ -4,6 +4,57 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Hash IndieAuth authorization codes at rest and mask them in admin
+
+- ``Auth.key`` is now stored as the same HMAC-SHA256 digest format used for
+  ``Token.key`` (``hmac-sha256$<hex>``), keyed on ``settings.SECRET_KEY``. The
+  raw authorization code is generated at issuance and surfaced once via
+  ``Auth.raw_key`` (similar to ``Token.raw_key``); ``Auth.save()`` rehashes any
+  caller-provided plaintext value before persisting. ``Auth.get_for_raw_key``
+  performs the lookup-by-digest with a constant-time check against the stored
+  hash and rejects submissions that already look like the at-rest digest, so a
+  leaked DB row cannot be replayed into a token exchange.
+- View paths that previously called ``Auth.objects.get(key=...)`` now route
+  through ``Auth.get_for_raw_key`` (``ConsentView._verify_auth_code``,
+  ``TokenView._get_auth_for_exchange``); the duplicate-row defensive delete also
+  handles both the hashed and raw forms during the upgrade window.
+- ``AuthAdmin`` exposes a non-secret ``masked_key`` accessor instead of the
+  raw ``key`` field, mirroring the ``TokenAdmin`` posture, and replaces ``key``
+  in the readonly fieldset.
+- Migration ``0023_hash_auth_keys`` widens ``Auth.key`` to 80 chars and
+  rehashes any plaintext rows in place, so deployments with in-flight auth
+  codes upgrade without a manual data fix.
+- Validation: ``uv run pytest`` (1281 passed, including new
+  ``test_models.py`` coverage for hash/lookup/masking and a ``test_admin.py``
+  end-to-end check that the change view does not render the raw key); ``uv run
+  mypy`` (no issues); ``uv run ruff check .`` (all checks passed).
+- Documentation: changelog entry covers the new at-rest hashing posture and
+  notes that hosts running raw queries against ``Auth.key`` must switch to
+  ``Auth.hash_key(raw)`` for lookups.
+
+### Cap response size on the Webmention sender's outbound POST helper
+
+- ``request_with_webmention_redirects`` now accepts a ``max_bytes`` keyword and
+  forwards it to ``request_with_safe_redirects``, routing the request through
+  the existing streaming/decoded-byte-budget path so a hostile Webmention
+  endpoint cannot return an unbounded body.
+- ``WebmentionSender.send_webmention()`` reads
+  ``INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES`` (new setting; default 1 MB,
+  ``None`` disables, malformed values fall back to the default) and threads
+  it through to the helper. ``HTTPResponseTooLarge`` is caught and reported as
+  a delivery failure (``success=False``, ``status_code=None``,
+  ``error="response too large: ..."``), keeping the existing failure shape
+  intact for downstream callers.
+- Validation: ``uv run pytest`` (1281 passed, including new tests in
+  ``tests/test_http_client.py`` that ``request_with_webmention_redirects``
+  enforces the cap on real ``httpx.Client`` transports, and tests in
+  ``tests/test_webmention_sender.py`` that the sender surfaces oversized
+  responses as failures and forwards the configured cap to the helper);
+  ``uv run mypy`` (no issues); ``uv run ruff check .`` (all checks passed).
+- Documentation: changelog entry documents the new
+  ``INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES`` setting and the failure-shape
+  behavior for oversized endpoint replies.
+
 ### Pin SSRF-safe outbound HTTP connections to checked addresses
 
 - Bound the SSRF safety decision to the actual socket connection: outbound

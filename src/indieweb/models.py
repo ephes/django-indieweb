@@ -15,6 +15,8 @@ from django.utils.crypto import get_random_string
 
 TOKEN_KEY_HASH_PREFIX = "hmac-sha256$"
 TOKEN_KEY_LENGTH = 32
+AUTH_KEY_LENGTH = 32
+AUTH_KEY_STORAGE_MAX_LENGTH = 80
 WEBMENTION_STATUS_TOKEN_LENGTH = 48
 WEBSUB_SECRET_ENCRYPTED_PREFIX = "fernet$"
 WEBSUB_SECRET_KEY_SALT = b"django-indieweb-websub-secret-v1"
@@ -53,7 +55,7 @@ class GenKeyMixin(models.Model):
         super().save(*args, **kwargs)
 
 
-class Auth(GenKeyMixin):
+class Auth(models.Model):
     """Stores authorization grants during the IndieAuth flow."""
 
     created = models.DateTimeField(auto_now_add=True)
@@ -65,7 +67,7 @@ class Auth(GenKeyMixin):
     before exchanging the auth code for an access token.
     """
 
-    key = models.CharField(max_length=32, unique=True)
+    key = models.CharField(max_length=AUTH_KEY_STORAGE_MAX_LENGTH, unique=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="indieweb_auth", on_delete=models.CASCADE)
     state = models.CharField(max_length=32)
     client_id = models.CharField(max_length=512)
@@ -80,6 +82,77 @@ class Auth(GenKeyMixin):
 
     def __str__(self) -> str:
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        key_changed = False
+        raw_key = self.raw_key
+        if not self.key:
+            self.set_key()
+            key_changed = True
+        elif not self.is_hashed_key(self.key):
+            self.set_key(self.key)
+            key_changed = True
+        if key_changed:
+            raw_key = self.raw_key
+        if key_changed and kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = set(kwargs["update_fields"]) | {"key"}
+        super().save(*args, **kwargs)
+        if raw_key is not None:
+            self.key = raw_key
+
+    @classmethod
+    def make_raw_key(cls) -> str:
+        """Return a new raw authorization code value for one-time issuance."""
+        return get_random_string(length=AUTH_KEY_LENGTH)
+
+    @classmethod
+    def hash_key(cls, raw_key: str) -> str:
+        """Return the stable at-rest HMAC digest for a raw authorization code."""
+        digest = hmac.new(
+            str(settings.SECRET_KEY).encode("utf-8"),
+            raw_key.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return f"{TOKEN_KEY_HASH_PREFIX}{digest}"
+
+    @classmethod
+    def is_hashed_key(cls, value: str) -> bool:
+        """Return whether ``value`` begins with the reserved at-rest hash prefix."""
+        return value.startswith(TOKEN_KEY_HASH_PREFIX)
+
+    @classmethod
+    def get_for_raw_key(cls, raw_key: str, **filters: Any) -> Auth:
+        """Return the authorization row matching ``raw_key`` without storing the raw value."""
+        if cls.is_hashed_key(raw_key):
+            raise cls.DoesNotExist
+        hashed_key = cls.hash_key(raw_key)
+        try:
+            auth = cls.objects.get(key=hashed_key, **filters)
+        except cls.DoesNotExist:
+            auth = cls.objects.get(key=raw_key, **filters)
+        if not hmac.compare_digest(auth.key, hashed_key) and not hmac.compare_digest(auth.key, raw_key):
+            raise cls.DoesNotExist
+        return auth
+
+    def set_key(self, raw_key: str | None = None) -> str:
+        """Set a new authorization code hash and return the raw value for issuance."""
+        raw_key = raw_key or self.make_raw_key()
+        self.key = self.hash_key(raw_key)
+        self._raw_key = raw_key
+        return raw_key
+
+    @property
+    def raw_key(self) -> str | None:
+        """Return the one-time raw authorization code when this instance just generated one."""
+        return getattr(self, "_raw_key", None)
+
+    def masked_key(self) -> str:
+        """Return a non-secret display form for the stored authorization code hash."""
+        if not self.key:
+            return ""
+        if self.is_hashed_key(self.key):
+            return f"{TOKEN_KEY_HASH_PREFIX}..."
+        return "legacy-plaintext-code-hidden"
 
 
 class Token(GenKeyMixin):

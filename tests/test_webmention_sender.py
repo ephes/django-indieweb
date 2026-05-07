@@ -439,6 +439,53 @@ def test_send_webmention_network_error(mock_client_class, sender, source_url, ta
     assert "Connection failed" in result["error"]
 
 
+@patch("indieweb.senders.request_with_webmention_redirects")
+@patch("httpx.Client")
+def test_send_webmention_treats_oversized_response_as_failure(
+    mock_client_class, mock_request_with_redirects, sender, source_url, target_url
+):
+    """A hostile Webmention endpoint returning a body larger than the cap is a delivery failure."""
+    from indieweb.http_client import HTTPResponseTooLarge
+
+    mock_client = Mock()
+    mock_client_class.return_value.__enter__.return_value = mock_client
+    mock_request_with_redirects.side_effect = HTTPResponseTooLarge("response exceeded 1024 decoded bytes")
+
+    result = sender.send_webmention(source_url, target_url, "https://target.com/webmention")
+
+    assert result["success"] is False
+    assert result["status_code"] is None
+    assert "too large" in result["error"]
+    # The cap kwarg must have been threaded through to the redirect helper.
+    assert "max_bytes" in mock_request_with_redirects.call_args.kwargs
+    assert mock_request_with_redirects.call_args.kwargs["max_bytes"] is not None
+
+
+@override_settings(INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES=2048)
+@patch("indieweb.senders.request_with_webmention_redirects")
+@patch("httpx.Client")
+def test_send_webmention_passes_configured_response_cap_to_helper(
+    mock_client_class, mock_request_with_redirects, sender, source_url, target_url
+):
+    """Configured INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES is forwarded to the helper."""
+    mock_client = Mock()
+    mock_client_class.return_value.__enter__.return_value = mock_client
+    response = _sender_response(status_code=202)
+
+    class _Delivered:
+        pass
+
+    delivered = _Delivered()
+    delivered.response = response
+    delivered.final_url = "https://target.com/webmention"
+    mock_request_with_redirects.return_value = delivered
+
+    result = sender.send_webmention(source_url, target_url, "https://target.com/webmention")
+
+    assert result["success"] is True
+    assert mock_request_with_redirects.call_args.kwargs["max_bytes"] == 2048
+
+
 @patch("httpx.Client")
 def test_send_webmention_rejects_unsafe_vouch_without_post(mock_client_class, sender, source_url, target_url):
     """send_webmention validates Vouch even when callers bypass the command."""

@@ -785,10 +785,15 @@ def test_pkce_round_trip_through_consent_screen(client, user):
     assert auth.code_challenge == PKCE_S256_CHALLENGE
     assert auth.code_challenge_method == "S256"
 
+    redirect_query = parse_qs(urlparse(post_resp["Location"]).query)
+    issued_code = redirect_query["code"][0]
+    assert issued_code != auth.key
+    assert auth.key.startswith("hmac-sha256$")
+
     token_resp = client.post(
         reverse("indieweb:token"),
         data={
-            "code": auth.key,
+            "code": issued_code,
             "client_id": auth.client_id,
             "redirect_uri": auth.redirect_uri,
             "code_verifier": PKCE_VERIFIER,

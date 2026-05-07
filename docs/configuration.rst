@@ -924,6 +924,21 @@ over this limit mark the Webmention ``failed`` and are not stored as source
 snapshots. Set this to ``None`` only when an upstream proxy, queue, or worker
 boundary enforces an equivalent limit.
 
+INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum decoded response size accepted from a remote Webmention endpoint
+during outbound delivery (``WebmentionSender.send_webmention``).
+
+**Default:** ``1048576`` (1 MiB)
+
+Responses are streamed and counted while decoded chunks are read. A hostile
+endpoint that returns more than the configured limit causes the delivery to
+be reported as a failure (``success=False``, ``status_code=None``,
+``error="response too large: ..."``) instead of buffering the unbounded body.
+Set this to ``None`` only when an upstream proxy, queue, or worker boundary
+enforces an equivalent limit; malformed values fall back to the default cap.
+
 INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

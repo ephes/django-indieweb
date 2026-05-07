@@ -168,9 +168,10 @@ def test_auth_readonly_all_fields(auth):
     modeladmin = admin.site._registry[Auth]
     readonly_fields = modeladmin.get_readonly_fields(None, auth)
 
-    # All fields should be read-only
-    model_fields = [f.name for f in Auth._meta.fields]
-    assert set(readonly_fields) == set(model_fields)
+    # All fields should be read-only and the raw key is replaced with a masked accessor.
+    model_fields = {f.name for f in Auth._meta.fields if f.name != "key"} | {"masked_key"}
+    assert set(readonly_fields) == model_fields
+    assert "key" not in readonly_fields
 
 
 def test_auth_admin_does_not_search_state():
@@ -185,6 +186,28 @@ def test_auth_no_add_permission():
     modeladmin = admin.site._registry[Auth]
 
     assert not modeladmin.has_add_permission(None)
+
+
+def test_auth_admin_masks_key(auth):
+    """Test that auth admin exposes only a masked key representation."""
+    modeladmin = admin.site._registry[Auth]
+    raw_key = auth.key
+    auth.refresh_from_db()
+
+    assert modeladmin.masked_key(auth) == "hmac-sha256$..."
+    assert raw_key not in modeladmin.masked_key(auth)
+
+
+def test_auth_admin_change_view_does_not_expose_key(logged_admin_client, auth):
+    """The Auth admin change form does not render the plaintext authorization code."""
+    raw_key = auth.key
+    url = reverse("admin:indieweb_auth_change", args=[auth.pk])
+    response = logged_admin_client.get(url)
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert raw_key not in body
+    assert "hmac-sha256$..." in body
 
 
 def test_websub_subscription_admin_masks_secrets():

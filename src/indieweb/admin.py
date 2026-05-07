@@ -221,8 +221,14 @@ class AuthAdmin(admin.ModelAdmin):
     search_fields = ("client_id", "me")
     ordering = ("-created",)
 
+    @admin.display(description="Authorization code")
+    def masked_key(self, obj: Auth) -> str:
+        return obj.masked_key()
+
     def get_readonly_fields(self, request: HttpRequest, obj: Any = None) -> list[str]:
-        return [f.name for f in self.model._meta.fields]
+        fields = [f.name for f in self.model._meta.fields if f.name != "key"]
+        fields.append("masked_key")
+        return fields
 
     def has_add_permission(self, request: HttpRequest) -> bool:
         return False
@@ -231,7 +237,7 @@ class AuthAdmin(admin.ModelAdmin):
         (
             "Authorization Details",
             {
-                "fields": ("key", "state", "client_id", "redirect_uri", "scope", "me"),
+                "fields": ("masked_key", "state", "client_id", "redirect_uri", "scope", "me"),
             },
         ),
         (

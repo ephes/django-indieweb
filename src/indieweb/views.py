@@ -1216,7 +1216,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
         logger.info(f"auth view post verification: {client_id}")
         try:
-            auth = Auth.objects.get(key=auth_code, client_id=client_id)
+            auth = Auth.get_for_raw_key(auth_code, client_id=client_id)
         except (Auth.DoesNotExist, Auth.MultipleObjectsReturned):
             return HttpResponse("Invalid authorization code", status=400)
         response_values = {"me": auth.me}
@@ -1294,7 +1294,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     def _get_auth_for_exchange(self, code: str, client_id: str) -> Auth | HttpResponse:
         """Return the matched auth code or the existing invalid_grant response."""
         try:
-            return Auth.objects.get(key=code, client_id=client_id)
+            return Auth.get_for_raw_key(code, client_id=client_id)
         except Auth.DoesNotExist:
             logger.error(f"Auth not found for code={_redact_auth_code(code)}, client_id={client_id}")
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
@@ -1302,7 +1302,8 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.warning(
                 f"Multiple auth codes found for code={_redact_auth_code(code)}, client_id={client_id}; rejecting"
             )
-            Auth.objects.filter(key=code, client_id=client_id).delete()
+            hashed = Auth.hash_key(code) if not Auth.is_hashed_key(code) else code
+            Auth.objects.filter(key__in=(hashed, code), client_id=client_id).delete()
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
     def _check_redirect_uri(self, auth: Auth, redirect_uri: str | None) -> HttpResponse | None:
