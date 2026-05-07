@@ -24,9 +24,7 @@ No current Priority 2 items.
 
 ### Housekeeping
 
-- [ ] Tighten test/dev settings and dependency pinning.
-  References: `tests/settings.py`, `pyproject.toml`, `tox.ini`.
-  `tests/settings.py:17` ships a hardcoded `SECRET_KEY` with `DEBUG=True` — load from env with a sentinel default (`"insecure-test-key-do-not-use"`). `pyproject.toml` only pins Django with an upper bound; add lower bounds for `httpx`, `beautifulsoup4`, and `mf2py` (driven by known CVEs) and ship a `uv` lockfile / SBOM with releases. Add a tox env that runs full migrations (current `addopts` use `--no-migrations`).
+No current Housekeeping items.
 
 ### WebSub Enhancements
 

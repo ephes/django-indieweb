@@ -392,11 +392,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4" },
+    { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "django", specifier = ">=5.2.13,<6.1" },
     { name = "filetype", specifier = ">=1.2.0" },
-    { name = "httpx" },
-    { name = "mf2py" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mf2py", specifier = ">=2.0.1" },
     { name = "nh3", specifier = ">=0.3.5" },
 ]
 

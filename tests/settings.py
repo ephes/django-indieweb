@@ -7,14 +7,15 @@ import environ
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
+env = environ.Env()
+
 TEST_DIR = environ.Path(__file__) - 1
 APPS_DIR = ROOT_DIR / "src" / "indieweb"
 
-DEBUG = True
+DEBUG = env.bool("DJANGO_INDIEWEB_TEST_DEBUG", default=True)
 USE_TZ = True
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "mbmcf(_0(y@^nlf6w#1nq%s7&nzcfvx#ok$iwu8)i^d+^96h*="
+SECRET_KEY = env("DJANGO_INDIEWEB_TEST_SECRET_KEY", default="insecure-test-key-do-not-use")
 
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
 

@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* Tightened test and release metadata. The test settings now load
+  ``SECRET_KEY`` from ``DJANGO_INDIEWEB_TEST_SECRET_KEY`` with an explicit
+  insecure sentinel default, runtime dependency floors are declared for
+  ``httpx``, ``beautifulsoup4``, and ``mf2py``, tox includes a
+  ``py313-django52-migrations`` environment that overrides the default
+  ``--no-migrations`` pytest option, and release docs include a ``just sbom``
+  CycloneDX runtime-dependency export from the tracked ``uv.lock``.
 * Hardened optional endpoint rate limiting. Client identities in rate-limit
   cache keys are now HMAC-digested with Django's ``SECRET_KEY`` instead of
   bare SHA-256, exceeded limits now fall back to the configured window for

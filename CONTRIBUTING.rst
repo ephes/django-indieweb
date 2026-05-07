@@ -94,13 +94,17 @@ Ready to contribute? Here's how to set up ``django-indieweb`` for local developm
 
     $ tox
 
-7. Commit your changes and push your branch to GitHub::
+7. To run the suite once with Django migrations enabled, use the dedicated tox environment::
+
+    $ tox -e py313-django52-migrations
+
+8. Commit your changes and push your branch to GitHub::
 
     $ git add .
     $ git commit -m "Your detailed description of your changes."
     $ git push origin name-of-your-bugfix-or-feature
 
-8. Submit a pull request through the GitHub website.
+9. Submit a pull request through the GitHub website.
 
 Pull Request Guidelines
 -----------------------
@@ -162,6 +166,9 @@ Here's a quick reference of development commands::
 
     # Run tox for the supported Python/Django matrix
     tox
+
+    # Run tests with Django migrations enabled
+    tox -e py313-django52-migrations
 
 Tips
 ----

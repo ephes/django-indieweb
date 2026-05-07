@@ -22,7 +22,8 @@ Run the test suite using pytest::
     uv run pytest
 
 The default pytest command measures coverage for the ``indieweb`` package and
-enforces the configured coverage gate in ``pyproject.toml``.
+enforces the configured coverage gate in ``pyproject.toml``. It uses
+``--no-migrations`` for fast iteration.
 
 New tests should use pytest function style with fixtures and plain ``assert``.
 Use ``@pytest.mark.django_db`` or the ``db`` fixture for tests that need
@@ -57,6 +58,10 @@ locally. GitHub Actions provides them in CI.
 To run tests for a specific Python/Django combination::
 
     tox -e py313-django60
+
+To run the suite once with Django migrations enabled::
+
+    tox -e py313-django52-migrations
 
 To run configured hooks::
 
@@ -159,13 +164,20 @@ Building and Publishing Releases
 
    This will create distribution files in the ``dist/`` directory.
 
-4. Upload to PyPI::
+4. Generate a CycloneDX SBOM from the locked runtime dependency graph::
+
+    just sbom
+
+   ``uv.lock`` is tracked for reproducible release dependency review, and the
+   SBOM is written to ``dist/django-indieweb-sbom.cdx.json``.
+
+5. Upload to PyPI::
 
     uv publish --token your_token
 
    Replace ``your_token`` with your PyPI API token.
 
-5. Create a git tag for the release::
+6. Create a git tag for the release::
 
     git tag -a v0.0.8 -m "Release version 0.0.8"
     git push origin v0.0.8
@@ -190,6 +202,9 @@ Development Commands Summary
     # Run tox for the supported Python/Django matrix
     tox
 
+    # Run tests with Django migrations enabled
+    tox -e py313-django52-migrations
+
     # Format code
     uv run ruff format .
 
@@ -207,6 +222,9 @@ Development Commands Summary
 
     # Build package
     uv build
+
+    # Generate release SBOM
+    just sbom
 
     # Publish to PyPI
     uv publish --token your_token

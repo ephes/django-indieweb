@@ -4,6 +4,42 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-07
 
+### Tighten test/dev settings and dependency pinning
+
+- Changed ``tests.settings`` to load ``SECRET_KEY`` from
+  ``DJANGO_INDIEWEB_TEST_SECRET_KEY`` with the explicit
+  ``insecure-test-key-do-not-use`` sentinel default, and made test ``DEBUG``
+  env-overridable through ``DJANGO_INDIEWEB_TEST_DEBUG`` while preserving the
+  existing default.
+- Added runtime dependency lower bounds for ``httpx``, ``beautifulsoup4``, and
+  ``mf2py`` while keeping the existing Django support range and tracked
+  ``uv.lock`` release lockfile.
+- Added ``py313-django52-migrations`` to tox so the suite can run once with
+  Django migrations enabled despite the default pytest ``--no-migrations``
+  setting. Added a ``just sbom`` recipe that exports a CycloneDX SBOM from the
+  locked runtime dependency graph into ``dist/`` for releases.
+- Backlog: removed the completed Priority 4 housekeeping item from
+  ``BACKLOG.md``. No migrations were needed.
+- Documentation: updated ``README.rst``, ``CONTRIBUTING.rst``, and
+  ``docs/development.rst`` for the migration-enabled tox environment and
+  release SBOM workflow.
+- Changelog: updated ``docs/changelog.rst`` with an Unreleased note for the
+  test settings, dependency floor, tox, and SBOM workflow changes.
+- Validation: ``uv lock`` passed; ``uv lock --check`` passed; ``uv run pytest
+  tests/test_project_metadata.py -q --no-cov`` passed (5 passed); targeted
+  ``uv run ruff check`` and ``uv run ruff format --check`` passed; ``just
+  sbom`` passed; ``tox -e py313-django52-migrations`` passed (1168 passed with
+  migrations enabled); ``uv run pytest`` passed (1168 passed, coverage gate
+  reached at 90.29%); ``uv run mypy`` passed; ``uv run ruff check .`` passed;
+  ``uv run ruff format . --check`` passed; ``uv run sphinx-build -W -b html
+  docs docs/_build/html`` passed; ``uv run python manage.py makemigrations
+  --check --dry-run`` passed; ``uv run prek run --all-files`` passed; and
+  ``git diff --check`` passed. Post-review checks also passed after
+  strengthening the project-metadata tests and adding the tox override comment:
+  ``uv run pytest tests/test_project_metadata.py -q --no-cov``, targeted
+  ``uv run ruff check``, targeted ``uv run ruff format --check``, and ``tox c
+  -e py313-django52-migrations``.
+
 ### Harden rate-limit keys and document Micropub adapter ownership
 
 - Changed endpoint rate-limit cache keys to HMAC-digest client identities with

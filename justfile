@@ -39,6 +39,11 @@ hooks:
 loc:
     @uv run count-lines-of-code
 
+# Generate a CycloneDX SBOM from the locked runtime dependency graph
+sbom:
+    mkdir -p dist
+    uv export --format cyclonedx1.5 --preview-features sbom-export --frozen --no-dev > dist/django-indieweb-sbom.cdx.json
+
 # Remove build artifacts
 clean-build:
     rm -fr build/

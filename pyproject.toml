@@ -41,9 +41,9 @@ classifiers = [
 
 dependencies = [
     "Django>=5.2.13,<6.1",
-    "mf2py",
-    "beautifulsoup4",
-    "httpx",
+    "mf2py>=2.0.1",
+    "beautifulsoup4>=4.14.2",
+    "httpx>=0.28.1",
     "nh3>=0.3.5",
     "filetype>=1.2.0",
 ]
