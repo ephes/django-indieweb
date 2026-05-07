@@ -2,6 +2,73 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-08
+
+### Harden Micropub action input validation and bound WebSub hub responses
+
+- Applied URL-property validation on Micropub ``action=update`` ``replace`` /
+  ``add`` operations. The same set of URL-typed properties already gated on
+  create (``photo``, ``audio``, ``video``, ``in-reply-to``, ``like-of``,
+  ``repost-of``, ``bookmark-of``, ``syndication``) now rejects non-HTTP(S)
+  values during update before ``MicropubContentHandler.update_entry()`` is
+  called. ``delete`` operations intentionally skip the check.
+- Made the Micropub server-managed property deny-list extendable through
+  ``INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES``. Configured names extend
+  rather than replace the spec-mandated ``uid``/``author`` defaults and apply
+  consistently to create and update operations across both form-encoded and
+  JSON paths so hosts can reject client-supplied values for internal property
+  names such as ``_owner``.
+- Added a ``max_bytes`` keyword to ``request_with_safe_redirects`` that
+  delegates to ``stream_with_safe_redirects`` so the non-streaming helper now
+  enforces decompression-bomb protection on the same code path. WebSub
+  subscribe and publish requests now pass a configurable
+  ``INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES`` cap (default 256 KiB) and surface
+  oversized hub responses as request failures rather than buffering the
+  payload: ``request_websub_subscription()`` records the failure on the
+  subscription's ``last_request_error`` diagnostics, while ``notify_hubs()``
+  returns it on the ``WebSubNotificationResult.error`` field for the hub.
+- Backlog: added Priority 3 follow-ups for token-introspection same-`client_id`
+  authorization, hashing authorization codes at rest with admin masking, and a
+  Webmention sender response cap; added Priority 4 follow-ups for replacing
+  the ``stream_with_safe_redirects`` ``unittest.mock`` guard with an explicit
+  kwarg, ``xframe_options_deny`` parity for the token management view,
+  optional ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` and lease-bound clamping for
+  WebSub, h-card render-time URL hardening, and serializing concurrent
+  Webmention receives. No migrations were needed.
+- Documentation: updated ``docs/configuration.rst`` with the new
+  ``INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES`` and
+  ``INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES`` settings; updated
+  ``docs/micropub.rst`` to document update-time URL validation and the
+  configurable server-managed property policy; updated ``docs/websub.rst`` to
+  describe the hub response cap and oversized-response handling.
+- Changelog: added an Unreleased entry summarizing the Micropub update URL
+  validation, the configurable server-managed property policy, the
+  ``request_with_safe_redirects`` ``max_bytes`` keyword, and the WebSub hub
+  response cap.
+- Validation: ``uv run pytest tests/test_micropub_actions.py
+  tests/test_micropub_create.py tests/test_websub.py tests/test_http_client.py
+  -q --no-cov`` passed (197 passed); ``uv run pytest`` passed (1235 passed,
+  coverage 90.22% above the 88% gate); ``uv run mypy`` passed; ``uv run ruff
+  check .`` passed; ``uv run ruff format . --check`` passed; ``just docs``
+  built clean; ``uv run python manage.py makemigrations --check --dry-run``
+  reported no schema changes.
+- Post-review follow-up: an empty
+  ``INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES`` value was previously translated
+  to ``None`` by the shared ``_positive_int`` parser, which would have
+  silently disabled the new cap. The helper now treats empty/whitespace
+  configuration as malformed, logs a warning, and falls back to the 256 KiB
+  default; ``None`` remains the explicit "disable" sentinel. Added
+  ``test_notify_hubs_treats_empty_string_max_bytes_as_default`` and
+  ``test_notify_hubs_disables_cap_when_setting_is_none`` regression tests, and
+  tightened the WebSub configuration docs to distinguish persistent
+  subscription ``last_request_error`` diagnostics from publish
+  ``WebSubNotificationResult.error``. Validation reran:
+  ``uv run pytest tests/test_micropub_actions.py
+  tests/test_micropub_create.py tests/test_websub.py tests/test_http_client.py
+  -q --no-cov`` (199 passed), ``uv run pytest`` (1237 passed, coverage 90.25%),
+  ``uv run mypy``, ``uv run ruff check .``, ``uv run ruff format . --check``,
+  ``just docs``, and ``uv run prek run --all-files`` all passed.
+
 ## 2026-05-07
 
 ### Harden WebSub subscriber delivery security

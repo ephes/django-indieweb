@@ -5,6 +5,21 @@ Changelog
 
 Unreleased
 ----------
+* Hardened Micropub action input validation and bounded outbound WebSub hub
+  responses. ``action=update`` now rejects non-HTTP(S) values inside ``replace``
+  and ``add`` operations for URL-typed properties (``photo``, ``audio``,
+  ``video``, ``in-reply-to``, ``like-of``, ``repost-of``, ``bookmark-of``,
+  ``syndication``) before ``update_entry()`` is called, mirroring the existing
+  create-time URL validation. The server-managed Micropub property deny-list is
+  now extendable through the ``INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES``
+  setting and applied consistently to create and update operations so hosts
+  with reserved internal property names (for example ``_owner``) reject
+  client-supplied values on both paths. The shared
+  ``request_with_safe_redirects`` HTTP helper now accepts a ``max_bytes``
+  keyword that delegates to the streaming variant so non-streaming callers get
+  decompression-bomb protection too; WebSub subscribe and publish requests now
+  pass a configurable ``INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES`` cap and
+  surface oversized hub responses as request failures.
 * Hardened WebSub subscriber delivery handling. ``hub.secret`` and staged
   renewal secrets are now encrypted at rest with key material derived from
   Django's ``SECRET_KEY`` using the new ``cryptography`` runtime dependency;

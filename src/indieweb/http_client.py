@@ -156,9 +156,25 @@ def request_with_safe_redirects(
     url: str,
     *,
     resolver: AddressResolver | None = default_address_resolver,
+    max_bytes: int | None = None,
     **request_kwargs: Any,
 ) -> RedirectedResponse:
-    """Run an HTTP request after SSRF checks, re-checking every redirect."""
+    """Run an HTTP request after SSRF checks, re-checking every redirect.
+
+    When ``max_bytes`` is provided, the request is routed through streaming so the
+    decoded body is bounded before it is fully buffered, giving callers
+    decompression-bomb protection on the non-streaming helper too.
+    """
+    if max_bytes is not None:
+        return stream_with_safe_redirects(
+            client,
+            method,
+            url,
+            max_bytes=max_bytes,
+            resolver=resolver,
+            **request_kwargs,
+        )
+
     current_url = url
     request_method = getattr(client, method.lower())
 

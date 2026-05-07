@@ -105,6 +105,19 @@ without opening an HTTP client. If you inject a custom ``httpx.Client`` into
 ``notify_hubs()`` for testing or integration, that trusted client controls its
 own redirect behavior; the package-created client uses ``follow_redirects=False``.
 
+Hub responses are bounded to ``INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES``
+(default 256 KiB). Both ``notify_hubs()`` and ``request_websub_subscription()``
+stream the response and surface oversized replies as a request failure rather
+than buffering the payload: ``notify_hubs()`` returns the failure on the
+``WebSubNotificationResult.error`` field for the hub, while
+``request_websub_subscription()`` additionally persists it on the
+subscription's ``last_request_error`` diagnostics.
+
+Set the value to ``None`` to disable the cap when your deployment already
+enforces an equivalent limit. Malformed values, including an empty
+environment variable that resolves to ``""``, are ignored with a warning and
+the helper falls back to the 256 KiB default.
+
 Management Command
 ------------------
 

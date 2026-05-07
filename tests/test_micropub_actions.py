@@ -265,6 +265,99 @@ class TestMicropubUpdate:
 
         assert response.status_code == 204
 
+    @pytest.mark.parametrize(
+        "operation_key",
+        ["replace", "add"],
+    )
+    @pytest.mark.parametrize(
+        "property_name",
+        ["photo", "audio", "video", "in-reply-to", "like-of", "repost-of", "bookmark-of", "syndication"],
+    )
+    @pytest.mark.parametrize("bad_url", ["javascript:alert(1)", "data:text/html,<script>1</script>", "notaurl"])
+    def test_update_rejects_invalid_url_properties_before_handler(
+        self, client, user, micropub_url, monkeypatch, operation_key, property_name, bad_url
+    ):
+        """Update replace/add must reject non-HTTP(S) values for URL-typed properties before reaching the handler."""
+        handler_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def update_entry(self, url, updates, user):
+                nonlocal handler_called
+                handler_called = True
+                return super().update_entry(url, updates, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        token = _make_token(user, "update")
+        payload = {
+            "action": "update",
+            "url": "/entries/1/",
+            operation_key: {property_name: [bad_url]},
+        }
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert handler_called is False
+
+    def test_update_accepts_valid_url_properties(self, client, user, micropub_url, shared_handler):
+        entry = shared_handler.create_entry({"content": ["Original"]}, user)
+
+        token = _make_token(user, "update")
+        payload = {
+            "action": "update",
+            "url": entry.url,
+            "replace": {"photo": ["https://media.example.org/cat.jpg"]},
+        }
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 204
+        assert shared_handler.get_entry(entry.url, user).properties["photo"] == [
+            "https://media.example.org/cat.jpg",
+        ]
+
+    def test_update_rejects_configured_extra_server_managed_property(
+        self, client, user, micropub_url, monkeypatch, settings
+    ):
+        """Hosts can extend the server-managed deny-list via INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES."""
+        settings.INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES = ("_owner",)
+        handler_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def update_entry(self, url, updates, user):
+                nonlocal handler_called
+                handler_called = True
+                return super().update_entry(url, updates, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        token = _make_token(user, "update")
+        payload = {
+            "action": "update",
+            "url": "/entries/1/",
+            "replace": {"_owner": ["other-user"]},
+        }
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert handler_called is False
+
     def test_update_json_action_accepts_content_type_with_charset(self, client, user, micropub_url, shared_handler):
         entry = shared_handler.create_entry({"content": ["Original"]}, user)
 

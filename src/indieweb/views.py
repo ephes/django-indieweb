@@ -139,10 +139,32 @@ MICROPUB_FORM_CREATE_LIST_PROPERTIES = (
     "mp-photo-alt",
     "mp-syndicate-to",
 )
-MICROPUB_SERVER_MANAGED_PROPERTIES = frozenset({"uid", "author"})
+MICROPUB_DEFAULT_SERVER_MANAGED_PROPERTIES = frozenset({"uid", "author"})
 MICROPUB_URL_CREATE_PROPERTIES = frozenset(
     {"photo", "audio", "video", "in-reply-to", "like-of", "repost-of", "bookmark-of", "syndication"}
 )
+
+
+def _configured_server_managed_properties() -> frozenset[str]:
+    """Return the deny-list of server-managed Micropub property names.
+
+    The default set (``uid``, ``author``) can be extended by hosts that key on
+    additional reserved property names via ``INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES``.
+    Configured names extend rather than replace the defaults so the spec-mandated
+    server-managed properties are always rejected.
+    """
+    extra = getattr(settings, "INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES", ())
+    if extra is None:
+        return MICROPUB_DEFAULT_SERVER_MANAGED_PROPERTIES
+    if isinstance(extra, str):
+        extra_iter: tuple[str, ...] = (extra,)
+    else:
+        extra_iter = tuple(extra)
+    return MICROPUB_DEFAULT_SERVER_MANAGED_PROPERTIES | frozenset(
+        name.lower() for name in extra_iter if isinstance(name, str) and name
+    )
+
+
 DEFAULT_MICROPUB_SOURCE_LIST_LIMIT = 20
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -1447,8 +1469,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         """Return whether submitted property names include view/server-owned properties."""
         if not isinstance(property_names, dict | list | tuple | set):
             return False
+        deny_list = _configured_server_managed_properties()
         return any(
-            isinstance(name, str) and cls._normalized_property_name(name) in MICROPUB_SERVER_MANAGED_PROPERTIES
+            isinstance(name, str) and cls._normalized_property_name(name).lower() in deny_list
             for name in property_names
         )
 
@@ -1778,6 +1801,21 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
                 return True
         return False
 
+    def _updates_have_invalid_url_property(self, request: HttpRequest, updates: dict[str, Any]) -> bool:
+        """Return whether ``replace``/``add`` operations carry non-HTTP(S) URL-typed values.
+
+        ``delete`` is intentionally skipped: the values inside a delete map identify which
+        existing values to remove, not new content to persist, and the spec's per-property
+        URL validation does not apply to deletions.
+        """
+        for key in ("replace", "add"):
+            operation = updates.get(key)
+            if not isinstance(operation, dict):
+                continue
+            if self._properties_have_invalid_url_property(request, operation):
+                return True
+        return False
+
     @staticmethod
     def _sanitize_slug_value(value: Any) -> str | None:
         if not isinstance(value, str):
@@ -1827,6 +1865,8 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if updates is None:
             return self._invalid_request()
         if self._updates_have_server_managed_property(updates):
+            return self._invalid_request()
+        if self._updates_have_invalid_url_property(request, updates):
             return self._invalid_request()
         handler = get_micropub_handler()
         try:

@@ -299,6 +299,14 @@ both form and JSON requests; invalid values return ``400 invalid_request``.
 Multipart ``photo`` file uploads are stored first and the generated local
 absolute media URLs are allowed through this same gate.
 
+The same URL validation is applied to ``action=update`` ``replace`` and
+``add`` operations: a JSON update that asks the resource server to replace or
+add one of these URL-typed properties with a non-HTTP(S) value (for example
+``javascript:`` or ``data:``) is rejected with ``400 invalid_request`` before
+``MicropubContentHandler.update_entry()`` is called. ``delete`` operations
+intentionally skip this check because they remove existing values rather than
+persist new ones.
+
 For h-event-style form requests, django-indieweb forwards event properties
 such as ``name``, ``summary``, ``description``, ``start``, ``end``,
 ``location``, ``category``, ``url``, and ``published`` unchanged as normalized
@@ -417,6 +425,14 @@ Command and extension properties remain allowed and handler-owned:
 ``mp-slug`` values are sanitized before they reach the handler: path
 separators, control characters, and leading dots are stripped, and an empty
 result is omitted.
+
+Hosts that key on internal property names — for example ``_owner`` or
+``_status`` for host-owned ownership or workflow tracking — can extend the
+deny-list through ``INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES``.
+Configured names extend the built-in ``uid``/``author`` deny-list rather than
+replacing it and are applied consistently to create and update operations
+across both form and JSON paths. See :doc:`configuration` for the setting
+syntax.
 
 Media Endpoint
 ~~~~~~~~~~~~~~

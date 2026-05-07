@@ -816,6 +816,60 @@ class TestMicropubCreate:
         assert create_called is False
 
     @pytest.mark.django_db
+    def test_json_create_rejects_configured_extra_server_managed_property(
+        self, client, token, micropub_url, monkeypatch, settings
+    ):
+        """Hosts can extend the deny-list via INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES; JSON create honors it."""
+        settings.INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES = ("_owner",)
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {"type": ["h-entry"], "properties": {"content": ["x"], "_owner": ["other-user"]}}
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
+    def test_form_create_rejects_configured_extra_server_managed_property(
+        self, client, token, micropub_url, monkeypatch, settings
+    ):
+        """The form path also honors INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES extensions."""
+        settings.INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES = ["_owner"]
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={"h": "entry", "content": "x", "_owner": "other-user"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
     def test_form_create_forwards_event_properties(self, client, token, micropub_url, monkeypatch):
         """Test that form-encoded h-event fields are forwarded as property arrays."""
         received_properties = None

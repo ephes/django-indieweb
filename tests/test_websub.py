@@ -165,3 +165,55 @@ def test_notify_hubs_rejects_invalid_timeout(settings):
 
     with pytest.raises(ValueError, match="timeout must be a positive number"):
         notify_hubs("https://example.com/feed", ("https://hub.example/",))
+
+
+def test_notify_hubs_rejects_oversized_hub_response(settings):
+    """Hub responses larger than INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES are surfaced as failures."""
+    settings.INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES = 64
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 1024)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    results = notify_hubs("https://example.com/feed", ("https://hub.example/",), client=client)
+
+    assert results[0].success is False
+    assert results[0].status_code is None
+    assert "exceeded" in results[0].error
+
+
+def test_notify_hubs_treats_empty_string_max_bytes_as_default(settings):
+    """An empty INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES must fall back to the 256 KiB default.
+
+    Regression: ``_positive_int`` translates the empty string to ``None``; without an explicit
+    fallback the helper would have returned ``None`` and silently disabled the protection.
+    The handler returns a body just over the 256 KiB default so a "cap disabled" regression
+    would let the request succeed instead of failing closed.
+    """
+    settings.INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES = ""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * (256 * 1024 + 1))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    results = notify_hubs("https://example.com/feed", ("https://hub.example/",), client=client)
+
+    assert results[0].success is False
+    assert results[0].status_code is None
+    assert "exceeded" in results[0].error
+
+
+def test_notify_hubs_disables_cap_when_setting_is_none(settings):
+    """``None`` is the documented sentinel for disabling the hub response cap."""
+    settings.INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 1024 * 1024)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    results = notify_hubs("https://example.com/feed", ("https://hub.example/",), client=client)
+
+    assert results[0].success is True

@@ -74,6 +74,42 @@ def test_request_with_safe_redirects_allows_public_mocked_url():
     assert result.final_url == "https://example.com/post"
 
 
+def test_request_with_safe_redirects_enforces_max_bytes():
+    """Passing max_bytes routes through streaming and raises HTTPResponseTooLarge."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 1024)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(HTTPResponseTooLarge):
+        request_with_safe_redirects(
+            client,
+            "GET",
+            "https://example.com/post",
+            resolver=public_resolver,
+            max_bytes=64,
+        )
+
+
+def test_request_with_safe_redirects_max_bytes_allows_small_responses():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ok")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    result = request_with_safe_redirects(
+        client,
+        "GET",
+        "https://example.com/post",
+        resolver=public_resolver,
+        max_bytes=1024,
+    )
+
+    assert result.response.status_code == 200
+    assert result.response.content == b"ok"
+
+
 def test_response_text_with_limit_counts_decoded_bytes():
     response = httpx.Response(200, content=b"0123456789")
 

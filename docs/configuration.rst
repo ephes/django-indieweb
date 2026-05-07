@@ -617,6 +617,50 @@ when the header is present. Also configure a tight Django
 so oversized or malformed requests are stopped before they reach application
 workers.
 
+INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum decoded response size accepted from a WebSub hub for outbound
+subscribe and publish requests.
+
+**Default:** ``262144`` (256 KiB)
+
+WebSub hub responses are typically small acknowledgements; the cap protects
+django-indieweb against hostile or misconfigured hubs that return large or
+compressed-bomb payloads. Hub responses above this limit are surfaced as
+request failures rather than buffered into memory:
+``request_websub_subscription()`` records the failure on the subscription's
+``last_request_error`` diagnostics, and ``notify_hubs()`` returns it on the
+``WebSubNotificationResult.error`` field for the hub.
+
+Set this to ``None`` to disable the cap when your deployment already enforces
+an equivalent limit. Malformed values, including an empty environment variable
+that resolves to ``""``, are ignored and logged; outbound requests fall back
+to the 256 KiB default instead of disabling the cap or failing every hub
+call.
+
+INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional iterable of additional Micropub property names that the resource
+server manages and that clients must not submit.
+
+**Default:** ``()`` (only the spec-mandated ``uid`` and ``author`` are denied)
+
+Configured names extend the built-in deny-list (``uid``, ``author``); they
+never replace it. The check applies consistently to create and update
+(``replace`` / ``add`` / ``delete``) operations across both form-encoded and
+JSON Micropub requests. Use this when the host adapter keys on internal
+property names such as ``_owner``, ``_status``, or other reserved fields and
+needs to reject client-supplied values for those properties before the
+handler runs.
+
+**Example:**
+
+.. code-block:: python
+
+   INDIEWEB_MICROPUB_SERVER_MANAGED_PROPERTIES = ("_owner", "_status")
+
 INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

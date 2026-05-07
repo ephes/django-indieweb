@@ -20,6 +20,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from .http_client import (
+    HTTPResponseTooLarge,
     UnsafeHTTPUrlError,
     WebmentionRedirectError,
     default_address_resolver,
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WEBSUB_TIMEOUT = 10.0
 DEFAULT_WEBSUB_DELIVERY_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBSUB_HUB_RESPONSE_MAX_BYTES = 256 * 1024
 DEFAULT_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 300
 DEFAULT_WEBSUB_MIN_LEASE_SECONDS = 5 * 60
 DEFAULT_WEBSUB_MAX_LEASE_SECONDS = 30 * 24 * 60 * 60
@@ -208,6 +210,32 @@ def _delivery_max_bytes() -> int | None:
     except ValueError:
         logger.warning("Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES value; using the default limit")
         return DEFAULT_WEBSUB_DELIVERY_MAX_BYTES
+
+
+def _hub_response_max_bytes() -> int | None:
+    """Return the decoded byte cap applied to hub HTTP responses, or ``None`` to disable.
+
+    ``None`` is the explicit "disable cap" sentinel. Any other malformed value —
+    including the empty string that ``_positive_int`` translates back to ``None`` —
+    falls back to the default cap so an empty environment variable does not silently
+    weaken the protection.
+    """
+    configured = getattr(settings, "INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES", DEFAULT_WEBSUB_HUB_RESPONSE_MAX_BYTES)
+    if configured is None:
+        return None
+    try:
+        parsed = _positive_int(configured, label="WebSub hub response max bytes")
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES value; using the default limit",
+        )
+        return DEFAULT_WEBSUB_HUB_RESPONSE_MAX_BYTES
+    if parsed is None:
+        logger.warning(
+            "Ignoring empty INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES value; using the default limit",
+        )
+        return DEFAULT_WEBSUB_HUB_RESPONSE_MAX_BYTES
+    return parsed
 
 
 def _delivery_content_type_allowed(content_type: str) -> bool:
@@ -486,9 +514,10 @@ def request_websub_subscription(
                 subscription.hub_url,
                 data=data,
                 resolver=resolver,
+                max_bytes=_hub_response_max_bytes(),
             )
             response = delivered.response
-        except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError) as exc:
+        except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError, HTTPResponseTooLarge) as exc:
             logger.warning(f"WebSub subscription request failed for hub={subscription.hub_url!r}: {exc}")
             _save_subscription_request_failure(
                 subscription,
@@ -938,9 +967,10 @@ def notify_hubs(
                     hub_url,
                     data=data,
                     resolver=resolver,
+                    max_bytes=_hub_response_max_bytes(),
                 )
                 response = delivered.response
-            except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError) as exc:
+            except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError, HTTPResponseTooLarge) as exc:
                 logger.warning(f"WebSub hub notification failed for {hub_url!r}: {exc}")
                 results.append(
                     WebSubNotificationResult(
