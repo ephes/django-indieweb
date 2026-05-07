@@ -1,6 +1,6 @@
 # Security Analysis
 
-Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review.
+Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review.
 
 This document summarises a security review of `django-indieweb` as a third-party Django app. It focuses on risks when the app's public IndieWeb endpoints are installed on an internet-facing Django site.
 
@@ -12,12 +12,25 @@ The first pass identified five high-priority findings plus several supporting on
 - **Medium risk** if IndieAuth/Micropub are exposed only with strict production configuration, trusted users, rate limits, and hardened media storage.
 - **High risk** if Webmention processing and the bundled Webmention rendering templates are exposed publicly with defaults.
 
-The most urgent production blockers are:
+The most urgent remaining production blockers are:
 
-1. Stored XSS via `|safe` rendering of remote `content_html` AND via attacker-controlled URL schemes (e.g. `javascript:`/`data:`) in `Webmention.author_url` / `Webmention.author_photo`, neither of which is scheme-validated before persistence.
-2. SSRF on every outbound HTTP path: Webmention source/vouch fetches, outbound Webmention discovery and delivery, WebSub subscribe POSTs, and WebSub publish (`notify_hubs`) — none filter loopback / private / link-local / metadata addresses, and the redirect helper does not re-resolve and re-check after DNS resolution.
-3. Resolved 2026-05-06: CSRF exemption on the logged-in IndieAuth consent flow PLUS an unauthenticated open-redirect via the `action=deny` branch of the same view.
-4. Authorization codes are not invalidated on `redirect_uri` or scope mismatch (only PKCE failure deletes them), so a leaked code can be probed for the full TTL.
+1. **Residual SSRF DNS rebinding / TOCTOU risk**: outbound helpers now reject unsafe URL forms, private IP literals, DNS-to-private hosts, and redirect-to-private targets, but the checked hostname is still handed to `httpx` for connection. A rebinding host can resolve to a public address during validation and to a private address during the subsequent connect. The original "connect by checked IP with the original Host/SNI preserved" recommendation is not fully implemented.
+2. **Residual Webmention parser recursion DoS risk**: receive-side fetches now have decoded byte limits, streaming, timeouts, and capped primary nested-response scans, but fallback h-entry/h-card traversal paths remain recursive and uncapped.
+3. **Residual WebSub replay window gap**: WebSub now has signature hardening and a replay window, but it stores only the latest accepted delivery digest per subscription. Replaying payload A after a legitimate payload B is accepted within the replay window.
+
+Former production blockers that were verified fixed by 2026-05-07 include Webmention stored XSS/unsafe remote URL rendering, IndieAuth consent CSRF/open redirect, authorization-code one-time-use gaps, token exchange `redirect_uri` binding, token parsing/reissue hardening, Micropub media sniffing, introspection authentication, token hashing at rest, CORS wildcard credentials, and WebSub signature/lease/secret hardening.
+
+## Verification Status 2026-05-07
+
+The 2026-05-07 verification pass reviewed `SECURITY_ANALYSIS.md` against the current source and ran focused security regression tests:
+
+```bash
+uv run pytest tests/test_http_client.py tests/test_webmention_endpoint.py tests/test_webmention_processor.py tests/test_webmention_templatetags.py tests/test_auth_endpoint.py tests/test_consent_screen.py tests/test_token_endpoint.py tests/test_micropub_endpoint.py tests/test_micropub_create.py tests/test_micropub_media.py tests/test_cors.py tests/test_rate_limiting.py tests/test_websub.py tests/test_websub_subscriber.py tests/test_admin.py -q --no-cov
+```
+
+Result: `792 passed in 41.31s`.
+
+The pass found no new token, consent, Micropub media/property, CORS, admin-secret, or stored-XSS regressions beyond the three residual issues listed above.
 
 ## Positive Security Properties
 
@@ -50,6 +63,15 @@ The codebase already has several good security choices:
 
 **Severity:** Critical/High
 
+**Status:** Resolved and verified 2026-05-07. Remote Webmention `content_html`
+and nested response HTML are sanitized with an allowlist before persistence and
+again before bundled template rendering; remote author URL/photo values are
+restricted to absolute HTTP(S) URLs; bundled Webmention links now include
+`rel="nofollow noopener ugc"` and `referrerpolicy="no-referrer"`; and
+`webmention_endpoint_link` uses `format_html`. Regression coverage exists for
+script/event/SVG/form/iframe/style stripping and unsafe `javascript:`/`data:`
+author URL fields.
+
 **References:**
 
 - `src/indieweb/processors.py` (`_extract_author_properties` ~line 1085; persistence path that calls `.save()` without `full_clean()` at lines 293, 497)
@@ -76,6 +98,16 @@ Two related XSS surfaces on Webmention-derived data:
 ### 2. SSRF Across All Outbound HTTP Paths
 
 **Severity:** High
+
+**Status:** Partially resolved 2026-05-07. A shared outbound HTTP helper now
+screens URL syntax, private/loopback/link-local/reserved IP literals, DNS names
+that resolve to blocked addresses, and unsafe redirects; direct receive,
+sender, WebSub subscribe, and WebSub publish paths now route through it with
+explicit TLS verification and bounded redirects. Remaining gap: the helper
+validates DNS results and then lets `httpx` connect to the original hostname,
+which performs a second resolution. This leaves a DNS rebinding/time-of-check
+time-of-use bypass until the connection is pinned to a checked IP while
+preserving the original Host header and TLS SNI.
 
 **References:**
 
@@ -110,6 +142,17 @@ Other contributing issues:
 ### 3. Synchronous Webmention and WebSub Processing Cause DoS, Decompression Bombs, and Recursion DoS
 
 **Severity:** High
+
+**Status:** Partially resolved 2026-05-07. Webmention source/vouch fetches and
+sender fetches now stream decoded content with a default 1 MiB cap and tighter
+timeouts; Webmention nested-response extraction and primary
+`_search_for_mentioning_entry` traversal have depth/item limits; WebSub delivery
+checks `Content-Length` before reading and enforces a configured body-size cap.
+Remaining gap: fallback Webmention h-entry and h-card search paths such as
+`_search_for_any_h_entry`, `_search_items_for_h_card`,
+`_search_items_for_h_card_id`, and page-level h-card collection are still
+recursive and uncapped. The inline WebSub host hook also remains a deployment
+hardening consideration.
 
 **References:**
 
@@ -237,6 +280,12 @@ In addition, `_normalize_redirect_uri` only lowercased scheme/host. It did not c
 
 **Severity:** High when the sender is run automatically against published content that may contain user-influenced HTML; Medium otherwise (operator-only manual runs against trusted-author content).
 
+**Status:** Partially resolved 2026-05-07. Sender target filtering now rejects
+unsafe HTTP(S) URL forms and private IP literals before discovery; discovery,
+content fetches, delivery, and Salmention resend paths use the shared safe HTTP
+helpers with size limits and retry/drop policies. Remaining risk inherits the
+SSRF helper's DNS rebinding/TOCTOU gap from finding 2.
+
 **References:**
 
 - `src/indieweb/senders.py` (`extract_urls` ~line 21; `_extract_external_target_urls` ~line 298; `discover_endpoint`/`send_webmention` ~line 216; `resend_salmentions` ~line 264)
@@ -258,6 +307,12 @@ In addition, `_normalize_redirect_uri` only lowercased scheme/host. It did not c
 
 **Severity:** High
 
+**Status:** Resolved and verified 2026-05-07. Uploads are sniffed with
+`filetype`, sniffed type must match the declared part content type and any
+submitted suffix, stored suffixes are derived from the validated type, and
+request-level upload count plus aggregate byte caps are enforced. Documentation
+now covers media serving headers and storage isolation.
+
 **References:**
 
 - `src/indieweb/views.py` (`_micropub_media_storage_name` ~line 147; `_upload_type_allowed` ~line 170)
@@ -278,6 +333,11 @@ Media uploads are filtered by `upload.content_type` (client-controlled) and the 
 
 **Severity:** Medium
 
+**Status:** Resolved and verified 2026-05-07. Introspection now requires a
+strict bearer caller credential, supports same-owner target-token
+introspection, supports self-introspection via the bearer header, and returns
+inactive for unrelated-owner target tokens.
+
 **References:** `src/indieweb/views.py:949-994`, `src/indieweb/urls.py:23`.
 
 RFC 7662 §2.1 requires the introspection endpoint to authenticate the caller. The current view accepts any request and returns scope, `me`, `client_id`, and expiry for any token an attacker possesses. This is a privacy/spec issue rather than a direct auth bypass — exploitation requires possession of a high-entropy token — but it lets an attacker turn a stolen token into a global validity oracle and confirm scope/expiry without proof of capture timing.
@@ -287,6 +347,11 @@ RFC 7662 §2.1 requires the introspection endpoint to authenticate the caller. T
 ### Micropub Adapter Ownership Is Documentation Debt
 
 **Severity:** Medium
+
+**Status:** Resolved 2026-05-07. The abstract handler methods now raise
+`NotImplementedError`, the in-memory handler is documented as an unsafe
+development/testing example, and docs call out host-owned ownership checks for
+content and media operations.
 
 **References:** `src/indieweb/handlers.py:310-348` (`InMemoryMicropubHandler`), `src/indieweb/views.py` (`_handle_update`/`_handle_delete`/`_handle_undelete`/`_handle_source_query`), `README.rst:75`, `docs/index.rst:92`.
 
@@ -312,6 +377,11 @@ The fallback is now removed. Token-protected resource views accept only strict b
 
 **Severity:** Medium
 
+**Status:** Resolved and verified 2026-05-07. JSON and form create paths reject
+server-managed properties, update operations reject mutations to
+server-managed properties, and URL-typed create properties are validated before
+handler dispatch.
+
 **References:** `src/indieweb/views.py:78-102` (form allow-list), `src/indieweb/views.py:1045` (JSON path passes properties verbatim).
 
 The JSON Micropub create path passes `data["properties"]` verbatim to the handler, bypassing the form-path allow-list `MICROPUB_FORM_CREATE_PROPERTIES`. The form-path allow-list does include `published` and `url`, so those are not bypass examples; however a token with `create` scope can smuggle properties the form path never accepts, such as `uid` or `author`, through JSON. The same gap applies to `update`, where `replace`/`add`/`delete` operations are not gated on which properties may be modified.
@@ -321,6 +391,11 @@ The JSON Micropub create path passes `data["properties"]` verbatim to the handle
 ### WebSub Subscription Secrets and Token-Equivalent Fields Are Editable in Admin
 
 **Severity:** Medium
+
+**Status:** Resolved and verified 2026-05-07. WebSub shared secrets are
+encrypted at rest and masked in admin, `Token.key` is hashed at rest and masked
+in admin, `Auth.state` is no longer searchable, and WebSub delivery-attempt
+admin rows are read-only/non-deletable.
 
 **References:** `src/indieweb/admin.py:98` (WebSub fieldsets), `src/indieweb/admin.py:160` (`TokenAdmin` exposes `key`), `src/indieweb/admin.py:196` (`AuthAdmin.search_fields` includes `state`), `src/indieweb/models.py:308-310` (`secret`/`pending_secret` as plain `CharField`).
 
@@ -332,6 +407,10 @@ The JSON Micropub create path passes `data["properties"]` verbatim to the handle
 
 **Severity:** Medium
 
+**Status:** Resolved and verified 2026-05-07. Wildcard origins combined with
+`INDIEWEB_CORS_ALLOW_CREDENTIALS=True` now log a warning and emit wildcard CORS
+without `Access-Control-Allow-Credentials`.
+
 `src/indieweb/cors.py:97-109` — when `INDIEWEB_CORS_ALLOWED_ORIGINS = "*"` and `INDIEWEB_CORS_ALLOW_CREDENTIALS = True`, the response echoes any `Origin` and sets `Access-Control-Allow-Credentials: true`. Since Micropub and Media use bearer-token auth (not cookies), this is not a single-step browser-session takeover; but any cross-origin site can ride a session-authenticated browser request whose token is provided via cookie-bridged adapters or page-level fetch tooling.
 
 **Recommendation:** Refuse to honour credentials when wildcard origins are configured (drop the credentials header or refuse to enable CORS) and warn at startup. Document this combination as unsupported.
@@ -339,6 +418,11 @@ The JSON Micropub create path passes `data["properties"]` verbatim to the handle
 ### Rate Limiter Identity Hash Is Trivially Reversible; Counter Is Not Atomic
 
 **Severity:** Medium
+
+**Status:** Partially resolved 2026-05-07. Client identities are now HMACed with
+`SECRET_KEY`, cache-key versioning was bumped, and `Retry-After` falls back to
+the configured window if the reset marker is missing. The limiter remains
+documented as best-effort under contention rather than a strict atomic limiter.
 
 `rate_limit.py:86-88, 110-117` — `sha256(REMOTE_ADDR)` of an IPv4 is trivially reversible by exhaustive enumeration (4 billion keys), so the digest is not a privacy control. The `cache.add` + `cache.incr` pair is not atomic under contention with redis/memcached, allowing burst-over-limit.
 
@@ -348,6 +432,10 @@ The JSON Micropub create path passes `data["properties"]` verbatim to the handle
 
 **Severity:** Medium (refines first-pass enumeration finding)
 
+**Status:** Resolved and verified 2026-05-07. Status URLs now use opaque
+`status_token` values instead of sequential IDs, and public status JSON no
+longer includes Vouch URLs or Vouch timestamps.
+
 `views.py:2025` — `WebmentionStatusView` is unauthenticated and its sequential `<int:pk>` URL exposes every Webmention's `source_url`, `target_url`, `vouch_url`, status, and verification timestamps. This leaks attacker-probe pending state, vouch URLs that may be private, and any private/draft post URL that happens to be a Webmention target.
 
 **Recommendation:** Replace integer IDs with opaque tokens, gate access on ownership/staff, or restrict the response to public-safe states (verified only) and fields (no `vouch_url`).
@@ -356,6 +444,11 @@ The JSON Micropub create path passes `data["properties"]` verbatim to the handle
 
 **Severity:** Medium
 
+**Status:** Resolved and verified 2026-05-07 for the source-link proof. HTML
+verification skips non-rendered ancestors and plain-text URL tokens are no
+longer accepted as standalone source-link proof. The separate residual parser
+recursion issue is tracked under finding 3.
+
 `processors.py:122, 875` — `_html_links_to_target` matches `<a href>` inside non-rendered ancestors such as `<template>` and `<noscript>` (BeautifulSoup's `html.parser` does not extract tags from inside HTML comments, and `<script>`/`<style>` content is parsed as text, so those paths are not affected). `_text_links_to_target` matches plain-text URL tokens that the source page never renders as a link. Both bypass the Webmention spec §3.2.2 requirement that the source actually link to the target.
 
 **Recommendation:** Skip non-rendered ancestors (`<template>`, `<noscript>`, `<head>` except canonical/related rels) in `_html_links_to_target`. Only accept the text-token path when the same content's `html` also contains a real `<a href>`.
@@ -363,6 +456,14 @@ The JSON Micropub create path passes `data["properties"]` verbatim to the handle
 ### WebSub: No Replay Protection, No Lease Bounds, Algorithm Confusion
 
 **Severity:** Medium
+
+**Status:** Partially resolved 2026-05-07. WebSub signatures now prefer the
+strongest accepted algorithm, `sha1` is disabled by default, leases are clamped,
+shared secrets have byte-length bounds, secret headers are handled with
+case-insensitive request headers, and a replay window rejects duplicate latest
+accepted bodies. Remaining gap: only the latest accepted delivery digest is
+tracked, so replaying an older body after a different accepted body is not
+detected.
 
 - `websub.py:630-653` — signed deliveries have no nonce/timestamp/freshness check; a captured payload replays forever.
 - `websub.py:159-168, 458-465` — `lease_seconds` is unbounded; a hub returning `10**12` produces effectively-permanent subscriptions.
@@ -374,11 +475,21 @@ The JSON Micropub create path passes `data["properties"]` verbatim to the handle
 
 ### Client Trust Is Permissive by Default
 
+**Status:** Mitigated 2026-05-07. Client IDs are normalized before policy hooks
+and an explicit `INDIEWEB_ALLOWED_CLIENT_IDS` allowlist is available. The
+default remains permissive for backwards compatibility and should be hardened
+by production deployments.
+
 By default, structurally valid `client_id` URLs are accepted unless `INDIEWEB_CLIENT_ID_VALIDATOR` is configured. The validator hook receives the raw URL with no normalisation, so allow-lists by exact match miss case-only variants. (Note: when configured but unimportable, the hook DOES fail closed at `views.py:315`; that aspect is correct.)
 
 **Recommendation:** Document strict production client validation. Normalise `client_id` (lowercase scheme/host, IDNA) before invoking the validator.
 
 ### `me` Is Not Bound to the Logged-In User and Is Echoed on the Consent Screen
+
+**Status:** Resolved 2026-05-07. Deployments can enable strict
+`INDIEWEB_BIND_ME_TO_USER`; the consent screen now shows the configured profile
+URL and a mismatch warning when the requested `me` differs from the logged-in
+user's profile URL.
 
 The authorisation request accepts and stores arbitrary `me` values; the consent screen displays this client-supplied value verbatim, providing a phishing surface where a hostile client renders `me=https://victim.example/` to mislead the user.
 
@@ -386,11 +497,20 @@ The authorisation request accepts and stores arbitrary `me` values; the consent 
 
 ### Access Tokens Are Stored in Plaintext
 
+**Status:** Resolved and verified 2026-05-07. `Token.key` is now an
+`hmac-sha256$` digest at rest; raw bearer tokens are returned only at issuance
+or reissue, and authentication/introspection compare derived hashes.
+
 `Token.key` is stored directly in the database. A database-read compromise yields live bearer tokens. `Auth.key` and `Token.key` are now unique, and duplicate-key lookups fail closed, but token hashes at rest are still not implemented.
 
 **Recommendation:** Store only a hash; return the raw token at issuance only; authenticate by comparing derived hashes (with `hmac.compare_digest`).
 
 ### Micropub Property Validation Gaps
+
+**Status:** Resolved and verified 2026-05-07. URL-typed create properties are
+validated as HTTP(S), Micropub action URLs must be relative/local or same-host
+absolute URLs, `mp-slug` is sanitized, and JSON content types with parameters
+are parsed as JSON.
 
 - `mp-slug` and `mp-syndicate-to` reach the handler unsanitised.
 - Photo/audio/video/in-reply-to/like-of/repost-of/bookmark-of/syndication URL fields are not validated as `http(s)://`; `javascript:` and `file:///` reach the handler.
@@ -401,11 +521,19 @@ The authorisation request accepts and stores arbitrary `me` values; the consent 
 
 ### Rate Limiting Is Disabled by Default
 
+**Status:** Mitigated 2026-05-07. The optional limiter remains disabled by
+default for compatibility, but documentation now includes hardened production
+starting points and proxy-aware `REMOTE_ADDR` guidance.
+
 `INDIEWEB_RATE_LIMITS` defaults to disabled across auth, token, introspection, Micropub, media, Webmention, Webmention status, and WebSub callback endpoints.
 
 **Recommendation:** Document hardened production limits per endpoint. Consider shipping conservative defaults or a helper settings snippet. Cover proxy-aware client IP guidance (the limiter intentionally ignores `X-Forwarded-For`).
 
 ### Test Settings Hardcode `SECRET_KEY` and `DEBUG=True`
+
+**Status:** Resolved 2026-05-07. Test settings now load `SECRET_KEY` from
+`DJANGO_INDIEWEB_TEST_SECRET_KEY` with an explicit insecure sentinel default,
+and `DEBUG` is env-overridable.
 
 `tests/settings.py:17` ships a hardcoded key with `DEBUG=True`. Low risk since it is test-only, but a project that mistakenly imports `tests.settings` runs with that combination.
 
@@ -413,11 +541,18 @@ The authorisation request accepts and stores arbitrary `me` values; the consent 
 
 ### Dependency Pinning
 
+**Status:** Resolved 2026-05-07. Runtime lower bounds were added for `httpx`,
+`beautifulsoup4`, and `mf2py`, `uv.lock` is tracked, and release docs include
+SBOM generation.
+
 `pyproject.toml` only pins Django with an upper bound. Downstream installs may pull vulnerable `httpx`, `beautifulsoup4`, or `mf2py`.
 
 **Recommendation:** Add lower bounds for known-CVE versions; ship a `uv` lockfile and SBOM with releases.
 
 ### Inline Styles in Bundled Templates
+
+**Status:** Resolved 2026-05-06. Bundled consent and token-management inline
+styles moved into `static/css/indieweb.css`.
 
 `consent.html:45-100` and `tokens.html:52-94` carry inline `<style>` blocks. Operators with strict CSPs (no `'unsafe-inline'`, no hash/nonce) will see broken rendering or be forced to weaken CSP.
 
@@ -425,41 +560,31 @@ The authorisation request accepts and stores arbitrary `me` values; the consent 
 
 ### WebSub Deliveries Without Secrets Rely on Callback Token Only
 
+**Status:** Mitigated 2026-05-07. Production deployments can require signed
+deliveries with `INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`; docs recommend
+secrets for production subscriptions. Unsigned delivery remains accepted by
+default when no subscription secret is configured, preserving callback-token-only
+compatibility.
+
 `validate_websub_delivery_signature()` returns success when a subscription has no secret. Authenticity then depends on the unguessable callback URL token. Combined with the WebSub renewal logic, secrets persist across re-verifications even when a hub returns a new `hub.secret`-less response.
 
 **Recommendation:** Strongly recommend or optionally require WebSub secrets for subscriptions where supported. Rotate `Subscription.callback_token` on every successful resubscribe. Clear `secret` on successful re-verify when `pending_secret_set` is False.
 
-## Recommended Fix Order
+## Remaining Fix Order
 
-1. Sanitise Webmention HTML; validate URL schemes on Webmention author fields and the templatetag `mark_safe` site.
-2. Add a single SSRF-safe HTTP helper and route every outbound HTTP path through it (Webmention receive, Webmention sender, WebSub subscribe, WebSub publish). Restrict source/target URL validators to http/https.
-3. Restore CSRF protection for IndieAuth consent approve/deny POSTs; move the authentication gate above the deny branch; add `xframe_options_deny` and `frame-ancestors 'none'`.
-4. Delete authorisation codes on every grant-validation failure; redact codes in logs; rotate token keys on reissue; require strict bearer-token parsing. (Resolved 2026-05-06.)
-5. Add Webmention/WebSub fetch size limits, response streaming, queue guidance, and rate-limit defaults; cap nested h-entry recursion; check `Content-Length` before reading WebSub body.
-6. Require token-exchange `redirect_uri` matching with full normalisation (default ports, IDNA, percent-encoding).
-7. Add Micropub media magic-byte validation, derive suffix from validated content-type, cap multipart counts, document safe serving headers.
-8. Authenticate the introspection endpoint per RFC 7662.
-9. Apply the JSON-path Micropub property allow-list; gate `update` on server-managed properties. (The POST-body `Authorization` fallback is resolved.)
-10. Refuse CORS credentials when `Access-Control-Allow-Origin: *` is configured.
-11. Add stricter IndieAuth client/PKCE/`me` policy options (incl. consent-screen warning when `me` does not match the logged-in user's profile).
-12. Hash access tokens at rest. (`Auth.key`/`Token.key` uniqueness is resolved.)
-13. Mask WebSub subscription secrets, Token.key, and Auth.state in the admin; preserve delivery-attempt audit records; document Micropub adapter ownership responsibilities.
-14. Make Webmention status URLs non-enumerable or privacy-aware; harden source-link verification against non-rendered ancestors and plain-text-only matches.
-15. Require or strongly recommend signed WebSub deliveries; add replay protection, lease bounds, and signature-algorithm preference.
+1. **Pin SSRF-safe outbound connections to checked addresses.** Update the shared HTTP helper so the DNS/IP safety decision is bound to the actual socket connection, not just to a preflight hostname resolution. Preserve the original Host header and TLS SNI, re-apply the same policy on every redirect, and add DNS rebinding regression tests.
+2. **Cap all Webmention parser fallback traversals.** Apply the existing depth/item-count budget consistently to `_search_for_any_h_entry`, `_search_items_for_h_card`, `_search_items_for_h_card_id`, page-level h-card collection, and any future recursive microformats traversal helper. Add regression tests with wide/deep h-entry and h-card trees.
+3. **Track multiple recent WebSub delivery digests.** Replace the single latest accepted digest with a bounded replay cache/history per subscription, scoped to the configured replay window. Add tests proving A/B/A replay is rejected while old entries expire.
 
 ## Documentation Impact
 
-Several findings are partially or wholly documentation/guidance items. When the corresponding code fixes land, the user-facing docs must change in the same release:
+Most historical documentation updates have landed with the corresponding fixes. The remaining fixes should update docs as follows:
 
-- **`INDIEWEB_MEDIA_ALLOWED_TYPES = None`** (`docs/configuration.rst:351`, `docs/micropub.rst:470`): currently documented as a way to disable type filtering. Add an explicit security warning that this disables file-type validation entirely and requires the host to serve media on a separate origin with `X-Content-Type-Options: nosniff` and `Content-Disposition: attachment`.
-- **Micropub adapter ownership**: README and docs/index point hosts at `MicropubContentHandler`. Add a prominent section ("Adapter responsibilities") that the adapter MUST enforce ownership on update/delete/undelete/source — referencing the `user` argument and the in-memory example as `# UNSAFE`.
-- **Media serving headers**: docs/configuration should describe required serving headers and storage isolation when the host serves media themselves.
-- **CORS configuration**: docs/configuration.rst should explicitly call out that wildcard `Access-Control-Allow-Origin` with `Access-Control-Allow-Credentials: true` is unsupported, and the app will refuse to emit credentials in that combination once the fix lands.
-- **WebSub secret handling**: docs should recommend secrets for all production subscriptions, document the callback-token-only risk for unsigned deliveries, and warn against operator-supplied hub URLs that resolve to private addresses.
-- **Token introspection authentication**: when the fix lands, docs must show the resource-server credential format and behaviour change. Operators relying on the current unauthenticated endpoint will need a migration note.
-- **Rate limit defaults**: when defaults change, docs/configuration must list the new floors and the proxy-aware-IP guidance (the limiter intentionally ignores `X-Forwarded-For`).
+- **SSRF helper IP pinning**: document the exact guarantees and limitations of the safe outbound helper, including DNS rebinding protection and behavior when tests or callers inject custom clients.
+- **Webmention parser traversal caps**: document the relevant Webmention processing settings and their effect on pathological source pages.
+- **WebSub replay cache**: document the replay-window storage model, retention bounds, and migration implications if a new model/table is added.
 - **`AGENTS.md`**: no change needed.
 
 ## Current Backlog Coverage
 
-The recommended work is mirrored in `BACKLOG.md`, restructured after this revision so that each task corresponds to a single coherent PR.
+The three residual items found during the 2026-05-07 verification pass are mirrored in `BACKLOG.md` as current planned work. Historical issues marked resolved above have corresponding entries in `DONE.md`.
