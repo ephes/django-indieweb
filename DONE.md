@@ -19,6 +19,109 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Changelog: added an Unreleased bugfix entry. No additional documentation was
   needed because no public API or configuration changed.
 
+### Decorate the token management view with ``xframe_options_deny``
+
+- ``TokenManagementView`` (``src/indieweb/views.py``) is now decorated with
+  ``@method_decorator(xframe_options_deny, name="dispatch")`` and the rendered
+  response sets ``Content-Security-Policy: frame-ancestors 'none'``, mirroring
+  the consent screen's posture. The default ``XFrameOptionsMiddleware`` would
+  otherwise leave the revoke page at ``SAMEORIGIN``.
+- Added regression test
+  ``tests/test_token_management.py::test_token_management_blocks_framing``
+  asserting ``X-Frame-Options: DENY`` and the matching CSP header.
+- Validation: ``uv run pytest`` (full suite, 1286 passing).
+- Changelog: added an Unreleased entry describing the new clickjacking
+  protection.
+
+### Serialize concurrent Webmention receives with ``select_for_update``
+
+- ``WebmentionProcessor.process_webmention`` (``src/indieweb/processors.py``)
+  now splits processing into two phases. Phase 1 runs every outbound HTTP
+  call (source fetch, vouch fetch), microformat parsing, vouch verification,
+  and spam scoring outside any DB lock and produces a typed
+  ``_WebmentionOutcome`` that captures parsed fields and the vouch
+  verification timestamp explicitly. Phase 2 enters ``transaction.atomic``,
+  reloads the row with ``select_for_update().get(...)``, applies the
+  pre-computed outcome onto that locked instance with tightly scoped
+  ``update_fields``, and exits — so a slow source can no longer keep a row
+  lock open, and a concurrent receive that committed changes between the
+  initial ``get_or_create`` and the lock cannot have its unrelated field
+  updates clobbered by a stale full save.
+- ``_verify_vouch_for_webmention`` no longer writes ``vouch_verified_at``
+  itself; it returns ``(allowed, verified_at)`` so the caller can persist the
+  timestamp under the row lock alongside any pending ``vouch_url`` change.
+  ``_WebmentionOutcome`` records the URL Phase 1 actually verified
+  (``verified_vouch_url``); Phase 2 writes ``vouch_verified_at`` only when
+  the locked row still holds that URL, so a concurrent ``vouch_url`` swap
+  between phases cannot have a stale timestamp applied to its unverified
+  URL. Spam outcomes carry ``vouch_verified_at`` and ``verified_vouch_url``
+  as well, mirroring the previous behavior in which a successful Vouch
+  verification followed by a spam classification still persisted the
+  verification timestamp.
+- Added a freshness gate so a slow older receive cannot overwrite a newer
+  outcome that has already been committed. Every ``_WebmentionOutcome``
+  carries the wall-clock ``received_at`` captured at the *start* of Phase
+  1, before any outbound IO — so a request whose ``_fetch_source`` raises
+  after a long timeout still reports a watermark from when the receive
+  began rather than when the exception was caught, which would otherwise
+  let an older request post-date a newer success. A new
+  ``Webmention.last_received_at`` column (migration
+  ``0024_webmention_last_received_at``) tracks the latest ``received_at``
+  applied to the row. Under the row lock Phase 2 skips the outcome (and any
+  pending ``vouch_url`` save) when
+  ``locked.last_received_at >= outcome.received_at``. Every successful
+  outcome write — failed, spam, or verified — now updates
+  ``last_received_at`` via scoped ``update_fields``. ``fetched_at``
+  continues to record the actual fetch-completion time on verified
+  outcomes (used by ``WebmentionSourceSnapshot``); only the freshness
+  watermark moved to start-of-phase-1.
+- ``_store_source_snapshot_safely`` and ``_sync_nested_responses_safely`` now
+  wrap their writes in nested ``transaction.atomic`` savepoints so a real
+  database error in either is rolled back to its savepoint without poisoning
+  the parent's verified save.
+- ``webmention_received`` is dispatched via ``transaction.on_commit`` so
+  receivers never observe state that the outer transaction later rolled back.
+- Added regression tests in ``tests/test_webmention_processor.py``:
+  ``test_processor_serializes_writes_and_fetches_outside_row_lock`` (asserts
+  the source fetch precedes ``select_for_update``);
+  ``test_processor_does_not_overwrite_concurrent_field_updates`` (simulates a
+  concurrent ``vouch_url`` commit between the two phases and asserts it
+  survives — verified to fail against the pre-fix code that saved the stale
+  instance);
+  ``test_processor_does_not_apply_vouch_timestamp_to_concurrently_changed_url``
+  (verifies a different vouch URL, then a concurrent commit changes
+  ``vouch_url`` between the phases — the verification timestamp must not be
+  written onto the new, unverified URL; verified to fail against a
+  URL-blind elif branch);
+  ``test_processor_persists_vouch_verified_at_on_spam_outcome``
+  (vouch verification succeeds, spam check then classifies the entry as
+  spam, and the row must still record ``vouch_verified_at``; verified to
+  fail when the spam outcome omits the vouch fields);
+  ``test_processor_skips_stale_outcome_when_newer_outcome_already_committed``
+  (pre-creates a row with a future ``last_received_at`` and a newer
+  ``status='verified'`` payload, runs a stale receive whose source no longer
+  links to the target, and asserts the row's verified state survives —
+  verified to fail when the freshness gate is disabled);
+  ``test_processor_freshness_watermark_uses_start_time_not_exception_time``
+  (older receive's ``_fetch_source`` raises after a newer success has
+  committed; pins ``timezone.now()`` so the start-time call lands before B
+  and any later call lands after — asserts B's verified state survives,
+  verified to fail with ``'failed' == 'verified'`` when the exception path
+  stamps ``timezone.now()`` instead of the start-of-phase-1 watermark); and
+  ``test_processor_preserves_verified_status_when_safe_helpers_raise_db_error``
+  (raises ``IntegrityError`` from ``WebmentionSourceSnapshot.update_or_create``
+  and asserts ``status='verified'`` is committed). Updated
+  ``test_processor_emits_signal`` and
+  ``test_processor_preserves_verified_status_when_source_snapshot_write_fails``
+  to use ``django_capture_on_commit_callbacks`` since the signal now fires
+  post-commit.
+- Validation: ``uv run pytest`` (full suite, 1293 passing); ``uv run mypy
+  src``; ``uv run ruff check .``.
+- Changelog: refreshed the Unreleased entry to describe the IO-outside-lock
+  refactor, the locked-instance reload with scoped ``update_fields``, the
+  vouch persistence move into the lock, the savepoints in safe helpers, and
+  the post-commit signal dispatch.
+
 ### Treat empty ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` as the default cap
 
 - ``_delivery_max_bytes()`` in ``src/indieweb/websub.py`` previously routed the

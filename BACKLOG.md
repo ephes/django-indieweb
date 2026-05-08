@@ -29,11 +29,6 @@ No current Priority 3 API Hardening items.
   - Current state: streaming is short-circuited (skipping size enforcement) and IP pinning is suppressed when `client.__class__.__module__ == "unittest.mock"` so legacy `unittest.mock.Mock` clients keep working. A future caller wrapping a real `httpx.Client` in a `unittest.mock.Mock` for tracing could silently disable max-bytes enforcement and/or IP pinning.
   - Desired outcome: introduce explicit kwargs (e.g. `_skip_streaming=True` and `_skip_pinning=True`) used by the affected tests, drop both module-name guards, and verify all existing call sites still pass.
 
-- [ ] Add `xframe_options_deny` to the token management view.
-  - References: `SECURITY_ANALYSIS.md` "tokens.html clickjacking" residual; `src/indieweb/views.py` (`TokenManagementView`); `src/indieweb/templates/indieweb/tokens.html`.
-  - Current state: Django's default middleware sets `X-Frame-Options: SAMEORIGIN` on the revoke page; the consent screen already enforces `DENY`.
-  - Desired outcome: decorate the token management view with `@xframe_options_deny` (and a matching `frame-ancestors 'none'` CSP), mirroring the consent screen's posture. Add a regression test asserting the header.
-
 ### WebSub Enhancements
 
 - [ ] Optionally enqueue the WebSub delivery hook out of the request thread.
@@ -55,11 +50,6 @@ No current Syndication and Storage Examples items.
   - References: `SECURITY_ANALYSIS.md` h-card render finding; `src/indieweb/templates/indieweb/h-card.html`; `src/indieweb/models.py` (`Profile._validate_h_card_urls`); `src/indieweb/h_card.py`.
   - Current state: `Profile.save()` runs `full_clean()` which validates h-card URLs, but Django's default `URLValidator()` permits `ftp(s)://`, `mailto:` interpolations have no validator, and bypass paths (`bulk_update`, `update()`, raw SQL, fixtures with `bypass_validation`) skip validation entirely. Several `<a href>`/`<img src>` interpolations also lack `rel="nofollow noopener"`/`referrerpolicy="no-referrer"`.
   - Desired outcome: restrict h-card URL schemes to `http`/`https` at the model layer, sanitize at render with the existing `sanitize_remote_webmention_url`, and add `rel`/`referrerpolicy` on outbound author/photo links.
-
-- [ ] Wrap concurrent Webmention receives in `transaction.atomic` + `select_for_update`.
-  - References: `SECURITY_ANALYSIS.md` Webmention race residual; `src/indieweb/processors.py:289-296`; `tests/test_webmention_processor.py`.
-  - Current state: two concurrent `POST /webmention/` requests for the same `(source, target)` pair can stomp each other's `verified` state.
-  - Desired outcome: serialize the verify+update sequence per row so the second receive observes and preserves the first's outcome; add a regression test.
 
 ## Agent Workflow Improvements
 

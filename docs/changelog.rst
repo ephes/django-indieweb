@@ -9,6 +9,52 @@ Unreleased
   timestamps that serialize UTC offsets without a colon, such as
   ``2026-05-01T10:00:00+0000``. Nested Webmention responses now retain their
   published timestamp across all supported Python versions.
+* Hardened the token management page against clickjacking. The
+  ``TokenManagementView`` now emits ``X-Frame-Options: DENY`` (via
+  ``@xframe_options_deny``) and ``Content-Security-Policy: frame-ancestors
+  'none'``, matching the consent screen's posture rather than relying on
+  ``XFrameOptionsMiddleware`` defaulting to ``SAMEORIGIN``. A regression test
+  ``test_token_management_blocks_framing`` asserts both headers.
+* Serialized concurrent Webmention receives for the same ``(source_url,
+  target_url)`` pair. ``WebmentionProcessor.process_webmention`` now splits
+  processing into a lock-free IO phase (source fetch, parsing, vouch and spam
+  checks) and a short ``transaction.atomic`` block that acquires the row with
+  ``select_for_update`` and applies the pre-computed outcome. The persistence
+  phase reloads the row under the lock and writes onto that locked instance
+  with scoped ``update_fields``, so a concurrent receive that committed
+  changes between the initial ``get_or_create`` and the lock cannot have its
+  unrelated field updates clobbered by a stale full save.
+  ``_verify_vouch_for_webmention`` no longer persists ``vouch_verified_at``
+  itself; it returns the verification timestamp so the caller can write it
+  under the lock alongside any pending ``vouch_url`` change. The
+  persistence phase records the URL Phase 1 actually verified
+  (``verified_vouch_url``) and writes ``vouch_verified_at`` only when the
+  locked row still holds that URL — so a concurrent receive that swaps
+  ``vouch_url`` between Phase 1 and the lock cannot have a stale timestamp
+  applied to its (unverified) URL. Spam outcomes also carry the verified
+  timestamp, mirroring the previous mid-pipeline ``vouch_verified_at`` save
+  so a successful Vouch verification followed by a spam classification still
+  retains the verification timestamp.
+  Each ``_WebmentionOutcome`` records the wall-clock time at which Phase 1
+  *started* (``received_at``, captured before any outbound IO so that a
+  slow older receive whose failure surfaces only after a timeout still
+  carries an older watermark); a new ``Webmention.last_received_at`` column
+  (migration ``0024_webmention_last_received_at``) tracks the latest
+  ``received_at`` ever applied to a row. Phase 2 compares the locked row's
+  ``last_received_at`` against the incoming outcome and skips writes whose
+  start time is older than what has already been committed, so a slow
+  older receive can no longer overwrite a newer outcome that has already
+  landed — even when the older receive ultimately fails on a timeout.
+  ``_store_source_snapshot_safely`` and ``_sync_nested_responses_safely`` run
+  inside nested savepoints so a real database error in either cannot poison
+  the parent transaction and roll back the verified save.
+  ``webmention_received`` is dispatched via ``transaction.on_commit`` so
+  receivers never observe rolled-back state. Regression tests assert that the
+  source fetch happens before the row lock is acquired, that a concurrent
+  ``vouch_url`` update committed between the two phases survives processing,
+  that ``IntegrityError`` raised during snapshot writes still leaves
+  ``status='verified'`` committed, and that the signal fires after commit
+  (using ``django_capture_on_commit_callbacks``).
 * Treated an empty ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` as the documented
   default rather than a silent disable. ``_delivery_max_bytes()`` now mirrors
   the ``_hub_response_max_bytes()`` and ``_delivery_replay_history_max()``

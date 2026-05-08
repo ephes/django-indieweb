@@ -317,6 +317,11 @@ class Webmention(models.Model):
     modified = models.DateTimeField(auto_now=True)
     verified_at = models.DateTimeField(null=True, blank=True)
     vouch_verified_at = models.DateTimeField(null=True, blank=True)
+    # Wall-clock time at which the most recent processing pipeline fetched
+    # (or attempted to fetch) the source URL. Used as a freshness signal so
+    # an older concurrent receive cannot overwrite a newer outcome that has
+    # already been committed.
+    last_received_at = models.DateTimeField(null=True, blank=True)
 
     # Optional spam check result
     spam_check_result = models.JSONField(null=True, blank=True)

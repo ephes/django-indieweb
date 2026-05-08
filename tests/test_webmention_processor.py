@@ -238,6 +238,43 @@ class TestWebmentionProcessor:
             )
             assert webmention.status == "verified"
 
+    def test_processor_serializes_writes_and_fetches_outside_row_lock(self, processor):
+        """Writes run under select_for_update; the source fetch happens before the lock."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+
+        events: list[str] = []
+        original_select_for_update = Webmention.objects.select_for_update
+
+        def spying_select_for_update(*args, **kwargs):
+            events.append("lock")
+            return original_select_for_update(*args, **kwargs)
+
+        def fetching_get(*args, **kwargs):
+            events.append("fetch")
+            response = Mock()
+            response.status_code = 200
+            response.text = f'<html><body><a href="{target_url}">Link</a></body></html>'
+            response.headers = {"content-type": "text/html"}
+            return response
+
+        with (
+            patch.object(Webmention.objects, "select_for_update", side_effect=spying_select_for_update),
+            patch("httpx.Client") as mock_get_class,
+        ):
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = fetching_get
+
+            webmention = processor.process_webmention(source_url, target_url)
+
+        # Source fetch must run before the row lock is acquired so a slow source
+        # cannot hold the lock open and block duplicate receives for the same pair.
+        assert "fetch" in events
+        assert "lock" in events
+        assert events.index("fetch") < events.index("lock")
+        assert webmention.status == "verified"
+
     @override_settings(INDIEWEB_WEBMENTION_FETCH_MAX_BYTES=10)
     def test_processor_marks_oversized_source_failed_without_snapshot(self, processor):
         """Source responses over the decoded byte cap fail without storing raw HTML."""
@@ -1599,7 +1636,9 @@ class TestWebmentionProcessor:
         assert duplicate_snapshot.raw_source_html == second_html
         assert duplicate_snapshot.content_digest == hashlib.sha256(second_html.encode("utf-8")).hexdigest()
 
-    def test_processor_preserves_verified_status_when_source_snapshot_write_fails(self, processor):
+    def test_processor_preserves_verified_status_when_source_snapshot_write_fails(
+        self, processor, django_capture_on_commit_callbacks
+    ):
         """Test snapshot storage failures do not demote an otherwise verified Webmention."""
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
@@ -1614,6 +1653,7 @@ class TestWebmentionProcessor:
                     side_effect=RuntimeError("snapshot unavailable"),
                 ),
                 patch("indieweb.processors.webmention_received.send") as mock_signal,
+                django_capture_on_commit_callbacks(execute=True),
             ):
                 webmention = processor.process_webmention(source_url, target_url)
 
@@ -1627,6 +1667,292 @@ class TestWebmentionProcessor:
             source_url=source_url,
             target_url=target_url,
         )
+
+    def test_processor_does_not_overwrite_concurrent_field_updates(
+        self, processor, django_capture_on_commit_callbacks
+    ):
+        """A concurrent commit between phase 1 and phase 2 must not be clobbered.
+
+        Simulates the race the reviewer flagged: request A loads the row before
+        a concurrent request B commits a ``vouch_url`` change. After A finishes
+        Phase 1 (HTTP fetch + parsing on the stale snapshot) we mutate the DB
+        to mimic B's commit, then let A enter Phase 2. A must save with scoped
+        ``update_fields`` so B's ``vouch_url`` survives, instead of being
+        echoed back to its old value from A's stale instance.
+        """
+        source_url = "https://example.com/post-race"
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        concurrent_vouch_url = "https://other.example/vouch-from-b"
+
+        original_collect = processor._collect_webmention_outcome
+
+        def collect_then_simulate_concurrent_commit(webmention, *args, **kwargs):
+            outcome = original_collect(webmention, *args, **kwargs)
+            # B commits a vouch_url change between Phase 1 and Phase 2.
+            Webmention.objects.filter(pk=webmention.pk).update(vouch_url=concurrent_vouch_url)
+            return outcome
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            with (
+                patch.object(
+                    processor,
+                    "_collect_webmention_outcome",
+                    side_effect=collect_then_simulate_concurrent_commit,
+                ),
+                django_capture_on_commit_callbacks(execute=True),
+            ):
+                processor.process_webmention(source_url, target_url)
+
+        reloaded = Webmention.objects.get(source_url=source_url, target_url=target_url)
+        assert reloaded.status == "verified"
+        # The concurrent update from B must survive A's persistence phase.
+        assert reloaded.vouch_url == concurrent_vouch_url
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_processor_does_not_apply_vouch_timestamp_to_concurrently_changed_url(
+        self, processor, django_capture_on_commit_callbacks
+    ):
+        """Verified ``vouch_verified_at`` must not be written to a different ``vouch_url``.
+
+        Phase 1 verifies the vouch URL the row had when the request arrived.
+        If a concurrent receive commits a different ``vouch_url`` before this
+        request acquires the row lock, Phase 2 must not stamp the verification
+        timestamp onto the new (unverified) URL.
+        """
+        source_url = "https://example.com/post-vouch-race"
+        target_url = "https://mysite.com/article"
+        verified_vouch_url = "https://trusted.example/vouch-A"
+        concurrent_vouch_url = "https://other.example/vouch-B-not-verified"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
+
+        # Pre-create the row with vouch_url=A so Phase 1 verifies A without the
+        # request supplying a vouch_url itself (pending_vouch_save=False).
+        Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            vouch_url=verified_vouch_url,
+        )
+
+        original_collect = processor._collect_webmention_outcome
+
+        def collect_then_change_vouch(webmention, *args, **kwargs):
+            outcome = original_collect(webmention, *args, **kwargs)
+            # Concurrent commit between Phase 1 and Phase 2 swaps the vouch_url.
+            Webmention.objects.filter(pk=webmention.pk).update(vouch_url=concurrent_vouch_url)
+            return outcome
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=200, text=vouch_html),
+            ]
+
+            with (
+                patch.object(
+                    processor,
+                    "_collect_webmention_outcome",
+                    side_effect=collect_then_change_vouch,
+                ),
+                django_capture_on_commit_callbacks(execute=True),
+            ):
+                processor.process_webmention(source_url, target_url)
+
+        reloaded = Webmention.objects.get(source_url=source_url, target_url=target_url)
+        assert reloaded.status == "verified"
+        # Concurrent vouch_url survives.
+        assert reloaded.vouch_url == concurrent_vouch_url
+        # The verification timestamp must NOT be applied to URL B (which we
+        # never verified). It is correct for it to remain unset.
+        assert reloaded.vouch_verified_at is None
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_processor_persists_vouch_verified_at_on_spam_outcome(
+        self, processor, django_capture_on_commit_callbacks
+    ):
+        """A successful vouch verification must survive a later spam classification.
+
+        Before refactoring, ``_verify_vouch_for_webmention`` saved
+        ``vouch_verified_at`` mid-pipeline so a later spam result still
+        retained that timestamp. The two-phase pipeline must preserve the same
+        guarantee: spam outcomes carry ``vouch_verified_at`` so Phase 2 writes
+        it onto the locked row.
+        """
+        source_url = "https://example.com/post-spam-vouch"
+        target_url = "https://mysite.com/article"
+        vouch_url = "https://trusted.example/vouch-spam"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
+
+        spam_checker = Mock()
+        spam_checker.check.return_value = {"is_spam": True, "reason": "test"}
+
+        with patch("httpx.Client") as mock_get_class:
+            mock_client = Mock()
+            mock_get_class.return_value.__enter__.return_value = mock_client
+            mock_client.get.side_effect = [
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=200, text=vouch_html),
+            ]
+
+            with (
+                patch.object(processor, "_get_spam_checker", return_value=spam_checker),
+                django_capture_on_commit_callbacks(execute=True),
+            ):
+                webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
+
+        webmention.refresh_from_db()
+        assert webmention.status == "spam"
+        assert webmention.vouch_url == vouch_url
+        # Vouch verification succeeded before the spam check; the timestamp
+        # must be preserved.
+        assert webmention.vouch_verified_at is not None
+
+    def test_processor_freshness_watermark_uses_start_time_not_exception_time(
+        self, processor, django_capture_on_commit_callbacks
+    ):
+        """An older receive that times out must not overwrite a newer success.
+
+        Captures the reviewer's timeout race: the older receive started before
+        a newer receive arrived, but its ``_fetch_source`` call took longer
+        than the newer receive's whole pipeline. If we stamped
+        ``received_at`` when the exception is *caught*, the older outcome
+        would have a *later* timestamp than the newer success and pass the
+        freshness gate. The watermark must reflect when the receive started,
+        not when its failure surfaced.
+        """
+        from datetime import timedelta
+
+        source_url = "https://example.com/post-timeout-race"
+        target_url = "https://mysite.com/article"
+
+        # Newer success already committed: row state mimics request B having
+        # arrived after our (about-to-run) older request A and committing
+        # verified before A's slow fetch unwinds.
+        newer_received_at = django_timezone.now()
+        existing = Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            status="verified",
+            verified_at=newer_received_at,
+            last_received_at=newer_received_at,
+            content_html="<p>B's verified content</p>",
+        )
+
+        # Pin Phase 1's start time to *before* the newer success, and any
+        # later ``timezone.now()`` call to *after* it. Without start-time
+        # anchoring the older receive would otherwise post-date B and
+        # overwrite it.
+        a_started_at = newer_received_at - timedelta(seconds=10)
+        a_raised_at = newer_received_at + timedelta(seconds=30)
+        now_calls = {"count": 0}
+
+        def fake_now():
+            now_calls["count"] += 1
+            # First call is Phase 1's start-time capture; any subsequent
+            # call (e.g., a buggy exception-path timestamp) lands after B.
+            return a_started_at if now_calls["count"] == 1 else a_raised_at
+
+        def slow_fetch_then_raise(*args, **kwargs):
+            raise RuntimeError("connection timed out")
+
+        with (
+            patch("indieweb.processors.timezone.now", side_effect=fake_now),
+            patch.object(processor, "_fetch_source", side_effect=slow_fetch_then_raise),
+            django_capture_on_commit_callbacks(execute=True),
+        ):
+            processor.process_webmention(source_url, target_url)
+
+        existing.refresh_from_db()
+        # B's verified state survives — A's failure outcome was gated by
+        # ``a_started_at`` (before B), not by ``a_raised_at`` (after B).
+        assert existing.status == "verified"
+        assert existing.last_received_at == newer_received_at
+        assert existing.content_html == "<p>B's verified content</p>"
+
+    def test_processor_skips_stale_outcome_when_newer_outcome_already_committed(
+        self, processor, django_capture_on_commit_callbacks
+    ):
+        """An older outcome must not overwrite a newer outcome already committed.
+
+        Simulates the reviewer's race: request A fetches an old/failing source
+        and computes ``status='failed'`` outside the lock. Before A acquires
+        the lock, request B fetches a newer valid source and commits
+        ``status='verified'``. A then acquires the lock — its outcome's
+        ``received_at`` is older than the row's ``last_received_at``, so it
+        must be skipped rather than downgrading B's verified result.
+        """
+        from datetime import timedelta
+
+        source_url = "https://example.com/post-stale-race"
+        target_url = "https://mysite.com/article"
+        html_content = "<html><body>no link here</body></html>"
+
+        # Pre-create the row in a state mimicking "B already committed verified
+        # with a newer fetch": status=verified and last_received_at in the future
+        # relative to A's outcome.
+        future = django_timezone.now() + timedelta(minutes=5)
+        existing = Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            status="verified",
+            verified_at=django_timezone.now(),
+            last_received_at=future,
+            content_html="<p>B's verified content</p>",
+        )
+
+        with patch("httpx.Client") as mock_get_class:
+            # A's fetch: 200 but missing target link → A's outcome would be failed.
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            with django_capture_on_commit_callbacks(execute=True):
+                processor.process_webmention(source_url, target_url)
+
+        existing.refresh_from_db()
+        # B's verified state survives — A's stale failed outcome was skipped.
+        assert existing.status == "verified"
+        assert existing.last_received_at == future
+        assert existing.content_html == "<p>B's verified content</p>"
+
+    def test_processor_preserves_verified_status_when_safe_helpers_raise_db_error(
+        self, processor, django_capture_on_commit_callbacks
+    ):
+        """Real DB errors inside safe helpers must roll back to a savepoint, not the parent.
+
+        Without savepoints, a DB exception inside ``_store_source_snapshot_safely`` or
+        ``_sync_nested_responses_safely`` poisons the surrounding ``transaction.atomic``
+        block: the caught Python exception still leaves Django's connection in an
+        ``InternalError: cannot commit`` state, so the earlier ``status='verified'`` save
+        is rolled back. Simulate a real DB error by raising ``IntegrityError`` from the
+        snapshot write path.
+        """
+        from django.db import IntegrityError
+
+        source_url = "https://example.com/post-savepoint"
+        target_url = "https://mysite.com/article"
+        html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
+
+        with patch("httpx.Client") as mock_get_class:
+            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+
+            with (
+                patch(
+                    "indieweb.processors.WebmentionSourceSnapshot.objects.update_or_create",
+                    side_effect=IntegrityError("simulated db error"),
+                ),
+                django_capture_on_commit_callbacks(execute=True),
+            ):
+                webmention = processor.process_webmention(source_url, target_url)
+
+        webmention.refresh_from_db()
+        assert webmention.status == "verified"
+        assert webmention.verified_at is not None
+        assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
 
     @pytest.mark.parametrize(
         ("status_code", "html_content", "content_type"),
@@ -2293,7 +2619,7 @@ class TestWebmentionProcessor:
             assert webmention.status == "failed"
             assert webmention.verified_at is None
 
-    def test_processor_emits_signal(self, processor):
+    def test_processor_emits_signal(self, processor, django_capture_on_commit_callbacks):
         """Test that processor emits webmention_received signal."""
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
@@ -2316,7 +2642,8 @@ class TestWebmentionProcessor:
             mock_client.get.return_value = mock_response
 
             with patch("indieweb.processors.webmention_received.send") as mock_signal:
-                webmention = processor.process_webmention(source_url, target_url)
+                with django_capture_on_commit_callbacks(execute=True):
+                    webmention = processor.process_webmention(source_url, target_url)
 
                 mock_signal.assert_called_once_with(
                     sender=WebmentionProcessor,

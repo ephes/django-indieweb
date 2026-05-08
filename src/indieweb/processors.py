@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
@@ -20,6 +21,7 @@ import mf2py
 from bs4 import BeautifulSoup, Tag
 from django.conf import settings
 from django.contrib.sites.models import Site
+from django.db import transaction
 from django.dispatch import Signal
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -253,6 +255,36 @@ def _strip_plain_text_url_punctuation(value: str) -> str:
     return candidate
 
 
+@dataclass
+class _WebmentionOutcome:
+    """Result of the IO/parsing phase for a single Webmention.
+
+    Captures every value the persistence phase needs so the row lock can be
+    held only for the DB writes themselves, not for outbound HTTP.
+    """
+
+    status: str  # "verified" | "spam" | "failed"
+    log: tuple[str, str]  # (level, message)
+    # Wall-clock time at which Phase 1 computed this outcome. Phase 2 uses it
+    # as a freshness signal so a slow older receive cannot overwrite a newer
+    # outcome that has already been committed by a concurrent receive.
+    received_at: datetime
+    parsed_fields: dict[str, Any] | None = None
+    # ``vouch_verified_at`` is the timestamp at which Phase 1 verified
+    # ``verified_vouch_url``. Both are recorded so the persistence phase can
+    # bind the timestamp to the URL it actually verified — never apply it to a
+    # row whose ``vouch_url`` has been changed concurrently.
+    vouch_verified_at: datetime | None = None
+    verified_vouch_url: str | None = None
+    spam_result: dict[str, Any] | None = None
+    source_html: str | None = None
+    final_url: str | None = None
+    fetched_at: datetime | None = None
+    h_entry: dict[str, Any] | None = None
+    nested_response_candidates: list[dict[str, Any]] | None = None
+    previous_nested_identities: set[str] | None = None
+
+
 class WebmentionProcessor:
     """Process webmentions by fetching and parsing source URLs."""
 
@@ -292,112 +324,284 @@ class WebmentionProcessor:
             source_url=source_url,
             target_url=target_url,
         )
-        if vouch_url is not None and webmention.vouch_url != vouch_url:
+
+        pending_vouch_save = vouch_url is not None and webmention.vouch_url != vouch_url
+        if pending_vouch_save:
+            assert vouch_url is not None
             webmention.vouch_url = vouch_url
             webmention.vouch_verified_at = None
-            webmention.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
+
+        # Phase 1: outbound HTTP, parsing, vouch verification, and spam scoring
+        # all run outside any DB lock so a slow source cannot keep a row lock
+        # open. The result captures exactly what should be persisted.
+        outcome = self._collect_webmention_outcome(webmention, source_url, target_url)
+
+        # Phase 2: serialize the persistence step per row so concurrent receives
+        # for the same (source, target) pair cannot interleave writes. Reload
+        # the row under the lock so writes never echo stale field values from
+        # the pre-lock snapshot — a concurrent receive for the same pair may
+        # have committed updates to fields we did not intend to touch.
+        with transaction.atomic():
+            locked = Webmention.objects.select_for_update().get(pk=webmention.pk)
+
+            # Freshness gate: if a concurrent receive has already committed an
+            # outcome computed after ours, skip our writes entirely. The lock
+            # alone protects against interleaved writes, not stale outcomes.
+            if locked.last_received_at is not None and locked.last_received_at >= outcome.received_at:
+                logger.info(
+                    "Skipping stale webmention outcome for %s: row last received at %s, "
+                    "this outcome computed at %s",
+                    source_url,
+                    locked.last_received_at,
+                    outcome.received_at,
+                )
+                return locked
+
+            if pending_vouch_save:
+                # We are writing the same ``vouch_url`` that Phase 1 verified
+                # (Phase 1 saw it via the in-memory mutation above), so it is
+                # always safe to persist the verification timestamp here.
+                assert vouch_url is not None
+                locked.vouch_url = vouch_url
+                locked.vouch_verified_at = outcome.vouch_verified_at
+                locked.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
+            elif (
+                outcome.vouch_verified_at is not None
+                and outcome.verified_vouch_url is not None
+                and locked.vouch_url == outcome.verified_vouch_url
+                and locked.vouch_verified_at != outcome.vouch_verified_at
+            ):
+                # Apply the verification timestamp only if the row still holds
+                # the URL we verified — a concurrent receive may have changed
+                # ``vouch_url`` between Phase 1 and the row lock.
+                locked.vouch_verified_at = outcome.vouch_verified_at
+                locked.save(update_fields=["vouch_verified_at", "modified"])
+
+            self._apply_webmention_outcome(locked, outcome, source_url, target_url)
+
+        return locked
+
+    def _collect_webmention_outcome(
+        self,
+        webmention: Webmention,
+        source_url: str,
+        target_url: str,
+    ) -> _WebmentionOutcome:
+        """Run all IO/parsing for a Webmention and return the outcome to persist."""
+        # Capture the watermark *before* any outbound IO. Using the start of
+        # processing (rather than the time of fetch completion or exception
+        # capture) ensures that a slow older receive cannot win the freshness
+        # gate against a newer receive that already committed — even when the
+        # older receive's failure surfaces only after a timeout.
+        received_at = timezone.now()
 
         try:
-            # Fetch source URL
             fetched = self._fetch_source(source_url)
             response = fetched.response
 
-            # Check response status
             if response.status_code == 410:
-                # Source has been deleted
-                self._mark_webmention_failed(webmention)
-                logger.info(f"Source URL returned 410 Gone: {source_url}")
-                return webmention
+                return _WebmentionOutcome(
+                    status="failed",
+                    received_at=received_at,
+                    log=("info", f"Source URL returned 410 Gone: {source_url}"),
+                )
 
             if response.status_code != 200:
-                self._mark_webmention_failed(webmention)
-                logger.warning(f"Failed to fetch source URL {source_url}: {response.status_code}")
-                return webmention
+                return _WebmentionOutcome(
+                    status="failed",
+                    received_at=received_at,
+                    log=("warning", f"Failed to fetch source URL {source_url}: {response.status_code}"),
+                )
 
-            # Check content type
             content_type = response.headers.get("content-type", "").lower()
             if not content_type.startswith("text/html"):
-                self._mark_webmention_failed(webmention)
-                logger.warning(f"Source URL is not HTML: {content_type}")
-                return webmention
+                return _WebmentionOutcome(
+                    status="failed",
+                    received_at=received_at,
+                    log=("warning", f"Source URL is not HTML: {content_type}"),
+                )
 
             source_html = response_text_with_limit(response, max_bytes=_webmention_fetch_max_bytes())
 
-            # Verify target link exists
             if not self._verify_target_link(source_html, target_url):
-                self._mark_webmention_failed(webmention)
-                logger.warning(f"Target URL {target_url} not found in source")
-                return webmention
+                return _WebmentionOutcome(
+                    status="failed",
+                    received_at=received_at,
+                    log=("warning", f"Target URL {target_url} not found in source"),
+                )
 
+            # ``fetched_at`` records when we observed the source content; it is
+            # written to ``WebmentionSourceSnapshot`` and surfaces in salmention
+            # diffs. Keep it close to the actual fetch return time (``now()``
+            # right after fetch completion) so snapshots reflect when the
+            # source was read, not when this receive arrived.
             fetched_at = timezone.now()
 
-            # Parse microformats2
+            # ``_parse_microformats`` mutates the in-memory ``webmention`` so that
+            # downstream vouch and spam checks can read parsed fields off it.
+            # We capture those mutations into ``parsed_fields`` so the persistence
+            # phase can apply them to the freshly locked instance instead of the
+            # stale one we loaded before phase 1.
             _parsed, h_entry = self._parse_microformats(webmention, source_html, fetched.final_url, target_url)
+            parsed_fields = self._snapshot_parsed_fields(webmention)
 
-            if not self._verify_vouch_for_webmention(webmention, source_url):
-                self._mark_webmention_failed(webmention)
-                logger.warning(f"Vouch verification failed for webmention from {source_url}")
-                return webmention
+            vouch_allowed, vouch_verified_at = self._verify_vouch_for_webmention(webmention, source_url)
+            if not vouch_allowed:
+                return _WebmentionOutcome(
+                    status="failed",
+                    received_at=received_at,
+                    log=("warning", f"Vouch verification failed for webmention from {source_url}"),
+                )
+            # Bind the timestamp to the URL we actually verified so the
+            # persistence phase can refuse to apply it if the row's
+            # ``vouch_url`` has changed concurrently.
+            verified_vouch_url = webmention.vouch_url if vouch_verified_at is not None else None
 
-            # Check for spam (reload checker for test compatibility)
+            spam_result: dict[str, Any] | None = None
             spam_checker = self._get_spam_checker()
             if spam_checker:
                 spam_result = spam_checker.check(webmention)
-                webmention.spam_check_result = spam_result
                 if spam_result.get("is_spam", False):
-                    webmention.status = "spam"
-                    webmention.verified_at = None
-                    webmention.save(update_fields=["spam_check_result", "status", "verified_at", "modified"])
-                    webmention.refresh_from_db()
-                    logger.info(f"Webmention marked as spam: {source_url}")
-                    return webmention
+                    return _WebmentionOutcome(
+                        status="spam",
+                        received_at=received_at,
+                        spam_result=spam_result,
+                        vouch_verified_at=vouch_verified_at,
+                        verified_vouch_url=verified_vouch_url,
+                        log=("info", f"Webmention marked as spam: {source_url}"),
+                    )
 
             previous_nested_identities = self._previous_nested_response_identities(webmention)
             nested_response_candidates = self._nested_response_candidates(h_entry or {}, fetched.final_url)
 
-            # Mark as verified
-            webmention.status = "verified"
-            webmention.verified_at = timezone.now()
-            webmention.save()
-            self._sync_nested_responses_safely(
-                webmention=webmention,
-                candidates=nested_response_candidates,
-                previous_identities=previous_nested_identities,
-                seen_at=fetched_at,
-            )
-            self._store_source_snapshot_safely(
-                webmention=webmention,
-                raw_source_html=source_html,
-                final_source_url=fetched.final_url,
+            return _WebmentionOutcome(
+                status="verified",
+                received_at=received_at,
+                parsed_fields=parsed_fields,
+                vouch_verified_at=vouch_verified_at,
+                verified_vouch_url=verified_vouch_url,
+                spam_result=spam_result,
+                source_html=source_html,
+                final_url=fetched.final_url,
                 fetched_at=fetched_at,
                 h_entry=h_entry,
+                nested_response_candidates=nested_response_candidates,
+                previous_nested_identities=previous_nested_identities,
+                log=("info", f"Successfully processed webmention from {source_url}"),
             )
 
-            # Send signal
-            webmention_received.send(
-                sender=self.__class__,
+        except HTTPResponseTooLarge as e:
+            return _WebmentionOutcome(
+                status="failed",
+                received_at=received_at,
+                log=("warning", f"Fetched Webmention source exceeded size limit for {source_url}: {e}"),
+            )
+        except Exception as e:
+            return _WebmentionOutcome(
+                status="failed",
+                received_at=received_at,
+                log=("error", f"Error processing webmention from {source_url}: {e}"),
+            )
+
+    def _apply_webmention_outcome(
+        self,
+        webmention: Webmention,
+        outcome: _WebmentionOutcome,
+        source_url: str,
+        target_url: str,
+    ) -> None:
+        """Persist a pre-computed outcome onto the locked Webmention instance.
+
+        ``webmention`` is the freshly locked row. All saves use scoped
+        ``update_fields`` so concurrent receives cannot have their unrelated
+        field updates clobbered by a stale full save.
+        """
+        level, message = outcome.log
+        getattr(logger, level)(message)
+
+        if outcome.status == "failed":
+            self._mark_webmention_failed(webmention, last_received_at=outcome.received_at)
+            return
+
+        if outcome.status == "spam":
+            webmention.spam_check_result = outcome.spam_result
+            webmention.status = "spam"
+            webmention.verified_at = None
+            webmention.last_received_at = outcome.received_at
+            webmention.save(
+                update_fields=[
+                    "spam_check_result",
+                    "status",
+                    "verified_at",
+                    "last_received_at",
+                    "modified",
+                ]
+            )
+            webmention.refresh_from_db()
+            return
+
+        # Verified: copy parsed fields from the outcome onto the locked row,
+        # save with scoped update_fields, then persist nested rows and snapshot,
+        # then fire the signal post-commit.
+        assert outcome.parsed_fields is not None
+        assert outcome.fetched_at is not None
+        assert outcome.source_html is not None
+        assert outcome.final_url is not None
+        assert outcome.nested_response_candidates is not None
+        assert outcome.previous_nested_identities is not None
+
+        update_fields = [
+            "status",
+            "verified_at",
+            "last_received_at",
+            "modified",
+            *outcome.parsed_fields.keys(),
+        ]
+        for field_name, value in outcome.parsed_fields.items():
+            setattr(webmention, field_name, value)
+        if outcome.spam_result is not None:
+            webmention.spam_check_result = outcome.spam_result
+            update_fields.append("spam_check_result")
+        webmention.status = "verified"
+        webmention.verified_at = timezone.now()
+        webmention.last_received_at = outcome.received_at
+        webmention.save(update_fields=update_fields)
+
+        self._sync_nested_responses_safely(
+            webmention=webmention,
+            candidates=outcome.nested_response_candidates,
+            previous_identities=outcome.previous_nested_identities,
+            seen_at=outcome.fetched_at,
+        )
+        self._store_source_snapshot_safely(
+            webmention=webmention,
+            raw_source_html=outcome.source_html,
+            final_source_url=outcome.final_url,
+            fetched_at=outcome.fetched_at,
+            h_entry=outcome.h_entry,
+        )
+
+        sender_class = self.__class__
+        transaction.on_commit(
+            lambda: webmention_received.send(
+                sender=sender_class,
                 webmention=webmention,
                 source_url=source_url,
                 target_url=target_url,
             )
+        )
 
-            logger.info(f"Successfully processed webmention from {source_url}")
-            return webmention
-
-        except HTTPResponseTooLarge as e:
-            logger.warning(f"Fetched Webmention source exceeded size limit for {source_url}: {e}")
-            self._mark_webmention_failed(webmention)
-            return webmention
-        except Exception as e:
-            logger.error(f"Error processing webmention from {source_url}: {e}")
-            self._mark_webmention_failed(webmention)
-            return webmention
-
-    def _mark_webmention_failed(self, webmention: Webmention) -> None:
+    def _mark_webmention_failed(
+        self, webmention: Webmention, last_received_at: datetime | None = None
+    ) -> None:
         """Mark a Webmention as failed without discarding previously parsed fields."""
         webmention.status = "failed"
         webmention.verified_at = None
-        webmention.save(update_fields=["status", "verified_at", "modified"])
+        update_fields = ["status", "verified_at", "modified"]
+        if last_received_at is not None:
+            webmention.last_received_at = last_received_at
+            update_fields.append("last_received_at")
+        webmention.save(update_fields=update_fields)
         webmention.refresh_from_db()
 
     def _fetch_source(self, source_url: str) -> RedirectedResponse:
@@ -430,38 +634,48 @@ class WebmentionProcessor:
         """Verify that the target URL is linked in the source content."""
         return _html_links_to_target(html_content, target_url)
 
-    def _verify_vouch_for_webmention(self, webmention: Webmention, source_url: str) -> bool:
-        """Verify optional Vouch metadata when receiver policy enables it."""
+    def _verify_vouch_for_webmention(
+        self, webmention: Webmention, source_url: str
+    ) -> tuple[bool, datetime | None]:
+        """Verify optional Vouch metadata.
+
+        Returns ``(allowed, verified_at)``. ``allowed`` is False when the
+        policy requires a Vouch but the submitted URL did not pass; in that
+        case the caller should mark the Webmention as failed. ``verified_at``
+        is the timestamp at which the Vouch URL was successfully verified, or
+        ``None`` when no verification was performed (for example because the
+        receiver policy disables verification or the Webmention has no Vouch).
+        Persisting ``verified_at`` is the caller's responsibility so the write
+        can happen under the row lock.
+        """
         if not webmention.vouch_url:
             if getattr(settings, "INDIEWEB_WEBMENTION_VOUCH_REQUIRED", False):
-                return False
-            return True
+                return False, None
+            return True, None
 
         if not self._vouch_verification_enabled():
-            return True
+            return True, None
 
         if not self._vouch_url_trusted(webmention, source_url, webmention.vouch_url):
-            return False
+            return False, None
 
         fetched = self._fetch_vouch(webmention.vouch_url)
         response = fetched.response
         if not self._vouch_url_trusted(webmention, source_url, webmention.vouch_url, fetched.final_url):
-            return False
+            return False, None
         if response.status_code != 200:
-            return False
+            return False, None
         content_type = response.headers.get("content-type", "").lower()
         if not content_type.startswith("text/html"):
-            return False
+            return False, None
         try:
             vouch_html = response_text_with_limit(response, max_bytes=_webmention_fetch_max_bytes())
         except HTTPResponseTooLarge:
-            return False
+            return False, None
         if not _html_links_to_source_domain(vouch_html, source_url):
-            return False
+            return False, None
 
-        webmention.vouch_verified_at = timezone.now()
-        webmention.save(update_fields=["vouch_verified_at", "modified"])
-        return True
+        return True, timezone.now()
 
     def _vouch_verification_enabled(self) -> bool:
         """Return whether this deployment verifies submitted Vouch URLs."""
@@ -552,6 +766,18 @@ class WebmentionProcessor:
 
         return domain in trusted_domains
 
+    def _snapshot_parsed_fields(self, webmention: Webmention) -> dict[str, Any]:
+        """Capture fields ``_parse_microformats`` writes for later application under lock."""
+        return {
+            "author_name": webmention.author_name,
+            "author_url": webmention.author_url,
+            "author_photo": webmention.author_photo,
+            "content": webmention.content,
+            "content_html": webmention.content_html,
+            "published": webmention.published,
+            "mention_type": webmention.mention_type,
+        }
+
     def _parse_microformats(
         self,
         webmention: Webmention,
@@ -635,14 +861,18 @@ class WebmentionProcessor:
         h_entry: dict[str, Any] | None,
     ) -> None:
         """Store a source snapshot without changing parent verification on failure."""
+        # Wrap in a savepoint so a DB error here is rolled back to this point
+        # rather than poisoning the outer atomic block (which would discard the
+        # parent's "verified" save).
         try:
-            self._store_source_snapshot(
-                webmention=webmention,
-                raw_source_html=raw_source_html,
-                final_source_url=final_source_url,
-                fetched_at=fetched_at,
-                h_entry=h_entry,
-            )
+            with transaction.atomic():
+                self._store_source_snapshot(
+                    webmention=webmention,
+                    raw_source_html=raw_source_html,
+                    final_source_url=final_source_url,
+                    fetched_at=fetched_at,
+                    h_entry=h_entry,
+                )
         except Exception:
             logger.exception(f"Failed to store source snapshot for webmention {webmention.pk}")
 
@@ -742,13 +972,16 @@ class WebmentionProcessor:
         seen_at: datetime,
     ) -> None:
         """Persist child responses without changing parent verification on failure."""
+        # Savepoint so a DB error here does not discard the parent's verified
+        # save when this runs inside the outer atomic block.
         try:
-            self._sync_nested_responses(
-                webmention=webmention,
-                candidates=candidates,
-                previous_identities=previous_identities,
-                seen_at=seen_at,
-            )
+            with transaction.atomic():
+                self._sync_nested_responses(
+                    webmention=webmention,
+                    candidates=candidates,
+                    previous_identities=previous_identities,
+                    seen_at=seen_at,
+                )
         except Exception:
             logger.exception(f"Failed to sync nested responses for webmention {webmention.pk}")
 

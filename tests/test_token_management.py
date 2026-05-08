@@ -91,6 +91,18 @@ def test_token_management_lists_only_current_users_tokens(client, user, other_us
 
 
 @pytest.mark.django_db
+def test_token_management_blocks_framing(client, user, tokens_url):
+    """Token management page emits frame protections to prevent clickjacking."""
+    client.login(username=user.username, password="password")
+
+    response = client.get(tokens_url)
+
+    assert response.status_code == 200
+    assert response["X-Frame-Options"] == "DENY"
+    assert "frame-ancestors 'none'" in response["Content-Security-Policy"]
+
+
+@pytest.mark.django_db
 def test_token_management_renders_empty_list(client, user, tokens_url):
     client.login(username=user.username, password="password")
 

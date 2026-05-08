@@ -32,6 +32,7 @@ from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
 from django.utils.module_loading import import_string
+from django.views.decorators.clickjacking import xframe_options_deny
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
 
@@ -1476,12 +1477,15 @@ class UserLoginRequiredMixin(View):
         return super().dispatch(request, *args, **kwargs)
 
 
+@method_decorator(xframe_options_deny, name="dispatch")
 class TokenManagementView(UserLoginRequiredMixin, View):
     """List access tokens owned by the authenticated user."""
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         tokens = Token.objects.filter(owner_id=request.user.pk).order_by("-created")
-        return render(request, "indieweb/tokens.html", {"tokens": tokens})
+        response = render(request, "indieweb/tokens.html", {"tokens": tokens})
+        response["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return response
 
 
 class TokenRevokeView(UserLoginRequiredMixin, View):
