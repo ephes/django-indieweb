@@ -5,26 +5,38 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('indieweb', '0024_webmention_last_received_at'),
+        ("indieweb", "0024_webmention_last_received_at"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='WebSubAcceptedDelivery',
+            name="WebSubAcceptedDelivery",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('body_digest', models.CharField(max_length=128)),
-                ('accepted_at', models.DateTimeField(db_index=True)),
-                ('created', models.DateTimeField(auto_now_add=True)),
-                ('modified', models.DateTimeField(auto_now=True)),
-                ('subscription', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='accepted_deliveries', to='indieweb.websubsubscription')),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("body_digest", models.CharField(max_length=128)),
+                ("accepted_at", models.DateTimeField(db_index=True)),
+                ("created", models.DateTimeField(auto_now_add=True)),
+                ("modified", models.DateTimeField(auto_now=True)),
+                (
+                    "subscription",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="accepted_deliveries",
+                        to="indieweb.websubsubscription",
+                    ),
+                ),
             ],
             options={
-                'ordering': ('-accepted_at', '-pk'),
-                'indexes': [models.Index(fields=['subscription', 'accepted_at'], name='indieweb_we_subscri_c33fc3_idx')],
-                'constraints': [models.UniqueConstraint(fields=('subscription', 'body_digest'), name='websub_accepted_unique_subscription_digest')],
+                "ordering": ("-accepted_at", "-pk"),
+                "indexes": [
+                    models.Index(fields=["subscription", "accepted_at"], name="indieweb_we_subscri_c33fc3_idx")
+                ],
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=("subscription", "body_digest"), name="websub_accepted_unique_subscription_digest"
+                    )
+                ],
             },
         ),
     ]
