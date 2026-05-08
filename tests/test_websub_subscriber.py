@@ -1331,3 +1331,17 @@ def test_websub_subscriptions_command_lists_lease_attention():
     assert "https://source.example/expired" in output
     assert "https://source.example/due" in output
     assert "https://source.example/later" not in output
+
+
+def test_subscription_with_secret_rejects_http_hub():
+    from indieweb.websub import WebSubSecretRequiresHTTPSError, _post_subscription_request
+
+    with pytest.raises(WebSubSecretRequiresHTTPSError):
+        _post_subscription_request(
+            hub_url="http://hub.example/",
+            mode="subscribe",
+            topic_url="https://topic.example/",
+            callback_url="https://me.example/cb",
+            secret="abc123" * 6,
+            client=None,
+        )

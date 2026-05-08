@@ -9,6 +9,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from django.conf import settings
@@ -93,6 +94,10 @@ class WebSubLeaseSummary:
     state: str
     lease_expires_at: datetime | None
     expired: bool
+
+
+class WebSubSecretRequiresHTTPSError(ValueError):
+    """Raised when ``hub.secret`` would be sent over a plain-HTTP hub URL."""
 
 
 class WebSubDeliveryHookError(Exception):
@@ -592,6 +597,74 @@ def _prepare_subscription_request(
     return subscription, validated_mode, previous_state, previous_pending_secret, previous_pending_secret_set
 
 
+def _post_subscription_request(
+    *,
+    hub_url: str,
+    mode: str,
+    topic_url: str,
+    callback_url: str,
+    secret: str | None,
+    lease_seconds: int | None = None,
+    timeout: float | None = None,
+    client: httpx.Client | None = None,
+    use_resolver: bool | None = None,
+) -> httpx.Response:
+    """Send a single WebSub subscribe/unsubscribe ``POST`` to ``hub_url``.
+
+    Performs the HTTPS-required gate for ``hub.secret`` before any network
+    call, validates the hub URL with the shared SSRF helper when no caller
+    client is injected, and routes the POST through the strict cross-origin
+    redirect helper so a hub redirect cannot replay the ``hub.secret``-bearing
+    body to a different origin.
+
+    When ``use_resolver`` is ``None`` (the default) the SSRF resolver is used
+    only when this helper opens its own ``httpx.Client``; injected clients
+    skip DNS-based blocking and IP pinning, mirroring the
+    ``request_websub_subscription`` injection contract. Pass ``use_resolver``
+    explicitly to override that default — for example,
+    ``request_websub_subscription`` opens its own client and forwards it to
+    this helper while requesting that the resolver still run.
+
+    Returns the raw :class:`httpx.Response`. Callers are responsible for
+    inspecting status, recording subscription state changes, and translating
+    network errors into operator-facing failures.
+    """
+    if secret and urlparse(hub_url).scheme.lower() != "https":
+        raise WebSubSecretRequiresHTTPSError("WebSub subscription with hub.secret requires an https hub_url")
+
+    data: dict[str, str | int] = {
+        "hub.mode": mode,
+        "hub.callback": callback_url,
+        "hub.topic": topic_url,
+    }
+    if lease_seconds is not None:
+        data["hub.lease_seconds"] = lease_seconds
+    if secret is not None and mode == WebSubSubscription.MODE_SUBSCRIBE:
+        data["hub.secret"] = secret
+
+    request_timeout = _websub_timeout(timeout)
+    close_client = client is None
+    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True, trust_env=False)
+    if use_resolver is None:
+        use_resolver = close_client
+    resolver = default_address_resolver if use_resolver else None
+    try:
+        validate_safe_http_url(hub_url, resolver=resolver)
+        delivered = request_with_safe_redirects(
+            http_client,
+            "POST",
+            hub_url,
+            data=data,
+            resolver=resolver,
+            max_bytes=_hub_response_max_bytes(),
+            cross_origin_strip=True,
+        )
+        return delivered.response
+    finally:
+        if close_client:
+            http_client.close()
+
+
 def request_websub_subscription(
     topic_url: str,
     hub_url: str,
@@ -628,32 +701,28 @@ def request_websub_subscription(
     configured_timeout = timeout if timeout is not None else getattr(settings, "INDIEWEB_WEBSUB_TIMEOUT", None)
     request_timeout = _websub_timeout(configured_timeout)
 
-    data: dict[str, str | int] = {
-        "hub.mode": validated_mode,
-        "hub.callback": callback_url,
-        "hub.topic": subscription.topic_url,
-    }
-    if lease_seconds is not None:
-        data["hub.lease_seconds"] = lease_seconds
-    if secret is not None and validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
-        data["hub.secret"] = secret
-
     close_client = client is None
     http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True, trust_env=False)
-    resolver = default_address_resolver if close_client else None
     try:
         try:
-            validate_safe_http_url(subscription.hub_url, resolver=resolver)
-            delivered = request_with_safe_redirects(
-                http_client,
-                "POST",
-                subscription.hub_url,
-                data=data,
-                resolver=resolver,
-                max_bytes=_hub_response_max_bytes(),
+            response = _post_subscription_request(
+                hub_url=subscription.hub_url,
+                mode=validated_mode,
+                topic_url=subscription.topic_url,
+                callback_url=callback_url,
+                secret=secret if validated_mode == WebSubSubscription.MODE_SUBSCRIBE else None,
+                lease_seconds=lease_seconds,
+                timeout=request_timeout,
+                client=http_client,
+                use_resolver=close_client,
             )
-            response = delivered.response
-        except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError, HTTPResponseTooLarge) as exc:
+        except (
+            WebSubSecretRequiresHTTPSError,
+            httpx.RequestError,
+            UnsafeHTTPUrlError,
+            WebmentionRedirectError,
+            HTTPResponseTooLarge,
+        ) as exc:
             logger.warning(f"WebSub subscription request failed for hub={subscription.hub_url!r}: {exc}")
             _save_subscription_request_failure(
                 subscription,
@@ -1176,6 +1245,7 @@ def notify_hubs(
                     data=data,
                     resolver=resolver,
                     max_bytes=_hub_response_max_bytes(),
+                    cross_origin_strip=True,
                 )
                 response = delivered.response
             except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError, HTTPResponseTooLarge) as exc:

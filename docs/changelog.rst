@@ -5,6 +5,28 @@ Changelog
 
 Unreleased
 ----------
+* Added a strict cross-origin redirect mode to the shared HTTP helper.
+  ``request_with_safe_redirects`` and ``stream_with_safe_redirects`` now accept
+  a ``cross_origin_strip`` keyword argument (default ``False``). When enabled,
+  a redirect whose target origin (scheme/host/port) differs from the URL that
+  produced the redirect raises ``WebmentionRedirectError`` before any network
+  call to the new origin is made. WebSub subscribe (the new
+  ``_post_subscription_request`` helper used by
+  ``request_websub_subscription``) and publish (``notify_hubs``) opt into
+  strict mode so a hub redirect cannot replay a ``hub.secret``-bearing or
+  ``hub.url`` POST body to a different origin. Webmention sender redirect
+  handling (``request_with_webmention_redirects``) deliberately keeps the
+  permissive default because Webmention POST compatibility preserves the
+  method/body across origins.
+* Reject WebSub subscription requests that send ``hub.secret`` over plain HTTP.
+  ``_post_subscription_request`` now validates the hub URL scheme before any
+  network call and raises a typed ``WebSubSecretRequiresHTTPSError`` (a
+  ``ValueError`` subclass) when ``hub.secret`` would be transmitted to an
+  ``http://`` hub URL. ``request_websub_subscription`` records the rejection
+  through its existing failure path so operators see a recognisable error
+  without leaking the secret over the wire. Together with the strict
+  redirect mode this completes the P1.2 outbound HTTP hardening work begun
+  earlier in this Unreleased cycle.
 * Tightened outbound SSRF blocklist in ``_blocked_ip_address`` so multicast,
   reserved, unspecified, loopback, link-local, and private destinations are
   rejected explicitly even when ``ipaddress.is_global`` would already cover
@@ -17,9 +39,7 @@ Unreleased
   ``HTTP(S)_PROXY``/``NO_PROXY``/``SSL_CERT_FILE`` environment variables
   cannot redirect or downgrade the screened connection path. Injected client
   branches are unchanged; callers that supply their own ``httpx.Client`` keep
-  full control. Together these are the first half of the P1.2 outbound HTTP
-  hardening work; the second half (redirect-handling split and HTTPS
-  enforcement for ``hub.secret``-bearing WebSub requests) is still pending.
+  full control.
 * Restricted Webmention and Vouch source proof to rendered ``<a href>``
   hyperlinks. Non-anchor href carriers such as ``<link rel="canonical">``,
   ``<base>``, and ``<area>`` no longer satisfy target or Vouch source-domain

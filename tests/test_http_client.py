@@ -578,3 +578,46 @@ def test_default_clients_disable_trust_env(path):
     for match in matches:
         snippet = match.group(0)
         assert "trust_env=False" in snippet, f"{path}: {snippet} missing trust_env=False"
+
+
+def test_strict_redirect_rejects_cross_origin():
+    """When cross_origin_strip=True, a redirect to a different origin must raise."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "a.example":
+            return httpx.Response(302, headers={"location": "https://b.example/cb"})
+        return httpx.Response(200)
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(transport=transport, trust_env=False) as client:
+        with pytest.raises(WebmentionRedirectError):
+            request_with_safe_redirects(
+                client,
+                "GET",
+                "https://a.example/",
+                resolver=lambda host, port: ["1.1.1.1"],
+                pin_to_resolved_ip=False,
+                cross_origin_strip=True,
+            )
+
+
+def test_safe_redirect_allows_same_origin_when_strict():
+    """Same-origin redirects should be permitted even when strict mode is on."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/":
+            return httpx.Response(302, headers={"location": "https://a.example/next"})
+        return httpx.Response(200)
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(transport=transport, trust_env=False) as client:
+        result = request_with_safe_redirects(
+            client,
+            "GET",
+            "https://a.example/",
+            resolver=lambda host, port: ["1.1.1.1"],
+            pin_to_resolved_ip=False,
+            cross_origin_strip=True,
+        )
+        assert result.response.status_code == 200
+        assert result.final_url == "https://a.example/next"

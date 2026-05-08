@@ -156,7 +156,9 @@ def test_notify_hubs_rejects_redirect_to_private_hub():
 
     assert results[0].success is False
     assert results[0].status_code is None
-    assert "redirect target" in results[0].error
+    # Strict-mode cross-origin check fires before the SSRF redirect-target validation,
+    # so the error reports the cross-origin rejection rather than the private-IP block.
+    assert "cross-origin redirect not permitted" in results[0].error
     assert len(requests) == 1
 
 

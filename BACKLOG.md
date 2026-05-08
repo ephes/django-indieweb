@@ -8,25 +8,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Complete outbound HTTP hardening for protocol clients and secret-bearing
-  redirects. References: `src/indieweb/http_client.py`,
-  `src/indieweb/processors.py`, `src/indieweb/senders.py`,
-  `src/indieweb/websub.py`, `tests/test_http_client.py`,
-  `tests/test_websub_subscriber.py`, `tests/test_websub.py`. This can land as
-  a sequence of focused patches:
-  - [x] Extend `_blocked_ip_address` beyond `not ip.is_global` so multicast,
-    reserved, and NAT64 well-known-prefix addresses that map to blocked IPv4
-    destinations are rejected.
-  - [x] Instantiate default `httpx.Client` objects with `trust_env=False` so
-    proxy and CA environment variables cannot bypass the screened connection
-    path.
-  - Split redirect handling so Webmention POST compatibility can opt into
-    body-preserving redirects, while WebSub subscription/publish and other
-    secret-bearing callers strip sensitive headers/bodies or reject
-    cross-origin redirects.
-  - Reject or require HTTPS for WebSub subscription requests that send
-    `hub.secret`.
-
 - [ ] Serialize authorization-code exchange under a database lock. References:
   `src/indieweb/views.py` (`TokenView.post`, `send_token`,
   `_get_auth_for_exchange`), `src/indieweb/models.py` (`Auth`, `Token`),

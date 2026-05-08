@@ -4,33 +4,60 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
-### P1.2a — Outbound HTTP hardening: IP block tightening + trust_env=False (first half of P1.2)
+### P1.2 — Complete outbound HTTP hardening for protocol clients and secret-bearing redirects
 
-- Tightened ``_blocked_ip_address`` in ``src/indieweb/http_client.py`` so it
-  rejects multicast, reserved, unspecified, loopback, link-local, and private
-  destinations regardless of whether ``ipaddress.is_global`` already covered
-  them, and added explicit handling for NAT64 well-known (``64:ff9b::/96``)
-  and local-use (``64:ff9b:1::/48``) prefixes by recursing on the embedded
-  IPv4 address. This blocks NAT64 carriers of ``127.0.0.1``,
+All four sub-tasks of the P1.2 backlog item are now resolved across two
+commits. The first commit (P1.2a) delivered the IP-block tightening and
+``trust_env=False`` defaults; the second commit (P1.2b) adds the strict
+cross-origin redirect mode and the ``hub.secret`` HTTPS gate.
+
+- (P1.2a) Tightened ``_blocked_ip_address`` in ``src/indieweb/http_client.py``
+  so it rejects multicast, reserved, unspecified, loopback, link-local, and
+  private destinations regardless of whether ``ipaddress.is_global`` already
+  covered them, and added explicit handling for NAT64 well-known
+  (``64:ff9b::/96``) and local-use (``64:ff9b:1::/48``) prefixes by recursing
+  on the embedded IPv4 address. This blocks NAT64 carriers of ``127.0.0.1``,
   ``169.254.169.254``, and similar dangerous v4 destinations.
-- Instantiated default ``httpx.Client(...)`` constructors in
+- (P1.2a) Instantiated default ``httpx.Client(...)`` constructors in
   ``src/indieweb/processors.py``, ``src/indieweb/senders.py``, and
   ``src/indieweb/websub.py`` with ``trust_env=False`` so ambient
   ``HTTP(S)_PROXY``, ``NO_PROXY``, and CA bundle environment variables cannot
   redirect or downgrade the screened connection path. Injected client branches
   are unchanged; callers that supply their own client retain full control.
+- (P1.2b) Added a strict cross-origin redirect mode to
+  ``request_with_safe_redirects`` and ``stream_with_safe_redirects`` via a new
+  ``cross_origin_strip`` keyword argument (default ``False``). When enabled,
+  a redirect whose target origin (scheme/host/port) differs from the URL that
+  produced the redirect raises ``WebmentionRedirectError`` before any network
+  call to the new origin is made. The Webmention sender path
+  (``request_with_webmention_redirects``) keeps the default permissive
+  behavior because Webmention POST compatibility intentionally preserves the
+  method/body across origins.
+- (P1.2b) Wired ``cross_origin_strip=True`` into the WebSub subscribe path
+  (new ``_post_subscription_request`` helper used by
+  ``request_websub_subscription``) and the publish path (``notify_hubs``).
+  ``hub.secret``-bearing subscribe requests, hub redirects, and publish
+  redirects can no longer cross origins with the original POST body.
+- (P1.2b) Added a typed ``WebSubSecretRequiresHTTPSError`` (a ``ValueError``
+  subclass) and gated ``_post_subscription_request`` on the hub URL scheme
+  before any network call. Sending ``hub.secret`` to a plain-HTTP hub now
+  raises immediately and is recorded as a subscription request failure
+  through the existing ``_save_subscription_request_failure`` path.
 - Added regression tests in ``tests/test_http_client.py`` covering both the
   expanded IP-block table (NAT64, CGNAT, IPv6 discard prefix, multicast,
   unspecified, broadcast) and a static check that every default
   ``httpx.Client(...)`` construction in the protocol clients sets
-  ``trust_env=False``.
-- This commit is the first half (sub-tasks 1+2 of 4) of the P1.2 outbound HTTP
-  hardening backlog item; Task 3 will complete the second half by tightening
-  redirect handling and enforcing HTTPS for secret-bearing WebSub requests.
-- Validation: ``uv run pytest -q`` (1339 passed), ``uv run mypy`` (no issues),
+  ``trust_env=False``, plus new
+  ``test_strict_redirect_rejects_cross_origin`` and
+  ``test_safe_redirect_allows_same_origin_when_strict`` tests for the new
+  helper mode. ``tests/test_websub_subscriber.py`` gains
+  ``test_subscription_with_secret_rejects_http_hub`` covering the new
+  HTTPS-required gate. ``tests/test_websub.py`` was updated to assert the
+  cross-origin error string for the existing private-redirect rejection test.
+- Validation: ``uv run pytest -q`` (1342 passed), ``uv run mypy`` (no issues),
   ``uv run prek run --all-files`` (all hooks pass).
-- Docs: ``docs/changelog.rst`` records the partial hardening; this DONE entry
-  and ``SECURITY_ANALYSIS.md`` reflect the partially resolved residuals.
+- Docs: ``docs/changelog.rst`` records the full P1.2 hardening; this DONE
+  entry and ``SECURITY_ANALYSIS.md`` reflect all four sub-tasks as resolved.
 
 ### Restrict Webmention and Vouch source proof to rendered anchor links
 

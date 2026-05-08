@@ -14,18 +14,19 @@ The first pass identified five high-priority findings plus several supporting on
 
 The most urgent remaining production blockers are:
 
-1. The shared outbound HTTP hardening is incomplete: multicast and reserved
-   NAT64-prefix addresses pass the current ``is_global`` predicate, default
-   ``httpx.Client`` instances inherit proxy/CA environment settings, and
-   redirect handling preserves secret-bearing POST bodies across origins.
-2. Authorization-code exchange is still a read-then-delete flow without a row
+1. Authorization-code exchange is still a read-then-delete flow without a row
    lock, so concurrent token exchanges can violate single-use semantics under
    a database isolation level such as READ COMMITTED.
-3. IndieAuth authorization requests do not bind ``redirect_uri`` to
+2. IndieAuth authorization requests do not bind ``redirect_uri`` to
    ``client_id``. A deployment that allowlists trusted client IDs can still
    issue a code for an attacker-chosen redirect URI under that trusted
    ``client_id`` unless the operator's custom policy hook enforces the
    relationship.
+
+The outbound HTTP hardening blocker called out in earlier passes (incomplete
+IP block table, ``trust_env=True`` defaults, secret-bearing cross-origin
+redirects, and the missing HTTPS gate for ``hub.secret``) is fully resolved
+as of 2026-05-08; see Finding 2 below.
 
 Former production blockers that were verified fixed by 2026-05-07 include Webmention stored XSS/unsafe remote URL rendering, IndieAuth consent CSRF/open redirect, authorization-code validation-failure reuse, token exchange `redirect_uri` binding, token parsing/reissue hardening, Micropub media sniffing, introspection authentication, token hashing at rest, CORS wildcard credentials, and WebSub signature/lease/secret hardening. A separate concurrent authorization-code exchange race was identified on 2026-05-08 and remains open.
 
@@ -232,20 +233,21 @@ Two related XSS surfaces on Webmention-derived data:
 
 **Severity:** High
 
-**Status:** Mostly resolved 2026-05-07; reopened for residual hardening on
-2026-05-08. The shared outbound HTTP helper screens URL
-syntax, private/loopback/link-local/reserved IP literals, DNS names that
-resolve to blocked addresses, and unsafe redirects; direct receive, sender,
-WebSub subscribe, and WebSub publish paths route through it with explicit
-TLS verification and bounded redirects. As of 2026-05-07 the helper resolves
-the URL host once, validates every returned IP, and connects to the resolved
-IP literal while preserving the original ``Host`` header and forwarding the
+**Status:** Resolved 2026-05-08 after the four sub-tasks of the P1.2 outbound
+HTTP hardening plan landed (see DONE.md "P1.2 — Complete outbound HTTP
+hardening"). The shared outbound HTTP helper screens URL syntax,
+private/loopback/link-local/reserved IP literals, DNS names that resolve to
+blocked addresses, and unsafe redirects; direct receive, sender, WebSub
+subscribe, and WebSub publish paths route through it with explicit TLS
+verification and bounded redirects. As of 2026-05-07 the helper resolves the
+URL host once, validates every returned IP, and connects to the resolved IP
+literal while preserving the original ``Host`` header and forwarding the
 original hostname as ``extensions["sni_hostname"]`` for HTTPS, closing the
-DNS rebinding / TOCTOU window. The pin is re-applied on every redirect hop.
-The remaining gaps are that the IP predicate relies on ``is_global`` and misses
-some multicast/reserved/NAT64 cases, default ``httpx.Client`` instances still
-trust proxy/CA environment variables, and secret-bearing callers need stricter
-cross-origin redirect behavior.
+DNS rebinding / TOCTOU window; the pin is re-applied on every redirect hop.
+The remaining 2026-05-08 residuals — the multicast/reserved/NAT64 IP-block
+gap, ``trust_env=True`` defaults on the protocol clients, the cross-origin
+redirect behavior for secret-bearing callers, and the missing HTTPS gate for
+``hub.secret`` — are all closed on the same day.
 
 **References:**
 
@@ -273,9 +275,9 @@ Historical contributing issues, since resolved or narrowed:
 - Source/Vouch fetches did not use the shared safe redirect helper.
 - DNS rebinding could split validation and connection across different lookups.
 
-**Current residuals:**
+**Resolved sub-tasks (all four landed 2026-05-08):**
 
-- (Partially resolved 2026-05-08, P1.2a) Extend `_blocked_ip_address` beyond
+- (Resolved 2026-05-08, P1.2a) Extend `_blocked_ip_address` beyond
   `not ip.is_global` so multicast, reserved, and NAT64 well-known-prefix
   addresses that map to blocked IPv4 destinations are rejected. The current
   ``_blocked_ip_address`` now rejects multicast, reserved, unspecified,
@@ -284,18 +286,31 @@ Historical contributing issues, since resolved or narrowed:
   (``64:ff9b::/96``) and local-use (``64:ff9b:1::/48``) prefixes. Covered by
   ``test_blocked_ip_rejects_dangerous`` /
   ``test_blocked_ip_allows_public`` in ``tests/test_http_client.py``.
-- (Partially resolved 2026-05-08, P1.2a) Instantiate default protocol clients
+- (Resolved 2026-05-08, P1.2a) Instantiate default protocol clients
   with `trust_env=False`. Default ``httpx.Client(...)`` calls in
   ``processors.py``, ``senders.py``, and ``websub.py`` now pass
   ``trust_env=False`` so ambient proxy and CA bundle environment variables
   cannot redirect or downgrade the screened connection path. A static
   regression test
   (``test_default_clients_disable_trust_env``) prevents drift.
-- Split redirect behavior so Webmention compatibility can preserve POST bodies
-  while WebSub subscription/publish and other secret-bearing callers strip or
-  reject cross-origin body/header replay. (Pending — Task 3 of the P1.2 plan.)
-- Reject or require HTTPS for WebSub subscription requests that send
-  `hub.secret`. (Pending — Task 3 of the P1.2 plan.)
+- (Resolved 2026-05-08, P1.2b) Split redirect behavior so Webmention
+  compatibility can preserve POST bodies while WebSub subscription/publish
+  and other secret-bearing callers reject cross-origin body/header replay.
+  ``request_with_safe_redirects`` and ``stream_with_safe_redirects`` now
+  accept ``cross_origin_strip``; WebSub subscribe (``_post_subscription_request``)
+  and publish (``notify_hubs``) pass ``cross_origin_strip=True``. The
+  Webmention sender path (``request_with_webmention_redirects``) keeps the
+  permissive default. Covered by ``test_strict_redirect_rejects_cross_origin``
+  and ``test_safe_redirect_allows_same_origin_when_strict`` in
+  ``tests/test_http_client.py``.
+- (Resolved 2026-05-08, P1.2b) Reject WebSub subscription requests that
+  send `hub.secret` over plain HTTP. ``_post_subscription_request`` raises
+  the typed ``WebSubSecretRequiresHTTPSError`` before any network call when
+  the hub URL is not HTTPS, and ``request_websub_subscription`` records the
+  failure through the existing
+  ``_save_subscription_request_failure`` path. Covered by
+  ``test_subscription_with_secret_rejects_http_hub`` in
+  ``tests/test_websub_subscriber.py``.
 
 ### 3. Synchronous Webmention and WebSub Processing Cause DoS, Decompression Bombs, and Recursion DoS
 
@@ -756,11 +771,14 @@ The three production blockers identified in the 2026-05-07 verification pass
 were resolved on 2026-05-07, but the 2026-05-08 residual review found a new
 fix order:
 
-1. Restrict Webmention and Vouch source proof to rendered anchor links.
-2. Complete outbound HTTP hardening: deny multicast/reserved/NAT64 bypass
+1. ~~Restrict Webmention and Vouch source proof to rendered anchor links.~~
+   Resolved 2026-05-08.
+2. ~~Complete outbound HTTP hardening: deny multicast/reserved/NAT64 bypass
    addresses, disable environment trust on default protocol clients, protect
    secret-bearing WebSub subscription requests, and make redirect body/header
-   replay opt-in for Webmention-only callers.
+   replay opt-in for Webmention-only callers.~~ Resolved 2026-05-08 across
+   the P1.2a (IP block table + ``trust_env=False``) and P1.2b (strict
+   cross-origin redirect mode + ``hub.secret`` HTTPS gate) commits.
 3. Serialize authorization-code consume-and-token-issue under a database lock
    so the code remains single-use under concurrent exchanges.
 4. Bind IndieAuth ``redirect_uri`` values to ``client_id`` through same-origin

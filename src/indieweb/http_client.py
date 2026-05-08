@@ -181,6 +181,20 @@ def resolve_safe_http_url(url: str, *, resolver: AddressResolver) -> tuple[str, 
     return host, port, addresses[0]
 
 
+def _origin_for_url(url: str) -> tuple[str, str, int]:
+    """Return ``(scheme, host, port)`` for ``url`` for cross-origin comparison.
+
+    Hostnames are lowercased and the port falls back to the scheme default
+    (443 for ``https``, 80 for ``http``) so a redirect that omits the port and
+    one that includes the default port are treated as the same origin.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    port = parsed.port if parsed.port is not None else (443 if scheme == "https" else 80)
+    return scheme, host, port
+
+
 def _ip_url_replacement(url: str, ip: str) -> str:
     """Return ``url`` with its host replaced by ``ip`` (bracketed when IPv6)."""
     parsed = urlparse(url)
@@ -250,6 +264,10 @@ def request_with_webmention_redirects(
     followed redirects, including Webmention endpoint ``POST`` delivery. Each
     request URL and redirect target is screened with the shared SSRF checks.
 
+    Webmention sender compatibility deliberately permits cross-origin redirects
+    with method/body preservation, so this helper does not opt into the strict
+    cross-origin mode in :func:`request_with_safe_redirects`.
+
     When ``max_bytes`` is provided the response is streamed and decoded bytes are
     bounded so a hostile Webmention endpoint cannot force the sender to buffer
     an unbounded reply; oversized responses surface as
@@ -266,6 +284,7 @@ def request_with_safe_redirects(
     resolver: AddressResolver | None = default_address_resolver,
     max_bytes: int | None = None,
     pin_to_resolved_ip: bool = True,
+    cross_origin_strip: bool = False,
     **request_kwargs: Any,
 ) -> RedirectedResponse:
     """Run an HTTP request after SSRF checks, re-checking every redirect.
@@ -281,6 +300,13 @@ def request_with_safe_redirects(
     This binds the SSRF safety decision to the actual socket connection so a
     DNS rebinding host cannot resolve to a public address during validation
     and to a private address during the connect.
+
+    When ``cross_origin_strip`` is True, a redirect whose target origin
+    (scheme/host/port) differs from the URL that produced the redirect raises
+    :class:`WebmentionRedirectError` before any network call to the new origin
+    is made. Use this for secret-bearing callers (WebSub subscribe and
+    publish) where method/body/header replay across origins is unsafe; the
+    Webmention sender path keeps the default permissive behavior.
     """
     if max_bytes is not None:
         return stream_with_safe_redirects(
@@ -290,6 +316,7 @@ def request_with_safe_redirects(
             max_bytes=max_bytes,
             resolver=resolver,
             pin_to_resolved_ip=pin_to_resolved_ip,
+            cross_origin_strip=cross_origin_strip,
             **request_kwargs,
         )
 
@@ -320,6 +347,10 @@ def request_with_safe_redirects(
             raise WebmentionRedirectError(f"exceeded {WEBMENTION_MAX_REDIRECTS} Webmention redirects")
 
         next_url = urljoin(current_url, location)
+        if cross_origin_strip and _origin_for_url(current_url) != _origin_for_url(next_url):
+            raise WebmentionRedirectError(
+                f"cross-origin redirect not permitted for strict caller: {current_url} -> {next_url}"
+            )
         try:
             validate_safe_http_url(next_url, resolver=resolver)
         except UnsafeHTTPUrlError as exc:
@@ -401,6 +432,7 @@ def stream_with_safe_redirects(
     max_bytes: int | None,
     resolver: AddressResolver | None = default_address_resolver,
     pin_to_resolved_ip: bool = True,
+    cross_origin_strip: bool = False,
     **request_kwargs: Any,
 ) -> RedirectedResponse:
     """Stream an HTTP response after SSRF checks, re-checking every redirect.
@@ -409,8 +441,9 @@ def stream_with_safe_redirects(
     redirect statuses, including 301/302/303 for Webmention endpoint delivery
     compatibility. This differs from browser-style POST redirect rewriting.
 
-    See :func:`request_with_safe_redirects` for the ``pin_to_resolved_ip``
-    semantics. The same logic applies for streamed requests.
+    See :func:`request_with_safe_redirects` for the ``pin_to_resolved_ip`` and
+    ``cross_origin_strip`` semantics. The same logic applies for streamed
+    requests.
     """
     current_url = url
 
@@ -442,6 +475,10 @@ def stream_with_safe_redirects(
             raise WebmentionRedirectError(f"exceeded {WEBMENTION_MAX_REDIRECTS} Webmention redirects")
 
         next_url = urljoin(current_url, location)
+        if cross_origin_strip and _origin_for_url(current_url) != _origin_for_url(next_url):
+            raise WebmentionRedirectError(
+                f"cross-origin redirect not permitted for strict caller: {current_url} -> {next_url}"
+            )
         try:
             validate_safe_http_url(next_url, resolver=resolver)
         except UnsafeHTTPUrlError as exc:
