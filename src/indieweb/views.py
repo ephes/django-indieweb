@@ -640,15 +640,29 @@ def _get_webmention_enqueue() -> Callable[[int], None] | None:
 
 
 def _store_webmention_submission(source: str, target: str, vouch: str | None) -> Webmention:
-    """Create or reuse a submitted Webmention row, preserving existing state."""
+    """Create or reuse a submitted Webmention row, preserving existing state.
+
+    When the row already has a verified Vouch (``vouch_verified_at`` set), a
+    different newly submitted ``vouch`` URL is NOT written to the row: an
+    unauthenticated repeat submission must not downgrade a previously verified
+    Vouch by clobbering ``vouch_url`` and clearing ``vouch_verified_at``. The
+    submitted URL is stashed on a non-persisted attribute so any in-memory
+    consumer can still see it; the queued path discards it because the worker
+    only loads the row by id.
+    """
     webmention, _created = Webmention.objects.get_or_create(
         source_url=source,
         target_url=target,
     )
     if vouch is not None and webmention.vouch_url != vouch:
-        webmention.vouch_url = vouch
-        webmention.vouch_verified_at = None
-        webmention.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
+        if webmention.vouch_verified_at is not None:
+            # Preserve the previously verified Vouch metadata. Stash the
+            # submitted URL on a non-persisted attribute for in-memory callers.
+            webmention._submitted_vouch_url = vouch  # type: ignore[attr-defined]
+        else:
+            webmention.vouch_url = vouch
+            webmention.vouch_verified_at = None
+            webmention.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
     return webmention
 
 

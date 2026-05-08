@@ -5,6 +5,28 @@ Changelog
 
 Unreleased
 ----------
+* Prevented unauthenticated Vouch metadata downgrade on repeat Webmention
+  submissions. A repeat submission for an existing source/target row whose
+  newly submitted ``vouch`` URL fails verification (or whose verification is
+  skipped because the deployment does not verify Vouches) no longer replaces
+  the row's previously verified ``vouch_url`` and no longer clears
+  ``vouch_verified_at``. ``_store_webmention_submission`` now skips the
+  ``vouch_url`` / ``vouch_verified_at`` write when the row already has a
+  verified Vouch and stashes the submitted URL on a non-persisted attribute
+  for any in-memory caller (the queued worker reloads the row by id and so
+  silently discards the new URL when a prior verified Vouch is in place —
+  preserving the verified state is the intended behavior). The synchronous
+  ``WebmentionProcessor.process_webmention`` path records whether the row
+  had a prior verified Vouch and, in the persistence phase, only commits the
+  new ``vouch_url`` / ``vouch_verified_at`` when Phase 1 successfully
+  verified the new URL; rows without a prior verified Vouch keep the existing
+  behavior of accepting the submitted URL with a cleared timestamp.
+  ``tests/test_webmention_endpoint.py`` adds
+  ``test_async_repeat_submission_does_not_downgrade_verified_vouch`` and
+  ``tests/test_webmention_processor.py`` adds
+  ``test_repeat_submission_with_failing_vouch_keeps_previous_verified_metadata``
+  and ``test_repeat_submission_with_succeeding_vouch_replaces_verified_metadata``.
+  No migrations or settings changes.
 * Preserved staged WebSub secret rotations across denied renewal callbacks.
   ``record_websub_denial`` previously cleared ``pending_secret`` and
   ``pending_secret_set`` on any valid denied callback, including denials

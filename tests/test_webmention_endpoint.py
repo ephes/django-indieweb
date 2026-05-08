@@ -404,6 +404,37 @@ class TestWebmentionEndpoint:
 
     @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
     @patch("indieweb.views.WebmentionProcessor")
+    def test_async_repeat_submission_does_not_downgrade_verified_vouch(self, mock_processor_class, client, site):
+        """A repeat async submission with a different vouch must NOT clear a previously
+        verified vouch on the existing row."""
+        source = "https://other.com/reply"
+        target = f"https://{site.domain}/post"
+        original_vouch = "https://trusted.example/vouch-for-other"
+        existing = Webmention.objects.create(
+            source_url=source,
+            target_url=target,
+            vouch_url=original_vouch,
+            vouch_verified_at=timezone.now() - timedelta(days=1),
+            status="verified",
+            verified_at=timezone.now() - timedelta(days=1),
+        )
+        original_verified_at = existing.vouch_verified_at
+        new_vouch = "https://trusted.example/vouch-for-something-else"
+
+        url = reverse("indieweb:webmention")
+        response = client.post(
+            url,
+            {"source": source, "target": target, "vouch": new_vouch},
+        )
+
+        existing.refresh_from_db()
+        assert response.status_code == 202
+        assert existing.vouch_url == original_vouch
+        assert existing.vouch_verified_at == original_verified_at
+        mock_processor_class.assert_not_called()
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    @patch("indieweb.views.WebmentionProcessor")
     @pytest.mark.parametrize(
         "payload",
         [

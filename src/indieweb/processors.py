@@ -338,7 +338,14 @@ class WebmentionProcessor:
             target_url=target_url,
         )
 
+        # If a different Vouch URL is being submitted, we attempt verification
+        # against it. The persistence step at the end of process_webmention
+        # decides whether to actually replace the row's ``vouch_url`` /
+        # ``vouch_verified_at``: if the row already has a verified Vouch and
+        # the new URL fails to verify, the verified state is preserved so an
+        # unauthenticated repeat submission cannot downgrade it.
         pending_vouch_save = vouch_url is not None and webmention.vouch_url != vouch_url
+        had_prior_verified_vouch = pending_vouch_save and webmention.vouch_verified_at is not None
         if pending_vouch_save:
             assert vouch_url is not None
             webmention.vouch_url = vouch_url
@@ -370,13 +377,28 @@ class WebmentionProcessor:
                 return locked
 
             if pending_vouch_save:
-                # We are writing the same ``vouch_url`` that Phase 1 verified
-                # (Phase 1 saw it via the in-memory mutation above), so it is
-                # always safe to persist the verification timestamp here.
                 assert vouch_url is not None
-                locked.vouch_url = vouch_url
-                locked.vouch_verified_at = outcome.vouch_verified_at
-                locked.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
+                if had_prior_verified_vouch and outcome.vouch_verified_at is None:
+                    # The row had a previously verified Vouch and the newly
+                    # submitted URL did not verify (or no verification was
+                    # performed). Preserve the prior verified metadata: do not
+                    # overwrite ``vouch_url`` and do not clear
+                    # ``vouch_verified_at``. ``locked`` was just reloaded under
+                    # the row lock, so its ``vouch_url`` / ``vouch_verified_at``
+                    # already reflect the prior verified state.
+                    logger.info(
+                        "Preserving verified Vouch on row %s: submitted vouch_url=%r failed verification",
+                        locked.pk,
+                        vouch_url,
+                    )
+                else:
+                    # Either there was no prior verified Vouch (so accepting
+                    # the new URL with a cleared timestamp is the previous
+                    # behavior) or Phase 1 successfully verified the new URL
+                    # and we can persist it together with the timestamp.
+                    locked.vouch_url = vouch_url
+                    locked.vouch_verified_at = outcome.vouch_verified_at
+                    locked.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
             elif (
                 outcome.vouch_verified_at is not None
                 and outcome.verified_vouch_url is not None

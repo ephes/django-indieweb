@@ -95,10 +95,15 @@ Validated medium-priority residuals:
   active secret intact and the staged rotation available for an explicit
   operator retry; only fresh-subscribe denials (``STATE_PENDING_SUBSCRIBE``)
   transition to ``STATE_DENIED`` and clear pending secret state.
-- A new Webmention submission can replace ``vouch_url`` on an existing
+- ~~A new Webmention submission can replace ``vouch_url`` on an existing
   source/target row and clear a prior ``vouch_verified_at`` value if the new
   Vouch fails. That lets an unauthenticated repeat submission downgrade the
-  row's Vouch metadata.
+  row's Vouch metadata.~~ Resolved 2026-05-08 under P2.5:
+  ``_store_webmention_submission`` no longer overwrites ``vouch_url`` /
+  ``vouch_verified_at`` when the row already has a verified Vouch, and
+  ``WebmentionProcessor.process_webmention`` preserves the prior verified
+  metadata when a newly submitted Vouch fails verification. Verified Vouch
+  state is replaced only when the new submission successfully verifies.
 
 Claims reviewed but downgraded or rejected:
 

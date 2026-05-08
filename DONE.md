@@ -4,6 +4,39 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P2.5 — Prevent unauthenticated Vouch metadata downgrade on existing Webmentions
+
+A repeat Webmention submission for an existing source/target row no longer
+replaces a previously verified Vouch with an unverified one. Both the queued
+receive path (``_store_webmention_submission``) and the synchronous processor
+path (``WebmentionProcessor.process_webmention``) now preserve a row's
+``vouch_url`` and ``vouch_verified_at`` when a newly submitted Vouch URL
+fails verification or when verification is not performed. Verified Vouch
+metadata is replaced only after the new Vouch successfully verifies.
+
+- ``src/indieweb/views.py`` ``_store_webmention_submission`` skips the
+  ``vouch_url`` / ``vouch_verified_at`` write when the row already has
+  ``vouch_verified_at`` set; the submitted URL is stashed on a non-persisted
+  ``_submitted_vouch_url`` attribute for in-memory callers (the queued worker
+  reloads the row by id and therefore silently discards the new URL when a
+  prior verified Vouch is in place — preserving the verified state is the
+  intended semantics).
+- ``src/indieweb/processors.py`` ``WebmentionProcessor.process_webmention``
+  records whether the row had a prior verified Vouch before mutating the
+  in-memory ``vouch_url`` for verification, and in the persistence phase
+  preserves the prior verified metadata when the newly submitted Vouch did
+  not verify. Rows without a prior verified Vouch keep the existing behavior
+  of accepting the submitted URL with a cleared timestamp.
+- ``tests/test_webmention_endpoint.py`` adds
+  ``test_async_repeat_submission_does_not_downgrade_verified_vouch``.
+- ``tests/test_webmention_processor.py`` adds
+  ``test_repeat_submission_with_failing_vouch_keeps_previous_verified_metadata``
+  and ``test_repeat_submission_with_succeeding_vouch_replaces_verified_metadata``.
+- Validation: ``uv run pytest -q`` (1370 passed), ``uv run mypy``,
+  ``uv run prek run --all-files``.
+- Docs: ``docs/changelog.rst`` notes the behavior change; ``SECURITY_ANALYSIS.md``
+  marks the residual resolved.
+
 ### P2.4 — Preserve staged WebSub secret rotations on denied callbacks
 
 `record_websub_denial` no longer clears the staged secret rotation

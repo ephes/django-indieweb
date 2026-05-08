@@ -500,6 +500,69 @@ class TestWebmentionProcessor:
             assert webmention.vouch_verified_at == vouch_verified_at
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_repeat_submission_with_failing_vouch_keeps_previous_verified_metadata(self, processor):
+        """A repeat submission whose new vouch fails verification must NOT downgrade
+        a row that already has a verified vouch."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        original_vouch_url = "https://trusted.example/vouch-for-example"
+        original_verified_at = django_timezone.now() - timedelta(days=1)
+        Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            vouch_url=original_vouch_url,
+            vouch_verified_at=original_verified_at,
+        )
+        new_vouch_url = "https://trusted.example/vouch-for-other"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        # Vouch HTML deliberately does NOT link to the source domain, so verification fails.
+        failing_vouch_html = '<html><body><a href="https://someone-else.example/">No</a></body></html>'
+
+        with _processor_client(
+            processor,
+            side_effect=[
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=200, text=failing_vouch_html),
+            ],
+        ):
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=new_vouch_url)
+
+        webmention.refresh_from_db()
+        assert webmention.vouch_url == original_vouch_url
+        assert webmention.vouch_verified_at == original_verified_at
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_repeat_submission_with_succeeding_vouch_replaces_verified_metadata(self, processor):
+        """A repeat submission whose new vouch succeeds replaces the metadata."""
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.com/article"
+        original_vouch_url = "https://trusted.example/vouch-for-example"
+        original_verified_at = django_timezone.now() - timedelta(days=1)
+        Webmention.objects.create(
+            source_url=source_url,
+            target_url=target_url,
+            vouch_url=original_vouch_url,
+            vouch_verified_at=original_verified_at,
+        )
+        new_vouch_url = "https://trusted.example/vouch-for-other"
+        source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
+        succeeding_vouch_html = '<html><body><a href="https://example.com/">Yes</a></body></html>'
+
+        with _processor_client(
+            processor,
+            side_effect=[
+                _source_response(status_code=200, text=source_html),
+                _source_response(status_code=200, text=succeeding_vouch_html),
+            ],
+        ):
+            webmention = processor.process_webmention(source_url, target_url, vouch_url=new_vouch_url)
+
+        webmention.refresh_from_db()
+        assert webmention.vouch_url == new_vouch_url
+        assert webmention.vouch_verified_at is not None
+        assert webmention.vouch_verified_at > original_verified_at
+
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
     def test_processor_verifies_trusted_vouch_linking_to_source_domain(self, processor):
         """Test opt-in Vouch verification fetches trusted vouchers in processor-owned logic."""
         source_url = "https://example.com/post"

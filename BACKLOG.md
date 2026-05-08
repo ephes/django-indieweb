@@ -12,16 +12,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Prevent unauthenticated Vouch metadata downgrade on existing
-  Webmentions. References: `src/indieweb/views.py`
-  (`_store_webmention_submission`), `src/indieweb/processors.py`
-  (`WebmentionProcessor.process`), `tests/test_webmention_endpoint.py`,
-  `tests/test_webmention_processor.py`. A repeat submission for an existing
-  source/target pair can replace `vouch_url` and clear a previously verified
-  `vouch_verified_at` value when the new Vouch fails. Only replace verified
-  Vouch metadata after the new Vouch succeeds, or retain the previous verified
-  metadata when a new submitted Vouch fails.
-
 - [ ] Revisit WebSub replay-history cap semantics for high-volume topics.
   References: `src/indieweb/websub.py` (`DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`,
   `_delivery_replay_history_max`, `delivery_is_replay`,
