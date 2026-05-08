@@ -5,6 +5,22 @@ Changelog
 
 Unreleased
 ----------
+* Added length validation for inbound IndieAuth and Webmention protocol
+  fields. ``WebmentionEndpoint.post`` now rejects ``source``, ``target``,
+  and ``vouch`` URLs longer than the backing ``Webmention`` model
+  ``max_length`` with ``400 invalid_request`` before
+  ``_store_webmention_submission()`` so overlong but syntactically valid
+  URLs cannot reach the storage layer.  ``AuthView.get`` and
+  ``TokenView.post`` apply the same boundary check to ``client_id``,
+  ``redirect_uri``, ``state``, ``me``, and ``scope`` against the ``Auth``
+  model ``max_length`` values, returning ``400 invalid_request: <field>
+  exceeds maximum length``. The maxima are derived from
+  ``Auth._meta.get_field(...).max_length`` and
+  ``Webmention._meta.get_field(...).max_length`` at import time so they
+  stay in sync if the schema changes.  ``tests/test_webmention_endpoint.py``,
+  ``tests/test_auth_endpoint.py``, and ``tests/test_token_endpoint.py``
+  cover each rejected field and assert that no ``Webmention``/``Token``
+  row is written.
 * Added opt-in privacy-oriented log redaction for IndieAuth/Micropub/
   Webmention/WebSub INFO and WARNING log lines.
   ``INDIEWEB_LOG_REDACTION`` (default ``"passthrough"``) preserves the

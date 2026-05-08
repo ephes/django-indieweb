@@ -22,19 +22,7 @@ No current Priority 3 API Hardening items.
 
 ### Housekeeping
 
-- [ ] Validate inbound protocol field lengths before persistence. References:
-  `src/indieweb/views.py`, `src/indieweb/processors.py`,
-  `src/indieweb/models.py`, `tests/test_webmention_endpoint.py`,
-  `tests/test_auth_endpoint.py`, `tests/test_token_endpoint.py`. Public and
-  protocol-facing views validate URL syntax but do not consistently reject
-  values that exceed backing model field lengths before `get_or_create()` or
-  `create()` calls. In queued Webmention deployments, overlong but syntactically
-  valid `source`, `target`, or `vouch` URLs can reach
-  `_store_webmention_submission()` before the processing try/except boundary;
-  authorization parameters such as `state`, `scope`, `client_id`,
-  `redirect_uri`, and `me` have similar authenticated-user robustness gaps.
-  Return protocol-appropriate 400 responses before database writes and add
-  regression coverage for overlong fields.
+No current Priority 4 Housekeeping items.
 
 ### WebSub Enhancements
 

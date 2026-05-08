@@ -1802,3 +1802,69 @@ def test_token_exchange_acquires_row_lock_on_matched_auth(client, auth, token_en
 
     assert response.status_code == 201
     assert locked == [True]
+
+
+@pytest.mark.django_db
+def test_token_post_rejects_overlong_redirect_uri(client, token_endpoint_url):
+    """An overlong ``redirect_uri`` is rejected with 400 before any DB lookup."""
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": "x" * 32,
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/" + ("a" * 5000),
+        },
+    )
+    assert response.status_code == 400
+    assert models.Token.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_token_post_rejects_overlong_client_id(client, token_endpoint_url):
+    """An overlong ``client_id`` is rejected with 400 before any DB lookup."""
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": "x" * 32,
+            "client_id": "https://c.example/" + ("a" * 5000),
+            "redirect_uri": "https://c.example/cb",
+        },
+    )
+    assert response.status_code == 400
+    assert models.Token.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_token_post_rejects_overlong_me(client, token_endpoint_url):
+    """An overlong ``me`` is rejected with 400 before any DB lookup."""
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": "x" * 32,
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/cb",
+            "me": "https://me.example/" + ("a" * 5000),
+        },
+    )
+    assert response.status_code == 400
+    assert models.Token.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_token_post_rejects_overlong_scope(client, token_endpoint_url):
+    """An overlong ``scope`` is rejected with 400 before any DB lookup."""
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "grant_type": "authorization_code",
+            "code": "x" * 32,
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/cb",
+            "scope": "x" * 5000,
+        },
+    )
+    assert response.status_code == 400
+    assert models.Token.objects.count() == 0

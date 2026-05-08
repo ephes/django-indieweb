@@ -4,6 +4,47 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P4.2 — Validate inbound protocol field lengths
+
+Public and protocol-facing views now reject overlong input fields with
+``400 invalid_request`` before any database write or queue enqueue,
+using the backing ``Auth`` and ``Webmention`` model ``max_length``
+values as the source of truth. This is a backlog hardening item rather
+than a security residual from ``SECURITY_ANALYSIS.md``: the prior
+behavior would surface as ``DataError`` at model save (or silent
+truncation depending on the storage backend) instead of a clean
+protocol error.
+
+- ``src/indieweb/views.py`` derives module-level constants from
+  ``Webmention._meta.get_field("source_url")`` etc. so the limits stay
+  in sync with the model. New helper ``_length_error_response`` shapes
+  a uniform 400 ``invalid_request: <field> exceeds maximum length``
+  response and logs the field name and observed/limit lengths;
+  ``_first_length_error`` returns the first error across an ordered
+  tuple of ``(field_name, value, max_length)`` triples so each view
+  guards its inputs in one place.
+- ``WebmentionEndpoint.post`` validates ``source``, ``target``, and
+  ``vouch`` URL lengths after the missing-parameter check and before
+  ``URLValidator``. ``AuthView.get`` validates ``client_id``,
+  ``redirect_uri``, ``state``, ``me``, and ``scope`` after the
+  required-parameter check and before scope normalization.
+  ``TokenView.post`` checks the same fields via a new
+  ``_check_input_lengths`` method, chained with the existing
+  ``_token_grant_type_error`` and ``_token_client_id_error`` guards.
+- ``tests/test_webmention_endpoint.py`` adds three regressions
+  exercising overlong ``source``, ``target``, and ``vouch`` URLs and
+  asserts no ``Webmention`` row is created.
+  ``tests/test_auth_endpoint.py`` adds five regressions covering
+  overlong ``state``, ``client_id``, ``redirect_uri``, ``me``, and
+  ``scope`` on the authorization GET.
+  ``tests/test_token_endpoint.py`` adds four regressions covering
+  overlong ``client_id``, ``redirect_uri``, ``me``, and ``scope`` on
+  the token POST and asserts no ``Token`` row is created.
+- ``docs/changelog.rst`` records the change.
+
+Validation: ``uv run pytest -q`` (1406 passed); ``uv run mypy`` (no
+issues); ``uv run prek run --all-files`` (clean).
+
 ### P4.1 — Privacy-oriented logging redaction
 
 Added an opt-in log redaction mode that replaces privacy-sensitive

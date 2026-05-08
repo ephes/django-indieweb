@@ -68,6 +68,48 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Maximum lengths for protocol-facing input fields, derived from the backing
+# model fields so they stay in sync if the schema changes. Validated at the
+# view boundary BEFORE any database write or queue enqueue so overlong but
+# syntactically valid input is rejected with a 400 ``invalid_request`` rather
+# than reaching a model save where it would raise ``DataError`` or be silently
+# truncated by the storage layer.
+WEBMENTION_SOURCE_URL_MAX_LENGTH: int = cast(int, Webmention._meta.get_field("source_url").max_length)
+WEBMENTION_TARGET_URL_MAX_LENGTH: int = cast(int, Webmention._meta.get_field("target_url").max_length)
+WEBMENTION_VOUCH_URL_MAX_LENGTH: int = cast(int, Webmention._meta.get_field("vouch_url").max_length)
+AUTH_STATE_MAX_LENGTH: int = cast(int, Auth._meta.get_field("state").max_length)
+AUTH_SCOPE_MAX_LENGTH: int = cast(int, Auth._meta.get_field("scope").max_length)
+AUTH_CLIENT_ID_MAX_LENGTH: int = cast(int, Auth._meta.get_field("client_id").max_length)
+AUTH_REDIRECT_URI_MAX_LENGTH: int = cast(int, Auth._meta.get_field("redirect_uri").max_length)
+AUTH_ME_MAX_LENGTH: int = cast(int, Auth._meta.get_field("me").max_length)
+
+
+def _length_error_response(field_name: str, value: str | None, max_length: int) -> HttpResponse | None:
+    """Return a 400 ``invalid_request`` response when ``value`` exceeds ``max_length``.
+
+    Returns ``None`` when ``value`` is missing or fits, so callers can chain
+    checks at the top of a view without each guard rebuilding the same shape.
+    """
+    if value is not None and len(value) > max_length:
+        logger.info(f"rejected overlong {field_name} ({len(value)} > {max_length})")
+        return HttpResponse(
+            f"invalid_request: {field_name} exceeds maximum length",
+            status=400,
+        )
+    return None
+
+
+def _first_length_error(
+    fields: tuple[tuple[str, str | None, int], ...],
+) -> HttpResponse | None:
+    """Return the first 400 length-error response across ``fields`` or ``None``."""
+    for field_name, value, max_length in fields:
+        error = _length_error_response(field_name, value, max_length)
+        if error is not None:
+            return error
+    return None
+
+
 def _read_request_body_with_invalid_content_length_fallback(request: HttpRequest) -> bytes:
     """Read a request body even when a malformed Content-Length would make Django raise."""
     try:
@@ -1244,8 +1286,21 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
                 logger.info(f"missing parameter: {name}")
                 return HttpResponse(err_msg, status=404)
 
+        raw_scope = request.GET.get("scope")
+        length_error = _first_length_error(
+            (
+                ("client_id", client_id, AUTH_CLIENT_ID_MAX_LENGTH),
+                ("redirect_uri", redirect_uri, AUTH_REDIRECT_URI_MAX_LENGTH),
+                ("state", state, AUTH_STATE_MAX_LENGTH),
+                ("me", me, AUTH_ME_MAX_LENGTH),
+                ("scope", raw_scope, AUTH_SCOPE_MAX_LENGTH),
+            )
+        )
+        if length_error is not None:
+            return length_error
+
         # scope is optional; unknown scopes are intentionally preserved after normalization.
-        scope = _normalize_scope(request.GET.get("scope"))
+        scope = _normalize_scope(raw_scope)
         # All required parameters are verified to be not None above
         assert client_id is not None
         assert redirect_uri is not None
@@ -1501,6 +1556,18 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
                 return self._consume_invalid_grant(auth, "Redirect URI mismatch on token exchange")
         return None
 
+    def _check_input_lengths(self, request: HttpRequest) -> HttpResponse | None:
+        """Reject overlong protocol fields before any DB lookup or write."""
+        return _first_length_error(
+            (
+                ("client_id", request.POST.get("client_id"), AUTH_CLIENT_ID_MAX_LENGTH),
+                ("redirect_uri", request.POST.get("redirect_uri"), AUTH_REDIRECT_URI_MAX_LENGTH),
+                ("me", request.POST.get("me"), AUTH_ME_MAX_LENGTH),
+                ("scope", request.POST.get("scope"), AUTH_SCOPE_MAX_LENGTH),
+                ("state", request.POST.get("state"), AUTH_STATE_MAX_LENGTH),
+            )
+        )
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         # Get parameters from request
         code = request.POST.get("code")
@@ -1518,7 +1585,11 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.error(f"Missing required parameters: code={_redact_auth_code(code)}, client_id={client_id}")
             return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
 
-        parameter_error = _token_grant_type_error(grant_type) or _token_client_id_error(client_id)
+        parameter_error = (
+            self._check_input_lengths(request)
+            or _token_grant_type_error(grant_type)
+            or _token_client_id_error(client_id)
+        )
         if parameter_error is not None:
             return parameter_error
 
@@ -2890,6 +2961,19 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         # Basic validation
         if not source or not target:
             return HttpResponse(status=400)
+
+        # Reject overlong URLs before model writes or queue enqueue so an
+        # otherwise syntactically valid but oversized URL cannot raise
+        # ``DataError`` at ``_store_webmention_submission()``.
+        length_error = _first_length_error(
+            (
+                ("source", source, WEBMENTION_SOURCE_URL_MAX_LENGTH),
+                ("target", target, WEBMENTION_TARGET_URL_MAX_LENGTH),
+                ("vouch", vouch, WEBMENTION_VOUCH_URL_MAX_LENGTH),
+            )
+        )
+        if length_error is not None:
+            return length_error
 
         # Validate URLs
         validator = URLValidator(schemes=["http", "https"])

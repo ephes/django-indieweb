@@ -743,3 +743,43 @@ class TestWebmentionEndpoint:
         assert "source" in body
         assert "target" in body
         assert "status" in body
+
+
+@pytest.mark.django_db
+def test_webmention_rejects_overlong_source(client):
+    """Source URLs longer than the model max_length are rejected before persistence."""
+    overlong = "https://example.com/" + ("a" * 5000)
+    response = client.post(
+        reverse("indieweb:webmention"),
+        data={"source": overlong, "target": "https://example.com/post"},
+    )
+    assert response.status_code == 400
+    assert Webmention.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_webmention_rejects_overlong_target(client):
+    """Target URLs longer than the model max_length are rejected before persistence."""
+    overlong = "https://example.com/" + ("a" * 5000)
+    response = client.post(
+        reverse("indieweb:webmention"),
+        data={"source": "https://other.example/reply", "target": overlong},
+    )
+    assert response.status_code == 400
+    assert Webmention.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_webmention_rejects_overlong_vouch(client):
+    """Vouch URLs longer than the model max_length are rejected before persistence."""
+    overlong = "https://vouch.example/" + ("a" * 5000)
+    response = client.post(
+        reverse("indieweb:webmention"),
+        data={
+            "source": "https://other.example/reply",
+            "target": "https://example.com/post",
+            "vouch": overlong,
+        },
+    )
+    assert response.status_code == 400
+    assert Webmention.objects.count() == 0

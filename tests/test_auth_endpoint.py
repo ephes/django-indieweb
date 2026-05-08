@@ -1253,3 +1253,94 @@ def test_authorize_validator_failure_fails_closed(client, settings, user):
         },
     )
     assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_auth_get_rejects_overlong_state(client, user):
+    """A ``state`` longer than the backing model max_length is rejected with 400."""
+    client.force_login(user)
+    response = client.get(
+        reverse("indieweb:auth"),
+        {
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/cb",
+            "state": "x" * 5000,
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_auth_get_rejects_overlong_client_id(client, user):
+    """A ``client_id`` longer than the backing model max_length is rejected with 400."""
+    client.force_login(user)
+    response = client.get(
+        reverse("indieweb:auth"),
+        {
+            "client_id": "https://c.example/" + ("a" * 5000),
+            "redirect_uri": "https://c.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_auth_get_rejects_overlong_redirect_uri(client, user):
+    """A ``redirect_uri`` longer than the backing model max_length is rejected with 400."""
+    client.force_login(user)
+    response = client.get(
+        reverse("indieweb:auth"),
+        {
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/" + ("a" * 5000),
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_auth_get_rejects_overlong_me(client, user):
+    """A ``me`` longer than the backing model max_length is rejected with 400."""
+    client.force_login(user)
+    response = client.get(
+        reverse("indieweb:auth"),
+        {
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/cb",
+            "state": "abc",
+            "me": "https://me.example/" + ("a" * 5000),
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_auth_get_rejects_overlong_scope(client, user):
+    """An overlong ``scope`` is rejected with 400 before any DB write."""
+    client.force_login(user)
+    response = client.get(
+        reverse("indieweb:auth"),
+        {
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "scope": "x" * 5000,
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0
