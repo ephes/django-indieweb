@@ -4,6 +4,60 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P1.4 — Bind IndieAuth ``redirect_uri`` values to ``client_id``
+
+The IndieAuth authorization endpoint now binds the submitted ``redirect_uri``
+to the submitted ``client_id`` so a trusted client identifier can no longer be
+paired with an attacker-controlled redirect target.
+
+- ``src/indieweb/views.py`` adds ``_origin_tuple``,
+  ``_redirect_uri_origin_match``, ``_redirect_uri_allowlist_match``,
+  ``_redirect_uri_allowed``, and a shared
+  ``_auth_request_client_redirect_error`` helper. ``AuthView.get`` and
+  ``AuthView._handle_consent`` now apply the layered policy:
+  ``INDIEWEB_REDIRECT_URI_VALIDATOR`` (dotted path
+  ``(client_id, redirect_uri) -> bool``) short-circuits both other layers and
+  fails closed on import error, callable exception, non-callable values, and
+  non-bool returns; ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` (mapping of
+  ``client_id`` to a list/tuple of allowlist entries) replaces the default
+  rule for keyed clients with trailing-slash prefix entries and exact
+  origin+path+query entries (fragments rejected); otherwise the
+  ``redirect_uri`` *origin* (scheme, host, port after IDNA encoding and
+  default-port collapsing) must equal the ``client_id`` origin. Host-only
+  equality is not enough.
+- ``src/indieweb/templates/indieweb/consent.html`` now shows a clearly
+  labeled ``Redirect URI`` row so the user can verify the destination before
+  approving.
+- Added regression coverage in ``tests/test_auth_endpoint.py``
+  (``test_authorize_rejects_cross_origin_redirect_by_default``,
+  ``test_authorize_accepts_same_origin_redirect``,
+  ``test_authorize_allowlist_overrides_same_origin``,
+  ``test_authorize_allowlist_prefix_boundary``,
+  ``test_authorize_validator_hook_overrides_allowlist``,
+  ``test_authorize_validator_failure_fails_closed``) and
+  ``tests/test_consent_screen.py``
+  (``test_consent_screen_displays_redirect_uri``). New
+  ``tests/test_redirect_validators.py`` provides ``allow_all`` and
+  ``broken_path`` callables for the validator-hook tests. Existing tests that
+  intentionally exercised cross-origin ``client_id``/``redirect_uri`` pairs
+  while testing client-policy normalization now configure
+  ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` or
+  ``INDIEWEB_REDIRECT_URI_VALIDATOR`` so the new binding does not block their
+  scenario.
+- Documented the layered policy in ``docs/indieauth.rst`` (new "Redirect URI
+  Binding" section), the two new settings in ``docs/configuration.rst``, and
+  the change in ``docs/changelog.rst`` with the explicit
+  backwards-incompatibility note. ``SECURITY_ANALYSIS.md`` records the
+  residual as resolved.
+
+This change is a backwards-incompatible default for deployments that
+previously relied on cross-origin ``client_id``/``redirect_uri`` pairs without
+configuring a custom validator. Such deployments must add the necessary
+entries to ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` or set
+``INDIEWEB_REDIRECT_URI_VALIDATOR`` before upgrading; otherwise the
+authorization endpoint returns HTTP 400 ``invalid redirect_uri for
+client_id``.
+
 ### P1.3 — Serialize authorization-code exchange under a database lock
 
 The token endpoint now wraps the consume-and-issue sequence for matched

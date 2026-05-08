@@ -103,8 +103,9 @@ class TestConsentScreenDisplay:
         assert hasattr(response, "context"), "Response should have context attribute"
         assert response.context["scope_list"] == []
 
-    def test_consent_screen_escapes_html(self, client, user, auth_url):
+    def test_consent_screen_escapes_html(self, client, user, auth_url, settings):
         """Test that consent screen properly escapes HTML in parameters."""
+        settings.INDIEWEB_REDIRECT_URI_VALIDATOR = "tests.test_redirect_validators.allow_all"
         client.login(username=user.username, password="testpass")
 
         response = client.get(
@@ -551,3 +552,19 @@ class TestExistingAuthReplacement:
         # With new key
         new_auth = Auth.objects.get(client_id="https://app.example.com", scope="create")
         assert new_auth.key != first_key
+
+
+@pytest.mark.django_db
+def test_consent_screen_displays_redirect_uri(client, user):
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://client.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert b"https://client.example/cb" in response.content

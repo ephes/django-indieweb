@@ -267,6 +267,68 @@ paths, and query strings remain significant.
    existed (or by an out-of-band script) keeps working as long as it satisfies
    configured client policy, or no client policy is configured.
 
+INDIEWEB_REDIRECT_URI_ALLOWLIST
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional per-client redirect URI allowlist. When a ``client_id`` appears as a
+key in the mapping, the listed redirect URIs replace the default same-origin
+``client_id``/``redirect_uri`` binding for that client.
+
+**Default:** ``None`` (built-in same-origin binding applies to every client)
+
+The mapping value is a list (or tuple) of allowlist entries. Each entry is a
+URL string compared against the submitted ``redirect_uri`` after origin
+normalization (scheme, IDNA-encoded host, default-port collapsing). Entries
+with a trailing ``/`` are *prefix* entries — the candidate must share the
+entry's origin and its path must start with the entry's path. Entries without
+a trailing slash are *exact* entries — origin, path, and query string must all
+match. Fragments on either side are rejected. Invalid mapping values
+(non-list/tuple, non-string entries) fail closed for that client.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+       "https://client.example/": [
+           "https://callback.example/oauth/cb",       # exact entry
+           "https://callback.example/oauth/",         # prefix entry
+       ],
+   }
+
+INDIEWEB_REDIRECT_URI_VALIDATOR
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable
+``(client_id: str, redirect_uri: str) -> bool`` that decides whether a
+``redirect_uri`` is bound to its ``client_id``.
+
+**Default:** ``None`` (built-in same-origin rule applies, optionally overridden
+per-client by ``INDIEWEB_REDIRECT_URI_ALLOWLIST``)
+
+When set, the validator short-circuits both the default same-origin rule and
+``INDIEWEB_REDIRECT_URI_ALLOWLIST``. The callable receives the originally
+submitted strings (no normalization). Import errors, non-callable values,
+exceptions raised inside the callable, and non-bool return values fail closed
+so a misconfigured policy cannot silently weaken access control.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_REDIRECT_URI_VALIDATOR = "myapp.indieauth.is_allowed_redirect"
+
+.. warning::
+   The redirect URI binding is enforced by default. Deployments that
+   previously relied on cross-origin ``client_id``/``redirect_uri`` pairs
+   without configuring a custom validator must add the necessary entries to
+   ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` or set
+   ``INDIEWEB_REDIRECT_URI_VALIDATOR`` before upgrading; otherwise the
+   authorization endpoint returns HTTP 400 ``invalid redirect_uri for
+   client_id``.
+
 INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

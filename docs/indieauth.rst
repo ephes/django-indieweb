@@ -129,6 +129,49 @@ can tighten those defaults with settings:
 The original submitted ``client_id`` is still stored and returned. Normalized
 values are used only for operator policy decisions.
 
+Redirect URI Binding
+--------------------
+
+The IndieAuth authorization endpoint binds the submitted ``redirect_uri`` to
+the submitted ``client_id`` so a trusted client identifier cannot be paired
+with an attacker-controlled redirect target. The binding is enforced on both
+``AuthView.get`` and ``AuthView._handle_consent`` (consent POST), and the
+resolved redirect URI is shown on the bundled consent screen for user
+verification.
+
+The check has three layers, evaluated in this order:
+
+1. **Default same-origin rule.** When neither the allowlist nor the validator
+   hook applies, the ``redirect_uri`` *origin* (scheme, host, port after IDNA
+   encoding and default-port collapsing) must equal the ``client_id`` origin.
+   Host-only equality is not enough: ``http`` and ``https`` differ, and a
+   non-default port must match exactly.
+2. **Per-client allowlist** (``INDIEWEB_REDIRECT_URI_ALLOWLIST``). When the
+   ``client_id`` appears as a key in the configured mapping, only that
+   client's allowlist entries are considered and the default same-origin rule
+   no longer applies for that client. Entries with a trailing ``/`` are
+   *prefix* entries: any candidate whose origin matches and whose path starts
+   with the entry's path passes; the trailing slash is the path boundary.
+   Entries without a trailing slash are *exact* entries: origin, path, and
+   query string must all match. Fragments on either side are rejected.
+3. **Policy hook** (``INDIEWEB_REDIRECT_URI_VALIDATOR``). When set, the
+   configured callable ``(client_id: str, redirect_uri: str) -> bool``
+   short-circuits both the default rule and the allowlist. Import errors,
+   non-callable targets, exceptions raised by the callable, and non-bool
+   return values fail closed (the request is rejected).
+
+Misconfigured allowlists (``client_id`` keyed but with non-list/tuple values
+or non-string entries) fail closed for that client.
+
+.. warning::
+   This binding is enforced by default and is a backwards-incompatible change
+   for deployments that previously relied on cross-origin
+   ``client_id``/``redirect_uri`` pairs without configuring a custom validator.
+   Such deployments must add the relevant entries to
+   ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` or set
+   ``INDIEWEB_REDIRECT_URI_VALIDATOR`` before upgrading; otherwise the
+   authorization endpoint returns ``400 invalid redirect_uri for client_id``.
+
 Token Introspection
 -------------------
 

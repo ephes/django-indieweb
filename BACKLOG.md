@@ -8,20 +8,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Bind IndieAuth redirect URIs to client identity. References:
-  `src/indieweb/views.py` (`AuthView.get`, `_handle_consent`,
-  `_client_id_allowed`, `_validate_redirect_uri`),
-  `src/indieweb/templates/indieweb/consent.html`,
-  `docs/indieauth.rst`, `docs/configuration.rst`,
-  `tests/test_auth_endpoint.py`, `tests/test_consent_screen.py`. The
-  authorization endpoint validates `client_id` and `redirect_uri`
-  independently, so an allowlisted client ID can be paired with an
-  attacker-controlled redirect URI unless a deployment's custom validator
-  enforces the relationship. Add a built-in same-origin rule or configurable
-  per-client redirect allowlist/policy hook, apply it on authorization GET and
-  consent POST, show the resolved redirect URI on the consent screen, and
-  document the production policy.
-
 ## Priority 2
 
 ### Security Residuals

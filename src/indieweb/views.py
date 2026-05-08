@@ -699,6 +699,124 @@ def _normalize_redirect_uri(value: str) -> str:
     return parsed._replace(scheme=scheme, netloc=netloc, path=path, params=params, query=query).geturl()
 
 
+def _origin_tuple(url: str) -> tuple[str, str, int] | None:
+    """Return ``(scheme, host, port)`` for redirect-binding comparison or ``None`` for malformed input.
+
+    Hosts are IDNA-encoded and lowercased; default ports are filled in (80/443)
+    so an explicit ``https://example/`` and ``https://example:443/`` compare
+    equal. Only ``http`` and ``https`` schemes participate in origin matching.
+    """
+    try:
+        parsed = urlparse(url)
+    except (UnicodeError, ValueError):
+        return None
+    scheme = parsed.scheme.lower()
+    host_raw = parsed.hostname or ""
+    if not scheme or not host_raw or scheme not in ("http", "https"):
+        return None
+    try:
+        host = host_raw.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return scheme, host, port
+
+
+def _redirect_uri_origin_match(client_id: str, redirect_uri: str) -> bool:
+    """Return whether ``redirect_uri`` shares the ``client_id`` origin (scheme/host/port)."""
+    a = _origin_tuple(client_id)
+    b = _origin_tuple(redirect_uri)
+    return a is not None and a == b
+
+
+def _redirect_uri_allowlist_match(allowlist_entry: str, candidate: str) -> bool:
+    """Return whether ``candidate`` matches an ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` entry.
+
+    Trailing-slash entries are prefix entries: the candidate must share the
+    entry's origin and its path must start with the entry's path. Entries
+    without a trailing slash are exact entries: origin, path, and query must
+    match. Fragments on either side are rejected.
+    """
+    entry_parts = urlparse(allowlist_entry)
+    cand_parts = urlparse(candidate)
+    if cand_parts.fragment or entry_parts.fragment:
+        return False
+    entry_origin = _origin_tuple(allowlist_entry)
+    cand_origin = _origin_tuple(candidate)
+    if entry_origin is None or cand_origin is None or entry_origin != cand_origin:
+        return False
+    if allowlist_entry.endswith("/"):
+        return cand_parts.path.startswith(entry_parts.path)
+    return cand_parts.path == entry_parts.path and (cand_parts.query or "") == (entry_parts.query or "")
+
+
+def _auth_request_client_redirect_error(client_id: str, redirect_uri: str, *, on: str) -> HttpResponse | None:
+    """Run shared ``client_id``/``redirect_uri`` validation for AuthView GET and consent POST.
+
+    Returns the appropriate ``HttpResponse`` error or ``None`` when all checks
+    pass. ``on`` is included in log lines so the call site is identifiable.
+    """
+    if _validate_redirect_uri(redirect_uri) is None:
+        logger.info(f"rejected invalid redirect_uri on auth {on}")
+        return HttpResponse("invalid redirect_uri", status=400)
+    if _validate_client_id(client_id) is None:
+        logger.info(f"rejected invalid client_id on auth {on}")
+        return HttpResponse("invalid client_id", status=400)
+    if not _client_id_allowed(client_id):
+        logger.warning(f"rejected disallowed client_id on auth {on}: {client_id!r}")
+        return HttpResponse("invalid_client", status=400)
+    if not _redirect_uri_allowed(client_id, redirect_uri):
+        logger.info(f"rejected redirect_uri not bound to client_id on auth {on}")
+        return HttpResponse("invalid redirect_uri for client_id", status=400)
+    return None
+
+
+def _redirect_uri_allowed(client_id: str, redirect_uri: str) -> bool:
+    """Return whether ``redirect_uri`` is allowed for ``client_id`` under the layered policy.
+
+    Layered, in order:
+
+    1. ``INDIEWEB_REDIRECT_URI_VALIDATOR`` (if set) short-circuits both other
+       layers. Import errors, callable exceptions, non-callable values, and
+       non-bool returns fail closed.
+    2. ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` (if the ``client_id`` appears as a
+       key) replaces the default same-origin rule for that client.
+    3. Otherwise the built-in same-origin rule applies: the ``redirect_uri``
+       origin (scheme, host, port after IDNA + default-port collapsing) must
+       equal the ``client_id`` origin.
+    """
+    validator_path = getattr(settings, "INDIEWEB_REDIRECT_URI_VALIDATOR", None)
+    if validator_path:
+        try:
+            validator = import_string(validator_path)
+        except ImportError as exc:
+            logger.error(f"Failed to load INDIEWEB_REDIRECT_URI_VALIDATOR {validator_path}: {exc}")
+            return False
+        if not callable(validator):
+            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR {validator_path} is not callable")
+            return False
+        try:
+            result = validator(client_id, redirect_uri)
+        except Exception as exc:
+            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR raised: {exc}")
+            return False
+        if not isinstance(result, bool):
+            return False
+        return result
+    allowlist = getattr(settings, "INDIEWEB_REDIRECT_URI_ALLOWLIST", None)
+    if isinstance(allowlist, dict) and client_id in allowlist:
+        entries = allowlist[client_id]
+        if not isinstance(entries, list | tuple):
+            return False
+        return any(isinstance(entry, str) and _redirect_uri_allowlist_match(entry, redirect_uri) for entry in entries)
+    return _redirect_uri_origin_match(client_id, redirect_uri)
+
+
 def _validate_pkce_request(challenge: str | None, method: str | None) -> tuple[str, str] | None:
     """Validate PKCE inputs from an authorization request.
 
@@ -1070,17 +1188,9 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.info(f"rejected invalid response_type on auth get: {response_type!r}")
             return HttpResponse("invalid response_type", status=400)
 
-        if _validate_redirect_uri(redirect_uri) is None:
-            logger.info("rejected invalid redirect_uri on auth get")
-            return HttpResponse("invalid redirect_uri", status=400)
-
-        if _validate_client_id(client_id) is None:
-            logger.info("rejected invalid client_id on auth get")
-            return HttpResponse("invalid client_id", status=400)
-
-        if not _client_id_allowed(client_id):
-            logger.warning(f"rejected disallowed client_id on auth get: {client_id!r}")
-            return HttpResponse("invalid_client", status=400)
+        client_redirect_error = _auth_request_client_redirect_error(client_id, redirect_uri, on="get")
+        if client_redirect_error is not None:
+            return client_redirect_error
 
         me_binding_error = _me_binding_error(request.user, me)
         if me_binding_error is not None:
@@ -1144,17 +1254,9 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         if not request.user.is_authenticated:
             return HttpResponse("User not authenticated", status=401)
 
-        if _validate_redirect_uri(redirect_uri) is None:
-            logger.info("rejected invalid redirect_uri on auth consent")
-            return HttpResponse("invalid redirect_uri", status=400)
-
-        if _validate_client_id(client_id) is None:
-            logger.info("rejected invalid client_id on auth consent")
-            return HttpResponse("invalid client_id", status=400)
-
-        if not _client_id_allowed(client_id):
-            logger.warning(f"rejected disallowed client_id on auth consent: {client_id!r}")
-            return HttpResponse("invalid_client", status=400)
+        client_redirect_error = _auth_request_client_redirect_error(client_id, redirect_uri, on="consent")
+        if client_redirect_error is not None:
+            return client_redirect_error
 
         me_binding_error = _me_binding_error(request.user, me)
         if me_binding_error is not None:

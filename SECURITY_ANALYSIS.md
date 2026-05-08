@@ -14,11 +14,13 @@ The first pass identified five high-priority findings plus several supporting on
 
 The most urgent remaining production blockers are:
 
-1. IndieAuth authorization requests do not bind ``redirect_uri`` to
-   ``client_id``. A deployment that allowlists trusted client IDs can still
-   issue a code for an attacker-chosen redirect URI under that trusted
-   ``client_id`` unless the operator's custom policy hook enforces the
-   relationship.
+1. ~~IndieAuth authorization requests do not bind ``redirect_uri`` to
+   ``client_id``.~~ Resolved 2026-05-08 under P1.4: ``AuthView.get`` and
+   ``AuthView._handle_consent`` now enforce a layered binding (built-in
+   same-origin default; ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` for per-client
+   exact and prefix entries; ``INDIEWEB_REDIRECT_URI_VALIDATOR`` policy hook),
+   the consent screen now displays the resolved ``redirect_uri``, and the
+   change is documented as a backwards-incompatible default.
 
 The concurrent authorization-code exchange race called out in earlier passes
 is fully resolved as of 2026-05-08; see Finding 5 below.
@@ -118,13 +120,16 @@ Validated high-priority residuals:
 
 - ~~Authorization-code exchange atomicity remains open, as noted above.~~
   Resolved 2026-05-08 under P1.3; see Finding 5.
-- ``AuthView.get`` and ``AuthView._handle_consent`` validate ``client_id`` and
-  ``redirect_uri`` independently. ``INDIEWEB_ALLOWED_CLIENT_IDS`` and
-  ``INDIEWEB_CLIENT_ID_VALIDATOR`` receive only the normalized ``client_id``;
-  no built-in same-origin check, per-client redirect allowlist, or
-  redirect-policy hook binds the chosen redirect URI to that client. The
-  bundled consent template also does not visibly display the redirect URI,
-  making the mismatch harder for a user to notice.
+- ~~``AuthView.get`` and ``AuthView._handle_consent`` validate ``client_id``
+  and ``redirect_uri`` independently.~~ Resolved 2026-05-08 under P1.4:
+  ``AuthView.get`` and ``AuthView._handle_consent`` now run a layered binding
+  policy after the existing client-policy checks. The default rule requires
+  the ``redirect_uri`` origin (scheme, IDNA host, default-port-collapsed
+  port) to equal the ``client_id`` origin; ``INDIEWEB_REDIRECT_URI_ALLOWLIST``
+  enables per-client exact and prefix entries (fragments rejected); and
+  ``INDIEWEB_REDIRECT_URI_VALIDATOR`` is a fail-closed policy hook that
+  short-circuits both layers. The bundled consent screen now displays the
+  resolved ``redirect_uri``.
 - WebSub replay detection is not atomic under concurrent identical deliveries.
   ``WebSubCallbackView.post`` calls ``delivery_is_replay(subscription, body)``
   before any accepted digest is written, and the subscription row is not locked
@@ -795,9 +800,15 @@ fix order:
    in ``transaction.atomic()`` with ``select_for_update`` on both ``Auth`` and
    reissued ``Token`` rows, and the authoritative single-use enforcement is
    the delete-count gate so SQLite deployments are protected too.
-4. Bind IndieAuth ``redirect_uri`` values to ``client_id`` through same-origin
-   defaults, per-client redirect allowlists, or a configurable policy hook, and
-   display the resolved redirect target on the consent screen.
+4. ~~Bind IndieAuth ``redirect_uri`` values to ``client_id`` through
+   same-origin defaults, per-client redirect allowlists, or a configurable
+   policy hook, and display the resolved redirect target on the consent
+   screen.~~ Resolved 2026-05-08 (P1.4): ``AuthView.get`` and
+   ``AuthView._handle_consent`` enforce the layered binding (built-in
+   same-origin default, ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` per-client
+   exact/prefix entries, ``INDIEWEB_REDIRECT_URI_VALIDATOR`` fail-closed
+   policy hook), and the consent screen now shows the resolved
+   ``redirect_uri``.
 5. Make WebSub replay detection and accepted-digest updates atomic for valid
    deliveries.
 6. Fix Micropub create exception disclosure.

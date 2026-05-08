@@ -896,6 +896,9 @@ def test_get_accepts_allowed_client_id_via_validator(client, settings, user, aut
 def test_get_passes_normalized_client_id_to_validator(client, settings, user):
     """Validator allowlists see normalized scheme/host and IDNA client IDs."""
     settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.allow_only_normalized"
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "HTTPS://Bücher.Example/Client?A=1": ["https://webapp.example.org/auth/callback"],
+    }
     client.login(username=user.username, password="password")
     base_url = reverse("indieweb:auth")
     url_params = {
@@ -925,6 +928,9 @@ def test_get_allowed_client_ids_setting_blocks_untrusted_client(client, settings
 @pytest.mark.django_db
 def test_get_allowed_client_ids_setting_accepts_normalized_client(client, settings, user):
     settings.INDIEWEB_ALLOWED_CLIENT_IDS = ("https://xn--bcher-kva.example/Client?A=1",)
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "HTTPS://Bücher.Example/Client?A=1": ["https://webapp.example.org/auth/callback"],
+    }
     client.login(username=user.username, password="password")
     base_url = reverse("indieweb:auth")
     url_params = {
@@ -942,6 +948,9 @@ def test_get_allowed_client_ids_setting_accepts_normalized_client(client, settin
 @pytest.mark.django_db
 def test_get_client_id_validator_receives_normalized_value(client, settings, user):
     settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.client_id_validators.capture_and_allow"
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "HTTPS://Bücher.Example/Client?A=1": ["https://webapp.example.org/auth/callback"],
+    }
     client_id_validators.seen_client_ids.clear()
     client.login(username=user.username, password="password")
     base_url = reverse("indieweb:auth")
@@ -1126,3 +1135,121 @@ def test_post_verify_auth_code_keeps_default_form_response_for_wildcard_accept(c
     assert response.status_code == 200
     assert response["Content-Type"] == "application/x-www-form-urlencoded"
     assert parse_qs(response.content.decode("utf-8")) == {"me": ["http://example.org"]}
+
+
+@pytest.mark.django_db
+def test_authorize_rejects_cross_origin_redirect_by_default(client, user):
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://attacker.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_authorize_accepts_same_origin_redirect(client, user):
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://client.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_authorize_allowlist_overrides_same_origin(client, settings, user):
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "https://client.example/": ["https://callback.example/oauth/cb"],
+    }
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://callback.example/oauth/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_authorize_allowlist_prefix_boundary(client, settings, user):
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "https://client.example/": ["https://callback.example/oauth/"],
+    }
+    client.force_login(user)
+    bad = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://callback.example/oauth.evil",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert bad.status_code == 400
+    good = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://callback.example/oauth/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert good.status_code == 200
+
+
+@pytest.mark.django_db
+def test_authorize_validator_hook_overrides_allowlist(client, settings, user):
+    settings.INDIEWEB_REDIRECT_URI_VALIDATOR = "tests.test_redirect_validators.allow_all"
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "https://client.example/": ["https://only-this.example/"],
+    }
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://anywhere.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_authorize_validator_failure_fails_closed(client, settings, user):
+    settings.INDIEWEB_REDIRECT_URI_VALIDATOR = "tests.test_redirect_validators.broken_path"
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://client.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400

@@ -5,6 +5,26 @@ Changelog
 
 Unreleased
 ----------
+* Bound IndieAuth ``redirect_uri`` values to the submitted ``client_id`` so a
+  trusted client identifier can no longer be paired with an attacker-controlled
+  redirect target. ``AuthView.get`` and ``AuthView._handle_consent`` now run a
+  layered policy after the existing ``client_id`` allowlist/validator: the
+  built-in default requires the ``redirect_uri`` *origin* (scheme, host, port
+  after IDNA encoding and default-port collapsing) to equal the ``client_id``
+  origin; ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` lets operators bind specific
+  redirect URIs per ``client_id`` (trailing slash means prefix match, no
+  trailing slash means exact origin+path+query match, fragments rejected); and
+  ``INDIEWEB_REDIRECT_URI_VALIDATOR`` is a dotted-path
+  ``(client_id, redirect_uri) -> bool`` policy hook that short-circuits both
+  layers and fails closed on import error, callable exception, non-callable
+  values, or non-bool returns. The bundled consent screen now displays the
+  resolved redirect URI so a user can verify the destination before approving.
+  This is a backwards-incompatible change for deployments that previously
+  relied on cross-origin ``client_id``/``redirect_uri`` pairs without a custom
+  validator; such deployments must configure
+  ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` or
+  ``INDIEWEB_REDIRECT_URI_VALIDATOR`` before upgrading or the authorization
+  endpoint returns HTTP 400 ``invalid redirect_uri for client_id``.
 * Serialized the IndieAuth authorization-code consume-and-token-issue sequence
   under a database transaction so two concurrent token exchanges for the same
   code cannot both succeed. ``TokenView.post`` now opens
