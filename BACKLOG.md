@@ -24,10 +24,7 @@ No current Priority 3 API Hardening items.
 
 ### Housekeeping
 
-- [ ] Replace the `unittest.mock` module-name guards in `request_with_safe_redirects` and `stream_with_safe_redirects` with explicit kwargs.
-  - References: `src/indieweb/http_client.py` (`request_with_safe_redirects`, `stream_with_safe_redirects`); `tests/test_http_client.py`; sender/WebSub tests using `Mock` clients.
-  - Current state: streaming is short-circuited (skipping size enforcement) and IP pinning is suppressed when `client.__class__.__module__ == "unittest.mock"` so legacy `unittest.mock.Mock` clients keep working. A future caller wrapping a real `httpx.Client` in a `unittest.mock.Mock` for tracing could silently disable max-bytes enforcement and/or IP pinning.
-  - Desired outcome: introduce explicit kwargs (e.g. `_skip_streaming=True` and `_skip_pinning=True`) used by the affected tests, drop both module-name guards, and verify all existing call sites still pass.
+No current Priority 4 Housekeeping items.
 
 ### WebSub Enhancements
 

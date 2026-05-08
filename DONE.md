@@ -2,6 +2,36 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-08
+
+### Drop ``unittest.mock`` module-name guards in ``http_client``
+
+- ``request_with_safe_redirects`` and ``stream_with_safe_redirects``
+  (``src/indieweb/http_client.py``) no longer detect ``unittest.mock`` clients
+  by their ``__class__.__module__``. The previous guards silently disabled
+  streaming size enforcement and IP pinning, which would have downgraded SSRF
+  protection for any future caller wrapping a real ``httpx.Client`` in a
+  ``unittest.mock.Mock`` (e.g. for tracing).
+- ``WebmentionSender`` methods (``discover_endpoint``, ``send_webmention``,
+  ``fetch_content``) now accept an optional ``client`` keyword argument, and
+  ``WebmentionProcessor`` accepts ``client`` in ``__init__``. When a client is
+  provided, the SSRF resolver is skipped (no DNS-based blocking, no IP
+  pinning), mirroring the existing pattern in ``websub.request_websub_subscription``
+  and giving tests a clean injection point for ``httpx.MockTransport``-backed
+  clients. ``process_queued_webmention`` accepts the same kwarg and forwards it.
+- Migrated all ``unittest.mock.Mock`` ``httpx.Client`` tests in
+  ``tests/test_webmention_sender.py`` and ``tests/test_webmention_processor.py``
+  to ``httpx.MockTransport``-backed real clients via the new injection point.
+  A new ``_processor_client`` context manager mirrors the legacy ``return_value``
+  / ``side_effect`` semantics on top of ``MockTransport`` to keep per-test
+  changes mechanical.
+- Validation: ``uv run pytest`` (1293 passing, 90% coverage); ``uv run mypy``
+  (no issues); ``uv run ruff check .``; ``uv run prek run --all-files``.
+- Changelog: added an Unreleased entry describing the public API addition
+  (optional ``client`` kwarg) and the SSRF posture cleanup. No user-facing
+  behavior change for production callers — ``client`` defaults to ``None``,
+  preserving the previous DNS-and-pinning safety pipeline.
+
 ## 2026-05-07
 
 ### Restore Python 3.10 Webmention published-date parsing

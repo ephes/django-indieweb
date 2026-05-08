@@ -30,6 +30,7 @@ from .http_client import (
     SAFE_HTTP_DEFAULT_TIMEOUT,
     HTTPResponseTooLarge,
     RedirectedResponse,
+    default_address_resolver,
     response_text_with_limit,
     stream_with_safe_redirects,
 )
@@ -288,11 +289,21 @@ class _WebmentionOutcome:
 class WebmentionProcessor:
     """Process webmentions by fetching and parsing source URLs."""
 
-    def __init__(self) -> None:
-        """Initialize the processor with configured spam checker."""
+    def __init__(self, *, client: httpx.Client | None = None) -> None:
+        """Initialize the processor with configured spam checker.
+
+        Args:
+            client: Optional injected ``httpx.Client``. When provided, source
+                and Vouch fetches reuse this client and skip the SSRF
+                resolver (DNS-based blocking and IP pinning), so callers
+                injecting their own transport (typically tests) opt out of
+                network-level safety checks. Production callers should leave
+                this unset.
+        """
         self.spam_checker = self._get_spam_checker()
         # Force reload of spam checker for tests with override_settings
         self._spam_checker_loaded = False
+        self._injected_client = client
 
     def _get_spam_checker(self) -> SpamChecker | None:
         """Load spam checker from settings."""
@@ -604,28 +615,44 @@ class WebmentionProcessor:
     def _fetch_source(self, source_url: str) -> RedirectedResponse:
         """Fetch the source URL with explicit bounded redirect handling."""
         headers = {"User-Agent": "django-indieweb/1.0"}
-        with httpx.Client(verify=True) as client:
+        injected = self._injected_client
+        close_client = injected is None
+        client = injected if injected is not None else httpx.Client(verify=True)
+        resolver = default_address_resolver if close_client else None
+        try:
             return stream_with_safe_redirects(
                 client,
                 "GET",
                 source_url,
                 headers=headers,
                 max_bytes=_webmention_fetch_max_bytes(),
+                resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
             )
+        finally:
+            if close_client:
+                client.close()
 
     def _fetch_vouch(self, vouch_url: str) -> RedirectedResponse:
         """Fetch a Vouch URL with the same bounded redirect policy as source fetches."""
         headers = {"User-Agent": "django-indieweb/1.0"}
-        with httpx.Client(verify=True) as client:
+        injected = self._injected_client
+        close_client = injected is None
+        client = injected if injected is not None else httpx.Client(verify=True)
+        resolver = default_address_resolver if close_client else None
+        try:
             return stream_with_safe_redirects(
                 client,
                 "GET",
                 vouch_url,
                 headers=headers,
                 max_bytes=_webmention_fetch_max_bytes(),
+                resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
             )
+        finally:
+            if close_client:
+                client.close()
 
     def _verify_target_link(self, html_content: str, target_url: str) -> bool:
         """Verify that the target URL is linked in the source content."""
@@ -1532,15 +1559,19 @@ class WebmentionProcessor:
         return None
 
 
-def process_queued_webmention(webmention_id: int) -> Webmention:
+def process_queued_webmention(webmention_id: int, *, client: httpx.Client | None = None) -> Webmention:
     """Process an existing queued Webmention row.
 
     Queue integrations can call this helper from their worker process after the
     receive endpoint has created or reused a pending ``Webmention`` row.
+
+    The optional ``client`` keyword forwards an injected ``httpx.Client`` to
+    the underlying :class:`WebmentionProcessor`; see its ``__init__`` for the
+    safety semantics (intended for tests).
     """
     # Load by id first so worker integrations get an explicit DoesNotExist for missing queued rows.
     webmention = Webmention.objects.get(pk=webmention_id)
-    return WebmentionProcessor().process_webmention(
+    return WebmentionProcessor(client=client).process_webmention(
         webmention.source_url,
         webmention.target_url,
         vouch_url=webmention.vouch_url or None,

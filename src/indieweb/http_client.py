@@ -281,13 +281,6 @@ def request_with_safe_redirects(
             **request_kwargs,
         )
 
-    # Existing unit tests using unittest.mock.Mock clients pass URLs through
-    # unchanged and would otherwise see IP-rewritten URLs after pinning. The
-    # housekeeping backlog item tracks replacing this module-name guard with
-    # an explicit kwarg. Pre-flight URL validation still runs.
-    if client.__class__.__module__ == "unittest.mock":
-        pin_to_resolved_ip = False
-
     current_url = url
     request_method = getattr(client, method.lower())
 
@@ -407,17 +400,6 @@ def stream_with_safe_redirects(
     See :func:`request_with_safe_redirects` for the ``pin_to_resolved_ip``
     semantics. The same logic applies for streamed requests.
     """
-    if client.__class__.__module__ == "unittest.mock":
-        # Keep existing unit tests on simple Mock clients; production callers use real httpx.Client.
-        return request_with_safe_redirects(
-            client,
-            method,
-            url,
-            resolver=None,
-            pin_to_resolved_ip=False,
-            **request_kwargs,
-        )
-
     current_url = url
 
     for redirects_followed in range(WEBMENTION_MAX_REDIRECTS + 1):

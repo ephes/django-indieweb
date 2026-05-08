@@ -12,6 +12,7 @@ from django.utils import timezone
 from .http_client import (
     SAFE_HTTP_DEFAULT_TIMEOUT,
     HTTPResponseTooLarge,
+    default_address_resolver,
     is_safe_http_url,
     request_with_webmention_redirects,
     stream_with_safe_redirects,
@@ -126,52 +127,65 @@ class WebmentionSender:
 
         return list(urls)
 
-    def discover_endpoint(self, target_url: str) -> str | None:
+    def discover_endpoint(self, target_url: str, *, client: httpx.Client | None = None) -> str | None:
         """Discover the webmention endpoint for a target URL.
 
         First checks HTTP Link headers, then falls back to parsing HTML.
 
         Args:
             target_url: The URL to discover the endpoint for
+            client: Optional injected ``httpx.Client``. When provided, the SSRF
+                resolver is skipped (DNS-based blocking and IP pinning), so
+                callers injecting their own transport (typically tests) opt
+                out of network-level safety checks. Production callers should
+                leave this unset.
 
         Returns:
             The webmention endpoint URL or None if not found
         """
+        close_client = client is None
+        http_client = client if client is not None else httpx.Client(verify=True)
+        resolver = default_address_resolver if close_client else None
         try:
-            validate_safe_http_url(target_url)
+            validate_safe_http_url(target_url, resolver=resolver)
             # First try HEAD request to check Link headers
-            with httpx.Client(verify=True) as client:
-                discovered = request_with_webmention_redirects(client, "HEAD", target_url, timeout=self.timeout)
-                response = discovered.response
-                response.raise_for_status()
+            discovered = request_with_webmention_redirects(
+                http_client, "HEAD", target_url, resolver=resolver, timeout=self.timeout
+            )
+            response = discovered.response
+            response.raise_for_status()
 
-                # Check Link header
-                link_header = response.headers.get("Link", "")
-                endpoint = self._parse_link_header(link_header)
-                if endpoint:
-                    resolved_endpoint = urljoin(discovered.final_url, endpoint)
-                    validate_safe_http_url(resolved_endpoint)
-                    return resolved_endpoint
+            # Check Link header
+            link_header = response.headers.get("Link", "")
+            endpoint = self._parse_link_header(link_header)
+            if endpoint:
+                resolved_endpoint = urljoin(discovered.final_url, endpoint)
+                validate_safe_http_url(resolved_endpoint, resolver=resolver)
+                return resolved_endpoint
 
-                # Fall back to GET request to parse HTML
-                discovered = stream_with_safe_redirects(
-                    client,
-                    "GET",
-                    target_url,
-                    max_bytes=_sender_fetch_max_bytes(),
-                    timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
-                )
-                response = discovered.response
-                response.raise_for_status()
+            # Fall back to GET request to parse HTML
+            discovered = stream_with_safe_redirects(
+                http_client,
+                "GET",
+                target_url,
+                max_bytes=_sender_fetch_max_bytes(),
+                resolver=resolver,
+                timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+            )
+            response = discovered.response
+            response.raise_for_status()
 
-                endpoint = self._parse_html_for_endpoint(response.text, discovered.final_url)
-                if endpoint:
-                    validate_safe_http_url(endpoint)
-                return endpoint
+            endpoint = self._parse_html_for_endpoint(response.text, discovered.final_url)
+            if endpoint:
+                validate_safe_http_url(endpoint, resolver=resolver)
+            return endpoint
 
         except Exception:
             # Return None for any errors during discovery
             return None
+        finally:
+            if close_client:
+                http_client.close()
 
     def _parse_link_header(self, link_header: str) -> str | None:
         """Parse Link header for webmention endpoint.
@@ -222,7 +236,15 @@ class WebmentionSender:
 
         return None
 
-    def send_webmention(self, source: str, target: str, endpoint: str, vouch: str | None = None) -> dict:
+    def send_webmention(
+        self,
+        source: str,
+        target: str,
+        endpoint: str,
+        vouch: str | None = None,
+        *,
+        client: httpx.Client | None = None,
+    ) -> dict:
         """Send a webmention to an endpoint.
 
         Args:
@@ -230,38 +252,43 @@ class WebmentionSender:
             target: The target URL (the linked post)
             endpoint: The webmention endpoint URL
             vouch: Optional Vouch URL to include with the Webmention
+            client: Optional injected ``httpx.Client``. See
+                :meth:`discover_endpoint` for the safety semantics.
 
         Returns:
             Dict with 'success', 'status_code', and optionally 'error'
         """
+        close_client = client is None
+        http_client = client if client is not None else httpx.Client(verify=True)
+        resolver = default_address_resolver if close_client else None
         try:
-            validate_safe_http_url(endpoint)
+            validate_safe_http_url(endpoint, resolver=resolver)
             if vouch:
                 validate_safe_http_url(vouch, resolver=None)
             payload = {"source": source, "target": target}
             if vouch:
                 payload["vouch"] = vouch
-            with httpx.Client(verify=True) as client:
-                delivered = request_with_webmention_redirects(
-                    client,
-                    "POST",
-                    endpoint,
-                    data=payload,
-                    timeout=self.post_timeout,
-                    max_bytes=_sender_response_max_bytes(),
-                )
-                response = delivered.response
+            delivered = request_with_webmention_redirects(
+                http_client,
+                "POST",
+                endpoint,
+                data=payload,
+                resolver=resolver,
+                timeout=self.post_timeout,
+                max_bytes=_sender_response_max_bytes(),
+            )
+            response = delivered.response
 
-                # Accept 200, 201, or 202 as success
-                if response.status_code in [200, 201, 202]:
-                    return {"success": True, "status_code": response.status_code}
-                else:
-                    # Non-success status code
-                    return {
-                        "success": False,
-                        "status_code": response.status_code,
-                        "error": f"HTTP {response.status_code}",
-                    }
+            # Accept 200, 201, or 202 as success
+            if response.status_code in [200, 201, 202]:
+                return {"success": True, "status_code": response.status_code}
+            else:
+                # Non-success status code
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": f"HTTP {response.status_code}",
+                }
 
         except HTTPResponseTooLarge as e:
             return {"success": False, "status_code": None, "error": f"response too large: {e}"}
@@ -274,31 +301,42 @@ class WebmentionSender:
         except Exception as e:
             # Handle other exceptions
             return {"success": False, "status_code": None, "error": str(e)}
+        finally:
+            if close_client:
+                http_client.close()
 
-    def fetch_content(self, url: str) -> str | None:
+    def fetch_content(self, url: str, *, client: httpx.Client | None = None) -> str | None:
         """Fetch HTML content from a URL.
 
         Args:
             url: URL to fetch
+            client: Optional injected ``httpx.Client``. See
+                :meth:`discover_endpoint` for the safety semantics.
 
         Returns:
             HTML content or None if error
         """
+        close_client = client is None
+        http_client = client if client is not None else httpx.Client(verify=True)
+        resolver = default_address_resolver if close_client else None
         try:
-            validate_safe_http_url(url)
-            with httpx.Client(verify=True) as client:
-                fetched = stream_with_safe_redirects(
-                    client,
-                    "GET",
-                    url,
-                    max_bytes=_sender_fetch_max_bytes(),
-                    timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
-                )
-                response = fetched.response
-                response.raise_for_status()
-                return response.text
+            validate_safe_http_url(url, resolver=resolver)
+            fetched = stream_with_safe_redirects(
+                http_client,
+                "GET",
+                url,
+                max_bytes=_sender_fetch_max_bytes(),
+                resolver=resolver,
+                timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+            )
+            response = fetched.response
+            response.raise_for_status()
+            return response.text
         except Exception:
             return None
+        finally:
+            if close_client:
+                http_client.close()
 
     def send_webmentions(
         self,

@@ -1,11 +1,13 @@
+from collections.abc import Callable
 from datetime import timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+from urllib.parse import parse_qs
 
+import httpx
 import pytest
 from django.test import override_settings
 from django.utils import timezone
 
-from indieweb.http_client import SAFE_HTTP_DEFAULT_TIMEOUT
 from indieweb.models import WebmentionOutboundTarget
 from indieweb.senders import WebmentionSender
 
@@ -28,13 +30,17 @@ def target_url():
 
 
 def _sender_response(*, status_code=200, text="", headers=None):
-    """Build a mocked HTTP response for sender redirect tests."""
-    mock_response = Mock()
-    mock_response.status_code = status_code
-    mock_response.text = text
-    mock_response.headers = headers if headers is not None else {}
-    mock_response.raise_for_status = Mock()
-    return mock_response
+    """Build an httpx.Response for sender redirect tests."""
+    return httpx.Response(status_code, headers=headers or {}, text=text)
+
+
+def _make_test_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
+    """Build an httpx.Client backed by MockTransport for sender tests."""
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _request_urls(captured: list[httpx.Request]) -> list[str]:
+    return [str(request.url) for request in captured]
 
 
 def test_extract_urls_from_html(sender, source_url, target_url):
@@ -87,371 +93,337 @@ def test_extract_external_target_urls_filters_unsafe_hosts(sender, source_url):
     assert sender._extract_external_target_urls(source_url, html) == ["https://target.com/post"]
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_from_link_header(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_from_link_header(sender, source_url, target_url):
     """Test discovering webmention endpoint from Link header."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
+    captured: list[httpx.Request] = []
 
-    mock_response = Mock()
-    mock_response.headers = {"Link": '<https://target.com/webmention>; rel="webmention"'}
-    mock_response.raise_for_status = Mock()
-    mock_client.head.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, headers={"Link": '<https://target.com/webmention>; rel="webmention"'})
 
-    endpoint = sender.discover_endpoint(target_url)
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/webmention"
-    mock_client.head.assert_called_once_with(target_url, timeout=10)
+    assert len(captured) == 1
+    assert captured[0].method == "HEAD"
+    assert str(captured[0].url) == target_url
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_follows_redirect_to_link_header(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_follows_redirect_to_link_header(sender, source_url, target_url):
     """Test endpoint discovery follows target redirects before reading Link headers."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
     final_url = "https://target.com/canonical/their-post"
-    mock_client.head.side_effect = [
-        _sender_response(status_code=302, headers={"Location": final_url}),
-        _sender_response(status_code=200, headers={"Link": '<https://target.com/webmention>; rel="webmention"'}),
-    ]
+    responses = iter(
+        [
+            _sender_response(status_code=302, headers={"Location": final_url}),
+            _sender_response(status_code=200, headers={"Link": '<https://target.com/webmention>; rel="webmention"'}),
+        ]
+    )
+    captured: list[httpx.Request] = []
 
-    endpoint = sender.discover_endpoint(target_url)
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return next(responses)
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/webmention"
-    assert mock_client.head.call_args_list[0].args[0] == target_url
-    assert mock_client.head.call_args_list[1].args[0] == final_url
+    assert _request_urls(captured) == [target_url, final_url]
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_resolves_relative_link_header_against_final_url(
-    mock_client_class, sender, source_url, target_url
-):
+def test_discover_endpoint_resolves_relative_link_header_against_final_url(sender, source_url, target_url):
     """Test relative Link endpoints after redirects use the final target page URL."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
     final_url = "https://target.com/canonical/their-post"
-    mock_client.head.side_effect = [
-        _sender_response(status_code=301, headers={"Location": final_url}),
-        _sender_response(status_code=200, headers={"Link": '<wm>; rel="webmention"'}),
-    ]
+    responses = iter(
+        [
+            _sender_response(status_code=301, headers={"Location": final_url}),
+            _sender_response(status_code=200, headers={"Link": '<wm>; rel="webmention"'}),
+        ]
+    )
 
-    endpoint = sender.discover_endpoint(target_url)
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/canonical/wm"
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_from_link_header_with_multiple_rels(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_from_link_header_with_multiple_rels(sender, source_url, target_url):
     """Test discovering webmention endpoint from Link header with multiple rel values."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
 
-    mock_response = Mock()
-    # Multiple Link headers
-    mock_response.headers = {
-        "Link": '<https://target.com/other>; rel="other", <https://target.com/webmention>; rel="webmention"'
-    }
-    mock_response.raise_for_status = Mock()
-    mock_client.head.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "Link": '<https://target.com/other>; rel="other", <https://target.com/webmention>; rel="webmention"',
+            },
+        )
 
-    endpoint = sender.discover_endpoint(target_url)
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/webmention"
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_from_html_link_tag(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_from_html_link_tag(sender, source_url, target_url):
     """Test discovering webmention endpoint from HTML link tag."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-
-    # HEAD request returns no Link header
-    mock_head_response = Mock()
-    mock_head_response.headers = {}
-    mock_head_response.raise_for_status = Mock()
-    mock_client.head.return_value = mock_head_response
-
-    # GET request returns HTML with link tag
-    mock_get_response = Mock()
-    mock_get_response.headers = {}
-    mock_get_response.text = """
+    captured: list[httpx.Request] = []
+    html = """
     <html>
     <head>
         <link rel="webmention" href="/webmention-endpoint" />
     </head>
     </html>
     """
-    mock_get_response.raise_for_status = Mock()
-    mock_client.get.return_value = mock_get_response
 
-    endpoint = sender.discover_endpoint(target_url)
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.method == "HEAD":
+            return httpx.Response(200)
+        return httpx.Response(200, text=html)
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/webmention-endpoint"
-    mock_client.head.assert_called_once()
-    mock_client.get.assert_called_once_with(target_url, timeout=SAFE_HTTP_DEFAULT_TIMEOUT)
+    methods = [request.method for request in captured]
+    assert methods == ["HEAD", "GET"]
+    assert str(captured[1].url) == target_url
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_resolves_html_endpoint_against_final_url(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_resolves_html_endpoint_against_final_url(sender, source_url, target_url):
     """Test HTML endpoint discovery after redirects uses the final page URL."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
     final_url = "https://target.com/canonical/their-post"
-    mock_client.head.side_effect = [
-        _sender_response(status_code=302, headers={"Location": final_url}),
-        _sender_response(status_code=200),
-    ]
-    mock_client.get.side_effect = [
-        _sender_response(status_code=302, headers={"Location": final_url}),
-        _sender_response(
-            status_code=200,
-            text="""
-            <html>
-            <head>
-                <link rel="webmention" href="wm" />
-            </head>
-            </html>
-            """,
-        ),
-    ]
+    head_responses = iter(
+        [
+            _sender_response(status_code=302, headers={"Location": final_url}),
+            _sender_response(status_code=200),
+        ]
+    )
+    get_responses = iter(
+        [
+            _sender_response(status_code=302, headers={"Location": final_url}),
+            _sender_response(
+                status_code=200,
+                text="""
+                <html>
+                <head>
+                    <link rel="webmention" href="wm" />
+                </head>
+                </html>
+                """,
+            ),
+        ]
+    )
 
-    endpoint = sender.discover_endpoint(target_url)
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return next(head_responses)
+        return next(get_responses)
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/canonical/wm"
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_from_html_a_tag(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_from_html_a_tag(sender, source_url, target_url):
     """Test discovering webmention endpoint from HTML a tag."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-
-    # HEAD request returns no Link header
-    mock_head_response = Mock()
-    mock_head_response.headers = {}
-    mock_head_response.raise_for_status = Mock()
-    mock_client.head.return_value = mock_head_response
-
-    # GET request returns HTML with a tag
-    mock_get_response = Mock()
-    mock_get_response.headers = {}
-    mock_get_response.text = """
+    html = """
     <html>
     <body>
         <a rel="webmention" href="/webmention">Webmention endpoint</a>
     </body>
     </html>
     """
-    mock_get_response.raise_for_status = Mock()
-    mock_client.get.return_value = mock_get_response
 
-    endpoint = sender.discover_endpoint(target_url)
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200)
+        return httpx.Response(200, text=html)
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/webmention"
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_relative_url(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_relative_url(sender, source_url, target_url):
     """Test that relative URLs are resolved correctly."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
 
-    mock_response = Mock()
-    mock_response.headers = {"Link": '</api/webmention>; rel="webmention"'}
-    mock_response.raise_for_status = Mock()
-    mock_client.head.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Link": '</api/webmention>; rel="webmention"'})
 
-    endpoint = sender.discover_endpoint("https://example.com/post/123")
+    endpoint = sender.discover_endpoint("https://example.com/post/123", client=_make_test_client(handler))
 
     assert endpoint == "https://example.com/api/webmention"
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_not_found(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_not_found(sender, source_url, target_url):
     """Test when no webmention endpoint is found."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
 
-    # HEAD request returns no Link header
-    mock_head_response = Mock()
-    mock_head_response.headers = {}
-    mock_head_response.raise_for_status = Mock()
-    mock_client.head.return_value = mock_head_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(200)
+        return httpx.Response(200, text="<html><body>No webmention here</body></html>")
 
-    # GET request returns HTML with no webmention
-    mock_get_response = Mock()
-    mock_get_response.headers = {}
-    mock_get_response.text = "<html><body>No webmention here</body></html>"
-    mock_get_response.raise_for_status = Mock()
-    mock_client.get.return_value = mock_get_response
-
-    endpoint = sender.discover_endpoint(target_url)
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint is None
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_handles_request_exception(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_handles_request_exception(sender, source_url, target_url):
     """Test that discovery handles request exceptions gracefully."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.head.side_effect = Exception("Network error")
 
-    endpoint = sender.discover_endpoint(target_url)
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.RequestError("Network error")
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint is None
 
 
-@patch("httpx.Client")
-def test_send_webmention_success(mock_client_class, sender, source_url, target_url):
-    """Test successful webmention sending."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
+def _form_body(request: httpx.Request) -> dict[str, list[str]]:
+    return parse_qs(request.content.decode("ascii"))
 
-    mock_response = Mock()
-    mock_response.status_code = 201
-    mock_client.post.return_value = mock_response
+
+def test_send_webmention_success(sender, source_url, target_url):
+    """Test successful webmention sending."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(201)
 
     endpoint = "https://target.com/webmention"
-    result = sender.send_webmention(source_url, target_url, endpoint)
+    result = sender.send_webmention(source_url, target_url, endpoint, client=_make_test_client(handler))
 
     assert result["success"] is True
     assert result["status_code"] == 201
-    mock_client.post.assert_called_once_with(endpoint, data={"source": source_url, "target": target_url}, timeout=30)
+    assert len(captured) == 1
+    assert captured[0].method == "POST"
+    assert str(captured[0].url) == endpoint
+    assert _form_body(captured[0]) == {"source": [source_url], "target": [target_url]}
 
 
-@patch("httpx.Client")
-def test_send_webmention_includes_vouch_when_provided(mock_client_class, sender, source_url, target_url):
+def test_send_webmention_includes_vouch_when_provided(sender, source_url, target_url):
     """Test sender can opt in to including a Vouch URL."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
+    captured: list[httpx.Request] = []
 
-    mock_response = Mock()
-    mock_response.status_code = 202
-    mock_client.post.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(202)
 
     endpoint = "https://target.com/webmention"
     vouch = "https://trusted.example/vouch-for-example"
-    result = sender.send_webmention(source_url, target_url, endpoint, vouch=vouch)
+    result = sender.send_webmention(source_url, target_url, endpoint, vouch=vouch, client=_make_test_client(handler))
 
     assert result["success"] is True
-    mock_client.post.assert_called_once_with(
-        endpoint,
-        data={"source": source_url, "target": target_url, "vouch": vouch},
-        timeout=30,
-    )
+    assert _form_body(captured[0]) == {"source": [source_url], "target": [target_url], "vouch": [vouch]}
 
 
 @pytest.mark.parametrize("redirect_status_code", [301, 302, 303, 307, 308])
-@patch("httpx.Client")
 def test_send_webmention_preserves_post_payload_across_endpoint_redirect(
-    mock_client_class, sender, source_url, target_url, redirect_status_code
+    sender, source_url, target_url, redirect_status_code
 ):
     """Test endpoint redirects keep the Webmention POST body."""
     endpoint = "https://target.com/webmention"
     final_endpoint = "https://target.com/api/webmention"
+    responses = iter(
+        [
+            _sender_response(status_code=redirect_status_code, headers={"Location": final_endpoint}),
+            _sender_response(status_code=202),
+        ]
+    )
+    captured: list[httpx.Request] = []
 
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.post.side_effect = [
-        _sender_response(status_code=redirect_status_code, headers={"Location": final_endpoint}),
-        _sender_response(status_code=202),
-    ]
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return next(responses)
 
-    result = sender.send_webmention(source_url, target_url, endpoint)
+    result = sender.send_webmention(source_url, target_url, endpoint, client=_make_test_client(handler))
 
     assert result["success"] is True
     assert result["status_code"] == 202
-    assert mock_client.post.call_args_list[0].args[0] == endpoint
-    assert mock_client.post.call_args_list[1].args[0] == final_endpoint
-    for call in mock_client.post.call_args_list:
-        assert call.kwargs["data"] == {"source": source_url, "target": target_url}
+    assert _request_urls(captured) == [endpoint, final_endpoint]
+    expected_body = captured[0].content
+    assert captured[1].content == expected_body
 
 
-@patch("httpx.Client")
-def test_send_webmention_resolves_relative_endpoint_redirect_location(
-    mock_client_class, sender, source_url, target_url
-):
+def test_send_webmention_resolves_relative_endpoint_redirect_location(sender, source_url, target_url):
     """Test relative endpoint redirect locations resolve against the redirecting URL."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
     endpoint = "https://target.com/webmention"
-    mock_client.post.side_effect = [
-        _sender_response(status_code=302, headers={"Location": "/api/webmention"}),
-        _sender_response(status_code=202),
-    ]
+    responses = iter(
+        [
+            _sender_response(status_code=302, headers={"Location": "/api/webmention"}),
+            _sender_response(status_code=202),
+        ]
+    )
+    captured: list[httpx.Request] = []
 
-    result = sender.send_webmention(source_url, target_url, endpoint)
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return next(responses)
+
+    result = sender.send_webmention(source_url, target_url, endpoint, client=_make_test_client(handler))
 
     assert result["success"] is True
-    assert mock_client.post.call_args_list[1].args[0] == "https://target.com/api/webmention"
+    assert str(captured[1].url) == "https://target.com/api/webmention"
 
 
 @pytest.mark.parametrize("status_code", [200, 201, 202])
-@patch("httpx.Client")
-def test_send_webmention_with_different_success_codes(mock_client_class, sender, source_url, target_url, status_code):
+def test_send_webmention_with_different_success_codes(sender, source_url, target_url, status_code):
     """Test that 200, 201, and 202 are all considered success."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
 
-    mock_response = Mock()
-    mock_response.status_code = status_code
-    mock_client.post.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code)
 
-    result = sender.send_webmention(source_url, target_url, "https://example.com/webmention")
+    result = sender.send_webmention(
+        source_url, target_url, "https://example.com/webmention", client=_make_test_client(handler)
+    )
 
     assert result["success"] is True
     assert result["status_code"] == status_code
 
 
-@patch("httpx.Client")
-def test_send_webmention_failure(mock_client_class, sender, source_url, target_url):
+def test_send_webmention_failure(sender, source_url, target_url):
     """Test failed webmention sending."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
 
-    mock_response = Mock()
-    mock_response.status_code = 404
-    mock_client.post.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
 
     endpoint = "https://target.com/webmention"
-    result = sender.send_webmention(source_url, target_url, endpoint)
+    result = sender.send_webmention(source_url, target_url, endpoint, client=_make_test_client(handler))
 
     assert result["success"] is False
     assert result["status_code"] == 404
     assert "error" in result
 
 
-@patch("httpx.Client")
-def test_send_webmention_network_error(mock_client_class, sender, source_url, target_url):
+def test_send_webmention_network_error(sender, source_url, target_url):
     """Test webmention sending with network error."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
 
-    import httpx
-
-    mock_client.post.side_effect = httpx.RequestError("Connection failed")
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.RequestError("Connection failed")
 
     endpoint = "https://target.com/webmention"
-    result = sender.send_webmention(source_url, target_url, endpoint)
+    result = sender.send_webmention(source_url, target_url, endpoint, client=_make_test_client(handler))
 
     assert result["success"] is False
     assert "Connection failed" in result["error"]
 
 
 @patch("indieweb.senders.request_with_webmention_redirects")
-@patch("httpx.Client")
 def test_send_webmention_treats_oversized_response_as_failure(
-    mock_client_class, mock_request_with_redirects, sender, source_url, target_url
+    mock_request_with_redirects, sender, source_url, target_url
 ):
     """A hostile Webmention endpoint returning a body larger than the cap is a delivery failure."""
     from indieweb.http_client import HTTPResponseTooLarge
 
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
     mock_request_with_redirects.side_effect = HTTPResponseTooLarge("response exceeded 1024 decoded bytes")
 
-    result = sender.send_webmention(source_url, target_url, "https://target.com/webmention")
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    result = sender.send_webmention(
+        source_url, target_url, "https://target.com/webmention", client=_make_test_client(handler)
+    )
 
     assert result["success"] is False
     assert result["status_code"] is None
@@ -463,13 +435,10 @@ def test_send_webmention_treats_oversized_response_as_failure(
 
 @override_settings(INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES=2048)
 @patch("indieweb.senders.request_with_webmention_redirects")
-@patch("httpx.Client")
 def test_send_webmention_passes_configured_response_cap_to_helper(
-    mock_client_class, mock_request_with_redirects, sender, source_url, target_url
+    mock_request_with_redirects, sender, source_url, target_url
 ):
     """Configured INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES is forwarded to the helper."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
     response = _sender_response(status_code=202)
 
     class _Delivered:
@@ -480,135 +449,150 @@ def test_send_webmention_passes_configured_response_cap_to_helper(
     delivered.final_url = "https://target.com/webmention"
     mock_request_with_redirects.return_value = delivered
 
-    result = sender.send_webmention(source_url, target_url, "https://target.com/webmention")
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202)
+
+    result = sender.send_webmention(
+        source_url, target_url, "https://target.com/webmention", client=_make_test_client(handler)
+    )
 
     assert result["success"] is True
     assert mock_request_with_redirects.call_args.kwargs["max_bytes"] == 2048
 
 
-@patch("httpx.Client")
-def test_send_webmention_rejects_unsafe_vouch_without_post(mock_client_class, sender, source_url, target_url):
+def test_send_webmention_rejects_unsafe_vouch_without_post(sender, source_url, target_url):
     """send_webmention validates Vouch even when callers bypass the command."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200)
+
     result = sender.send_webmention(
         source_url,
         target_url,
         "https://target.com/webmention",
         vouch="http://127.0.0.1/vouch",
+        client=_make_test_client(handler),
     )
 
     assert result["success"] is False
-    mock_client_class.return_value.__enter__.return_value.post.assert_not_called()
+    assert captured == []
 
 
-@patch("httpx.Client")
-def test_fetch_content(mock_client_class, sender, source_url, target_url):
+def test_fetch_content(sender, source_url, target_url):
     """Test fetching content from a URL."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
+    captured: list[httpx.Request] = []
 
-    mock_response = Mock()
-    mock_response.text = "<html><body>Test content</body></html>"
-    mock_response.raise_for_status = Mock()
-    mock_client.get.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, text="<html><body>Test content</body></html>")
 
-    content = sender.fetch_content("https://example.com/page")
+    content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
 
     assert content == "<html><body>Test content</body></html>"
-    mock_client.get.assert_called_once_with("https://example.com/page", timeout=SAFE_HTTP_DEFAULT_TIMEOUT)
+    assert len(captured) == 1
+    assert captured[0].method == "GET"
+    assert str(captured[0].url) == "https://example.com/page"
 
 
-@patch("httpx.Client")
-def test_fetch_content_follows_redirect(mock_client_class, sender, source_url, target_url):
+def test_fetch_content_follows_redirect(sender, source_url, target_url):
     """Test fetching source content follows bounded redirects."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
     final_url = "https://example.com/canonical/page"
-    mock_client.get.side_effect = [
-        _sender_response(status_code=302, headers={"Location": final_url}),
-        _sender_response(status_code=200, text="<html><body>Final content</body></html>"),
-    ]
+    responses = iter(
+        [
+            _sender_response(status_code=302, headers={"Location": final_url}),
+            _sender_response(status_code=200, text="<html><body>Final content</body></html>"),
+        ]
+    )
+    captured: list[httpx.Request] = []
 
-    content = sender.fetch_content("https://example.com/page")
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return next(responses)
+
+    content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
 
     assert content == "<html><body>Final content</body></html>"
-    assert mock_client.get.call_args_list[0].args[0] == "https://example.com/page"
-    assert mock_client.get.call_args_list[1].args[0] == final_url
+    assert _request_urls(captured) == ["https://example.com/page", final_url]
 
 
-@patch("httpx.Client")
-def test_fetch_content_resolves_relative_redirect_location(mock_client_class, sender, source_url, target_url):
+def test_fetch_content_resolves_relative_redirect_location(sender, source_url, target_url):
     """Test relative content redirect locations resolve against the redirecting URL."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.get.side_effect = [
-        _sender_response(status_code=302, headers={"Location": "/canonical/page"}),
-        _sender_response(status_code=200, text="<html><body>Final content</body></html>"),
-    ]
+    responses = iter(
+        [
+            _sender_response(status_code=302, headers={"Location": "/canonical/page"}),
+            _sender_response(status_code=200, text="<html><body>Final content</body></html>"),
+        ]
+    )
+    captured: list[httpx.Request] = []
 
-    content = sender.fetch_content("https://example.com/page")
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return next(responses)
+
+    content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
 
     assert content == "<html><body>Final content</body></html>"
-    assert mock_client.get.call_args_list[1].args[0] == "https://example.com/canonical/page"
+    assert str(captured[1].url) == "https://example.com/canonical/page"
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_returns_none_when_redirect_limit_exceeded(
-    mock_client_class, sender, source_url, target_url
-):
+def test_discover_endpoint_returns_none_when_redirect_limit_exceeded(sender, source_url, target_url):
     """Test discovery returns None for redirect errors."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.head.side_effect = [
-        _sender_response(status_code=302, headers={"Location": f"https://target.com/r{i}"}) for i in range(6)
-    ]
+    responses = iter(
+        [_sender_response(status_code=302, headers={"Location": f"https://target.com/r{i}"}) for i in range(6)]
+    )
 
-    endpoint = sender.discover_endpoint(target_url)
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint is None
 
 
-@patch("httpx.Client")
-def test_fetch_content_returns_none_when_redirect_limit_exceeded(mock_client_class, sender, source_url, target_url):
+def test_fetch_content_returns_none_when_redirect_limit_exceeded(sender, source_url, target_url):
     """Test content fetch returns None for redirect errors."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.get.side_effect = [
-        _sender_response(status_code=302, headers={"Location": f"https://example.com/r{i}"}) for i in range(6)
-    ]
+    responses = iter(
+        [_sender_response(status_code=302, headers={"Location": f"https://example.com/r{i}"}) for i in range(6)]
+    )
 
-    content = sender.fetch_content("https://example.com/page")
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
 
     assert content is None
 
 
-@patch("httpx.Client")
-def test_fetch_content_returns_none_for_unsupported_redirect_scheme(mock_client_class, sender, source_url, target_url):
+def test_fetch_content_returns_none_for_unsupported_redirect_scheme(sender, source_url, target_url):
     """Test redirects only continue to HTTP and HTTPS URLs."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.get.return_value = _sender_response(status_code=302, headers={"Location": "mailto:a@example.com"})
+    captured: list[httpx.Request] = []
 
-    content = sender.fetch_content("https://example.com/page")
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(302, headers={"Location": "mailto:a@example.com"})
+
+    content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
 
     assert content is None
-    assert mock_client.get.call_count == 1
+    assert len(captured) == 1
 
 
-@patch("httpx.Client")
-def test_send_webmention_returns_failure_when_redirect_limit_exceeded(
-    mock_client_class, sender, source_url, target_url
-):
+def test_send_webmention_returns_failure_when_redirect_limit_exceeded(sender, source_url, target_url):
     """Test endpoint POST redirect errors use the safe failure shape."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.post.side_effect = [
-        _sender_response(status_code=302, headers={"Location": f"https://target.com/r{i}"}) for i in range(6)
-    ]
+    responses = iter(
+        [_sender_response(status_code=302, headers={"Location": f"https://target.com/r{i}"}) for i in range(6)]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
 
     result = sender.send_webmention(
         source_url,
         target_url,
         "https://target.com/webmention",
+        client=_make_test_client(handler),
     )
 
     assert result["success"] is False
@@ -616,14 +600,13 @@ def test_send_webmention_returns_failure_when_redirect_limit_exceeded(
     assert "redirects" in result["error"]
 
 
-@patch("httpx.Client")
-def test_fetch_content_error(mock_client_class, sender, source_url, target_url):
+def test_fetch_content_error(sender, source_url, target_url):
     """Test fetching content handles errors."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-    mock_client.get.side_effect = Exception("Network error")
 
-    content = sender.fetch_content("https://example.com/page")
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.RequestError("Network error")
+
+    content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
 
     assert content is None
 
@@ -707,19 +690,17 @@ def test_send_webmentions_passes_vouch_to_each_delivery(sender, source_url, targ
     )
 
 
-@patch("httpx.Client")
-def test_discover_endpoint_handles_fragment_and_query(mock_client_class, sender, source_url, target_url):
+def test_discover_endpoint_handles_fragment_and_query(sender, source_url, target_url):
     """Test that fragments and query strings don't interfere with endpoint discovery."""
-    mock_client = Mock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
 
-    mock_response = Mock()
-    mock_response.headers = {"Link": '<https://target.com/webmention>; rel="webmention"'}
-    mock_response.raise_for_status = Mock()
-    mock_client.head.return_value = mock_response
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Link": '<https://target.com/webmention>; rel="webmention"'})
 
     # URL with fragment and query
-    endpoint = sender.discover_endpoint("https://target.com/post?param=value#section")
+    endpoint = sender.discover_endpoint(
+        "https://target.com/post?param=value#section",
+        client=_make_test_client(handler),
+    )
 
     assert endpoint == "https://target.com/webmention"
 

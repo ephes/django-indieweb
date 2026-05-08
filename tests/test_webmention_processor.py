@@ -2,45 +2,96 @@
 
 import hashlib
 import sys
+from contextlib import contextmanager
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
+import httpx
 import pytest
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, override_settings
 from django.utils import timezone as django_timezone
 
-from indieweb.http_client import SAFE_HTTP_DEFAULT_TIMEOUT
 from indieweb.models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from indieweb.processors import WebmentionProcessor, process_queued_webmention
 from indieweb.sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
 
-def _mock_source_response(
-    mock_get_class,
-    *,
-    status_code,
-    text="",
-    content_type="text/html",
-):
-    """Configure the patched httpx client to return a source response."""
-    mock_client = Mock()
-    mock_get_class.return_value.__enter__.return_value = mock_client
-    mock_response = Mock()
-    mock_response.status_code = status_code
-    mock_response.text = text
-    mock_response.headers = {"content-type": content_type}
-    mock_client.get.return_value = mock_response
-    return mock_response
-
-
 def _source_response(*, status_code, text="", content_type="text/html", headers=None):
-    """Build a mocked source response for redirect chains."""
-    mock_response = Mock()
-    mock_response.status_code = status_code
-    mock_response.text = text
-    mock_response.headers = headers if headers is not None else {"content-type": content_type}
-    return mock_response
+    """Build an httpx.Response for source/vouch fetch tests."""
+    if headers is None:
+        headers = {"content-type": content_type}
+    return httpx.Response(status_code, headers=headers, text=text)
+
+
+def _make_test_http_client(handler):
+    """Build an ``httpx.Client`` backed by ``MockTransport``."""
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _build_response_handler(*, return_value, side_effect):
+    """Return a request->response callable matching legacy Mock semantics."""
+    fixed_exc: BaseException | None = None
+    if side_effect is not None:
+        if isinstance(side_effect, BaseException):
+            fixed_exc = side_effect
+        elif callable(side_effect) and not hasattr(side_effect, "__iter__"):
+            return side_effect
+        else:
+            sequence = iter(list(side_effect))
+
+            def from_sequence(request: httpx.Request) -> httpx.Response:
+                item = next(sequence)
+                if isinstance(item, BaseException):
+                    raise item
+                return item(request) if callable(item) else item
+
+            return from_sequence
+    elif isinstance(return_value, BaseException):
+        fixed_exc = return_value
+    else:
+        assert return_value is not None, "Pass return_value or side_effect to _processor_client"
+
+    if fixed_exc is not None:
+
+        def raise_fixed(_request: httpx.Request) -> httpx.Response:
+            raise fixed_exc
+
+        return raise_fixed
+
+    def fixed_response(_request: httpx.Request) -> httpx.Response:
+        return return_value
+
+    return fixed_response
+
+
+@contextmanager
+def _processor_client(processor, *, return_value=None, side_effect=None):
+    """Inject a MockTransport-backed ``httpx.Client`` into ``processor`` for the duration.
+
+    Mirrors the legacy ``mock_client.get.return_value`` / ``side_effect``
+    semantics. ``return_value`` answers every request with the same
+    ``httpx.Response``; ``side_effect`` accepts an exception, a callable
+    ``request -> response``, or an iterable of responses/callables/exceptions.
+
+    Yields the list of captured ``httpx.Request`` objects.
+    """
+    handler = _build_response_handler(return_value=return_value, side_effect=side_effect)
+
+    captured: list[httpx.Request] = []
+
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return handler(request)
+
+    client = _make_test_http_client(wrapped)
+    original = processor._injected_client
+    processor._injected_client = client
+    try:
+        yield captured
+    finally:
+        processor._injected_client = original
+        client.close()
 
 
 @pytest.mark.parametrize(
@@ -216,26 +267,19 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = '<html><body><a href="https://mysite.com/article">Link</a></body></html>'
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text='<html><body><a href="https://mysite.com/article">Link</a></body></html>',
+            ),
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url)
 
-            mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
-            )
+            assert len(captured) == 1
+            assert str(captured[0].url) == source_url
+            assert dict(captured[0].headers).get("user-agent") == "django-indieweb/1.0"
             assert webmention.status == "verified"
 
     def test_processor_serializes_writes_and_fetches_outside_row_lock(self, processor):
@@ -250,22 +294,18 @@ class TestWebmentionProcessor:
             events.append("lock")
             return original_select_for_update(*args, **kwargs)
 
-        def fetching_get(*args, **kwargs):
+        def fetching_handler(request: httpx.Request) -> httpx.Response:
             events.append("fetch")
-            response = Mock()
-            response.status_code = 200
-            response.text = f'<html><body><a href="{target_url}">Link</a></body></html>'
-            response.headers = {"content-type": "text/html"}
-            return response
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text=f'<html><body><a href="{target_url}">Link</a></body></html>',
+            )
 
         with (
             patch.object(Webmention.objects, "select_for_update", side_effect=spying_select_for_update),
-            patch("httpx.Client") as mock_get_class,
+            _processor_client(processor, side_effect=[fetching_handler]),
         ):
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = fetching_get
-
             webmention = processor.process_webmention(source_url, target_url)
 
         # Source fetch must run before the row lock is acquired so a slow source
@@ -282,11 +322,7 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert webmention.status == "failed"
@@ -429,19 +465,18 @@ class TestWebmentionProcessor:
         vouch_url = "https://trusted.example/vouch-for-example"
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=html_content)
-
+        with _processor_client(
+            processor,
+            return_value=_source_response(status_code=200, text=html_content),
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
 
             assert webmention.status == "verified"
             assert webmention.vouch_url == vouch_url
             assert webmention.vouch_verified_at is None
-            mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
-            )
+            assert len(captured) == 1
+            assert str(captured[0].url) == source_url
+            assert dict(captured[0].headers).get("user-agent") == "django-indieweb/1.0"
 
     def test_processor_without_vouch_does_not_clear_existing_vouch(self, processor):
         """Test synchronous duplicate processing preserves existing Vouch metadata."""
@@ -457,11 +492,7 @@ class TestWebmentionProcessor:
         )
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -477,21 +508,20 @@ class TestWebmentionProcessor:
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
         vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=200, text=source_html),
                 _source_response(status_code=200, text=vouch_html),
-            ]
-
+            ],
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
 
             assert webmention.status == "verified"
             assert webmention.vouch_url == vouch_url
             assert webmention.vouch_verified_at is not None
-            assert mock_client.get.call_args_list[0].args[0] == source_url
-            assert mock_client.get.call_args_list[1].args[0] == vouch_url
+            assert str(captured[0].url) == source_url
+            assert str(captured[1].url) == vouch_url
 
     @override_settings(
         INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.trust_submitted_and_final",
@@ -506,22 +536,21 @@ class TestWebmentionProcessor:
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
         vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=200, text=source_html),
                 _source_response(status_code=302, headers={"Location": final_vouch_url}),
                 _source_response(status_code=200, text=vouch_html),
-            ]
-
+            ],
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
 
             assert webmention.status == "verified"
             assert webmention.vouch_verified_at is not None
-            assert mock_client.get.call_args_list[0].args[0] == source_url
-            assert mock_client.get.call_args_list[1].args[0] == vouch_url
-            assert mock_client.get.call_args_list[2].args[0] == final_vouch_url
+            assert str(captured[0].url) == source_url
+            assert str(captured[1].url) == vouch_url
+            assert str(captured[2].url) == final_vouch_url
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.reject_submitted")
     def test_processor_policy_rejects_submitted_vouch_without_fetching_it(self, processor):
@@ -530,11 +559,10 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
-
+        with _processor_client(
+            processor,
+            return_value=_source_response(status_code=200, text=source_html),
+        ) as captured:
             webmention = processor.process_webmention(
                 source_url,
                 target_url,
@@ -543,9 +571,9 @@ class TestWebmentionProcessor:
 
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
-            mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
-            )
+            assert len(captured) == 1
+            assert str(captured[0].url) == source_url
+            assert dict(captured[0].headers).get("user-agent") == "django-indieweb/1.0"
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY="tests.vouch_policies.reject_final")
     def test_processor_policy_rejects_final_vouch_after_redirect(self, processor):
@@ -557,20 +585,19 @@ class TestWebmentionProcessor:
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
         vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=200, text=source_html),
                 _source_response(status_code=302, headers={"Location": final_vouch_url}),
                 _source_response(status_code=200, text=vouch_html),
-            ]
-
+            ],
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
 
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
-            assert mock_client.get.call_args_list[2].args[0] == final_vouch_url
+            assert str(captured[2].url) == final_vouch_url
 
     @pytest.mark.parametrize(
         "policy_path",
@@ -587,11 +614,10 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
-
+        with _processor_client(
+            processor,
+            return_value=_source_response(status_code=200, text=source_html),
+        ) as captured:
             webmention = processor.process_webmention(
                 source_url,
                 target_url,
@@ -600,9 +626,9 @@ class TestWebmentionProcessor:
 
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
-            mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
-            )
+            assert len(captured) == 1
+            assert str(captured[0].url) == source_url
+            assert dict(captured[0].headers).get("user-agent") == "django-indieweb/1.0"
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
     def test_processor_preserves_parsed_fields_after_successful_vouch_verification(self, processor):
@@ -626,14 +652,13 @@ class TestWebmentionProcessor:
         """
         vouch_html = '<html><body><a href="https://example.com/">Example</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=200, text=source_html),
                 _source_response(status_code=200, text=vouch_html),
-            ]
-
+            ],
+        ):
             webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
 
         webmention.refresh_from_db()
@@ -653,11 +678,10 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
-
+        with _processor_client(
+            processor,
+            return_value=_source_response(status_code=200, text=source_html),
+        ) as captured:
             webmention = processor.process_webmention(
                 source_url,
                 target_url,
@@ -666,9 +690,9 @@ class TestWebmentionProcessor:
 
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
-            mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
-            )
+            assert len(captured) == 1
+            assert str(captured[0].url) == source_url
+            assert dict(captured[0].headers).get("user-agent") == "django-indieweb/1.0"
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
     def test_processor_fails_vouch_that_does_not_link_to_source_domain(self, processor):
@@ -679,14 +703,13 @@ class TestWebmentionProcessor:
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
         vouch_html = '<html><body><a href="https://someone-else.example/">Elsewhere</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=200, text=source_html),
                 _source_response(status_code=200, text=vouch_html),
-            ]
-
+            ],
+        ):
             webmention = processor.process_webmention(source_url, target_url, vouch_url=vouch_url)
 
             assert webmention.status == "failed"
@@ -699,11 +722,7 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=source_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "failed"
@@ -716,11 +735,10 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         source_html = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
-
+        with _processor_client(
+            processor,
+            return_value=_source_response(status_code=200, text=source_html),
+        ) as captured:
             webmention = processor.process_webmention(
                 source_url,
                 target_url,
@@ -729,9 +747,9 @@ class TestWebmentionProcessor:
 
             assert webmention.status == "failed"
             assert webmention.vouch_verified_at is None
-            mock_client.get.assert_called_once_with(
-                source_url, headers={"User-Agent": "django-indieweb/1.0"}, timeout=SAFE_HTTP_DEFAULT_TIMEOUT
-            )
+            assert len(captured) == 1
+            assert str(captured[0].url) == source_url
+            assert dict(captured[0].headers).get("user-agent") == "django-indieweb/1.0"
 
     def test_process_queued_webmention_processes_existing_row(self):
         """Test the public worker helper dispatches processing for an existing row."""
@@ -783,10 +801,10 @@ class TestWebmentionProcessor:
         webmention = Webmention.objects.create(source_url=source_url, target_url=target_url)
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _source_response(status_code=200, text=html_content)
 
-            result = process_queued_webmention(webmention.pk)
+        result = process_queued_webmention(webmention.pk, client=_make_test_http_client(handler))
 
         assert result.status == "verified"
         snapshot = result.source_snapshot
@@ -807,10 +825,10 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _source_response(status_code=200, text=html_content)
 
-            result = process_queued_webmention(webmention.pk)
+        result = process_queued_webmention(webmention.pk, client=_make_test_http_client(handler))
 
         assert result.status == "verified"
         child = WebmentionNestedResponse.objects.get(webmention=result)
@@ -829,21 +847,20 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=302, headers={"Location": final_url}),
                 _source_response(status_code=200, text=html_content),
-            ]
-
+            ],
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
             assert webmention.source_url == source_url
             assert webmention.target_url == target_url
-            assert mock_client.get.call_args_list[0].args[0] == source_url
-            assert mock_client.get.call_args_list[1].args[0] == final_url
+            assert str(captured[0].url) == source_url
+            assert str(captured[1].url) == final_url
 
     def test_processor_resolves_relative_source_redirect_location(self, processor):
         """Test relative source redirect locations resolve against the redirecting URL."""
@@ -851,18 +868,17 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=302, headers={"Location": "/posts/final"}),
                 _source_response(status_code=200, text=html_content),
-            ]
-
+            ],
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
-            assert mock_client.get.call_args_list[1].args[0] == "https://example.com/posts/final"
+            assert str(captured[1].url) == "https://example.com/posts/final"
 
     def test_processor_uses_final_source_url_as_microformats_base_after_redirect(self, processor):
         """Test relative author URLs resolve against the final redirected source URL."""
@@ -885,14 +901,13 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=301, headers={"Location": final_url}),
                 _source_response(status_code=200, text=html_content),
-            ]
-
+            ],
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -924,9 +939,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert webmention.status == "verified"
@@ -962,9 +975,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert webmention.status == "verified"
@@ -983,13 +994,12 @@ class TestWebmentionProcessor:
             verified_at=django_timezone.now(),
         )
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=302, headers={"Location": f"https://example.com/r{i}"}) for i in range(6)
-            ]
-
+            ],
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.id == existing.id
@@ -1001,14 +1011,13 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=302, headers={"Location": "https://example.com/data.json"}),
                 _source_response(status_code=200, text='{"ok": true}', content_type="application/json"),
-            ]
-
+            ],
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "failed"
@@ -1019,14 +1028,13 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=302, headers={"Location": "https://example.com/missing"}),
                 _source_response(status_code=404, text="Not found"),
-            ]
-
+            ],
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "failed"
@@ -1037,18 +1045,17 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(
+        with _processor_client(
+            processor,
+            return_value=_source_response(
                 status_code=302,
                 headers={"Location": "mailto:a@example.com"},
-            )
-
+            ),
+        ) as captured:
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "failed"
-            assert mock_client.get.call_count == 1
+            assert len(captured) == 1
 
     def test_processor_verifies_canonical_equivalent_target_link(self, processor):
         """Test processing succeeds when the source links a canonical-equivalent target."""
@@ -1056,15 +1063,10 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article?a=1&b=2"
         html_content = '<html><body><a href="https://www.mysite.com/article/?b=2&a=1#comments">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = html_content
-            mock_response.headers = {"content-type": "text/html"}
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -1076,11 +1078,7 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = Exception("Network error")
-
+        with _processor_client(processor, side_effect=Exception("Network error")):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "failed"
@@ -1093,40 +1091,20 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
 
         # Test with link present
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = f'<html><body><a href="{target_url}">Link to article</a></body></html>'
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        present_html = f'<html><body><a href="{target_url}">Link to article</a></body></html>'
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=present_html),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "verified"
 
         # Test with link missing
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = "<html><body>No link here</body></html>"
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        missing_html = "<html><body>No link here</body></html>"
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=missing_html),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "failed"
 
@@ -1135,19 +1113,7 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 404
-
-            mock_response.text = "Not found"
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(processor, return_value=httpx.Response(404, text="Not found")):
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "failed"
 
@@ -1173,21 +1139,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -1230,9 +1185,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         snapshot = webmention.source_snapshot
@@ -1275,9 +1228,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         child = WebmentionNestedResponse.objects.get(webmention=webmention)
@@ -1329,9 +1280,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         child = WebmentionNestedResponse.objects.get(webmention=webmention)
@@ -1372,16 +1321,14 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=first_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         child = WebmentionNestedResponse.objects.get(webmention=webmention)
         first_child_id = child.pk
         first_seen_at = child.first_seen_at
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=second_html)):
             duplicate = processor.process_webmention(source_url, target_url)
 
         child.refresh_from_db()
@@ -1422,8 +1369,7 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=first_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         child = WebmentionNestedResponse.objects.get(webmention=webmention)
@@ -1431,8 +1377,7 @@ class TestWebmentionProcessor:
         assert child.author_name == "Jane Child"
         assert child.mention_type == "reply"
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=second_html)):
             processor.process_webmention(source_url, target_url)
 
         child.refresh_from_db()
@@ -1465,14 +1410,12 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=first_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert webmention.source_snapshot.nested_response_identities == ["https://example.com/comments/one"]
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=second_html)):
             processor.process_webmention(source_url, target_url)
 
         assert WebmentionNestedResponse.objects.filter(webmention=webmention).count() == 2
@@ -1512,14 +1455,12 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=first_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         missing_child = WebmentionNestedResponse.objects.get(webmention=webmention, identity__endswith="/two")
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=second_html)):
             processor.process_webmention(source_url, target_url)
 
         missing_child.refresh_from_db()
@@ -1550,14 +1491,12 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=first_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert WebmentionNestedResponse.objects.filter(webmention=webmention, status="verified").count() == 2
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=second_html)):
             processor.process_webmention(source_url, target_url)
 
         assert WebmentionNestedResponse.objects.filter(webmention=webmention, status="missing").count() == 2
@@ -1579,8 +1518,7 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert webmention.status == "verified"
@@ -1603,8 +1541,7 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert WebmentionNestedResponse.objects.filter(webmention=webmention).count() == 0
@@ -1617,15 +1554,13 @@ class TestWebmentionProcessor:
         first_html = f'<html><body><a href="{target_url}">First</a></body></html>'
         second_html = f'<html><body><a href="{target_url}">Second</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=first_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=first_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         snapshot = webmention.source_snapshot
         snapshot_id = snapshot.pk
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=second_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=second_html)):
             duplicate = processor.process_webmention(source_url, target_url)
 
         duplicate_snapshot = duplicate.source_snapshot
@@ -1642,9 +1577,7 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with (
                 patch(
                     "indieweb.processors.WebmentionSourceSnapshot.objects.update_or_create",
@@ -1691,9 +1624,7 @@ class TestWebmentionProcessor:
             Webmention.objects.filter(pk=webmention.pk).update(vouch_url=concurrent_vouch_url)
             return outcome
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with (
                 patch.object(
                     processor,
@@ -1743,14 +1674,13 @@ class TestWebmentionProcessor:
             Webmention.objects.filter(pk=webmention.pk).update(vouch_url=concurrent_vouch_url)
             return outcome
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=200, text=source_html),
                 _source_response(status_code=200, text=vouch_html),
-            ]
-
+            ],
+        ):
             with (
                 patch.object(
                     processor,
@@ -1788,14 +1718,13 @@ class TestWebmentionProcessor:
         spam_checker = Mock()
         spam_checker.check.return_value = {"is_spam": True, "reason": "test"}
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=200, text=source_html),
                 _source_response(status_code=200, text=vouch_html),
-            ]
-
+            ],
+        ):
             with (
                 patch.object(processor, "_get_spam_checker", return_value=spam_checker),
                 django_capture_on_commit_callbacks(execute=True),
@@ -1902,10 +1831,8 @@ class TestWebmentionProcessor:
             content_html="<p>B's verified content</p>",
         )
 
-        with patch("httpx.Client") as mock_get_class:
-            # A's fetch: 200 but missing target link → A's outcome would be failed.
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        # A's fetch: 200 but missing target link → A's outcome would be failed.
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with django_capture_on_commit_callbacks(execute=True):
                 processor.process_webmention(source_url, target_url)
 
@@ -1933,9 +1860,7 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with (
                 patch(
                     "indieweb.processors.WebmentionSourceSnapshot.objects.update_or_create",
@@ -1965,14 +1890,10 @@ class TestWebmentionProcessor:
         source_url = f"https://example.com/post-{status_code}-{content_type}"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(
-                mock_get_class,
-                status_code=status_code,
-                text=html_content,
-                content_type=content_type,
-            )
-
+        with _processor_client(
+            processor,
+            return_value=_source_response(status_code=status_code, text=html_content, content_type=content_type),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
         assert webmention.status == "failed"
@@ -1984,16 +1905,14 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
         verified_html = f'<html><body><a href="{target_url}">Verified</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=verified_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=verified_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         snapshot = webmention.source_snapshot
         original_snapshot_id = snapshot.pk
         original_digest = snapshot.content_digest
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=410)
+        with _processor_client(processor, return_value=_source_response(status_code=410)):
             processor.process_webmention(source_url, target_url)
 
         snapshot.refresh_from_db()
@@ -2017,14 +1936,12 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=verified_html)
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=verified_html)):
             webmention = processor.process_webmention(source_url, target_url)
 
         child = WebmentionNestedResponse.objects.get(webmention=webmention)
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=410)
+        with _processor_client(processor, return_value=_source_response(status_code=410)):
             processor.process_webmention(source_url, target_url)
 
         webmention.refresh_from_db()
@@ -2048,11 +1965,7 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.return_value = _source_response(status_code=200, text=source_html)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=source_html)):
             webmention = processor.process_webmention(
                 source_url,
                 target_url,
@@ -2077,9 +1990,7 @@ class TestWebmentionProcessor:
         </body></html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
                 mock_check.return_value = {
                     "is_spam": True,
@@ -2110,21 +2021,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = reply_html
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=reply_html),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.mention_type == "reply"
 
@@ -2139,21 +2039,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = like_html
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=like_html),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.mention_type == "like"
 
@@ -2168,21 +2057,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = repost_html
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=repost_html),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.mention_type == "repost"
 
@@ -2202,15 +2080,10 @@ class TestWebmentionProcessor:
         </html>
         """
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = html_content
-            mock_response.headers = {"content-type": "text/html"}
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -2281,21 +2154,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -2311,21 +2173,10 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             # Patch the spam checker to verify it's called
             with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
                 mock_check.return_value = {
@@ -2348,21 +2199,10 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body>Buy cheap stuff! <a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             # Mock spam checker to return spam
             with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
                 mock_check.return_value = {
@@ -2409,9 +2249,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with patch("indieweb.interfaces.NoOpSpamChecker.check") as mock_check:
                 mock_check.return_value = {
                     "is_spam": True,
@@ -2454,21 +2292,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.id == existing.id
@@ -2495,9 +2322,7 @@ class TestWebmentionProcessor:
             verified_at=verified_at,
         )
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=410)
-
+        with _processor_client(processor, return_value=_source_response(status_code=410)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.id == existing.id
@@ -2526,13 +2351,11 @@ class TestWebmentionProcessor:
             verified_at=django_timezone.now(),
         )
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(
-                mock_get_class,
-                status_code=200,
-                text="<html><body><p>The old target link is gone.</p></body></html>",
-            )
-
+        new_html = "<html><body><p>The old target link is gone.</p></body></html>"
+        with _processor_client(
+            processor,
+            return_value=_source_response(status_code=200, text=new_html),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.id == existing.id
@@ -2566,9 +2389,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             before = django_timezone.now()
             webmention = processor.process_webmention(source_url, target_url)
             after = django_timezone.now()
@@ -2585,9 +2406,7 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/gone"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=410)
-
+        with _processor_client(processor, return_value=_source_response(status_code=410)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "failed"
@@ -2606,9 +2425,7 @@ class TestWebmentionProcessor:
             verified_at=django_timezone.now(),
         )
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=404)
-
+        with _processor_client(processor, return_value=_source_response(status_code=404)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.id == existing.id
@@ -2622,21 +2439,10 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             with patch("indieweb.processors.webmention_received.send") as mock_signal:
                 with django_capture_on_commit_callbacks(execute=True):
                     webmention = processor.process_webmention(source_url, target_url)
@@ -2655,21 +2461,10 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             before = django_timezone.now()
             webmention = processor.process_webmention(source_url, target_url)
             after = django_timezone.now()
@@ -2682,21 +2477,10 @@ class TestWebmentionProcessor:
         source_url = "https://example.com/data.json"
         target_url = "https://mysite.com/article"
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = '{"data": "json"}'
-
-            mock_response.headers = {"content-type": "application/json"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "application/json"}, text='{"data": "json"}'),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
             assert webmention.status == "failed"
 
@@ -2721,21 +2505,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.author_url == "https://example.com/about"
@@ -2758,21 +2531,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.content == "This is bold text with a link."
@@ -2785,21 +2547,10 @@ class TestWebmentionProcessor:
 
         html_content = f'<html><body><a href="{target_url}">Link</a></body></html>'
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             import logging
 
             with caplog.at_level(logging.INFO):
@@ -2829,21 +2580,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             # Should extract author info from the separate h-card
@@ -2885,9 +2625,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -2915,9 +2653,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -2972,21 +2708,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             # Should find the nested h-card and extract author info
@@ -3013,21 +2738,10 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-
-            mock_get_class.return_value.__enter__.return_value = mock_client
-
-            mock_response = Mock()
-
-            mock_response.status_code = 200
-
-            mock_response.text = html_content
-
-            mock_response.headers = {"content-type": "text/html"}
-
-            mock_client.get.return_value = mock_response
-
+        with _processor_client(
+            processor,
+            return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             # Should fall back to using URL as name (backwards compatibility)
@@ -3053,9 +2767,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3084,9 +2796,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3119,9 +2829,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3147,9 +2855,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3177,14 +2883,13 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            mock_client = Mock()
-            mock_get_class.return_value.__enter__.return_value = mock_client
-            mock_client.get.side_effect = [
+        with _processor_client(
+            processor,
+            side_effect=[
                 _source_response(status_code=302, headers={"Location": final_url}),
                 _source_response(status_code=200, text=html_content),
-            ]
-
+            ],
+        ):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3212,9 +2917,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3241,9 +2944,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3267,9 +2968,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3306,9 +3005,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
@@ -3345,9 +3042,7 @@ class TestWebmentionProcessor:
         </html>
         '''
 
-        with patch("httpx.Client") as mock_get_class:
-            _mock_source_response(mock_get_class, status_code=200, text=html_content)
-
+        with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"

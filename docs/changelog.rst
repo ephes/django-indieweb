@@ -5,6 +5,23 @@ Changelog
 
 Unreleased
 ----------
+* Removed the ``unittest.mock`` module-name guards in
+  ``request_with_safe_redirects`` and ``stream_with_safe_redirects``. Those
+  guards silently disabled streaming size enforcement and IP pinning whenever
+  the HTTP client's ``__class__.__module__`` was ``"unittest.mock"`` so legacy
+  ``Mock`` clients in the sender/processor test suites kept working — but they
+  also meant a future caller wrapping a real ``httpx.Client`` in a
+  ``unittest.mock.Mock`` for tracing or instrumentation would have silently
+  bypassed those SSRF protections in production. ``WebmentionSender``
+  (``discover_endpoint``, ``send_webmention``, ``fetch_content``) and
+  ``WebmentionProcessor`` (constructor) now accept an optional ``client``
+  keyword argument; when provided, the SSRF resolver is skipped, mirroring the
+  ``websub.request_websub_subscription`` injection pattern. ``process_queued_webmention``
+  accepts and forwards the same kwarg. Production callers that pass no
+  ``client`` (the default) retain the full DNS-blocking and IP-pinning
+  pipeline. Sender and processor tests now inject ``httpx.MockTransport``-backed
+  clients through this kwarg instead of patching ``httpx.Client`` with
+  ``unittest.mock.Mock``.
 * Fixed Webmention ``dt-published`` parsing on Python 3.10 for microformats
   timestamps that serialize UTC offsets without a colon, such as
   ``2026-05-01T10:00:00+0000``. Nested Webmention responses now retain their
