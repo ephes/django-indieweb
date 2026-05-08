@@ -4,6 +4,32 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P2.4 — Preserve staged WebSub secret rotations on denied callbacks
+
+`record_websub_denial` no longer clears the staged secret rotation
+(`pending_secret`, `pending_secret_set`) when the denied callback
+corresponds to an active renewal. The active subscription stays in
+`STATE_ACTIVE`, the active `secret` continues to validate hub
+deliveries, and the staged rotation remains available for an explicit
+operator retry. Fresh-subscribe denials (state `pending_subscribe`)
+still transition to `STATE_DENIED` and clear the pending secret state
+so a follow-up subscribe starts from a clean slate.
+
+- `src/indieweb/websub.py` gates the secret-clearing branch on
+  `subscription.state != WebSubSubscription.STATE_ACTIVE` and only
+  includes `pending_secret` / `pending_secret_set` in the
+  `update_fields` list when those fields actually change.
+- `tests/test_websub_subscriber.py` adds
+  `test_denied_renewal_preserves_active_secret_and_staged_rotation`
+  and `test_denied_initial_subscribe_clears_pending_secret_state`,
+  and updates
+  `test_callback_denial_for_active_renewal_preserves_current_subscription`
+  to assert the staged rotation is retained.
+- Validation: `uv run pytest -q` (1367 passed), `uv run mypy`,
+  `uv run prek run --all-files`.
+- Docs: `docs/changelog.rst` notes the behavior change;
+  `SECURITY_ANALYSIS.md` marks the residual resolved.
+
 ### P2.3 — Production hardening profile for public IndieWeb endpoints
 
 Added a copyable production-hardening settings snippet so internet-facing

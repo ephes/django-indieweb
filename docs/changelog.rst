@@ -5,6 +5,24 @@ Changelog
 
 Unreleased
 ----------
+* Preserved staged WebSub secret rotations across denied renewal callbacks.
+  ``record_websub_denial`` previously cleared ``pending_secret`` and
+  ``pending_secret_set`` on any valid denied callback, including denials
+  that targeted a renewal of an already-active subscription; that
+  discarded the staged rotation that operators had set up before the
+  next subscribe attempt. The function now keeps the staged rotation
+  intact when ``subscription.state == STATE_ACTIVE`` (the active secret
+  continues to validate hub deliveries and the operator can retry the
+  renewal without rebuilding the rotation) and only clears the pending
+  secret state for non-active denials such as ``STATE_PENDING_SUBSCRIBE``.
+  ``update_fields`` on the ``save()`` call is narrowed accordingly so we
+  do not write the unchanged secret columns on the active-renewal path.
+  ``tests/test_websub_subscriber.py`` adds
+  ``test_denied_renewal_preserves_active_secret_and_staged_rotation`` and
+  ``test_denied_initial_subscribe_clears_pending_secret_state`` and
+  tightens
+  ``test_callback_denial_for_active_renewal_preserves_current_subscription``
+  to lock in the new behavior. No migrations or settings changes.
 * Added a copyable production-hardening settings snippet to the
   configuration guide so internet-facing IndieAuth/Micropub deployments
   can opt in to strict defaults without deriving setting names by reading

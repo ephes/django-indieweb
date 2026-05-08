@@ -20,6 +20,7 @@ from indieweb.websub import (
     delivery_is_replay,
     get_websub_expired_subscriptions,
     get_websub_renewal_candidates,
+    record_websub_denial,
     request_websub_subscription,
     summarize_websub_leases,
     validate_websub_delivery_signature,
@@ -701,12 +702,13 @@ def test_callback_denial_for_active_renewal_preserves_current_subscription(clien
     assert response.status_code == 204
     assert subscription.state == WebSubSubscription.STATE_ACTIVE
     assert subscription.get_secret() == ACTIVE_SECRET
-    assert subscription.pending_secret == ""
-    assert subscription.pending_secret_set is False
+    assert subscription.pending_secret_set is True
+    assert subscription.get_pending_secret() == NEW_SECRET
     assert subscription.confirmed_lease_seconds == 3600
     assert subscription.lease_expires_at == lease_expires_at
     assert subscription.last_denied_mode == WebSubSubscription.MODE_SUBSCRIBE
     assert subscription.last_denial_reason == "renewal refused"
+    assert subscription.pending_mode == ""
 
 
 @pytest.mark.django_db
@@ -1473,3 +1475,63 @@ def test_concurrent_identical_deliveries_dispatch_hook_once(settings, subscripti
     assert outcomes.count(True) == 1
     assert outcomes.count(False) == 1
     assert WebSubAcceptedDelivery.objects.filter(subscription=subscription).count() == 1
+
+
+@pytest.mark.django_db
+def test_denied_renewal_preserves_active_secret_and_staged_rotation():
+    """Denied renewal callbacks must not discard the staged secret rotation."""
+    lease_expires_at = timezone.now() + timedelta(seconds=3600)
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_ACTIVE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+        confirmed_lease_seconds=3600,
+        lease_expires_at=lease_expires_at,
+    )
+    subscription.set_secret(ACTIVE_SECRET)
+    subscription.set_pending_secret(NEW_SECRET)
+    subscription.pending_secret_set = True
+    subscription.save()
+
+    record_websub_denial(
+        subscription,
+        topic_url=subscription.topic_url,
+        reason="denied by hub",
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert subscription.get_secret() == ACTIVE_SECRET
+    assert subscription.pending_secret_set is True
+    assert subscription.get_pending_secret() == NEW_SECRET
+    assert subscription.pending_mode == ""
+    assert subscription.last_denied_mode == WebSubSubscription.MODE_SUBSCRIBE
+    assert subscription.last_denial_reason == "denied by hub"
+
+
+@pytest.mark.django_db
+def test_denied_initial_subscribe_clears_pending_secret_state():
+    """Fresh-subscribe denials still clear the pending secret rotation."""
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+    subscription.set_pending_secret(NEW_SECRET)
+    subscription.pending_secret_set = True
+    subscription.save()
+
+    record_websub_denial(
+        subscription,
+        topic_url=subscription.topic_url,
+        reason="not allowed",
+    )
+
+    subscription.refresh_from_db()
+    assert subscription.state == WebSubSubscription.STATE_DENIED
+    assert subscription.pending_secret_set is False
+    assert subscription.pending_secret == ""
+    assert subscription.pending_mode == ""
+    assert subscription.last_denial_reason == "not allowed"

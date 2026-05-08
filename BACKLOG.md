@@ -12,15 +12,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Preserve staged WebSub secret rotations on denied callbacks unless the
-  denial is trustworthy for the pending request. References:
-  `src/indieweb/websub.py` (`record_websub_denial`,
-  `confirm_websub_verification`), `tests/test_websub_subscriber.py`.
-  A valid callback-token denial currently clears `pending_secret` and
-  `pending_secret_set` for active renewals. Keep the active secret safe, avoid
-  discarding staged rotation state unnecessarily, and add coverage for denied
-  renewal callbacks.
-
 - [ ] Prevent unauthenticated Vouch metadata downgrade on existing
   Webmentions. References: `src/indieweb/views.py`
   (`_store_webmention_submission`), `src/indieweb/processors.py`

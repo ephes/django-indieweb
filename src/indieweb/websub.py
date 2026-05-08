@@ -828,22 +828,27 @@ def record_websub_denial(
     subscription.last_denied_mode = denied_mode
     subscription.last_denial_reason = reason[:500]
     subscription.pending_mode = ""
-    subscription.pending_secret = ""
-    subscription.pending_secret_set = False
-    subscription.save(
-        update_fields=[
-            "state",
-            "pending_mode",
-            "pending_secret",
-            "pending_secret_set",
-            "confirmed_lease_seconds",
-            "lease_expires_at",
-            "last_denied_at",
-            "last_denied_mode",
-            "last_denial_reason",
-            "modified",
-        ]
-    )
+    update_fields = [
+        "state",
+        "pending_mode",
+        "confirmed_lease_seconds",
+        "lease_expires_at",
+        "last_denied_at",
+        "last_denied_mode",
+        "last_denial_reason",
+        "modified",
+    ]
+    # Preserve any staged secret rotation when denying a renewal of an
+    # already-active subscription: the active secret continues to validate
+    # incoming hub deliveries, and the operator can retry the renewal
+    # without rebuilding the staged rotation. For non-active denials
+    # (e.g. an initial pending subscribe rejected by the hub), clear the
+    # pending secret so a follow-up subscribe starts fresh.
+    if subscription.state != WebSubSubscription.STATE_ACTIVE:
+        subscription.pending_secret = ""
+        subscription.pending_secret_set = False
+        update_fields.extend(["pending_secret", "pending_secret_set"])
+    subscription.save(update_fields=update_fields)
 
 
 def get_websub_expired_subscriptions(*, now: datetime | None = None) -> QuerySet[WebSubSubscription]:

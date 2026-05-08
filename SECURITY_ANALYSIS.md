@@ -87,10 +87,14 @@ Validated medium-priority residuals:
   response and does not re-invoke the hook. Hooks that opt in to the new
   ``body_digest`` keyword argument get a stable idempotency key for any
   remaining at-least-once host-side processing.
-- ``record_websub_denial`` clears staged renewal secret state for any valid
-  denied callback matching the subscription token and topic. The callback token
-  is high entropy, so this is not an unauthenticated public bypass, but it is a
-  useful hardening item if hubs log or expose callback URLs.
+- ~~``record_websub_denial`` clears staged renewal secret state for any valid
+  denied callback matching the subscription token and topic.~~ Resolved
+  2026-05-08 under P2.4: ``record_websub_denial`` now only clears
+  ``pending_secret`` / ``pending_secret_set`` when the subscription is not
+  ``STATE_ACTIVE``. A denied callback for an active renewal leaves the
+  active secret intact and the staged rotation available for an explicit
+  operator retry; only fresh-subscribe denials (``STATE_PENDING_SUBSCRIBE``)
+  transition to ``STATE_DENIED`` and clear pending secret state.
 - A new Webmention submission can replace ``vouch_url`` on an existing
   source/target row and clear a prior ``vouch_verified_at`` value if the new
   Vouch fails. That lets an unauthenticated repeat submission downgrade the
