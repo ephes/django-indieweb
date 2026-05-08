@@ -5,6 +5,23 @@ Changelog
 
 Unreleased
 ----------
+* Documented that injected ``httpx.Client`` arguments are a trusted
+  test/integration escape hatch. ``docs/webmention.rst`` and
+  ``docs/websub.rst`` now carry prominent ``.. warning::`` blocks (anchored
+  at ``webmention-injected-client-warning`` and
+  ``websub-injected-client-warning``) explaining that DNS-based SSRF blocking
+  and IP pinning are not applied to caller-provided clients; the warnings
+  cover ``WebmentionProcessor(client=...)``, ``process_queued_webmention``,
+  ``WebmentionSender.discover_endpoint``,
+  ``WebmentionSender.send_webmention``,
+  ``WebmentionSender.fetch_content``, ``notify_hubs()``, and
+  ``request_websub_subscription()``. ``docs/configuration.rst`` adds an
+  ``Injected HTTP Clients`` subsection under ``Security Configuration`` and
+  ``docs/api.rst`` cross-references the warnings near the WebSub publisher
+  helpers. ``tests/test_documentation_snippets.py`` adds
+  ``test_injected_client_warning_present`` so removing the warning text from
+  either RST file fails CI. Doc-only change; no behavior, settings, or
+  migrations changed.
 * Added an optional view-level URL policy hook for Micropub source and media
   operations. ``INDIEWEB_MICROPUB_URL_POLICY`` is a dotted path to a callable
   ``(url, kind: Literal["entry", "media"], request) -> bool`` that gates the

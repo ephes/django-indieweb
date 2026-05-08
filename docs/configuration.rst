@@ -1545,6 +1545,23 @@ Ensure your domain is in ``ALLOWED_HOSTS``:
    # settings.py
    ALLOWED_HOSTS = ['yourdomain.com', 'www.yourdomain.com']
 
+Injected HTTP Clients
+~~~~~~~~~~~~~~~~~~~~~
+
+Several django-indieweb APIs (``WebmentionProcessor``,
+``process_queued_webmention``, ``WebmentionSender.discover_endpoint``,
+``WebmentionSender.send_webmention``, ``WebmentionSender.fetch_content``,
+``notify_hubs``, ``request_websub_subscription``) accept an optional
+``client`` keyword that takes an ``httpx.Client`` instance. When a caller
+provides one, django-indieweb trusts the transport: DNS-based SSRF blocking
+and IP pinning are not applied to that client's requests. Production
+deployments should leave ``client`` unset so the package-managed client and
+SSRF safety checks apply. Treat the injection point as a test/integration
+escape hatch and review the source docstrings in
+``src/indieweb/processors.py``, ``src/indieweb/senders.py``, and
+``src/indieweb/websub.py`` before using it. See the prominent warnings in
+:doc:`webmention` and :doc:`websub` for details.
+
 Extending Functionality
 -----------------------
 

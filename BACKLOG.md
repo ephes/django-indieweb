@@ -16,16 +16,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### API Hardening
 
-- [ ] Document injected HTTP clients as trusted test/integration-only escape
-  hatches. References: `src/indieweb/processors.py`,
-  `src/indieweb/senders.py`, `src/indieweb/websub.py`,
-  `docs/webmention.rst`, `docs/websub.rst`, `docs/configuration.rst`,
-  `docs/api.rst`. Several APIs accept an injected `httpx.Client`; when a
-  caller provides one, DNS-based SSRF blocking and IP pinning are skipped.
-  Public documentation should mirror the source docstrings, recommend leaving
-  `client` unset in production, and explain that injected clients are trusted
-  transports for tests or tightly controlled integrations.
-
 - [ ] Add an optional public-safe Webmention status response mode. References:
   `src/indieweb/views.py` (`WebmentionStatusView`), `docs/webmention.rst`,
   `docs/api.rst`, `tests/test_webmention_endpoint.py`. Status URLs use opaque

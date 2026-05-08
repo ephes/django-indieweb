@@ -209,6 +209,12 @@ Validated lower-priority hardening:
 - Injected ``httpx.Client`` arguments intentionally bypass DNS-based SSRF
   blocking and IP pinning. The source docstrings warn that this is test/trusted
   integration behavior; public docs should carry the same warning.
+  **Status:** Resolved 2026-05-08. ``docs/webmention.rst`` and
+  ``docs/websub.rst`` now carry prominent ``.. warning::`` blocks that mirror
+  the source docstrings; ``docs/configuration.rst`` adds an ``Injected HTTP
+  Clients`` subsection and ``docs/api.rst`` cross-references the warnings.
+  ``tests/test_documentation_snippets.py::test_injected_client_warning_present``
+  guards the warning text against doc drift.
 - The Webmention status endpoint uses high-entropy opaque status tokens, but a
   leaked status URL reveals source URL, target URL, status, and verification
   timestamp to the holder. This is likely intended protocol diagnostics, but

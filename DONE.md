@@ -4,6 +4,46 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P3.2 — Document injected HTTP-client trust
+
+Doc-only change. Several django-indieweb APIs accept an optional
+``client`` keyword that takes an ``httpx.Client``. When a caller provides
+one, the project trusts the transport: DNS-based SSRF blocking and IP
+pinning are not applied to that client's requests. The source docstrings
+in ``src/indieweb/processors.py``, ``src/indieweb/senders.py``, and
+``src/indieweb/websub.py`` already warned about this; the public docs now
+mirror the warning so production callers do not enable the test/integration
+escape hatch by accident.
+
+- ``docs/webmention.rst`` adds a ``.. warning::`` block under
+  ``Receive-Side Network and Resource Limits`` (anchored at
+  ``webmention-injected-client-warning``) covering
+  ``WebmentionProcessor(client=...)``, ``process_queued_webmention``,
+  ``WebmentionSender.discover_endpoint``,
+  ``WebmentionSender.send_webmention``, and
+  ``WebmentionSender.fetch_content``. The Vouch sender example
+  cross-references the warning.
+- ``docs/websub.rst`` upgrades the existing brief ``notify_hubs()`` mention
+  into a ``.. warning::`` block (anchored at
+  ``websub-injected-client-warning``) covering ``notify_hubs()`` and
+  ``request_websub_subscription()``. The subscription helper section
+  cross-references the warning.
+- ``docs/configuration.rst`` adds an ``Injected HTTP Clients`` subsection
+  under ``Security Configuration`` that names every API and points readers
+  at the prominent warnings and source docstrings.
+- ``docs/api.rst`` adds a brief paragraph under ``WebSub Publisher Helpers``
+  pointing at the same prominent warnings and source docstrings.
+- ``tests/test_documentation_snippets.py`` adds
+  ``test_injected_client_warning_present`` so removing the warning from
+  ``docs/webmention.rst`` or ``docs/websub.rst`` fails CI.
+- ``docs/changelog.rst`` records the doc-only change.
+- ``SECURITY_ANALYSIS.md`` marks the corresponding lower-priority residual
+  resolved.
+
+Validation: ``uv run pytest tests/test_documentation_snippets.py -v
+--no-cov`` (2 passed); ``uv run pytest -q`` (1381 passed); ``uv run mypy``
+(no issues); ``uv run prek run --all-files`` (all hooks passed).
+
 ### P3.1 — Optional Micropub URL policy hook
 
 ``INDIEWEB_MICROPUB_URL_POLICY`` is a new optional dotted-path setting that

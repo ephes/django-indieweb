@@ -77,6 +77,15 @@ to each hub with ``hub.mode=publish`` and ``hub.url=<topic_url>``. It returns a
 list of result objects containing the hub URL, topic URL, success flag, status
 code when available, and error text for failed attempts.
 
+``notify_hubs()`` and ``request_websub_subscription()`` both accept an optional
+``client`` keyword that takes an ``httpx.Client``. When provided, the project
+trusts the transport: DNS-based SSRF blocking and IP pinning are not applied
+to that client's requests. Production callers should leave ``client`` unset so
+the package-managed transport is used. See the explicit injected-client
+warnings in :doc:`websub` and :doc:`webmention` and the source docstrings in
+``src/indieweb/websub.py``, ``src/indieweb/senders.py``, and
+``src/indieweb/processors.py`` for the full transport-trust contract.
+
 The ``notify_websub`` management command wraps the same helper:
 
 .. code-block:: bash

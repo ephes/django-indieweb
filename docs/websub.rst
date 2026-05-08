@@ -105,6 +105,20 @@ without opening an HTTP client. If you inject a custom ``httpx.Client`` into
 ``notify_hubs()`` for testing or integration, that trusted client controls its
 own redirect behavior; the package-created client uses ``follow_redirects=False``.
 
+.. _websub-injected-client-warning:
+
+.. warning::
+
+   Leave ``client`` unset in production. When you pass an ``httpx.Client``
+   instance, the project trusts the transport: DNS-based SSRF blocking and
+   IP pinning are *not* applied to that client's requests. Injected clients
+   are intended for tests and tightly controlled integrations only.
+
+   This applies to every django-indieweb WebSub API that accepts an injected
+   ``httpx.Client``, including ``notify_hubs()`` and
+   ``request_websub_subscription()``. The source docstrings in
+   ``src/indieweb/websub.py`` carry the same warning.
+
 Hub responses are bounded to ``INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES``
 (default 256 KiB). Both ``notify_hubs()`` and ``request_websub_subscription()``
 stream the response and surface oversized replies as a request failure rather
@@ -221,6 +235,11 @@ at rest.
 Set ``mode=WebSubSubscription.MODE_UNSUBSCRIBE`` to ask the hub to cancel an
 existing subscription. Unknown subscriptions are rejected before any network
 request is made.
+
+``request_websub_subscription()`` also accepts an optional ``client`` keyword
+for tests and tightly controlled integrations. See the injected-client warning
+above (:ref:`websub-injected-client-warning`); production callers should leave
+it unset so DNS-based SSRF blocking and IP pinning apply.
 
 Callback Verification
 ---------------------

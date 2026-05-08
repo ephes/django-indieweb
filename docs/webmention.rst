@@ -205,6 +205,24 @@ preserving the original ``Host`` header and TLS SNI, so a DNS rebinding host
 that resolves to a public address during validation and to a private address
 during the connect cannot bypass the safety check.
 
+.. _webmention-injected-client-warning:
+
+.. warning::
+
+   Leave ``client`` unset in production. When you pass an ``httpx.Client``
+   instance, the project trusts the transport: DNS-based SSRF blocking and
+   IP pinning are *not* applied to that client's requests. Injected clients
+   are intended for tests and tightly controlled integrations only.
+
+   This applies to every django-indieweb API that accepts an injected
+   ``httpx.Client``, including ``WebmentionProcessor(client=...)``,
+   ``process_queued_webmention(..., client=...)``,
+   ``WebmentionSender.discover_endpoint``,
+   ``WebmentionSender.send_webmention``, and
+   ``WebmentionSender.fetch_content``. Source-side docstrings in
+   ``src/indieweb/processors.py`` and ``src/indieweb/senders.py`` carry the
+   same warning.
+
 Synchronous receiving is still available for compatibility, but production
 deployments should use ``INDIEWEB_WEBMENTION_ENQUEUE`` so source fetching,
 target-link verification, microformats parsing, spam checks, Vouch checks,
@@ -322,6 +340,13 @@ Outgoing Webmentions can include Vouch metadata explicitly:
 
 The ``send_webmentions`` management command also accepts ``--vouch`` to include
 the same voucher URL with each delivered Webmention.
+
+``WebmentionSender`` methods such as ``discover_endpoint``,
+``send_webmention``, and ``fetch_content`` accept an optional ``client``
+keyword for tests and tightly controlled integrations. See the injected-client
+warning under :ref:`Receive-Side Network and Resource Limits
+<webmention-injected-client-warning>`; production callers should leave it
+unset so DNS-based SSRF blocking and IP pinning apply.
 
 Salmention Support Status
 =========================

@@ -25,3 +25,9 @@ def test_production_hardening_snippet_references_known_settings():
     assert "Production hardening" in text, "configuration.rst missing 'Production hardening' section"
     for name in KNOWN_SETTINGS:
         assert name in text, f"{name} missing from configuration.rst hardening snippet"
+
+
+def test_injected_client_warning_present():
+    for path in ("docs/webmention.rst", "docs/websub.rst"):
+        text = Path(path).read_text()
+        assert "Leave ``client`` unset in production" in text, path
