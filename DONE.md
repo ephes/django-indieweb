@@ -4,6 +4,34 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P1.2a — Outbound HTTP hardening: IP block tightening + trust_env=False (first half of P1.2)
+
+- Tightened ``_blocked_ip_address`` in ``src/indieweb/http_client.py`` so it
+  rejects multicast, reserved, unspecified, loopback, link-local, and private
+  destinations regardless of whether ``ipaddress.is_global`` already covered
+  them, and added explicit handling for NAT64 well-known (``64:ff9b::/96``)
+  and local-use (``64:ff9b:1::/48``) prefixes by recursing on the embedded
+  IPv4 address. This blocks NAT64 carriers of ``127.0.0.1``,
+  ``169.254.169.254``, and similar dangerous v4 destinations.
+- Instantiated default ``httpx.Client(...)`` constructors in
+  ``src/indieweb/processors.py``, ``src/indieweb/senders.py``, and
+  ``src/indieweb/websub.py`` with ``trust_env=False`` so ambient
+  ``HTTP(S)_PROXY``, ``NO_PROXY``, and CA bundle environment variables cannot
+  redirect or downgrade the screened connection path. Injected client branches
+  are unchanged; callers that supply their own client retain full control.
+- Added regression tests in ``tests/test_http_client.py`` covering both the
+  expanded IP-block table (NAT64, CGNAT, IPv6 discard prefix, multicast,
+  unspecified, broadcast) and a static check that every default
+  ``httpx.Client(...)`` construction in the protocol clients sets
+  ``trust_env=False``.
+- This commit is the first half (sub-tasks 1+2 of 4) of the P1.2 outbound HTTP
+  hardening backlog item; Task 3 will complete the second half by tightening
+  redirect handling and enforcing HTTPS for secret-bearing WebSub requests.
+- Validation: ``uv run pytest -q`` (1339 passed), ``uv run mypy`` (no issues),
+  ``uv run prek run --all-files`` (all hooks pass).
+- Docs: ``docs/changelog.rst`` records the partial hardening; this DONE entry
+  and ``SECURITY_ANALYSIS.md`` reflect the partially resolved residuals.
+
 ### Restrict Webmention and Vouch source proof to rendered anchor links
 
 - ``_html_links_to_target`` and ``_html_links_to_source_domain`` in

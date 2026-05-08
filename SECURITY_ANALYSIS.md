@@ -275,15 +275,27 @@ Historical contributing issues, since resolved or narrowed:
 
 **Current residuals:**
 
-- Extend `_blocked_ip_address` beyond `not ip.is_global` so multicast,
-  reserved, and NAT64 well-known-prefix addresses that map to blocked IPv4
-  destinations are rejected.
-- Instantiate default protocol clients with `trust_env=False`.
+- (Partially resolved 2026-05-08, P1.2a) Extend `_blocked_ip_address` beyond
+  `not ip.is_global` so multicast, reserved, and NAT64 well-known-prefix
+  addresses that map to blocked IPv4 destinations are rejected. The current
+  ``_blocked_ip_address`` now rejects multicast, reserved, unspecified,
+  loopback, link-local, and private destinations explicitly and recurses
+  through the embedded IPv4 destination for NAT64 well-known
+  (``64:ff9b::/96``) and local-use (``64:ff9b:1::/48``) prefixes. Covered by
+  ``test_blocked_ip_rejects_dangerous`` /
+  ``test_blocked_ip_allows_public`` in ``tests/test_http_client.py``.
+- (Partially resolved 2026-05-08, P1.2a) Instantiate default protocol clients
+  with `trust_env=False`. Default ``httpx.Client(...)`` calls in
+  ``processors.py``, ``senders.py``, and ``websub.py`` now pass
+  ``trust_env=False`` so ambient proxy and CA bundle environment variables
+  cannot redirect or downgrade the screened connection path. A static
+  regression test
+  (``test_default_clients_disable_trust_env``) prevents drift.
 - Split redirect behavior so Webmention compatibility can preserve POST bodies
   while WebSub subscription/publish and other secret-bearing callers strip or
-  reject cross-origin body/header replay.
+  reject cross-origin body/header replay. (Pending — Task 3 of the P1.2 plan.)
 - Reject or require HTTPS for WebSub subscription requests that send
-  `hub.secret`.
+  `hub.secret`. (Pending — Task 3 of the P1.2 plan.)
 
 ### 3. Synchronous Webmention and WebSub Processing Cause DoS, Decompression Bombs, and Recursion DoS
 

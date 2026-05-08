@@ -144,7 +144,7 @@ class WebmentionSender:
             The webmention endpoint URL or None if not found
         """
         close_client = client is None
-        http_client = client if client is not None else httpx.Client(verify=True)
+        http_client = client if client is not None else httpx.Client(verify=True, trust_env=False)
         resolver = default_address_resolver if close_client else None
         try:
             validate_safe_http_url(target_url, resolver=resolver)
@@ -259,7 +259,7 @@ class WebmentionSender:
             Dict with 'success', 'status_code', and optionally 'error'
         """
         close_client = client is None
-        http_client = client if client is not None else httpx.Client(verify=True)
+        http_client = client if client is not None else httpx.Client(verify=True, trust_env=False)
         resolver = default_address_resolver if close_client else None
         try:
             validate_safe_http_url(endpoint, resolver=resolver)
@@ -317,7 +317,7 @@ class WebmentionSender:
             HTML content or None if error
         """
         close_client = client is None
-        http_client = client if client is not None else httpx.Client(verify=True)
+        http_client = client if client is not None else httpx.Client(verify=True, trust_env=False)
         resolver = default_address_resolver if close_client else None
         try:
             validate_safe_http_url(url, resolver=resolver)

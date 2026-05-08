@@ -14,11 +14,12 @@ When adding or completing items, keep each entry specific enough for an agent or
   `src/indieweb/websub.py`, `tests/test_http_client.py`,
   `tests/test_websub_subscriber.py`, `tests/test_websub.py`. This can land as
   a sequence of focused patches:
-  - Extend `_blocked_ip_address` beyond `not ip.is_global` so multicast,
+  - [x] Extend `_blocked_ip_address` beyond `not ip.is_global` so multicast,
     reserved, and NAT64 well-known-prefix addresses that map to blocked IPv4
     destinations are rejected.
-  - Instantiate default `httpx.Client` objects with `trust_env=False` so proxy
-    and CA environment variables cannot bypass the screened connection path.
+  - [x] Instantiate default `httpx.Client` objects with `trust_env=False` so
+    proxy and CA environment variables cannot bypass the screened connection
+    path.
   - Split redirect handling so Webmention POST compatibility can opt into
     body-preserving redirects, while WebSub subscription/publish and other
     secret-bearing callers strip sensitive headers/bodies or reject

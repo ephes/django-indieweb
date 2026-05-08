@@ -639,7 +639,7 @@ def request_websub_subscription(
         data["hub.secret"] = secret
 
     close_client = client is None
-    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True)
+    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True, trust_env=False)
     resolver = default_address_resolver if close_client else None
     try:
         try:
@@ -1162,7 +1162,7 @@ def notify_hubs(
     data = {"hub.mode": "publish", "hub.url": validated_topic_url}
 
     close_client = client is None
-    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True)
+    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True, trust_env=False)
     resolver = default_address_resolver if close_client else None
     results: list[WebSubNotificationResult] = []
     try:

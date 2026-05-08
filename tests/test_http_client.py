@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -5,6 +8,7 @@ from indieweb.http_client import (
     HTTPResponseTooLarge,
     UnsafeHTTPUrlError,
     WebmentionRedirectError,
+    _blocked_ip_address,
     request_with_safe_redirects,
     request_with_webmention_redirects,
     resolve_safe_http_url,
@@ -527,3 +531,50 @@ def test_stream_with_safe_redirects_does_not_set_sni_for_http_scheme():
     assert "sni_hostname" not in requests[0].extensions
     assert requests[0].url.host == "93.184.216.34"
     assert requests[0].headers["host"] == "example.com"
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "239.255.255.250",  # IPv4 multicast (SSDP)
+        "224.0.0.1",  # IPv4 multicast all-hosts
+        "0.0.0.0",  # IPv4 unspecified
+        "255.255.255.255",  # IPv4 broadcast
+        "169.254.169.254",  # link-local (cloud metadata)
+        "100.64.0.1",  # CGNAT shared address space
+        "100::1",  # IPv6 discard prefix
+        "64:ff9b::7f00:1",  # NAT64 wkn -> 127.0.0.1
+        "64:ff9b:1::a9fe:a9fe",  # NAT64 local-use -> 169.254.169.254
+    ],
+)
+def test_blocked_ip_rejects_dangerous(address):
+    assert _blocked_ip_address(address) is True, address
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "1.1.1.1",
+        "8.8.8.8",
+        "2606:4700:4700::1111",
+    ],
+)
+def test_blocked_ip_allows_public(address):
+    assert _blocked_ip_address(address) is False, address
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/indieweb/processors.py",
+        "src/indieweb/senders.py",
+        "src/indieweb/websub.py",
+    ],
+)
+def test_default_clients_disable_trust_env(path):
+    text = Path(path).read_text()
+    matches = list(re.finditer(r"httpx\.Client\([^)]*\)", text))
+    assert matches, f"{path}: expected at least one httpx.Client(...) construction"
+    for match in matches:
+        snippet = match.group(0)
+        assert "trust_env=False" in snippet, f"{path}: {snippet} missing trust_env=False"

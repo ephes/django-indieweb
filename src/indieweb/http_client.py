@@ -58,6 +58,10 @@ def _canonical_host(host: str) -> str:
         raise UnsafeHTTPUrlError("URL host is not valid IDNA") from exc
 
 
+NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
+NAT64_LOCAL_USE_PREFIX = ipaddress.IPv6Network("64:ff9b:1::/48")
+
+
 def _blocked_ip_address(address: str) -> bool:
     try:
         ip = ipaddress.ip_address(address)
@@ -65,7 +69,15 @@ def _blocked_ip_address(address: str) -> bool:
         raise UnsafeHTTPUrlError(f"resolved address is not a valid IP address: {address}") from exc
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
-    return not ip.is_global
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip in NAT64_WELL_KNOWN_PREFIX or ip in NAT64_LOCAL_USE_PREFIX:
+            embedded_v4 = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+            return _blocked_ip_address(str(embedded_v4))
+    if not ip.is_global:
+        return True
+    if ip.is_multicast or ip.is_reserved or ip.is_unspecified or ip.is_loopback or ip.is_link_local or ip.is_private:
+        return True
+    return False
 
 
 def _validate_parsed_http_url(url: str) -> tuple[str, int]:

@@ -619,7 +619,7 @@ class WebmentionProcessor:
         headers = {"User-Agent": "django-indieweb/1.0"}
         injected = self._injected_client
         close_client = injected is None
-        client = injected if injected is not None else httpx.Client(verify=True)
+        client = injected if injected is not None else httpx.Client(verify=True, trust_env=False)
         resolver = default_address_resolver if close_client else None
         try:
             return stream_with_safe_redirects(
@@ -640,7 +640,7 @@ class WebmentionProcessor:
         headers = {"User-Agent": "django-indieweb/1.0"}
         injected = self._injected_client
         close_client = injected is None
-        client = injected if injected is not None else httpx.Client(verify=True)
+        client = injected if injected is not None else httpx.Client(verify=True, trust_env=False)
         resolver = default_address_resolver if close_client else None
         try:
             return stream_with_safe_redirects(

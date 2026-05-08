@@ -5,6 +5,21 @@ Changelog
 
 Unreleased
 ----------
+* Tightened outbound SSRF blocklist in ``_blocked_ip_address`` so multicast,
+  reserved, unspecified, loopback, link-local, and private destinations are
+  rejected explicitly even when ``ipaddress.is_global`` would already cover
+  them, and added recursion through NAT64 well-known (``64:ff9b::/96``) and
+  local-use (``64:ff9b:1::/48``) prefixes so an IPv6 carrier of a blocked IPv4
+  address (for example a NAT64-encoded ``127.0.0.1`` or
+  ``169.254.169.254``) is rejected via the embedded v4 destination. Default
+  ``httpx.Client`` instantiations in the Webmention, Webmention sender, and
+  WebSub clients now pass ``trust_env=False`` so ambient
+  ``HTTP(S)_PROXY``/``NO_PROXY``/``SSL_CERT_FILE`` environment variables
+  cannot redirect or downgrade the screened connection path. Injected client
+  branches are unchanged; callers that supply their own ``httpx.Client`` keep
+  full control. Together these are the first half of the P1.2 outbound HTTP
+  hardening work; the second half (redirect-handling split and HTTPS
+  enforcement for ``hub.secret``-bearing WebSub requests) is still pending.
 * Restricted Webmention and Vouch source proof to rendered ``<a href>``
   hyperlinks. Non-anchor href carriers such as ``<link rel="canonical">``,
   ``<base>``, and ``<area>`` no longer satisfy target or Vouch source-domain
