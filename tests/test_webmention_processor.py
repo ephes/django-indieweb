@@ -233,12 +233,12 @@ class TestWebmentionProcessor:
 
         assert processor._verify_target_link(html_content, target_url) is True
 
-    def test_verify_target_link_accepts_non_anchor_href(self, processor):
-        """Test that structured href extraction preserves non-anchor href matching."""
+    def test_verify_target_link_rejects_non_anchor_href(self, processor):
+        """Non-anchor href carriers (link, base, area) must not satisfy target verification."""
         target_url = "https://mysite.com/article"
         html_content = f'<html><head><link rel="canonical" href="{target_url}"></head></html>'
 
-        assert processor._verify_target_link(html_content, target_url) is True
+        assert processor._verify_target_link(html_content, target_url) is False
 
     @pytest.mark.parametrize(
         ("href", "target_url"),
@@ -3049,3 +3049,33 @@ class TestWebmentionProcessor:
             assert webmention.author_name == "Canonical Profile Name"
             assert webmention.author_url == "https://example.com/authors/canonical"
             assert webmention.author_photo == "https://example.com/canonical-profile.jpg"
+
+
+from indieweb.processors import _html_links_to_source_domain, _html_links_to_target  # noqa: E402
+
+ANCHOR_ONLY_NEGATIVE_FIXTURES = [
+    ('<link rel="alternate" href="https://target.example/post"/>', "link element"),
+    ('<base href="https://target.example/post"/>', "base element"),
+    ('<map><area href="https://target.example/post"/></map>', "area element"),
+]
+
+
+@pytest.mark.parametrize("html,label", ANCHOR_ONLY_NEGATIVE_FIXTURES)
+def test_html_links_to_target_rejects_non_anchor(html, label):
+    assert _html_links_to_target(html, "https://target.example/post") is False, label
+
+
+def test_html_links_to_target_accepts_anchor():
+    html = '<a href="https://target.example/post">link</a>'
+    assert _html_links_to_target(html, "https://target.example/post") is True
+
+
+@pytest.mark.parametrize("html,label", ANCHOR_ONLY_NEGATIVE_FIXTURES)
+def test_html_links_to_source_domain_rejects_non_anchor(html, label):
+    html_for_domain = html.replace("target.example/post", "source.example")
+    assert _html_links_to_source_domain(html_for_domain, "https://source.example/page") is False, label
+
+
+def test_html_links_to_source_domain_accepts_anchor():
+    html = '<a href="https://source.example/about">about</a>'
+    assert _html_links_to_source_domain(html, "https://source.example/page") is True

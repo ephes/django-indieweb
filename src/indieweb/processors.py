@@ -181,7 +181,7 @@ def _urls_match(left: str, right: str) -> bool:
 def _html_links_to_target(html_content: str, target_url: str) -> bool:
     """Return whether ``html_content`` contains an href value matching ``target_url``."""
     soup = BeautifulSoup(html_content, "html.parser")
-    for tag in soup.find_all(href=True):
+    for tag in soup.find_all("a", href=True):
         if isinstance(tag, Tag):
             if _has_non_rendered_ancestor(tag):
                 continue
@@ -236,8 +236,10 @@ def _html_links_to_source_domain(html_content: str, source_url: str) -> bool:
         return False
 
     soup = BeautifulSoup(html_content, "html.parser")
-    for tag in soup.find_all(href=True):
+    for tag in soup.find_all("a", href=True):
         if isinstance(tag, Tag):
+            if _has_non_rendered_ancestor(tag):
+                continue
             href = tag.get("href")
             if isinstance(href, str) and _href_links_to_domain(href, source_domain):
                 return True

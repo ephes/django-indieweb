@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Restricted Webmention and Vouch source proof to rendered ``<a href>``
+  hyperlinks. Non-anchor href carriers such as ``<link rel="canonical">``,
+  ``<base>``, and ``<area>`` no longer satisfy target or Vouch source-domain
+  verification, and the non-rendered-ancestor guard (``<template>``,
+  ``<script>``, ``<style>``, ``<noscript>``, ``<iframe>``, ``<svg>``, HTML
+  comments) now applies consistently to Vouch domain checks as well.
 * Tightened h-card URL handling as defense-in-depth. ``Profile`` validation now
   restricts ``h_card.url``/``h_card.photo``/``h_card.org.url`` and the synced
   ``Profile.url``/``Profile.photo_url`` fields to ``http``/``https``, rejecting

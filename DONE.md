@@ -4,6 +4,29 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### Restrict Webmention and Vouch source proof to rendered anchor links
+
+- ``_html_links_to_target`` and ``_html_links_to_source_domain`` in
+  ``src/indieweb/processors.py`` now iterate ``soup.find_all("a", href=True)``
+  instead of any element carrying an ``href`` attribute. Non-rendered carriers
+  such as ``<link rel="canonical">``, ``<base>``, and ``<area>`` no longer
+  satisfy Webmention target verification or Vouch source-domain verification.
+  ``_html_links_to_source_domain`` also gained the existing
+  ``_has_non_rendered_ancestor`` guard for parity with target verification, so
+  anchors inside ``<template>``, ``<script>``, ``<style>``, ``<noscript>``,
+  ``<iframe>``, ``<svg>``, or HTML comments are skipped consistently.
+- Added regression tests in ``tests/test_webmention_processor.py`` covering
+  ``<link>``, ``<base>``, and ``<area>`` rejection plus ``<a>`` acceptance for
+  both helpers, and updated the existing
+  ``test_verify_target_link_*_non_anchor_href`` case to reflect the stricter
+  policy.
+- Validation: ``uv run pytest -q`` (1324 passed), ``uv run mypy`` (no issues),
+  ``uv run prek run --all-files`` (all hooks pass).
+- Docs: ``docs/changelog.rst`` records the security tightening; this DONE
+  entry and ``SECURITY_ANALYSIS.md`` reflect the resolved residual.
+- Changelog: see "Restrict Webmention and Vouch source proof to rendered
+  anchor links" entry in ``docs/changelog.rst``.
+
 ### Tighten h-card render-time URL validation as defense-in-depth
 
 - ``Profile._validate_h_card_urls`` now uses ``URLValidator(schemes=["http",
