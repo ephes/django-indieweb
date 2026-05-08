@@ -9,7 +9,7 @@ import logging
 import math
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import Message
@@ -42,6 +42,7 @@ from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSub
 from .processors import WebmentionProcessor
 from .rate_limit import RateLimitMixin
 from .websub import (
+    WebSubDeliveryEnqueueError,
     WebSubDeliveryHookError,
     confirm_websub_verification,
     delivery_body_too_large,
@@ -49,6 +50,7 @@ from .websub import (
     delivery_content_type_allowed,
     delivery_is_replay,
     delivery_max_bytes,
+    enqueue_websub_delivery,
     process_websub_delivery,
     record_websub_delivery,
     record_websub_denial,
@@ -2569,8 +2571,60 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             )
             return HttpResponse(status=409)
 
+        failure = self._dispatch_delivery(
+            subscription,
+            body,
+            request.headers,
+            content_type=content_type,
+            signature_algorithm=signature_algorithm,
+        )
+        if failure is not None:
+            return failure
+
+        record_websub_delivery(
+            subscription,
+            body,
+            content_type=content_type,
+            status_code=204,
+            signature_algorithm=signature_algorithm,
+        )
+        return HttpResponse(status=204)
+
+    def _dispatch_delivery(
+        self,
+        subscription: WebSubSubscription,
+        body: bytes,
+        headers: Mapping[str, str],
+        *,
+        content_type: str,
+        signature_algorithm: str | None,
+    ) -> HttpResponse | None:
+        """Run the configured enqueue or sync delivery hook for an accepted body.
+
+        Returns an ``HttpResponse`` when the dispatch failed and the caller
+        should return that response immediately. Returns ``None`` when the
+        delivery should continue to the success path. ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE``
+        wins when set: the inline ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` is skipped
+        because the queued worker is expected to run any host-side processing.
+        """
         try:
-            process_websub_delivery(subscription, body, request.headers)
+            enqueued = enqueue_websub_delivery(subscription, body, headers)
+        except WebSubDeliveryEnqueueError:
+            record_websub_delivery(
+                subscription,
+                body,
+                content_type=content_type,
+                status_code=500,
+                error="delivery enqueue failed",
+                signature_algorithm=signature_algorithm,
+            )
+            return HttpResponse(status=500)
+
+        if enqueued:
+            return None
+
+        try:
+            process_websub_delivery(subscription, body, headers)
         except WebSubDeliveryHookError:
             record_websub_delivery(
                 subscription,
@@ -2582,14 +2636,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             )
             return HttpResponse(status=500)
 
-        record_websub_delivery(
-            subscription,
-            body,
-            content_type=content_type,
-            status_code=204,
-            signature_algorithm=signature_algorithm,
-        )
-        return HttpResponse(status=204)
+        return None
 
 
 class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):

@@ -805,6 +805,66 @@ host-owned worker. The examples keep feed parsing, entry persistence, queue
 choice, retry behavior, and delivery body storage policy outside
 django-indieweb.
 
+INDIEWEB_WEBSUB_DELIVERY_ENQUEUE
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable that hands accepted WebSub deliveries to a
+host-owned queue instead of running ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` inline in
+the callback request thread.
+
+**Default:** ``None`` (deliveries run synchronously through
+``INDIEWEB_WEBSUB_DELIVERY_HOOK`` if configured)
+
+The callable receives the same keyword arguments as
+``INDIEWEB_WEBSUB_DELIVERY_HOOK`` so a host can reuse one handler implementation
+for either delivery mode:
+
+.. code-block:: python
+
+   def enqueue_delivery(*, subscription_id, hub_url, topic_url, body, headers):
+       ...
+
+When set, the callback view validates the token, active subscription state,
+size and content-type limits, signature, and replay guard before invoking the
+enqueue callable. On a successful enqueue the view returns HTTP ``204`` and
+records the delivery as accepted; ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` is
+**not** called inline. The host's queue worker is responsible for running the
+delivery hook (or any equivalent processing) later. Import failures,
+non-callables, and exceptions raised by the enqueue callable are logged,
+recorded on the subscription row with ``delivery enqueue failed``, and returned
+as HTTP ``500`` so the hub retries.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "myapp.websub.enqueue_delivery"
+
+.. code-block:: python
+
+   # myapp/websub.py
+   from myapp.tasks import process_websub_delivery_task
+
+   def enqueue_delivery(*, subscription_id, hub_url, topic_url, body, headers):
+       process_websub_delivery_task.delay(
+           subscription_id=subscription_id,
+           hub_url=hub_url,
+           topic_url=topic_url,
+           body=body,
+           headers=headers,
+       )
+
+Production deployments should prefer queued processing. Synchronous deliveries
+still run under bounded size and content-type limits, but feed parsing and
+persistence should not run inline in the callback request.
+
+.. note::
+   ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` and ``INDIEWEB_WEBSUB_DELIVERY_HOOK``
+   are mutually exclusive at request time: when both are set, the callback
+   view enqueues the delivery and skips the inline hook. The queued worker is
+   expected to call the host's delivery handler itself.
+
 WebSub Subscriber Models and Commands
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

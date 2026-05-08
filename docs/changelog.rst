@@ -5,6 +5,19 @@ Changelog
 
 Unreleased
 ----------
+* Added ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` so hosts can hand accepted WebSub
+  deliveries off to a queue instead of running
+  ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` synchronously inside the callback request
+  thread. The enqueue callable receives the same keyword arguments as the
+  delivery hook (``subscription_id``, ``hub_url``, ``topic_url``, ``body``,
+  ``headers``). When ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` is set, the callback
+  view validates token, signature, size, content-type, and replay state, calls
+  the enqueue, records HTTP ``204`` on success, and skips the inline delivery
+  hook so the queued worker can run any host-side processing later. Import
+  failures, non-callables, and exceptions from the enqueue callable are logged,
+  recorded as ``delivery enqueue failed``, and returned as HTTP ``500`` so the
+  hub retries. ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` continues to drive synchronous
+  deliveries when ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` is unset.
 * Removed the ``unittest.mock`` module-name guards in
   ``request_with_safe_redirects`` and ``stream_with_safe_redirects``. Those
   guards silently disabled streaming size enforcement and IP pinning whenever

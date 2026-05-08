@@ -1191,6 +1191,70 @@ def test_callback_post_reports_delivery_hook_failure(client, settings, subscript
 
 
 @pytest.mark.django_db
+def test_callback_post_enqueue_records_204_and_skips_sync_hook(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.capture_enqueue"
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+    body = b"<feed><updated>now</updated></feed>"
+
+    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+
+    subscription.refresh_from_db()
+    assert response.status_code == 204
+    assert subscription.last_delivery_status_code == 204
+    assert subscription.last_delivery_error == ""
+    assert websub_hooks.DELIVERIES == []
+    assert len(websub_hooks.ENQUEUED) == 1
+    enqueued = websub_hooks.ENQUEUED[0]
+    assert enqueued["subscription_id"] == subscription.pk
+    assert enqueued["hub_url"] == subscription.hub_url
+    assert enqueued["topic_url"] == subscription.topic_url
+    assert enqueued["body"] == body
+    assert isinstance(enqueued["headers"], dict)
+
+
+@pytest.mark.django_db
+def test_callback_post_reports_enqueue_failure(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.failing_enqueue"
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+
+    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+
+    subscription.refresh_from_db()
+    assert response.status_code == 500
+    assert subscription.last_delivery_status_code == 500
+    assert subscription.last_delivery_error == "delivery enqueue failed"
+    assert websub_hooks.DELIVERIES == []
+
+
+@pytest.mark.django_db
+def test_callback_post_reports_enqueue_import_failure(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.does_not_exist"
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+
+    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+
+    subscription.refresh_from_db()
+    assert response.status_code == 500
+    assert subscription.last_delivery_status_code == 500
+    assert subscription.last_delivery_error == "delivery enqueue failed"
+    assert websub_hooks.DELIVERIES == []
+
+
+@pytest.mark.django_db
+def test_callback_post_reports_enqueue_non_callable(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.DELIVERIES"
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+
+    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+
+    subscription.refresh_from_db()
+    assert response.status_code == 500
+    assert subscription.last_delivery_status_code == 500
+    assert subscription.last_delivery_error == "delivery enqueue failed"
+    assert websub_hooks.DELIVERIES == []
+
+
+@pytest.mark.django_db
 def test_websub_lease_helpers_list_expired_and_renewal_candidates():
     now = timezone.now()
     expired = WebSubSubscription.objects.create(

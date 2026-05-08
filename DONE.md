@@ -4,6 +4,37 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### Add ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` for queued WebSub deliveries
+
+- New optional setting ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` (dotted path to a
+  callable) lets hosts hand accepted WebSub deliveries to a host-owned queue
+  instead of running ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` synchronously inside the
+  callback request thread. The callable receives the same keyword arguments as
+  the delivery hook (``subscription_id``, ``hub_url``, ``topic_url``, ``body``,
+  ``headers``) so hosts can reuse one handler implementation for either mode.
+- ``src/indieweb/websub.py`` adds ``WebSubDeliveryEnqueueError``,
+  ``get_websub_delivery_enqueue()``, and ``enqueue_websub_delivery()`` mirroring
+  the existing delivery-hook helpers.
+- ``WebSubCallbackView.post`` (``src/indieweb/views.py``) invokes the enqueue
+  callable after token, signature, size, content-type, and replay validation.
+  On success, the view records a ``204`` delivery and skips the inline
+  ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` so the queued worker can run any host-side
+  processing later. Import failures, non-callables, and exceptions raised by
+  the enqueue callable are logged, recorded as ``delivery enqueue failed``, and
+  returned as HTTP ``500`` so the hub retries.
+- Tests in ``tests/test_websub_subscriber.py`` cover queued success (204,
+  inline hook is **not** invoked), enqueue runtime failure, bad import path,
+  and a non-callable enqueue setting. ``tests/websub_hooks.py`` gains
+  ``capture_enqueue`` and ``failing_enqueue`` helpers plus an ``ENQUEUED``
+  capture list.
+- Validation: ``uv run pytest`` (full suite); ``uv run mypy``; ``uv run ruff
+  check .``; ``uv run prek run --all-files``.
+- Documentation: new ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` section in
+  ``docs/configuration.rst`` next to the delivery-hook documentation, with an
+  explicit note that the enqueue and inline hook are mutually exclusive at
+  request time. Changelog: added an Unreleased entry describing the new
+  setting and behavior.
+
 ### Drop ``unittest.mock`` module-name guards in ``http_client``
 
 - ``request_with_safe_redirects`` and ``stream_with_safe_redirects``

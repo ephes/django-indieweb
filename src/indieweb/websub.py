@@ -99,6 +99,10 @@ class WebSubDeliveryHookError(Exception):
     """Configured WebSub delivery hook failed to load or run."""
 
 
+class WebSubDeliveryEnqueueError(Exception):
+    """Configured WebSub delivery enqueue hook failed to load or run."""
+
+
 def _as_string_tuple(value: Any, *, setting_name: str) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -1085,6 +1089,52 @@ def process_websub_delivery(
     except Exception as exc:
         logger.exception(f"WebSub delivery hook failed for subscription {subscription.pk}")
         raise WebSubDeliveryHookError from exc
+
+
+def get_websub_delivery_enqueue() -> Any | None:
+    """Load the optional WebSub delivery enqueue callable."""
+    enqueue_path = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_ENQUEUE", None)
+    if not enqueue_path:
+        return None
+    try:
+        enqueue = import_string(enqueue_path)
+    except Exception as exc:
+        logger.exception(f"Failed to load INDIEWEB_WEBSUB_DELIVERY_ENQUEUE {enqueue_path!r}")
+        raise WebSubDeliveryEnqueueError from exc
+    if not callable(enqueue):
+        logger.error(f"INDIEWEB_WEBSUB_DELIVERY_ENQUEUE {enqueue_path!r} is not callable")
+        raise WebSubDeliveryEnqueueError
+    return enqueue
+
+
+def enqueue_websub_delivery(
+    subscription: WebSubSubscription,
+    body: bytes,
+    headers: Mapping[str, str],
+) -> bool:
+    """Hand an accepted WebSub delivery to the configured enqueue callable.
+
+    Returns ``True`` when the enqueue callable was invoked successfully, ``False``
+    when no ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` setting is configured. Raises
+    ``WebSubDeliveryEnqueueError`` for import failures, non-callables, and
+    runtime exceptions raised by the configured callable so the caller can
+    record a failed delivery and return HTTP 500.
+    """
+    enqueue = get_websub_delivery_enqueue()
+    if enqueue is None:
+        return False
+    try:
+        enqueue(
+            subscription_id=subscription.pk,
+            hub_url=subscription.hub_url,
+            topic_url=subscription.topic_url,
+            body=body,
+            headers=dict(headers),
+        )
+    except Exception as exc:
+        logger.exception(f"WebSub delivery enqueue hook failed for subscription {subscription.pk}")
+        raise WebSubDeliveryEnqueueError from exc
+    return True
 
 
 def notify_hubs(

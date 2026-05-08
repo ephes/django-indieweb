@@ -28,10 +28,7 @@ No current Priority 4 Housekeeping items.
 
 ### WebSub Enhancements
 
-- [ ] Optionally enqueue the WebSub delivery hook out of the request thread.
-  - References: `SECURITY_ANALYSIS.md` WebSub sync-hook finding; `src/indieweb/websub.py` (`process_websub_delivery`); `src/indieweb/views.py` (WebSub callback view).
-  - Current state: the configured `INDIEWEB_WEBSUB_DELIVERY_HOOK` runs synchronously inside the request thread, mirroring the pre-`INDIEWEB_WEBMENTION_ENQUEUE` Webmention design.
-  - Desired outcome: add `INDIEWEB_WEBSUB_DELIVERY_ENQUEUE` analogous to the Webmention enqueue setting, with documentation and tests for the queued path.
+No current Priority 4 WebSub Enhancements items.
 
 ### Micropub Enhancements and Extensions
 
