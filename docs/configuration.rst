@@ -1268,6 +1268,39 @@ verification fails closed for submitted vouchers. Configure a trust policy or
 at least one trusted voucher domain before enabling required mode in
 production.
 
+INDIEWEB_WEBMENTION_STATUS_PUBLIC
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Restrict the Webmention status endpoint response to a minimal public-safe
+shape.
+
+**Default:** ``False``
+
+Status URLs at ``/indieweb/webmention/<status-token>/`` use opaque,
+high-entropy ``status_token`` values, but a leaked status URL still reveals
+the stored ``source`` URL, ``target`` URL, current ``status``, and
+``verified_at`` timestamp to anyone who holds the token. The default
+behavior treats this as token-holder diagnostics and is unchanged.
+
+When set to ``True``, ``WebmentionStatusView`` returns only ``status`` and,
+when set, ``verified_at``. The ``source`` and ``target`` URLs are omitted,
+and no Vouch fields are exposed (they are also omitted in the default
+response). This avoids leaking private or draft post URLs through a
+forwarded ``Location`` header or a sender's logs.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBMENTION_STATUS_PUBLIC = True
+
+.. note::
+   Senders that follow the ``202 Accepted`` ``Location`` header to poll the
+   status endpoint can still observe ``status`` (and ``verified_at`` once
+   verified). They do not need ``source``/``target`` echoed back, since they
+   already know which URL pair they submitted.
+
 Salmention Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1791,6 +1824,7 @@ domain:
        "websub_callback":     {"limit": 120, "window": 60},
    }
    INDIEWEB_MICROPUB_URL_POLICY = "your_project.micropub_policy.allow_only_owned_urls"
+   INDIEWEB_WEBMENTION_STATUS_PUBLIC = True
 
 Notes:
 
@@ -1815,8 +1849,13 @@ Notes:
   considers safe (e.g. owned post URLs, plus your storage and CDN hosts).
   Returning anything else yields ``400 invalid_request``; raises and import
   failures fail closed with ``500``.
+* ``INDIEWEB_WEBMENTION_STATUS_PUBLIC = True`` restricts the Webmention
+  status endpoint response to ``status`` and (when set) ``verified_at``,
+  omitting the stored ``source`` and ``target`` URLs. The default response
+  shape is intended as token-holder diagnostics; enable the public-safe mode
+  for deployments where a leaked status URL must not reveal the URL pair.
 * Additional production-relevant settings will be documented here as they
-  are introduced (logging redaction, public-safe Webmention status mode).
+  are introduced (logging redaction).
 
 Testing Configuration
 ---------------------

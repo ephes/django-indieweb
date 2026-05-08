@@ -680,3 +680,66 @@ class TestWebmentionEndpoint:
         url = reverse("indieweb:webmention-status", args=[99999])
         response = client.get(url)
         assert response.status_code == 404
+
+    def test_webmention_status_public_mode_returns_minimal_fields(self, client):
+        """When INDIEWEB_WEBMENTION_STATUS_PUBLIC is True, response includes only status and verified_at."""
+        verified_at = timezone.now()
+        webmention = Webmention.objects.create(
+            source_url="https://other.example/reply",
+            target_url="https://example.com/post",
+            status="verified",
+            verified_at=verified_at,
+            vouch_url="https://trusted.example/vouch",
+        )
+
+        url = reverse("indieweb:webmention-status", args=[webmention.status_token])
+        with override_settings(INDIEWEB_WEBMENTION_STATUS_PUBLIC=True):
+            response = client.get(url)
+
+        assert response.status_code == 200
+        body = json.loads(response.content)
+        assert set(body.keys()) <= {"status", "verified_at"}
+        assert body["status"] == "verified"
+        assert body["verified_at"] == verified_at.isoformat()
+        assert "source" not in body
+        assert "target" not in body
+        assert "vouch_url" not in body
+        # No leak of URLs in body even as substrings.
+        raw = response.content.decode()
+        assert webmention.source_url not in raw
+        assert webmention.target_url not in raw
+        assert webmention.vouch_url not in raw
+
+    def test_webmention_status_public_mode_pending_omits_verified_at(self, client):
+        """Public mode for an unverified Webmention returns status only without verified_at."""
+        webmention = Webmention.objects.create(
+            source_url="https://other.example/reply",
+            target_url="https://example.com/post",
+            status="pending",
+        )
+
+        url = reverse("indieweb:webmention-status", args=[webmention.status_token])
+        with override_settings(INDIEWEB_WEBMENTION_STATUS_PUBLIC=True):
+            response = client.get(url)
+
+        assert response.status_code == 200
+        body = json.loads(response.content)
+        assert body == {"status": "pending"}
+
+    def test_webmention_status_default_mode_returns_full_fields(self, client):
+        """Default INDIEWEB_WEBMENTION_STATUS_PUBLIC=False keeps the existing diagnostic shape."""
+        webmention = Webmention.objects.create(
+            source_url="https://other.example/reply",
+            target_url="https://example.com/post",
+            status="verified",
+            verified_at=timezone.now(),
+        )
+
+        url = reverse("indieweb:webmention-status", args=[webmention.status_token])
+        response = client.get(url)
+
+        assert response.status_code == 200
+        body = json.loads(response.content)
+        assert "source" in body
+        assert "target" in body
+        assert "status" in body

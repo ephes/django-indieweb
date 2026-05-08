@@ -16,13 +16,7 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### API Hardening
 
-- [ ] Add an optional public-safe Webmention status response mode. References:
-  `src/indieweb/views.py` (`WebmentionStatusView`), `docs/webmention.rst`,
-  `docs/api.rst`, `tests/test_webmention_endpoint.py`. Status URLs use opaque
-  high-entropy tokens, but a leaked status URL reveals `source`, `target`,
-  `status`, and `verified_at`. Add a setting to return only minimal status
-  fields, or document the existing response as token-holder diagnostics that
-  can expose private source/target URLs.
+No current Priority 3 API Hardening items.
 
 ## Priority 4
 

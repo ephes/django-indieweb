@@ -219,6 +219,13 @@ Validated lower-priority hardening:
   leaked status URL reveals source URL, target URL, status, and verification
   timestamp to the holder. This is likely intended protocol diagnostics, but
   privacy-sensitive deployments may want a minimal public-safe response mode.
+  **Status:** Resolved 2026-05-08. ``WebmentionStatusView`` now honors
+  ``INDIEWEB_WEBMENTION_STATUS_PUBLIC`` (default ``False`` preserves the
+  diagnostic shape). When set to ``True``, the response body is restricted
+  to ``status`` and (when set) ``verified_at``; ``source`` and ``target``
+  are omitted. ``docs/configuration.rst``, ``docs/webmention.rst``, and
+  ``docs/api.rst`` document the setting; ``docs/configuration.rst`` adds it
+  to the ``Production hardening`` snippet.
 - Logging now redacts authorization codes and bearer tokens, but INFO/WARNING
   logs still include client IDs, ``redirect_uri``, ``state``, ``me``, and
   Webmention source/target URLs. That can expose private or draft URLs through
@@ -680,9 +687,13 @@ documented as best-effort under contention rather than a strict atomic limiter.
 
 **Severity:** Medium (refines first-pass enumeration finding)
 
-**Status:** Resolved and verified 2026-05-07. Status URLs now use opaque
-`status_token` values instead of sequential IDs, and public status JSON no
-longer includes Vouch URLs or Vouch timestamps.
+**Status:** Resolved and verified 2026-05-07; further hardened 2026-05-08.
+Status URLs now use opaque `status_token` values instead of sequential IDs,
+and public status JSON no longer includes Vouch URLs or Vouch timestamps.
+Deployments that must not echo the stored ``source``/``target`` URLs to a
+holder of a leaked status URL can additionally set
+``INDIEWEB_WEBMENTION_STATUS_PUBLIC = True`` to restrict the response body
+to ``status`` and (when set) ``verified_at``.
 
 `views.py:2025` — `WebmentionStatusView` is unauthenticated and its sequential `<int:pk>` URL exposes every Webmention's `source_url`, `target_url`, `vouch_url`, status, and verification timestamps. This leaks attacker-probe pending state, vouch URLs that may be private, and any private/draft post URL that happens to be a Webmention target.
 

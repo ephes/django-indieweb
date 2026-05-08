@@ -4,6 +4,41 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P3.3 — Public-safe Webmention status mode
+
+Added an optional minimal response mode for the Webmention status endpoint.
+Status URLs at ``/indieweb/webmention/<status-token>/`` already use opaque,
+high-entropy tokens, but the default response body echoes the stored
+``source`` and ``target`` URLs alongside ``status`` and ``verified_at``.
+That shape is intended as token-holder diagnostics; deployments where a
+leaked status URL must not reveal the URL pair can now opt into a minimal
+public-safe mode.
+
+- ``src/indieweb/views.py`` (``WebmentionStatusView``) reads
+  ``INDIEWEB_WEBMENTION_STATUS_PUBLIC`` (default ``False``). When ``True``,
+  the JSON body contains only ``status`` and, when set, ``verified_at``;
+  ``source``, ``target``, and any other fields are omitted. Default
+  behavior is unchanged.
+- ``docs/configuration.rst`` documents the new setting and adds it to the
+  ``Production hardening`` snippet (anchored at ``production-hardening``).
+  ``docs/webmention.rst`` and ``docs/api.rst`` describe the default
+  response as token-holder diagnostics and cross-reference the setting.
+- ``tests/test_webmention_endpoint.py`` adds three regressions:
+  ``test_webmention_status_public_mode_returns_minimal_fields`` checks that
+  ``source``, ``target``, and any vouch fields are dropped (and that none of
+  those URLs leak as substrings); ``test_webmention_status_public_mode_pending_omits_verified_at``
+  confirms unverified rows return ``{"status": "pending"}``;
+  ``test_webmention_status_default_mode_returns_full_fields`` pins the
+  default diagnostic shape.
+- ``tests/test_documentation_snippets.py`` adds
+  ``INDIEWEB_WEBMENTION_STATUS_PUBLIC`` to ``KNOWN_SETTINGS`` so removing
+  the setting from the hardening snippet fails CI.
+- ``docs/changelog.rst`` records the change. ``SECURITY_ANALYSIS.md`` marks
+  the matching residual resolved.
+
+Validation: ``uv run pytest -q`` (1387 passed); ``uv run mypy`` (no
+issues); ``uv run prek run --all-files`` (clean).
+
 ### P3.2 — Document injected HTTP-client trust
 
 Doc-only change. Several django-indieweb APIs accept an optional

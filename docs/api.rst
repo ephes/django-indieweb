@@ -1495,6 +1495,16 @@ The response includes ``verified_at`` when the Webmention has been verified.
 It does not expose stored Vouch URLs or Vouch verification timestamps. Missing
 or guessed status tokens return ``404``.
 
+The default response shape above is intended as token-holder diagnostics: a
+sender that received the ``202 Accepted`` ``Location`` (or a holder of the
+opaque token) can confirm which ``source``/``target`` pair the row records and
+its current ``status``. For deployments where a leaked status URL must not
+echo the stored URL pair, set
+``INDIEWEB_WEBMENTION_STATUS_PUBLIC = True`` (see
+:doc:`configuration`). In public-safe mode the body is restricted to
+``status`` and, when set, ``verified_at``; ``source`` and ``target`` are
+omitted.
+
 Error Responses
 ---------------
 

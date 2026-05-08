@@ -2960,15 +2960,24 @@ class WebmentionStatusView(CorsMixin, RateLimitMixin, View):
         """Return status of a webmention."""
         webmention = get_object_or_404(Webmention, status_token=status_token)
 
-        # Return JSON response with webmention status
-        status_data = {
-            "source": webmention.source_url,
-            "target": webmention.target_url,
-            "status": webmention.status,
-        }
+        public_mode = bool(getattr(settings, "INDIEWEB_WEBMENTION_STATUS_PUBLIC", False))
 
-        if webmention.verified_at:
-            status_data["verified_at"] = webmention.verified_at.isoformat()
+        if public_mode:
+            # Minimal public-safe response: omit source/target URLs and any
+            # diagnostic fields that could leak private post or vouch metadata
+            # to a holder of the opaque status token.
+            status_data: dict[str, str] = {"status": webmention.status}
+            if webmention.verified_at:
+                status_data["verified_at"] = webmention.verified_at.isoformat()
+        else:
+            # Default token-holder diagnostic response with full URL pair.
+            status_data = {
+                "source": webmention.source_url,
+                "target": webmention.target_url,
+                "status": webmention.status,
+            }
+            if webmention.verified_at:
+                status_data["verified_at"] = webmention.verified_at.isoformat()
 
         return HttpResponse(
             json.dumps(status_data),

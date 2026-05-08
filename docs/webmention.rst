@@ -268,6 +268,15 @@ admin use. Public status endpoint responses do not expose stored Vouch URLs or
 Vouch verification timestamps. Missing ``vouch`` values do not affect ordinary
 Webmentions unless ``INDIEWEB_WEBMENTION_VOUCH_REQUIRED`` is enabled.
 
+The default Webmention status response at
+``/indieweb/webmention/<status-token>/`` echoes the stored ``source`` and
+``target`` URLs along with ``status`` and (when verified) ``verified_at``.
+That shape is intended as token-holder diagnostics so the original sender can
+confirm which URL pair the row records. For deployments where a leaked status
+URL must not reveal the stored URL pair, set
+``INDIEWEB_WEBMENTION_STATUS_PUBLIC = True`` to restrict the response body to
+``status`` and ``verified_at``; see :doc:`configuration` for details.
+
 Queued receiving preserves the async boundary: the request path validates and
 stores the optional ``vouch`` URL, calls the configured enqueue hook, and
 returns ``202`` without fetching the source or voucher URL. Voucher fetching

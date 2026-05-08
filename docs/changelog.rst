@@ -5,6 +5,26 @@ Changelog
 
 Unreleased
 ----------
+* Added an optional public-safe Webmention status response mode.
+  ``INDIEWEB_WEBMENTION_STATUS_PUBLIC`` (default ``False``) preserves the
+  existing token-holder diagnostic shape that echoes ``source``, ``target``,
+  ``status``, and (when verified) ``verified_at``. When set to ``True``,
+  ``WebmentionStatusView`` returns only ``status`` and (when set)
+  ``verified_at``, omitting ``source`` and ``target`` so a leaked status URL
+  does not reveal the stored URL pair. Status URLs already use opaque
+  high-entropy ``status_token`` values; this setting is the residual
+  hardening for deployments where private or draft target URLs must not
+  appear in a status response. ``src/indieweb/views.py``
+  (``WebmentionStatusView``) reads the setting via ``getattr`` so existing
+  ``settings.py`` files behave unchanged. ``docs/configuration.rst``
+  documents the setting and adds it to the ``Production hardening`` snippet
+  (anchored at ``production-hardening``); ``docs/webmention.rst`` and
+  ``docs/api.rst`` describe the default response as token-holder diagnostics
+  and cross-reference the setting. ``tests/test_webmention_endpoint.py``
+  adds three regressions covering the public-safe shape (verified and
+  pending) and the default diagnostic shape;
+  ``tests/test_documentation_snippets.py`` adds
+  ``INDIEWEB_WEBMENTION_STATUS_PUBLIC`` to its known-settings sanity check.
 * Documented that injected ``httpx.Client`` arguments are a trusted
   test/integration escape hatch. ``docs/webmention.rst`` and
   ``docs/websub.rst`` now carry prominent ``.. warning::`` blocks (anchored

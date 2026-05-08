@@ -13,10 +13,10 @@ KNOWN_SETTINGS = {
     "INDIEWEB_RATE_LIMITS",
     "INDIEWEB_REDIRECT_URI_ALLOWLIST",
     "INDIEWEB_MICROPUB_URL_POLICY",
-    # Note: INDIEWEB_LOG_REDACTION and INDIEWEB_WEBMENTION_STATUS_PUBLIC are
-    # introduced in later tasks (P3/P4) of the same plan and will be
-    # referenced from the same hardening section then. They are intentionally
-    # omitted from this set until they exist.
+    "INDIEWEB_WEBMENTION_STATUS_PUBLIC",
+    # Note: INDIEWEB_LOG_REDACTION is introduced in a later task (P4) of the
+    # same plan and will be referenced from the same hardening section then.
+    # It is intentionally omitted from this set until it exists.
 }
 
 
