@@ -34,6 +34,7 @@ from .http_client import (
     response_text_with_limit,
     stream_with_safe_redirects,
 )
+from .log_redaction import redact_url
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
@@ -330,7 +331,7 @@ class WebmentionProcessor:
         Returns:
             Webmention object with processing results
         """
-        logger.info(f"Processing webmention from {source_url} to {target_url}")
+        logger.info(f"Processing webmention from {redact_url(source_url)} to {redact_url(target_url)}")
 
         # Get or create webmention
         webmention, _created = Webmention.objects.get_or_create(
@@ -370,7 +371,7 @@ class WebmentionProcessor:
             if locked.last_received_at is not None and locked.last_received_at >= outcome.received_at:
                 logger.info(
                     "Skipping stale webmention outcome for %s: row last received at %s, this outcome computed at %s",
-                    source_url,
+                    redact_url(source_url),
                     locked.last_received_at,
                     outcome.received_at,
                 )
@@ -389,7 +390,7 @@ class WebmentionProcessor:
                     logger.info(
                         "Preserving verified Vouch on row %s: submitted vouch_url=%r failed verification",
                         locked.pk,
-                        vouch_url,
+                        redact_url(vouch_url),
                     )
                 else:
                     # Either there was no prior verified Vouch (so accepting

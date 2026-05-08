@@ -22,15 +22,6 @@ No current Priority 3 API Hardening items.
 
 ### Housekeeping
 
-- [ ] Add privacy-oriented logging guidance or redaction mode. References:
-  `src/indieweb/views.py`, `src/indieweb/processors.py`,
-  `src/indieweb/websub.py`, `docs/configuration.rst`. Authorization codes and
-  bearer tokens are redacted, but logs still include client IDs,
-  `redirect_uri`, `state`, `me`, Webmention source/target URLs, and handler
-  URL parameters. Add deployment guidance for log retention/redaction, or add a
-  setting/helper that redacts privacy-sensitive URL and state values in
-  protocol logs.
-
 - [ ] Validate inbound protocol field lengths before persistence. References:
   `src/indieweb/views.py`, `src/indieweb/processors.py`,
   `src/indieweb/models.py`, `tests/test_webmention_endpoint.py`,

@@ -5,6 +5,29 @@ Changelog
 
 Unreleased
 ----------
+* Added opt-in privacy-oriented log redaction for IndieAuth/Micropub/
+  Webmention/WebSub INFO and WARNING log lines.
+  ``INDIEWEB_LOG_REDACTION`` (default ``"passthrough"``) preserves the
+  existing log shape; setting it to ``"redact"`` replaces ``client_id``,
+  ``redirect_uri``, ``state``, ``me``, Webmention source/target URLs,
+  and WebSub hub URLs with stable 12-character HMAC-SHA256 digests
+  keyed with ``SECRET_KEY``. The ``me`` parameter uses an
+  origin-only digest (scheme+host) so multiple paths under the same
+  origin collapse to a shared digest, supporting correlation without
+  disclosure. ERROR-level logs are not redacted so operators retain
+  full URLs for incident response. New module
+  ``src/indieweb/log_redaction.py`` exposes ``redact_url``,
+  ``redact_url_origin``, and ``redact_state``. Wiring covers the auth
+  GET log, consent verification, token exchange, resource-server
+  client gating, Micropub entry/media URL rejections, the Webmention
+  processing INFO line, stale-outcome and vouch-preservation logs, and
+  WebSub subscription/notification failure warnings.
+  ``docs/configuration.rst`` documents the setting (anchored at
+  ``log-redaction``) and adds it to the ``Production hardening``
+  snippet. ``tests/test_log_redaction.py`` covers both modes, stable
+  digests, origin collapsing, mode resolution, and end-to-end log
+  output via ``caplog``;  ``tests/test_documentation_snippets.py`` adds
+  ``INDIEWEB_LOG_REDACTION`` to its known-settings sanity check.
 * Added an optional public-safe Webmention status response mode.
   ``INDIEWEB_WEBMENTION_STATUS_PUBLIC`` (default ``False``) preserves the
   existing token-holder diagnostic shape that echoes ``source``, ``target``,

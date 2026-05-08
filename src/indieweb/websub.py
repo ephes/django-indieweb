@@ -31,6 +31,7 @@ from .http_client import (
     request_with_safe_redirects,
     validate_safe_http_url,
 )
+from .log_redaction import redact_url
 from .models import (
     WEBSUB_SECRET_ENCRYPTED_PREFIX,
     WebSubAcceptedDelivery,
@@ -688,7 +689,7 @@ def request_websub_subscription(
             WebmentionRedirectError,
             HTTPResponseTooLarge,
         ) as exc:
-            logger.warning(f"WebSub subscription request failed for hub={subscription.hub_url!r}: {exc}")
+            logger.warning(f"WebSub subscription request failed for hub={redact_url(subscription.hub_url)!r}: {exc}")
             _save_subscription_request_failure(
                 subscription,
                 mode=validated_mode,
@@ -1318,7 +1319,7 @@ def notify_hubs(
                 )
                 response = delivered.response
             except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError, HTTPResponseTooLarge) as exc:
-                logger.warning(f"WebSub hub notification failed for {hub_url!r}: {exc}")
+                logger.warning(f"WebSub hub notification failed for {redact_url(hub_url)!r}: {exc}")
                 results.append(
                     WebSubNotificationResult(
                         hub_url=hub_url,

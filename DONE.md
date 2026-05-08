@@ -4,6 +4,50 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P4.1 — Privacy-oriented logging redaction
+
+Added an opt-in log redaction mode that replaces privacy-sensitive
+URL/state values with stable HMAC-SHA256 digests in INFO/WARNING log
+lines emitted by the IndieAuth, Micropub, Webmention, and WebSub code
+paths. Authorization codes and bearer tokens were already redacted, but
+logs still echoed ``client_id``, ``redirect_uri``, ``state``, ``me``,
+Webmention source/target URLs, and WebSub hub URLs verbatim.
+
+- ``src/indieweb/log_redaction.py`` is a new module providing
+  ``redact_url``, ``redact_url_origin`` (digests scheme+host so multiple
+  paths under the same origin collapse together), and ``redact_state``.
+  All three accept an explicit ``mode=`` argument and otherwise read
+  ``INDIEWEB_LOG_REDACTION`` (default ``"passthrough"``). Unknown values
+  fall back to ``"passthrough"``. Digests are 12 hex chars from
+  HMAC-SHA256 keyed with ``SECRET_KEY``: one-way, stable per input,
+  invalidated by ``SECRET_KEY`` rotation.
+- ``src/indieweb/views.py`` wraps INFO/WARNING log calls covering the
+  authorization GET, consent verification, token exchange, resource
+  server client gating, ``me`` mismatch, and Micropub entry/media
+  rejections. ``src/indieweb/processors.py`` wraps the Webmention
+  processing INFO line and the stale-outcome / vouch-preservation logs.
+  ``src/indieweb/websub.py`` wraps the subscription request failure and
+  hub notification failure WARNING lines. ERROR-level logs are left
+  intact so operators retain full URLs for incident response.
+- ``docs/configuration.rst`` documents the setting under a new
+  ``INDIEWEB_LOG_REDACTION`` section anchored at ``log-redaction`` and
+  adds ``INDIEWEB_LOG_REDACTION = "redact"`` to the ``Production
+  hardening`` snippet.
+- ``tests/test_log_redaction.py`` is new. Helper-level tests cover both
+  modes, the stable-digest property, origin collapsing, fixed-length
+  output, mode resolution from settings, and unknown-value fallback. Two
+  Django integration tests exercise the auth GET handler and assert the
+  raw ``redirect_uri`` and ``state`` values do not appear in INFO logs
+  in redact mode while remaining present in passthrough mode.
+- ``tests/test_documentation_snippets.py`` adds
+  ``INDIEWEB_LOG_REDACTION`` to ``KNOWN_SETTINGS`` so removing it from
+  the hardening snippet fails CI.
+- ``docs/changelog.rst`` records the change. ``SECURITY_ANALYSIS.md``
+  marks the matching residual resolved.
+
+Validation: ``uv run pytest -q`` (1394 passed); ``uv run mypy`` (no
+issues); ``uv run prek run --all-files`` (clean).
+
 ### P3.3 — Public-safe Webmention status mode
 
 Added an optional minimal response mode for the Webmention status endpoint.

@@ -39,6 +39,7 @@ from django.views.generic import View
 
 from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
+from .log_redaction import redact_state, redact_url, redact_url_origin
 from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
 from .processors import WebmentionProcessor
 from .rate_limit import RateLimitMixin
@@ -534,7 +535,7 @@ def _token_client_id_error(client_id: str) -> HttpResponse | None:
         logger.info("rejected invalid client_id on token exchange")
         return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
     if not _client_id_allowed(client_id):
-        logger.warning(f"rejected disallowed client_id on token exchange: {client_id!r}")
+        logger.warning(f"rejected disallowed client_id on token exchange: {redact_url(client_id)!r}")
         return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
     return None
 
@@ -828,7 +829,7 @@ def _auth_request_client_redirect_error(client_id: str, redirect_uri: str, *, on
         logger.info(f"rejected invalid client_id on auth {on}")
         return HttpResponse("invalid client_id", status=400)
     if not _client_id_allowed(client_id):
-        logger.warning(f"rejected disallowed client_id on auth {on}: {client_id!r}")
+        logger.warning(f"rejected disallowed client_id on auth {on}: {redact_url(client_id)!r}")
         return HttpResponse("invalid_client", status=400)
     if not _redirect_uri_allowed(client_id, redirect_uri):
         logger.info(f"rejected redirect_uri not bound to client_id on auth {on}")
@@ -964,7 +965,10 @@ def _me_binding_error(user: AbstractBaseUser, submitted_me: str) -> HttpResponse
         logger.warning("rejected IndieAuth request because INDIEWEB_BIND_ME_TO_USER is enabled without profile URL")
         return HttpResponse("invalid me", status=400)
     if not _me_matches_expected(submitted_me, expected_me):
-        logger.warning(f"rejected IndieAuth request with mismatched me={submitted_me!r}, expected={expected_me!r}")
+        logger.warning(
+            f"rejected IndieAuth request with mismatched me={redact_url_origin(submitted_me)!r}, "
+            f"expected={redact_url_origin(expected_me)!r}"
+        )
         return HttpResponse("invalid me", status=400)
     return None
 
@@ -1180,7 +1184,7 @@ class TokenAuthMixin(View):
             return _bearer_authentication_error_response()
 
         if not _client_id_allowed(self.token.client_id):
-            logger.warning(f"rejected disallowed client_id on resource server: {self.token.client_id!r}")
+            logger.warning(f"rejected disallowed client_id on resource server: {redact_url(self.token.client_id)!r}")
             return HttpResponse("invalid_client", status=403)
 
         return super().dispatch(request, *args, **kwargs)
@@ -1226,7 +1230,12 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         redirect_uri = request.GET.get("redirect_uri")
         state = request.GET.get("state")
         me = request.GET.get("me")
-        logger.info(f"auth view get: {client_id}, {redirect_uri}, {state}, {me}")
+        logger.info(
+            f"auth view get: {redact_url(client_id) if client_id else client_id}, "
+            f"{redact_url(redirect_uri) if redirect_uri else redirect_uri}, "
+            f"{redact_state(state) if state else state}, "
+            f"{redact_url_origin(me) if me else me}"
+        )
         required = [client_id, redirect_uri, state, me]
 
         for name, val in zip(self.required_params, required, strict=True):
@@ -1377,10 +1386,10 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             return HttpResponse("invalid client_id", status=400)
 
         if not _client_id_allowed(client_id):
-            logger.warning(f"rejected disallowed client_id on code verification: {client_id!r}")
+            logger.warning(f"rejected disallowed client_id on code verification: {redact_url(client_id)!r}")
             return HttpResponse("invalid_client", status=400)
 
-        logger.info(f"auth view post verification: {client_id}")
+        logger.info(f"auth view post verification: {redact_url(client_id)}")
         try:
             auth = Auth.get_for_raw_key(auth_code, client_id=client_id)
         except (Auth.DoesNotExist, Auth.MultipleObjectsReturned):
@@ -1541,7 +1550,10 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         me = me or auth.me
         scope = stored_scope
 
-        logger.info(f"token view post: {client_id}, {me}, {_redact_auth_code(code)} {scope}")
+        logger.info(
+            f"token view post: {redact_url(client_id)}, {redact_url_origin(me) if me else me}, "
+            f"{_redact_auth_code(code)} {scope}"
+        )
 
         # Check if auth code is still valid
         timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
@@ -1610,7 +1622,7 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.info(f"{log_prefix} rejected expired token: {key[:8]}...")
             return None
         if not _client_id_allowed(token.client_id):
-            logger.warning(f"{log_prefix} rejected disallowed client_id: {token.client_id!r}")
+            logger.warning(f"{log_prefix} rejected disallowed client_id: {redact_url(token.client_id)!r}")
             return None
         return token
 
@@ -2114,7 +2126,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             entry = handler.update_entry(url, updates, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"update_entry rejected url={url!r}: {exc}")
+            logger.warning(f"update_entry rejected url={redact_url(url)!r}: {exc}")
             return self._invalid_request()
         except Exception:
             logger.exception(f"Unexpected error in update_entry for url={url!r}")
@@ -2130,7 +2142,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             handler.delete_entry(url, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"delete_entry rejected url={url!r}: {exc}")
+            logger.warning(f"delete_entry rejected url={redact_url(url)!r}: {exc}")
             return self._invalid_request()
         except Exception:
             logger.exception(f"Unexpected error in delete_entry for url={url!r}")
@@ -2146,7 +2158,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             entry = handler.undelete_entry(url, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"undelete_entry rejected url={url!r}: {exc}")
+            logger.warning(f"undelete_entry rejected url={redact_url(url)!r}: {exc}")
             return self._invalid_request()
         except Exception:
             logger.exception(f"Unexpected error in undelete_entry for url={url!r}")
@@ -2295,13 +2307,13 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             entry = handler.get_entry(url, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"get_entry rejected url={url!r}: {exc}")
+            logger.warning(f"get_entry rejected url={redact_url(url)!r}: {exc}")
             return self._invalid_request()
         except Exception:
             logger.exception(f"Unexpected error in get_entry for url={url!r}")
             return HttpResponse(status=500)
         if entry is None:
-            logger.warning(f"get_entry did not find url={url!r}")
+            logger.warning(f"get_entry did not find url={redact_url(url)!r}")
             return self._invalid_request()
 
         requested_properties = request.GET.getlist("properties[]")
@@ -2537,13 +2549,13 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         try:
             item = handler.get_media(url, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"get_media rejected url={url!r}: {exc}")
+            logger.warning(f"get_media rejected url={redact_url(url)!r}: {exc}")
             return self._invalid_request()
         except Exception:
             logger.exception(f"Unexpected error in get_media for url={url!r}")
             return HttpResponse(status=500)
         if item is None:
-            logger.warning(f"get_media did not find url={url!r}")
+            logger.warning(f"get_media did not find url={redact_url(url)!r}")
             return self._invalid_request()
         return HttpResponse(json.dumps(self._media_item_body(item)), content_type="application/json")
 
@@ -2613,14 +2625,14 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         try:
             deleted = handler.delete_media(url, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"delete_media rejected url={url!r}: {exc}")
+            logger.warning(f"delete_media rejected url={redact_url(url)!r}: {exc}")
             return self._invalid_request()
         except Exception:
             logger.exception(f"Unexpected error in delete_media for url={url!r}")
             return HttpResponse(status=500)
 
         if deleted is not True:
-            logger.warning(f"delete_media did not delete url={url!r}")
+            logger.warning(f"delete_media did not delete url={redact_url(url)!r}")
             return self._invalid_request()
         return HttpResponse(status=204)
 

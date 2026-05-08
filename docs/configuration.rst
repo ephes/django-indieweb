@@ -1825,6 +1825,7 @@ domain:
    }
    INDIEWEB_MICROPUB_URL_POLICY = "your_project.micropub_policy.allow_only_owned_urls"
    INDIEWEB_WEBMENTION_STATUS_PUBLIC = True
+   INDIEWEB_LOG_REDACTION = "redact"
 
 Notes:
 
@@ -1854,8 +1855,37 @@ Notes:
   omitting the stored ``source`` and ``target`` URLs. The default response
   shape is intended as token-holder diagnostics; enable the public-safe mode
   for deployments where a leaked status URL must not reveal the URL pair.
-* Additional production-relevant settings will be documented here as they
-  are introduced (logging redaction).
+* ``INDIEWEB_LOG_REDACTION = "redact"`` opts INFO/WARNING log lines that
+  reference IndieAuth/Micropub/Webmention/WebSub URLs and the OAuth ``state``
+  parameter into a stable HMAC-SHA256 digest (truncated to 12 hex chars,
+  keyed with ``SECRET_KEY``) instead of emitting the raw values. See
+  :ref:`log-redaction` for details on which call sites are covered and how
+  to correlate digests across log lines.
+
+.. _log-redaction:
+
+INDIEWEB_LOG_REDACTION
+^^^^^^^^^^^^^^^^^^^^^^
+
+Default: ``"passthrough"``.
+
+Controls whether INFO/WARNING log lines emitted by the views, processors,
+and WebSub modules render IndieAuth/Micropub URLs, the OAuth ``state``
+parameter, the verified ``me`` URL, and webmention/WebSub source/target
+URLs verbatim or as a stable HMAC-SHA256 digest.
+
+* ``"passthrough"`` (default): values appear verbatim. Backwards-compatible
+  with existing log pipelines.
+* ``"redact"``: values are replaced by a 12-character hex digest derived
+  from ``SECRET_KEY``. The digest is one-way and stable per input, so
+  log consumers can correlate events for the same URL/state without
+  seeing the underlying value. ``redact_url_origin`` (used for the ``me``
+  parameter) digests scheme+host so multiple paths under the same origin
+  collapse to a shared digest.
+
+ERROR-level logs are not redacted, so operators retain full URLs for
+incident response. Rotate ``SECRET_KEY`` to invalidate previously-emitted
+digests; values are scoped to the current key.
 
 Testing Configuration
 ---------------------

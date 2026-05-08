@@ -230,6 +230,15 @@ Validated lower-priority hardening:
   logs still include client IDs, ``redirect_uri``, ``state``, ``me``, and
   Webmention source/target URLs. That can expose private or draft URLs through
   log aggregation; track a privacy logging mode or deployment guidance.
+  **Status:** Resolved 2026-05-08. ``INDIEWEB_LOG_REDACTION`` (default
+  ``"passthrough"``) opts INFO/WARNING log calls in ``views.py``,
+  ``processors.py``, and ``websub.py`` into stable HMAC-SHA256 digests
+  (12 hex chars, keyed with ``SECRET_KEY``) for ``client_id``,
+  ``redirect_uri``, ``state``, ``me`` (origin-only), and Webmention/WebSub
+  URLs. ERROR-level logs are left intact for incident response.
+  ``docs/configuration.rst`` documents the setting (anchored at
+  ``log-redaction``) and adds ``INDIEWEB_LOG_REDACTION = "redact"`` to
+  the ``Production hardening`` snippet.
 
 ## Positive Security Properties
 
