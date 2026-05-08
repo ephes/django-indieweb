@@ -982,6 +982,48 @@ class TestMicropubCreate:
         assert response.status_code == 201
         assert received_properties == payload["properties"]
 
+    @pytest.mark.django_db
+    def test_create_returns_400_for_value_error(self, client, token, micropub_url, monkeypatch):
+        """Handler ``ValueError`` -> 400 ``invalid_request`` plain-text body, no exception leak."""
+
+        class FailingHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                raise ValueError("invalid h-entry")
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: FailingHandler())
+
+        response = client.post(
+            micropub_url,
+            data={"h": "entry", "content": "x"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+
+    @pytest.mark.django_db
+    def test_create_returns_500_for_unexpected_exception(self, client, token, micropub_url, monkeypatch, caplog):
+        """Unexpected handler exception -> 500 with empty body. Exception text logged, not returned."""
+
+        class CrashingHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                raise RuntimeError("internal db error: secret_token=abc")
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: CrashingHandler())
+
+        with caplog.at_level("ERROR", logger="indieweb.views"):
+            response = client.post(
+                micropub_url,
+                data={"h": "entry", "content": "x"},
+                Authorization=f"Bearer {token.key}",
+            )
+
+        assert response.status_code == 500
+        assert b"secret_token" not in response.content
+        assert b"internal db error" not in response.content
+        # Exception text should appear in server logs.
+        assert "secret_token" in caplog.text
+
 
 class TestInMemoryHandler:
     """Test the in-memory Micropub handler."""

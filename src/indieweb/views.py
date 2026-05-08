@@ -2337,21 +2337,23 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
         try:
             entry = handler.create_entry(properties, self.token.owner)
+        except ValueError as exc:
+            logger.warning(f"create_entry rejected request: {exc}")
+            return self._invalid_request()
+        except Exception:
+            logger.exception("Unexpected error in create_entry")
+            return HttpResponse(status=500)
 
-            # Return 201 Created with Location header
-            response = HttpResponse(status=201)
-            # Build full URL - check if entry.url is already absolute
-            if entry.url.startswith("http"):
-                response["Location"] = entry.url
-            else:
-                # Build absolute URL from request
-                response["Location"] = request.build_absolute_uri(entry.url)
+        # Return 201 Created with Location header
+        response = HttpResponse(status=201)
+        # Build full URL - check if entry.url is already absolute
+        if entry.url.startswith("http"):
+            response["Location"] = entry.url
+        else:
+            # Build absolute URL from request
+            response["Location"] = request.build_absolute_uri(entry.url)
 
-            return response
-
-        except Exception as e:
-            logger.error(f"Error creating micropub entry: {e}")
-            return HttpResponse(f"Error creating entry: {str(e)}", status=400)
+        return response
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Handle GET requests for queries and configuration."""

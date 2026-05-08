@@ -4,6 +4,32 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P2.2 — Stop leaking Micropub create handler exception details to clients
+
+Aligned the Micropub create error path with the rest of the action handlers so
+unexpected exceptions no longer flow through to authenticated clients.
+
+- ``src/indieweb/views.py`` ``MicropubView.post`` create branch now catches
+  ``ValueError`` separately and returns ``400 invalid_request`` (logged at
+  warning level, exception text not echoed to the client). Any other
+  exception is logged via ``logger.exception("Unexpected error in
+  create_entry")`` and the response is ``500`` with an empty body, matching
+  ``update_entry``, ``delete_entry``, ``undelete_entry``, ``get_entry``, and
+  the media handler error semantics.
+- ``tests/test_micropub_create.py`` adds two regression tests:
+  ``test_create_returns_400_for_value_error`` (handler ``ValueError`` →
+  ``400 invalid_request`` plain-text body) and
+  ``test_create_returns_500_for_unexpected_exception`` (``RuntimeError``
+  with secret-shaped text → ``500`` with empty body, secret text never
+  appears in response, but does appear in server logs).
+- Documentation: ``docs/micropub.rst`` documents the create error semantics
+  alongside the existing update/delete/undelete description.
+  ``docs/api.rst`` adds explicit ``400 invalid_request`` and ``500`` rows to
+  the create-action response section. ``docs/changelog.rst`` records the
+  change. ``SECURITY_ANALYSIS.md`` marks the residual resolved.
+
+Validation: ``uv run pytest tests/test_micropub_create.py --no-cov`` passes.
+
 ### P2.1 — Harden WebSub delivery replay atomicity and side-effect ordering
 
 Reworked the WebSub delivery replay-detection path so two concurrent

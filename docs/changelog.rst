@@ -5,6 +5,15 @@ Changelog
 
 Unreleased
 ----------
+* Aligned the Micropub create error path with the rest of the action handlers
+  so unexpected exceptions no longer flow through to authenticated clients.
+  ``MicropubView.post`` now catches ``ValueError`` from
+  ``MicropubContentHandler.create_entry()`` and returns
+  ``400 invalid_request`` (the rejection is logged at warning level; the
+  exception message is no longer echoed in the response body). Any other
+  handler exception is logged via ``logger.exception("Unexpected error in
+  create_entry")`` and the response is ``500`` with an empty body, matching
+  the existing update, delete, undelete, source, and media error semantics.
 * Made WebSub delivery replay detection atomic against concurrent identical
   deliveries and tightened the at-most-once-per-digest hook contract. A new
   ``WebSubAcceptedDelivery`` model carries a unique constraint on

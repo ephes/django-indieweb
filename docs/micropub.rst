@@ -318,6 +318,14 @@ For RSVP posts, the form parser forwards ``rsvp``, ``in-reply-to``, ``name``,
 attendance, event date, time-zone, calendar-feed, or persistence behavior.
 Your configured handler owns those choices.
 
+Create error semantics mirror the other action handlers. When
+``MicropubContentHandler.create_entry()`` raises ``ValueError`` the request
+is rejected with ``400 invalid_request`` and the rejection is logged at
+warning level (the exception message is not sent to the client). Any other
+exception is logged via ``logger.exception`` and the response is ``500`` with
+an empty body — handler stack traces and internal error messages are never
+returned to the client.
+
 Command Properties and Draft Status
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

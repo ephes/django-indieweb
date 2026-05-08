@@ -772,6 +772,16 @@ and are not part of this deny-list.
     HTTP/1.1 201 Created
     Location: https://yoursite.com/posts/123/
 
+- ``201 Created`` with a ``Location`` header on success
+- ``400 Bad Request`` body ``invalid_request`` when the configured
+  ``MicropubContentHandler.create_entry()`` raises ``ValueError``; the
+  rejection is logged at warning level and the exception message is not
+  echoed in the response body
+- ``500 Internal Server Error`` with an empty body when
+  ``MicropubContentHandler.create_entry()`` raises any other exception. The
+  full exception is logged via ``logger.exception``; handler stack traces and
+  internal error messages are never returned to the client
+
 Update Action
 ~~~~~~~~~~~~~
 

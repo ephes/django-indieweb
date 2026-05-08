@@ -147,11 +147,15 @@ Validated high-priority residuals:
 
 Validated medium-priority residuals:
 
-- Micropub create leaks unexpected handler exception text to authenticated
+- ~~Micropub create leaks unexpected handler exception text to authenticated
   clients. The create path catches every ``Exception`` from
   ``handler.create_entry(...)`` and returns ``400 Error creating entry:
   {str(exc)}``, unlike update/delete/source/media paths that keep unexpected
-  exception details in logs and return a generic ``500``.
+  exception details in logs and return a generic ``500``.~~ Resolved
+  2026-05-08 (P2.2): ``MicropubView.post`` now catches ``ValueError``
+  separately and returns ``400 invalid_request``; any other handler exception
+  is logged via ``logger.exception`` and the response is ``500`` with an
+  empty body, matching the rest of the action handlers.
 - Micropub entry source, media source-by-URL, and media delete operations pass
   submitted URLs unchanged to the configured handler. This matches the
   documented host-owned adapter boundary, but it remains an integration risk
@@ -819,7 +823,10 @@ fix order:
    ``redirect_uri``.
 5. Make WebSub replay detection and accepted-digest updates atomic for valid
    deliveries.
-6. Fix Micropub create exception disclosure.
+6. ~~Fix Micropub create exception disclosure.~~ Resolved 2026-05-08 (P2.2):
+   the create branch now treats ``ValueError`` as ``400 invalid_request`` and
+   any other exception as a generic ``500`` with an empty body, with the full
+   exception logged via ``logger.exception``.
 7. Add the production hardening profile.
 8. Follow with WebSub denial hardening and Vouch metadata downgrade protection.
 9. Then address Micropub source/media URL policy, injected HTTP-client safety

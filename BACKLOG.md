@@ -12,15 +12,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Stop leaking Micropub create handler exception details to clients.
-  References: `src/indieweb/views.py` (`MicropubView.post`),
-  `tests/test_micropub_create.py`, `docs/api.rst`, `docs/micropub.rst`.
-  The create path catches every exception from `handler.create_entry(...)` and
-  returns `400 Error creating entry: {str(exc)}`. Treat expected
-  `ValueError`-style validation failures as `400 invalid_request`, log
-  unexpected exceptions server-side, and return a generic `500` body consistent
-  with update/delete/source/media handlers.
-
 - [ ] Add a production hardening profile for public IndieWeb endpoints.
   References: `docs/indieauth.rst`, `docs/configuration.rst`, `docs/api.rst`,
   `README.rst`, `tests/test_auth_endpoint.py`, `tests/test_rate_limiting.py`.
