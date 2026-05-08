@@ -9,6 +9,7 @@ Tests for `django-indieweb` auth endpoint.
 
 import logging
 from datetime import timedelta
+from unittest.mock import patch
 from urllib.parse import parse_qs, unquote
 
 import pytest
@@ -1735,3 +1736,69 @@ def test_token_introspection_does_not_mutate_token_rows(client, user, token_intr
     assert models.Token.objects.count() == original_count
     assert token.expires_at == expires_at
     assert token.modified == original_modified
+
+
+@pytest.mark.django_db
+def test_concurrent_authorization_code_exchange_single_use(client, auth, token_endpoint_url, token_payload):
+    """A racing competitor that consumes the auth code mid-exchange must yield invalid_grant.
+
+    The test suite runs on SQLite ``:memory:`` where ``select_for_update`` is a
+    no-op and connections are not shared across threads, so a faithful
+    threading test cannot exercise the lock contention path. Instead, simulate
+    the race deterministically: while the view holds its critical section open
+    (between ``select_for_update().filter(...).first()`` and the gated
+    ``.delete()``), a competing transaction consumes the row. The
+    delete-count gate must observe ``deleted == 0`` and return
+    ``invalid_grant`` without issuing a token.
+    """
+    queryset_class = models.Auth.objects.all().__class__
+    real_first = queryset_class.first
+    triggered: list[bool] = []
+
+    def race_first(self):
+        result = real_first(self)
+        # Only the first `.first()` call against an Auth queryset simulates
+        # the race; subsequent calls (if any) behave normally.
+        if not triggered and self.model is models.Auth:
+            triggered.append(True)
+            models.Auth.objects.filter(pk=auth.pk).delete()
+        return result
+
+    with patch.object(queryset_class, "first", race_first):
+        response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_grant"
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert models.Token.objects.count() == 0
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_authorization_code_cannot_be_exchanged_twice(client, auth, token_endpoint_url, token_payload):
+    """A second exchange for the same authorization code must return invalid_grant."""
+    first = client.post(token_endpoint_url, data=token_payload)
+    assert first.status_code == 201
+    assert models.Token.objects.count() == 1
+
+    second = client.post(token_endpoint_url, data=token_payload)
+    assert second.status_code == 400
+    assert second.content == b"invalid_grant"
+    assert models.Token.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_token_exchange_acquires_row_lock_on_matched_auth(client, auth, token_endpoint_url, token_payload):
+    """The consume-and-issue sequence must call ``select_for_update`` on the matched ``Auth`` row."""
+    real_select_for_update = models.Auth.objects.select_for_update
+    locked: list[bool] = []
+
+    def spy(*args, **kwargs):
+        locked.append(True)
+        return real_select_for_update(*args, **kwargs)
+
+    with patch.object(models.Auth.objects, "select_for_update", side_effect=spy):
+        response = client.post(token_endpoint_url, data=token_payload)
+
+    assert response.status_code == 201
+    assert locked == [True]

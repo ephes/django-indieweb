@@ -5,6 +5,20 @@ Changelog
 
 Unreleased
 ----------
+* Serialized the IndieAuth authorization-code consume-and-token-issue sequence
+  under a database transaction so two concurrent token exchanges for the same
+  code cannot both succeed. ``TokenView.post`` now opens
+  ``transaction.atomic()`` once an ``Auth`` row matches, evaluates
+  ``Auth.objects.select_for_update().filter(pk=auth.pk).first()`` for
+  defense-in-depth on row-locking backends, and gates the consume on the
+  delete count: ``Auth.objects.filter(pk=auth.pk).delete()`` returning ``0``
+  means a competing exchange already consumed the code, in which case the view
+  returns ``invalid_grant`` without issuing a token. ``send_token`` runs
+  inside the same atomic block and the reissue branch now acquires
+  ``Token.objects.select_for_update().filter(pk=token.pk).first()`` before
+  rotating the bearer key, so a concurrent reissue cannot interleave another
+  rotation on Postgres/MySQL. The delete-count gate is the authoritative
+  enforcement on SQLite, where row locks are a no-op.
 * Added a strict cross-origin redirect mode to the shared HTTP helper.
   ``request_with_safe_redirects`` and ``stream_with_safe_redirects`` now accept
   a ``cross_origin_strip`` keyword argument (default ``False``). When enabled,

@@ -4,6 +4,49 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P1.3 — Serialize authorization-code exchange under a database lock
+
+The token endpoint now wraps the consume-and-issue sequence for matched
+authorization codes in ``transaction.atomic()`` so two concurrent exchanges
+for one code cannot both succeed.
+
+- ``src/indieweb/views.py`` (``TokenView.post``) now opens a
+  ``transaction.atomic()`` block once an ``Auth`` row has been validated.
+  Inside the block the view evaluates
+  ``Auth.objects.select_for_update().filter(pk=auth.pk).first()`` (defense in
+  depth on Postgres/MySQL; a no-op on SQLite) and then runs the
+  authoritative single-use gate: ``deleted, _ =
+  Auth.objects.filter(pk=auth.pk).delete()``. If ``deleted == 0`` a competing
+  exchange already consumed the code and the view returns the existing
+  ``invalid_grant`` response without issuing a token. ``send_token`` now runs
+  inside the same atomic block, and the reissue branch acquires
+  ``Token.objects.select_for_update().filter(pk=token.pk).first()`` before
+  rotating ``Token.key`` so a concurrent reissue cannot interleave another
+  rotation between read and save on row-locking backends. A new
+  ``_invalid_grant_response`` helper keeps the failure path consistent with
+  the existing ``_consume_invalid_grant`` shape.
+- Added regression coverage in ``tests/test_token_endpoint.py``:
+  ``test_concurrent_authorization_code_exchange_single_use`` patches
+  ``QuerySet.first`` to delete the row mid-exchange (simulating a competing
+  consumer between the row lock and the gated delete) and asserts the
+  exchange returns 400 ``invalid_grant`` with no token issued;
+  ``test_authorization_code_cannot_be_exchanged_twice`` exercises the
+  serial single-use invariant; and
+  ``test_token_exchange_acquires_row_lock_on_matched_auth`` spies on
+  ``select_for_update`` to confirm the lock call site survives future
+  refactors. The threading-based variant the spec hinted at was rejected
+  because the test suite runs on SQLite ``:memory:`` where connections are
+  not shared between threads and ``select_for_update`` is a no-op; the
+  delete-count gate is what enforces single-use on every backend, and the
+  patch-driven test exercises that gate deterministically.
+- Validation: ``uv run pytest -q`` (1345 passed; +3 new tests over the prior
+  1342 baseline), ``uv run mypy`` (no issues), ``uv run prek run
+  --all-files`` (all hooks pass).
+- Docs: ``docs/changelog.rst`` records the auth-code single-use lock under
+  the existing Unreleased entry, this DONE entry replaces the
+  ``BACKLOG.md`` Priority 1 item, and ``SECURITY_ANALYSIS.md`` Finding 5
+  marks the concurrent exchange race resolved.
+
 ### P1.2 — Complete outbound HTTP hardening for protocol clients and secret-bearing redirects
 
 All four sub-tasks of the P1.2 backlog item are now resolved across two

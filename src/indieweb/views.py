@@ -24,6 +24,7 @@ from django.contrib.sites.models import Site
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
+from django.db import transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.shortcuts import get_object_or_404, redirect, render
@@ -1257,6 +1258,12 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             defaults={"expires_at": expires_at},
         )
         if not created:
+            # Lock the existing row before key rotation so a concurrent
+            # reissue cannot interleave another rotation between read and
+            # save. ``select_for_update`` is a no-op on SQLite, but the
+            # outer ``transaction.atomic()`` plus the auth-code delete-count
+            # gate still serialize entry to this branch on every backend.
+            Token.objects.select_for_update().filter(pk=token.pk).first()
             token.set_key()
             token.expires_at = expires_at
             token.save(update_fields=["key", "expires_at", "modified"])
@@ -1277,11 +1284,14 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         response = urlencode(response_values)
         return HttpResponse(response, status=status_code, content_type="application/x-www-form-urlencoded")
 
+    def _invalid_grant_response(self) -> HttpResponse:
+        return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+
     def _consume_invalid_grant(self, auth: Auth, message: str) -> HttpResponse:
         """Delete a matched auth code and return the token endpoint's invalid_grant response."""
         logger.error(message)
         auth.delete()
-        return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
+        return self._invalid_grant_response()
 
     def _check_pkce(self, auth: Auth, code_verifier: str | None) -> HttpResponse | None:
         """Verify PKCE for a token exchange. Deletes ``auth`` on failure to preserve one-time use."""
@@ -1376,11 +1386,25 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         if (timezone.now() - auth.created).total_seconds() > timeout:
             return self._consume_invalid_grant(auth, f"Auth code expired for client_id={client_id}")
 
-        # Delete auth code after use (one-time use)
-        auth.delete()
+        # Serialize the consume-and-issue sequence so two concurrent token
+        # exchanges for the same authorization code cannot both succeed. On
+        # backends with row locks, ``select_for_update`` blocks the second
+        # transaction at the lookup step. On SQLite the row lock is a no-op,
+        # so the authoritative single-use enforcement is the delete-count
+        # gate below: ``deleted == 0`` means another exchange already
+        # consumed the code, and we must return ``invalid_grant`` without
+        # issuing a token.
+        with transaction.atomic():
+            Auth.objects.select_for_update().filter(pk=auth.pk).first()
+            deleted, _ = Auth.objects.filter(pk=auth.pk).delete()
+            if deleted == 0:
+                logger.error(f"Auth code already consumed by concurrent exchange for client_id={client_id}")
+                return self._invalid_grant_response()
 
-        # Create and return token
-        return self.send_token(request, me, client_id, scope, auth.owner)
+            # Token issue/reissue stays inside the atomic block so the
+            # existing-row reissue path can lock the ``Token`` row before
+            # rotating its key on Postgres/MySQL.
+            return self.send_token(request, me, client_id, scope, auth.owner)
 
 
 def _authorization_bearer_token(request: HttpRequest) -> str | None:

@@ -8,16 +8,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Serialize authorization-code exchange under a database lock. References:
-  `src/indieweb/views.py` (`TokenView.post`, `send_token`,
-  `_get_auth_for_exchange`), `src/indieweb/models.py` (`Auth`, `Token`),
-  `tests/test_token_endpoint.py`. The token endpoint still performs a
-  read-validate-delete-issue flow for authorization codes. Use
-  `transaction.atomic()` plus `select_for_update()` around the matched `Auth`
-  row, and keep token reissue/rotation inside the same critical section or
-  otherwise lock the affected `Token` row. Add a regression test that
-  concurrent exchanges for one code cannot both issue usable bearer tokens.
-
 - [ ] Bind IndieAuth redirect URIs to client identity. References:
   `src/indieweb/views.py` (`AuthView.get`, `_handle_consent`,
   `_client_id_allowed`, `_validate_redirect_uri`),

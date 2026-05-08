@@ -14,21 +14,21 @@ The first pass identified five high-priority findings plus several supporting on
 
 The most urgent remaining production blockers are:
 
-1. Authorization-code exchange is still a read-then-delete flow without a row
-   lock, so concurrent token exchanges can violate single-use semantics under
-   a database isolation level such as READ COMMITTED.
-2. IndieAuth authorization requests do not bind ``redirect_uri`` to
+1. IndieAuth authorization requests do not bind ``redirect_uri`` to
    ``client_id``. A deployment that allowlists trusted client IDs can still
    issue a code for an attacker-chosen redirect URI under that trusted
    ``client_id`` unless the operator's custom policy hook enforces the
    relationship.
+
+The concurrent authorization-code exchange race called out in earlier passes
+is fully resolved as of 2026-05-08; see Finding 5 below.
 
 The outbound HTTP hardening blocker called out in earlier passes (incomplete
 IP block table, ``trust_env=True`` defaults, secret-bearing cross-origin
 redirects, and the missing HTTPS gate for ``hub.secret``) is fully resolved
 as of 2026-05-08; see Finding 2 below.
 
-Former production blockers that were verified fixed by 2026-05-07 include Webmention stored XSS/unsafe remote URL rendering, IndieAuth consent CSRF/open redirect, authorization-code validation-failure reuse, token exchange `redirect_uri` binding, token parsing/reissue hardening, Micropub media sniffing, introspection authentication, token hashing at rest, CORS wildcard credentials, and WebSub signature/lease/secret hardening. A separate concurrent authorization-code exchange race was identified on 2026-05-08 and remains open.
+Former production blockers that were verified fixed by 2026-05-07 include Webmention stored XSS/unsafe remote URL rendering, IndieAuth consent CSRF/open redirect, authorization-code validation-failure reuse, token exchange `redirect_uri` binding, token parsing/reissue hardening, Micropub media sniffing, introspection authentication, token hashing at rest, CORS wildcard credentials, and WebSub signature/lease/secret hardening. A separate concurrent authorization-code exchange race was identified on 2026-05-08 and resolved the same day; see Finding 5 below.
 
 ## Verification Status 2026-05-07
 
@@ -116,7 +116,8 @@ and public documentation.
 
 Validated high-priority residuals:
 
-- Authorization-code exchange atomicity remains open, as noted above.
+- ~~Authorization-code exchange atomicity remains open, as noted above.~~
+  Resolved 2026-05-08 under P1.3; see Finding 5.
 - ``AuthView.get`` and ``AuthView._handle_consent`` validate ``client_id`` and
   ``redirect_uri`` independently. ``INDIEWEB_ALLOWED_CLIENT_IDS`` and
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` receive only the normalized ``client_id``;
@@ -383,7 +384,8 @@ Worse, the deny branch executed the redirect *before* the `request.user.is_authe
 **Severity:** High
 
 **Status:** Resolved 2026-05-06 for authorization-code validation-failure
-reuse; reopened 2026-05-08 for a concurrent exchange race.
+reuse; the concurrent exchange race reopened on 2026-05-08 was resolved the
+same day under P1.3.
 `TokenView.post` now consumes a matched `Auth` row on PKCE failures,
 `redirect_uri` mismatches, scope mismatches, and expired-code failures before
 returning the existing `invalid_grant` response. Token endpoint logs now redact
@@ -393,10 +395,18 @@ bearer headers must now be strict two-part `Authorization: Bearer <token>`
 values, POST-body `Authorization` fallback is removed, token-protected 401
 responses include `Cache-Control: no-store` and `WWW-Authenticate: Bearer`,
 `Auth.key` and `Token.key` are unique, duplicate-key lookups fail closed, and
-token reissue rotates the existing row's bearer key. The remaining gap is that
-successful exchange does not hold a database row lock from code lookup through
-code deletion and token issuance, so two concurrent exchanges can both observe
-the same unconsumed code under common database isolation.
+token reissue rotates the existing row's bearer key. As of 2026-05-08 the
+consume-and-issue sequence runs inside `transaction.atomic()`, evaluates
+`Auth.objects.select_for_update().filter(pk=auth.pk).first()` for
+defense-in-depth on row-locking backends, and gates single-use enforcement on
+the delete count: `Auth.objects.filter(pk=auth.pk).delete()` returning ``0``
+means a competing exchange already consumed the code and the view returns
+`invalid_grant` without issuing a token. `send_token` now runs inside the
+same atomic block and the reissue branch acquires
+`Token.objects.select_for_update().filter(pk=token.pk).first()` before
+rotating the bearer key. The delete-count gate is the authoritative
+backend-agnostic enforcement (SQLite row locks are no-ops); the
+`select_for_update` calls add real serialization on Postgres/MySQL.
 
 **References:**
 
@@ -779,8 +789,12 @@ fix order:
    replay opt-in for Webmention-only callers.~~ Resolved 2026-05-08 across
    the P1.2a (IP block table + ``trust_env=False``) and P1.2b (strict
    cross-origin redirect mode + ``hub.secret`` HTTPS gate) commits.
-3. Serialize authorization-code consume-and-token-issue under a database lock
-   so the code remains single-use under concurrent exchanges.
+3. ~~Serialize authorization-code consume-and-token-issue under a database lock
+   so the code remains single-use under concurrent exchanges.~~ Resolved
+   2026-05-08 (P1.3): ``TokenView.post`` wraps the consume-and-issue sequence
+   in ``transaction.atomic()`` with ``select_for_update`` on both ``Auth`` and
+   reissued ``Token`` rows, and the authoritative single-use enforcement is
+   the delete-count gate so SQLite deployments are protected too.
 4. Bind IndieAuth ``redirect_uri`` values to ``client_id`` through same-origin
    defaults, per-client redirect allowlists, or a configurable policy hook, and
    display the resolved redirect target on the consent screen.
