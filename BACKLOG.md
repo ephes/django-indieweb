@@ -12,19 +12,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Add a production hardening profile for public IndieWeb endpoints.
-  References: `docs/indieauth.rst`, `docs/configuration.rst`, `docs/api.rst`,
-  `README.rst`, `tests/test_auth_endpoint.py`, `tests/test_rate_limiting.py`.
-  Current compatibility defaults leave PKCE, S256-only PKCE, client allowlists,
-  `me` binding, and endpoint rate limits opt-in. Add copyable production
-  settings that enable `INDIEWEB_REQUIRE_PKCE`,
-  `INDIEWEB_REQUIRE_PKCE_S256`, `INDIEWEB_BIND_ME_TO_USER`,
-  `INDIEWEB_ALLOWED_CLIENT_IDS` or a validator, and concrete
-  `INDIEWEB_RATE_LIMITS` entries for auth, token, token introspection,
-  Micropub/media, Webmention, Webmention status, and WebSub callbacks. Clarify
-  which defaults are protocol compatibility choices rather than recommended
-  internet-facing settings.
-
 - [ ] Preserve staged WebSub secret rotations on denied callbacks unless the
   denial is trustworthy for the pending request. References:
   `src/indieweb/websub.py` (`record_websub_denial`,

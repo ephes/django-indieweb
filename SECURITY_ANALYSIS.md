@@ -163,12 +163,21 @@ Validated medium-priority residuals:
   If django-indieweb wants stronger guardrails, it needs a configurable
   host-owned URL policy rather than a hard same-host rule, because media may
   legitimately live on storage/CDN hosts.
-- Production IndieAuth and endpoint hardening remains opt-in:
+- ~~Production IndieAuth and endpoint hardening remains opt-in:
   ``INDIEWEB_REQUIRE_PKCE``, ``INDIEWEB_REQUIRE_PKCE_S256``,
   ``INDIEWEB_ALLOWED_CLIENT_IDS``, ``INDIEWEB_BIND_ME_TO_USER``, and
   ``INDIEWEB_RATE_LIMITS`` default to compatibility-oriented values. This is
   documented, but a production hardening profile would make safe deployments
-  easier to copy.
+  easier to copy.~~ **Resolved 2026-05-08 under P2.3:**
+  ``docs/configuration.rst`` now ships a copyable ``Production hardening``
+  section enabling these settings together (with concrete
+  ``INDIEWEB_RATE_LIMITS`` entries for ``auth``, ``token``,
+  ``token_introspection``, ``micropub``, ``media``, ``webmention``,
+  ``webmention_status``, and ``websub_callback``) and a
+  ``production-hardening`` reST label that ``docs/indieauth.rst``,
+  ``docs/api.rst``, and ``README.rst`` cross-reference. The compatibility
+  defaults remain unchanged. ``tests/test_documentation_snippets.py``
+  guards the snippet against setting-name drift.
 
 Validated lower-priority hardening:
 
@@ -827,7 +836,16 @@ fix order:
    the create branch now treats ``ValueError`` as ``400 invalid_request`` and
    any other exception as a generic ``500`` with an empty body, with the full
    exception logged via ``logger.exception``.
-7. Add the production hardening profile.
+7. ~~Add the production hardening profile.~~ Resolved 2026-05-08 (P2.3):
+   ``docs/configuration.rst`` ships a copyable ``Production hardening``
+   section that enables ``INDIEWEB_REQUIRE_PKCE``,
+   ``INDIEWEB_REQUIRE_PKCE_S256``, ``INDIEWEB_BIND_ME_TO_USER``,
+   ``INDIEWEB_ALLOWED_CLIENT_IDS``, ``INDIEWEB_REDIRECT_URI_ALLOWLIST``,
+   and concrete ``INDIEWEB_RATE_LIMITS`` entries for every bundled
+   rate-limited endpoint, with cross-references from ``docs/indieauth.rst``,
+   ``docs/api.rst``, and ``README.rst``.
+   ``tests/test_documentation_snippets.py`` guards against setting-name
+   drift.
 8. Follow with WebSub denial hardening and Vouch metadata downgrade protection.
 9. Then address Micropub source/media URL policy, injected HTTP-client safety
    docs, and status-token privacy controls.

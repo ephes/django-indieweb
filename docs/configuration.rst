@@ -1691,6 +1691,62 @@ on a response, django-indieweb does not overwrite it. It preserves the
 downstream CORS decision and adds ``Vary: Origin`` only when the existing value
 is origin-specific rather than ``*``.
 
+.. _production-hardening:
+
+Production hardening
+--------------------
+
+The bundled defaults favour protocol compatibility (e.g., PKCE is optional,
+the ``me`` parameter is not bound to the logged-in user, rate limits are
+disabled). For an internet-facing IndieAuth/Micropub deployment, copy the
+settings block below into your ``settings.py`` and customise for your
+domain:
+
+.. code-block:: python
+
+   # Hardened defaults for public IndieAuth/Micropub endpoints.
+   INDIEWEB_REQUIRE_PKCE = True
+   INDIEWEB_REQUIRE_PKCE_S256 = True
+   INDIEWEB_BIND_ME_TO_USER = True
+   INDIEWEB_ALLOWED_CLIENT_IDS = [
+       "https://your-trusted-app.example/",
+   ]
+   INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+       "https://your-trusted-app.example/": [
+           "https://your-trusted-app.example/oauth/callback",
+       ],
+   }
+   INDIEWEB_RATE_LIMITS = {
+       "auth":                {"limit": 10,  "window": 60},
+       "token":               {"limit": 20,  "window": 60},
+       "token_introspection": {"limit": 60,  "window": 60},
+       "micropub":            {"limit": 60,  "window": 60},
+       "media":               {"limit": 30,  "window": 60},
+       "webmention":          {"limit": 60,  "window": 60},
+       "webmention_status":   {"limit": 30,  "window": 60},
+       "websub_callback":     {"limit": 120, "window": 60},
+   }
+
+Notes:
+
+* Compatibility defaults remain non-strict for protocol interop. Override
+  them in production with the block above (or your equivalent) so PKCE is
+  required, the ``me`` parameter is bound to the authenticated user, and
+  only known client identifiers can drive the authorization endpoint.
+* ``INDIEWEB_ALLOWED_CLIENT_IDS`` is a coarse allowlist; if you need more
+  flexible policy (per-environment lists, host suffix matching, etc.) use
+  ``INDIEWEB_CLIENT_ID_VALIDATOR`` instead.
+* ``INDIEWEB_RATE_LIMITS`` numbers above are conservative starting points;
+  tune from operational data. The keys correspond to the bundled
+  ``auth``, ``token``, ``token_introspection``, ``micropub``, ``media``,
+  ``webmention``, ``webmention_status``, and ``websub_callback`` endpoints.
+* See :doc:`indieauth` for ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` semantics
+  (exact entries vs trailing-``/`` prefix entries) and for the
+  ``INDIEWEB_REDIRECT_URI_VALIDATOR`` policy hook.
+* Additional production-relevant settings will be documented here as they
+  are introduced (logging redaction, public-safe Webmention status mode,
+  Micropub URL policy hook).
+
 Testing Configuration
 ---------------------
 

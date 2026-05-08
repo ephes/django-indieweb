@@ -93,6 +93,16 @@ Quick Start
 
     INDIEWEB_MICROPUB_HANDLER = 'myapp.handlers.MyContentHandler'
 
+Production Deployment
+~~~~~~~~~~~~~~~~~~~~~
+
+The bundled defaults favour protocol compatibility (PKCE optional, ``me``
+not bound to the logged-in user, rate limits disabled). For an
+internet-facing IndieAuth/Micropub deployment, see the *Production
+hardening* section of the configuration guide for a copyable settings
+snippet:
+https://django-indieweb.readthedocs.io/en/latest/configuration.html#production-hardening
+
 Adapter Responsibilities
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

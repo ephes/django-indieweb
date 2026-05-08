@@ -4,6 +4,44 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P2.3 — Production hardening profile for public IndieWeb endpoints
+
+Added a copyable production-hardening settings snippet so internet-facing
+IndieAuth/Micropub deployments can opt in to strict PKCE, ``me`` binding,
+client/redirect URI allowlists, and per-endpoint rate limits without
+deriving the setting names by reading source. No behaviour change.
+
+- ``docs/configuration.rst`` adds a new ``Production hardening`` section
+  (with a ``production-hardening`` reST label) containing a single
+  copyable settings block covering ``INDIEWEB_REQUIRE_PKCE``,
+  ``INDIEWEB_REQUIRE_PKCE_S256``, ``INDIEWEB_BIND_ME_TO_USER``,
+  ``INDIEWEB_ALLOWED_CLIENT_IDS``, ``INDIEWEB_REDIRECT_URI_ALLOWLIST``,
+  and concrete ``INDIEWEB_RATE_LIMITS`` entries for the bundled ``auth``,
+  ``token``, ``token_introspection``, ``micropub``, ``media``,
+  ``webmention``, ``webmention_status``, and ``websub_callback`` keys
+  (verified against ``rate_limit_key`` declarations in
+  ``src/indieweb/views.py``). The section flags compatibility defaults
+  as deliberate protocol-interop choices rather than recommended
+  internet-facing settings, and notes that future P3/P4 hardening
+  settings (logging redaction, public-safe Webmention status mode,
+  Micropub URL policy hook) will be folded into the same section as they
+  land.
+- ``docs/indieauth.rst`` and ``docs/api.rst`` add ``.. seealso::``
+  cross-references at the top pointing at the new section. ``README.rst``
+  gains a short ``Production Deployment`` paragraph linking to the
+  rendered docs page so the snippet is discoverable from the project
+  landing page.
+- ``tests/test_documentation_snippets.py`` is a new sanity test that
+  reads ``docs/configuration.rst`` and asserts the section header plus
+  the six setting names exist verbatim, so renaming or removing a
+  setting in code without updating the snippet fails CI. Settings
+  introduced by later P3/P4 tasks are intentionally omitted from the
+  asserted set until those settings exist.
+
+Validation: ``uv run pytest -q`` (1365 passed), ``uv run mypy``
+(no issues), ``uv run prek run --all-files`` (all hooks passed).
+``SECURITY_ANALYSIS.md`` marks the residual resolved.
+
 ### P2.2 — Stop leaking Micropub create handler exception details to clients
 
 Aligned the Micropub create error path with the rest of the action handlers so

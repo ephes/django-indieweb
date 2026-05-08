@@ -5,6 +5,22 @@ Changelog
 
 Unreleased
 ----------
+* Added a copyable production-hardening settings snippet to the
+  configuration guide so internet-facing IndieAuth/Micropub deployments
+  can opt in to strict defaults without deriving setting names by reading
+  source. ``docs/configuration.rst`` gains a new ``Production hardening``
+  section (with a ``production-hardening`` reST label) covering
+  ``INDIEWEB_REQUIRE_PKCE``, ``INDIEWEB_REQUIRE_PKCE_S256``,
+  ``INDIEWEB_BIND_ME_TO_USER``, ``INDIEWEB_ALLOWED_CLIENT_IDS``,
+  ``INDIEWEB_REDIRECT_URI_ALLOWLIST``, and concrete
+  ``INDIEWEB_RATE_LIMITS`` entries for the bundled ``auth``, ``token``,
+  ``token_introspection``, ``micropub``, ``media``, ``webmention``,
+  ``webmention_status``, and ``websub_callback`` keys. ``docs/indieauth.rst``,
+  ``docs/api.rst``, and ``README.rst`` cross-reference the new section.
+  ``tests/test_documentation_snippets.py`` asserts the section header and
+  setting names exist in ``docs/configuration.rst`` so renaming or
+  removing a setting in code without updating the snippet fails CI. No
+  behaviour change.
 * Aligned the Micropub create error path with the rest of the action handlers
   so unexpected exceptions no longer flow through to authenticated clients.
   ``MicropubView.post`` now catches ``ValueError`` from

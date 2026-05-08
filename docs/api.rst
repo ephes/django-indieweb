@@ -13,6 +13,14 @@ This document describes the IndieWeb endpoints provided by django-indieweb.
    callback endpoint for host-owned subscriptions. It does not include a hub
    service. See :doc:`websub`.
 
+.. seealso::
+
+   For a copyable production-hardening settings snippet covering PKCE,
+   ``me`` binding, client/redirect URI allowlists, and per-endpoint rate
+   limits across the IndieAuth, Micropub, Webmention, and WebSub callback
+   endpoints below, see :ref:`Production hardening <production-hardening>`
+   in the configuration guide.
+
 Endpoints Overview
 ------------------
 

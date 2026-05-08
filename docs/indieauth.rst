@@ -3,6 +3,13 @@ IndieAuth Implementation
 
 Django-IndieWeb provides a complete IndieAuth implementation that supports both authentication (logging into sites) and authorization (granting permissions to apps).
 
+.. seealso::
+
+   For a copyable production-hardening settings snippet (PKCE, ``me``
+   binding, client allowlist, redirect URI allowlist, and per-endpoint rate
+   limits), see :ref:`Production hardening <production-hardening>` in the
+   configuration guide.
+
 Overview
 --------
 
