@@ -349,8 +349,7 @@ class WebmentionProcessor:
             # alone protects against interleaved writes, not stale outcomes.
             if locked.last_received_at is not None and locked.last_received_at >= outcome.received_at:
                 logger.info(
-                    "Skipping stale webmention outcome for %s: row last received at %s, "
-                    "this outcome computed at %s",
+                    "Skipping stale webmention outcome for %s: row last received at %s, this outcome computed at %s",
                     source_url,
                     locked.last_received_at,
                     outcome.received_at,
@@ -591,9 +590,7 @@ class WebmentionProcessor:
             )
         )
 
-    def _mark_webmention_failed(
-        self, webmention: Webmention, last_received_at: datetime | None = None
-    ) -> None:
+    def _mark_webmention_failed(self, webmention: Webmention, last_received_at: datetime | None = None) -> None:
         """Mark a Webmention as failed without discarding previously parsed fields."""
         webmention.status = "failed"
         webmention.verified_at = None
@@ -634,9 +631,7 @@ class WebmentionProcessor:
         """Verify that the target URL is linked in the source content."""
         return _html_links_to_target(html_content, target_url)
 
-    def _verify_vouch_for_webmention(
-        self, webmention: Webmention, source_url: str
-    ) -> tuple[bool, datetime | None]:
+    def _verify_vouch_for_webmention(self, webmention: Webmention, source_url: str) -> tuple[bool, datetime | None]:
         """Verify optional Vouch metadata.
 
         Returns ``(allowed, verified_at)``. ``allowed`` is False when the

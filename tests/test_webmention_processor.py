@@ -1199,9 +1199,7 @@ class TestWebmentionProcessor:
 
     def test_extract_published_parses_compact_timezone_offset(self, processor):
         """Python 3.10 requires ISO offsets to include a colon."""
-        published = processor._extract_published(
-            {"properties": {"published": ["2026-05-01T10:00:00+0000"]}}
-        )
+        published = processor._extract_published({"properties": {"published": ["2026-05-01T10:00:00+0000"]}})
 
         assert published is not None
         assert published.isoformat() == "2026-05-01T10:00:00+00:00"
@@ -1772,9 +1770,7 @@ class TestWebmentionProcessor:
         assert reloaded.vouch_verified_at is None
 
     @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
-    def test_processor_persists_vouch_verified_at_on_spam_outcome(
-        self, processor, django_capture_on_commit_callbacks
-    ):
+    def test_processor_persists_vouch_verified_at_on_spam_outcome(self, processor, django_capture_on_commit_callbacks):
         """A successful vouch verification must survive a later spam classification.
 
         Before refactoring, ``_verify_vouch_for_webmention`` saved

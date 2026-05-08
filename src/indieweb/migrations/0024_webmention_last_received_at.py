@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('indieweb', '0023_hash_auth_keys'),
+        ("indieweb", "0023_hash_auth_keys"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='webmention',
-            name='last_received_at',
+            model_name="webmention",
+            name="last_received_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
     ]
