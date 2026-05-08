@@ -169,11 +169,11 @@ Rendered HTML Example
 .. code-block:: html
 
     <div class="h-card">
-        <img class="u-photo" src="https://example.com/alice.jpg" alt="Alice Johnson">
+        <img class="u-photo" src="https://example.com/alice.jpg" alt="Alice Johnson" referrerpolicy="no-referrer">
         <div class="p-name">Alice Johnson</div>
-        <a class="u-url" href="https://example.com" rel="me">Profile</a>
-        <a class="u-url" href="https://social.example/@alice">https://social.example/@alice</a>
-        <a class="u-email" href="mailto:alice@example.com">alice@example.com</a>
+        <a class="u-url" href="https://example.com" rel="me noopener" referrerpolicy="no-referrer">Profile</a>
+        <a class="u-url" href="https://social.example/@alice" rel="nofollow noopener" referrerpolicy="no-referrer">https://social.example/@alice</a>
+        <a class="u-email" href="mailto:alice%40example.com">alice@example.com</a>
         <p class="p-note">Web developer and IndieWeb enthusiast</p>
         <div class="p-adr h-adr">
             <span class="p-locality">Portland</span>
@@ -181,6 +181,14 @@ Rendered HTML Example
             <span class="p-country-name">USA</span>
         </div>
     </div>
+
+The bundled template restricts every interpolated ``href``/``src`` to
+``http``/``https`` URLs at render time via the ``h_card_safe_url`` filter.
+Unsafe schemes (``javascript:``, ``data:``, ``ftp:``, ``file:``, ``mailto:``)
+are dropped silently as a defense-in-depth layer over ``Profile.full_clean()``,
+which catches the same cases when a profile is saved via ``Profile.save()`` but
+not via bypass paths such as ``QuerySet.update``, ``bulk_update``, raw SQL, or
+``loaddata`` fixtures.
 
 Admin Interface
 ===============
@@ -260,17 +268,29 @@ Best Practices
        # Incorrect
        h_card = {"name": "Alice"}
 
-2. **Include rel="me"**: Add ``rel="me"`` to the first URL in your h-card for IndieAuth:
+2. **Include rel="me"**: Add ``rel="me"`` to the first URL in your h-card for
+   IndieAuth identity discovery. The bundled template emits ``rel="me
+   noopener"`` on the first emitted safe profile URL and ``rel="nofollow
+   noopener"`` on subsequent URLs, with ``referrerpolicy="no-referrer"`` on
+   every outbound h-card link and photo:
 
    .. code-block:: html
 
-       <a class="u-url" href="https://example.com" rel="me">Profile</a>
+       <a class="u-url" href="https://example.com" rel="me noopener" referrerpolicy="no-referrer">Profile</a>
 
 3. **Use semantic markup**: The h-card template uses proper microformats2 classes (``p-name``, ``u-url``, ``u-photo``, etc.)
 
 4. **Validate data**: Use ``validate_h_card()`` before saving h-card data to ensure it follows the correct structure
 
-5. **URL and Email validation**: The Profile model automatically validates URLs and email addresses in h_card data when saving. Invalid URLs or emails will raise a ``ValidationError``.
+5. **URL and Email validation**: The Profile model automatically validates URLs
+   and email addresses in h_card data when saving. URL fields
+   (``h_card.url``, ``h_card.photo``, ``h_card.org.url``, ``Profile.url``,
+   ``Profile.photo_url``) are restricted to ``http``/``https`` schemes;
+   ``ftp``/``ftps``/``javascript``/``data``/``file``/``mailto`` schemes raise a
+   ``ValidationError`` from ``Profile.full_clean()``. The bundled
+   ``h-card.html`` template re-applies the same scheme restriction at render
+   time so bypass paths (``QuerySet.update``, ``bulk_update``, raw SQL,
+   fixtures) cannot leak unsafe URLs into rendered pages.
 
 API Reference
 =============
@@ -341,14 +361,27 @@ Complete Profile Example
 Custom H-Card Template
 ----------------------
 
-You can create custom h-card templates by overriding ``indieweb/h-card.html``:
+You can create custom h-card templates by overriding ``indieweb/h-card.html``.
+Always route ``href``/``src`` interpolations through the bundled
+``h_card_safe_url`` filter (or ``h_card_safe_urls`` when iterating a list) and
+keep ``rel`` / ``referrerpolicy`` defenses on outbound links — the bundled
+template treats render-time sanitization as a defense-in-depth layer over
+``Profile.full_clean()`` and overrides should preserve that:
 
 .. code-block:: django
 
     {# templates/indieweb/h-card.html #}
+    {% load indieweb_tags %}
     <div class="h-card custom-card">
         {% if profile and profile.photo_url %}
-            <img class="u-photo avatar" src="{{ profile.photo_url }}" alt="{{ profile.name|default:user.username }}">
+            {% with safe_photo=profile.photo_url|h_card_safe_url %}
+                {% if safe_photo %}
+                    <img class="u-photo avatar"
+                         src="{{ safe_photo }}"
+                         alt="{{ profile.name|default:user.username }}"
+                         referrerpolicy="no-referrer">
+                {% endif %}
+            {% endwith %}
         {% endif %}
 
         <h3 class="p-name">{{ profile.name|default:user.username }}</h3>
@@ -362,10 +395,23 @@ You can create custom h-card templates by overriding ``indieweb/h-card.html``:
         {% endif %}
 
         <div class="links">
-            {% for url in h_card.url %}
-                <a class="u-url" href="{{ url }}" {% if forloop.first %}rel="me"{% endif %}>
-                    {{ url|urlize }}
-                </a>
+            {% for safe_url in h_card.url|h_card_safe_urls %}
+                {% if forloop.first %}
+                    <a class="u-url"
+                       href="{{ safe_url }}"
+                       rel="me noopener"
+                       referrerpolicy="no-referrer">{{ safe_url }}</a>
+                {% else %}
+                    <a class="u-url"
+                       href="{{ safe_url }}"
+                       rel="nofollow noopener"
+                       referrerpolicy="no-referrer">{{ safe_url }}</a>
+                {% endif %}
             {% endfor %}
         </div>
     </div>
+
+The ``h_card_safe_urls`` filter drops unsafe entries before iteration so
+``forloop.first`` keys off the first *emitted* safe URL — preserving
+``rel="me"`` for IndieAuth identity discovery even when an earlier raw entry
+was filtered out by the sanitizer.

@@ -5,6 +5,20 @@ Changelog
 
 Unreleased
 ----------
+* Tightened h-card URL handling as defense-in-depth. ``Profile`` validation now
+  restricts ``h_card.url``/``h_card.photo``/``h_card.org.url`` and the synced
+  ``Profile.url``/``Profile.photo_url`` fields to ``http``/``https``, rejecting
+  ``ftp``, ``ftps``, ``javascript``, ``data``, ``file``, and ``mailto`` schemes
+  via ``full_clean()``. The bundled ``h-card.html`` template now runs every
+  interpolated ``href``/``src`` through a new ``h_card_safe_url`` filter
+  (backed by ``sanitize_remote_webmention_url``) and skips emission when the
+  result is empty, so bypass paths like ``QuerySet.update``, ``bulk_update``,
+  raw SQL, and fixture loads cannot leak unsafe URLs into rendered pages.
+  Outbound profile links now carry ``rel="me noopener"`` (first URL, for
+  IndieAuth identity discovery) or ``rel="nofollow noopener"`` (subsequent
+  URLs); every ``<a class="u-url">`` and ``<img class="u-photo">`` element sets
+  ``referrerpolicy="no-referrer"``. ``mailto:`` ``href`` values now go through
+  ``urlencode``.
 * Added ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` so hosts can hand accepted WebSub
   deliveries off to a queue instead of running
   ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` synchronously inside the callback request

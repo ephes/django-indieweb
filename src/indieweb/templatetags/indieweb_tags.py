@@ -8,9 +8,44 @@ from django.template.loader import render_to_string
 
 from indieweb.h_card import normalize_property_names
 from indieweb.models import Profile
+from indieweb.sanitizers import sanitize_remote_webmention_url
 
 register = template.Library()
 User = get_user_model()
+
+
+@register.filter(name="h_card_safe_url")
+def h_card_safe_url(value: Any) -> str:
+    """Return an absolute http(s) URL or an empty string.
+
+    Defense-in-depth for h-card render: bypass paths (``bulk_update``,
+    ``QuerySet.update``, raw SQL, fixtures) skip ``Profile.full_clean``, so the
+    template still re-validates URL schemes before emitting ``href``/``src``.
+    """
+    if isinstance(value, dict) and "value" in value:
+        value = value["value"]
+    if not isinstance(value, str):
+        return ""
+    return sanitize_remote_webmention_url(value)
+
+
+@register.filter(name="h_card_safe_urls")
+def h_card_safe_urls(values: Any) -> list[str]:
+    """Return a list of absolute http(s) URLs, dropping unsafe entries.
+
+    Used in the bundled h-card template so that ``forloop.first`` keys off the
+    first *emitted* safe URL rather than the first raw list item — preserves
+    ``rel="me"`` on the first rendered profile link when an earlier raw entry
+    was dropped by the sanitizer.
+    """
+    if not isinstance(values, (list, tuple)):
+        return []
+    safe: list[str] = []
+    for value in values:
+        candidate = h_card_safe_url(value)
+        if candidate:
+            safe.append(candidate)
+    return safe
 
 
 @register.simple_tag

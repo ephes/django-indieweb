@@ -40,10 +40,7 @@ No current Syndication and Storage Examples items.
 
 ### Webmention and Reader Boundaries
 
-- [ ] Tighten h-card render-time URL validation as defense-in-depth.
-  - References: `SECURITY_ANALYSIS.md` h-card render finding; `src/indieweb/templates/indieweb/h-card.html`; `src/indieweb/models.py` (`Profile._validate_h_card_urls`); `src/indieweb/h_card.py`.
-  - Current state: `Profile.save()` runs `full_clean()` which validates h-card URLs, but Django's default `URLValidator()` permits `ftp(s)://`, `mailto:` interpolations have no validator, and bypass paths (`bulk_update`, `update()`, raw SQL, fixtures with `bypass_validation`) skip validation entirely. Several `<a href>`/`<img src>` interpolations also lack `rel="nofollow noopener"`/`referrerpolicy="no-referrer"`.
-  - Desired outcome: restrict h-card URL schemes to `http`/`https` at the model layer, sanitize at render with the existing `sanitize_remote_webmention_url`, and add `rel`/`referrerpolicy` on outbound author/photo links.
+No current Webmention and Reader Boundaries items.
 
 ## Agent Workflow Improvements
 

@@ -4,6 +4,50 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### Tighten h-card render-time URL validation as defense-in-depth
+
+- ``Profile._validate_h_card_urls`` now uses ``URLValidator(schemes=["http",
+  "https"])``, and ``Profile._validate_quick_access_urls`` extends that
+  restriction to the synced ``Profile.url`` and ``Profile.photo_url`` fields.
+  The default ``URLField`` validator continues to run, so ``Profile.save()``
+  rejects ``ftp``, ``ftps``, ``javascript``, ``data``, ``file``, and ``mailto``
+  values via the existing ``full_clean()`` call.
+- Added the ``h_card_safe_url`` and ``h_card_safe_urls`` template filters
+  (``src/indieweb/templatetags/indieweb_tags.py``) wrapping
+  ``sanitize_remote_webmention_url``. The bundled ``h-card.html`` template now
+  passes every interpolated ``href``/``src`` (``h_card.url``, ``h_card.photo``,
+  ``h_card.org.url``, ``profile.url``, ``profile.photo_url``) through the
+  filters and skips emission when the result is empty. The list-form
+  ``h_card_safe_urls`` filter is used to iterate ``h_card.url`` so
+  ``forloop.first`` keys off the first *emitted* safe URL — preserving
+  ``rel="me"`` for IndieAuth identity discovery even when an earlier raw entry
+  was dropped by the sanitizer. This closes bypass paths like
+  ``QuerySet.update``, ``bulk_update``, raw SQL, and ``loaddata`` fixtures that
+  skip ``Profile.full_clean``.
+- Outbound h-card links now carry ``rel="me noopener"`` (first profile URL,
+  preserving IndieAuth identity discovery) or ``rel="nofollow noopener"``
+  (subsequent profile URLs), and every ``<a class="u-url">`` / ``<img
+  class="u-photo">`` element sets ``referrerpolicy="no-referrer"``. The org URL
+  hardening from earlier work is preserved.
+- ``mailto:`` email links now run the address through ``urlencode`` before
+  splicing it into ``href``.
+- Added regression tests in ``tests/test_profile_models.py`` covering ``ftp``,
+  ``ftps``, ``javascript``, ``data``, and ``file`` rejection on
+  ``h_card.url``/``h_card.photo``/``h_card.org.url``/``Profile.url``/
+  ``Profile.photo_url``, and tests in ``tests/test_h_card_templatetags.py``
+  asserting that bypass-path-injected unsafe URLs are not rendered, that the
+  first profile URL keeps ``rel="me noopener"``, that subsequent URLs are
+  ``rel="nofollow noopener"``, and that photos include
+  ``referrerpolicy="no-referrer"``.
+- Validation: ``uv run pytest`` (1316 passing); ``uv run mypy``; ``uv run ruff
+  check .``; ``uv run ruff format --check .``; ``uv run prek run --all-files``;
+  ``just docs``.
+- Documentation: changelog gains an Unreleased entry. ``docs/h-card.rst``
+  updated — rendered HTML example, IndieAuth ``rel="me"`` best-practice
+  snippet, URL/email validation note, and custom-template override example all
+  reflect the new filter usage and outbound link attributes so hosts copying
+  the override do not reintroduce the unsafe rendering path.
+
 ### Add ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` for queued WebSub deliveries
 
 - New optional setting ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE`` (dotted path to a

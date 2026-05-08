@@ -1,14 +1,27 @@
+{% load indieweb_tags %}
 <div class="h-card{% if extra_classes %} {{ extra_classes }}{% endif %}">
   {% if h_card.photo %}
     {% for photo in h_card.photo %}
       {% if photo.value %}
-        <img class="u-photo" src="{{ photo.value }}" alt="{{ photo.alt|default:profile.name|default:user.username }}">
+        {% with safe_photo=photo.value|h_card_safe_url %}
+          {% if safe_photo %}
+            <img class="u-photo" src="{{ safe_photo }}" alt="{{ photo.alt|default:profile.name|default:user.username }}" referrerpolicy="no-referrer">
+          {% endif %}
+        {% endwith %}
       {% else %}
-        <img class="u-photo" src="{{ photo }}" alt="{{ profile.name|default:user.username }}">
+        {% with safe_photo=photo|h_card_safe_url %}
+          {% if safe_photo %}
+            <img class="u-photo" src="{{ safe_photo }}" alt="{{ profile.name|default:user.username }}" referrerpolicy="no-referrer">
+          {% endif %}
+        {% endwith %}
       {% endif %}
     {% endfor %}
   {% elif profile and profile.photo_url %}
-    <img class="u-photo" src="{{ profile.photo_url }}" alt="{{ profile.name|default:user.username }}">
+    {% with safe_photo=profile.photo_url|h_card_safe_url %}
+      {% if safe_photo %}
+        <img class="u-photo" src="{{ safe_photo }}" alt="{{ profile.name|default:user.username }}" referrerpolicy="no-referrer">
+      {% endif %}
+    {% endwith %}
   {% endif %}
 
   <div class="p-name">
@@ -16,22 +29,24 @@
   </div>
 
   {% if h_card.url %}
-    {% for url in h_card.url %}
-      <a class="u-url" href="{{ url }}" {% if forloop.first %}rel="me"{% endif %}>
-        {% if forloop.first %}
-          Profile
-        {% else %}
-          {{ url }}
-        {% endif %}
-      </a>
+    {% for safe_url in h_card.url|h_card_safe_urls %}
+      {% if forloop.first %}
+        <a class="u-url" href="{{ safe_url }}" rel="me noopener" referrerpolicy="no-referrer">Profile</a>
+      {% else %}
+        <a class="u-url" href="{{ safe_url }}" rel="nofollow noopener" referrerpolicy="no-referrer">{{ safe_url }}</a>
+      {% endif %}
     {% endfor %}
   {% elif profile.url %}
-    <a class="u-url" href="{{ profile.url }}" rel="me">Profile</a>
+    {% with safe_url=profile.url|h_card_safe_url %}
+      {% if safe_url %}
+        <a class="u-url" href="{{ safe_url }}" rel="me noopener" referrerpolicy="no-referrer">Profile</a>
+      {% endif %}
+    {% endwith %}
   {% endif %}
 
   {% if h_card.email %}
     {% for email in h_card.email %}
-      <a class="u-email" href="mailto:{{ email }}">{{ email }}</a>
+      <a class="u-email" href="mailto:{{ email|urlencode }}">{{ email }}</a>
     {% endfor %}
   {% endif %}
 
@@ -61,7 +76,11 @@
     {% for org in h_card.org %}
       <div class="p-org h-card">
         {% if org.name %}<span class="p-name">{{ org.name }}</span>{% endif %}
-        {% if org.url %}<a class="u-url" href="{{ org.url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">{{ org.url }}</a>{% endif %}
+        {% if org.url %}
+          {% with safe_org_url=org.url|h_card_safe_url %}
+            {% if safe_org_url %}<a class="u-url" href="{{ safe_org_url }}" rel="nofollow noopener ugc" referrerpolicy="no-referrer">{{ safe_org_url }}</a>{% endif %}
+          {% endwith %}
+        {% endif %}
       </div>
     {% endfor %}
   {% endif %}

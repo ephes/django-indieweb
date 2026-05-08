@@ -661,13 +661,26 @@ class Profile(models.Model):
     def clean(self) -> None:
         """Validate h_card data before saving."""
         super().clean()
+        self._validate_quick_access_urls()
         if self.h_card:
             self._validate_h_card_urls()
             self._validate_h_card_emails()
 
+    def _validate_quick_access_urls(self) -> None:
+        """Restrict the synced ``url``/``photo_url`` fields to ``http``/``https``."""
+        url_validator = URLValidator(schemes=["http", "https"])
+        for attr in ("url", "photo_url"):
+            value = getattr(self, attr) or ""
+            if not value:
+                continue
+            try:
+                url_validator(value)
+            except ValidationError as exc:
+                raise ValidationError({attr: f"Only http(s) URLs are allowed: {value}"}) from exc
+
     def _validate_h_card_urls(self) -> None:
-        """Validate all URLs in h_card data."""
-        url_validator = URLValidator()
+        """Validate all URLs in h_card data, restricting to ``http``/``https``."""
+        url_validator = URLValidator(schemes=["http", "https"])
 
         for field in ("url", "photo"):
             if field in self.h_card:
