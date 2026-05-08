@@ -12,18 +12,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Harden WebSub delivery replay atomicity and side-effect ordering. References:
-  `src/indieweb/views.py` (`WebSubCallbackView.post`),
-  `src/indieweb/websub.py` (`delivery_is_replay`, `record_websub_delivery`),
-  `tests/test_websub_subscriber.py`. Successful deliveries currently check
-  replay before accepted digest history is written, with no subscription row
-  lock around replay-check, host hook/enqueue dispatch, and history update.
-  Two parallel identical deliveries can both pass replay detection, and a retry
-  after a crash between hook side effects and history recording can re-run the
-  hook. Rework the flow so replay-check and accepted-digest updates are atomic
-  for valid deliveries, or document and expose an idempotency key contract for
-  hooks if exactly-once behavior is intentionally delegated to hosts.
-
 - [ ] Stop leaking Micropub create handler exception details to clients.
   References: `src/indieweb/views.py` (`MicropubView.post`),
   `tests/test_micropub_create.py`, `docs/api.rst`, `docs/micropub.rst`.

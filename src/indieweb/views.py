@@ -45,11 +45,11 @@ from .rate_limit import RateLimitMixin
 from .websub import (
     WebSubDeliveryEnqueueError,
     WebSubDeliveryHookError,
+    accept_websub_delivery,
     confirm_websub_verification,
     delivery_body_too_large,
     delivery_content_length_too_large,
     delivery_content_type_allowed,
-    delivery_is_replay,
     delivery_max_bytes,
     enqueue_websub_delivery,
     process_websub_delivery,
@@ -2686,7 +2686,21 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             )
             return HttpResponse(status=403)
 
-        if delivery_is_replay(subscription, body):
+        body_digest = hashlib.sha256(body).hexdigest()
+        # Atomic replay-check + acceptance gate. The unique constraint on
+        # ``WebSubAcceptedDelivery(subscription, body_digest)`` guarantees that
+        # two concurrent identical deliveries cannot both record an
+        # acceptance, regardless of backend row-locking semantics. Hook
+        # dispatch happens *after* the gate commits, so a crash between commit
+        # and hook execution leaves an accepted-and-recorded delivery whose
+        # hook may not have run; on retry the unique-constraint conflict
+        # returns the replay response and the hook is not re-invoked. We
+        # trade at-least-once delivery for at-most-once-per-digest hook
+        # invocation. Operators who require at-least-once host-side
+        # processing should make the configured hook a queue producer (cheap,
+        # idempotent on the host side) rather than the side-effecting work
+        # directly.
+        if not accept_websub_delivery(subscription, body_digest):
             record_websub_delivery(
                 subscription,
                 body,
@@ -2703,6 +2717,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             request.headers,
             content_type=content_type,
             signature_algorithm=signature_algorithm,
+            body_digest=body_digest,
         )
         if failure is not None:
             return failure
@@ -2724,6 +2739,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
         *,
         content_type: str,
         signature_algorithm: str | None,
+        body_digest: str,
     ) -> HttpResponse | None:
         """Run the configured enqueue or sync delivery hook for an accepted body.
 
@@ -2732,9 +2748,13 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
         delivery should continue to the success path. ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE``
         wins when set: the inline ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` is skipped
         because the queued worker is expected to run any host-side processing.
+
+        The ``body_digest`` is forwarded to the configured hook or enqueue
+        callable when its signature advertises a ``body_digest`` parameter,
+        giving hosts a stable idempotency key for opt-in dedupe.
         """
         try:
-            enqueued = enqueue_websub_delivery(subscription, body, headers)
+            enqueued = enqueue_websub_delivery(subscription, body, headers, body_digest=body_digest)
         except WebSubDeliveryEnqueueError:
             record_websub_delivery(
                 subscription,
@@ -2750,7 +2770,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             return None
 
         try:
-            process_websub_delivery(subscription, body, headers)
+            process_websub_delivery(subscription, body, headers, body_digest=body_digest)
         except WebSubDeliveryHookError:
             record_websub_delivery(
                 subscription,

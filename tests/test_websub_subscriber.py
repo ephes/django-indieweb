@@ -13,13 +13,13 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
-from indieweb.models import WebSubDeliveryAttempt, WebSubSubscription
+from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
 from indieweb.websub import (
+    accept_websub_delivery,
     build_websub_callback_url,
     delivery_is_replay,
     get_websub_expired_subscriptions,
     get_websub_renewal_candidates,
-    record_websub_delivery,
     request_websub_subscription,
     summarize_websub_leases,
     validate_websub_delivery_signature,
@@ -973,89 +973,62 @@ def test_callback_post_rejects_a_b_a_replay_within_replay_window(client, setting
     assert subscription.last_delivery_error == "replay detected"
     # Single-row diagnostic remains the most-recent accepted digest.
     assert subscription.last_accepted_delivery_digest == hashlib.sha256(body_b).hexdigest()
-    digests = {entry["digest"] for entry in subscription.recent_accepted_delivery_digests}
+    digests = set(
+        WebSubAcceptedDelivery.objects.filter(subscription=subscription).values_list("body_digest", flat=True)
+    )
     assert hashlib.sha256(body_a).hexdigest() in digests
     assert hashlib.sha256(body_b).hexdigest() in digests
     assert len(websub_hooks.DELIVERIES) == 2
 
 
 @pytest.mark.django_db
-def test_record_websub_delivery_evicts_oldest_history_when_cap_exceeded(settings, subscription):
+def test_accept_websub_delivery_evicts_oldest_history_when_cap_exceeded(settings, subscription):
     """Beyond the configured cap the oldest digest is dropped; replaying it is no longer rejected."""
     settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 3
-    bodies = [f"<feed><id>{index}</id></feed>".encode() for index in range(4)]
+    digests = [hashlib.sha256(f"<feed><id>{i}</id></feed>".encode()).hexdigest() for i in range(4)]
 
-    for body in bodies:
-        record_websub_delivery(subscription, body, content_type="application/atom+xml", status_code=204)
+    for digest in digests:
+        assert accept_websub_delivery(subscription, digest) is True
 
-    subscription.refresh_from_db()
-    history_digests = [entry["digest"] for entry in subscription.recent_accepted_delivery_digests]
-    assert len(history_digests) == 3
-    # The oldest-accepted digest has been evicted; replaying it now passes the replay check.
-    assert hashlib.sha256(bodies[0]).hexdigest() not in history_digests
-    assert delivery_is_replay(subscription, bodies[0]) is False
-    # Newer entries are still tracked and rejected as replays.
-    assert delivery_is_replay(subscription, bodies[-1]) is True
+    remaining = list(
+        WebSubAcceptedDelivery.objects.filter(subscription=subscription).values_list("body_digest", flat=True)
+    )
+    assert len(remaining) == 3
+    # The oldest-accepted digest has been evicted; the unique constraint no
+    # longer rejects it, so the gate accepts a fresh insertion.
+    assert digests[0] not in remaining
+    assert accept_websub_delivery(subscription, digests[0]) is True
+    # Newer entries are still tracked and the gate returns ``False`` on retry.
+    assert accept_websub_delivery(subscription, digests[-1]) is False
 
 
 @pytest.mark.django_db
-def test_record_websub_delivery_prunes_entries_outside_replay_window(settings, subscription):
-    """Entries older than the replay window are pruned and no longer count as replays."""
+def test_accept_websub_delivery_prunes_entries_outside_replay_window(settings, subscription):
+    """Rows older than the replay window are pruned and no longer count as replays."""
     settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 60
-    body_old = b"<feed><id>old</id></feed>"
-    body_new = b"<feed><id>new</id></feed>"
+    digest_old = hashlib.sha256(b"<feed><id>old</id></feed>").hexdigest()
+    digest_new = hashlib.sha256(b"<feed><id>new</id></feed>").hexdigest()
 
-    stale_at = (timezone.now() - timedelta(seconds=120)).isoformat()
-    subscription.recent_accepted_delivery_digests = [
-        {"digest": hashlib.sha256(body_old).hexdigest(), "accepted_at": stale_at},
-    ]
-    subscription.save(update_fields=["recent_accepted_delivery_digests"])
+    stale_at = timezone.now() - timedelta(seconds=120)
+    WebSubAcceptedDelivery.objects.create(
+        subscription=subscription,
+        body_digest=digest_old,
+        accepted_at=stale_at,
+    )
 
-    # The stale entry must not block a fresh accept of the same body.
-    assert delivery_is_replay(subscription, body_old) is False
-
-    record_websub_delivery(subscription, body_new, content_type="application/atom+xml", status_code=204)
-    subscription.refresh_from_db()
-    history_digests = [entry["digest"] for entry in subscription.recent_accepted_delivery_digests]
-    assert hashlib.sha256(body_old).hexdigest() not in history_digests
-    assert hashlib.sha256(body_new).hexdigest() in history_digests
-
-
-@pytest.mark.django_db
-def test_replay_history_tolerates_naive_accepted_at_entries(settings, subscription):
-    """Corrupted offset-naive ``accepted_at`` entries are dropped, not crashed on.
-
-    A parseable but offset-naive ISO timestamp would otherwise raise ``TypeError`` when
-    compared to the offset-aware ``timezone.now()`` cutoff.
-    """
-    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 60
-    body_corrupt = b"<feed><id>corrupt</id></feed>"
-    body_new = b"<feed><id>new</id></feed>"
-
-    subscription.recent_accepted_delivery_digests = [
-        # Naive ISO timestamp — must be silently dropped, not allowed to raise.
-        {"digest": hashlib.sha256(body_corrupt).hexdigest(), "accepted_at": "2026-05-07T12:00:00"},
-        # Empty/missing accepted_at — also dropped.
-        {"digest": "deadbeef", "accepted_at": ""},
-        # Non-ISO garbage — also dropped.
-        {"digest": "deadbeef", "accepted_at": "not-a-timestamp"},
-    ]
-    subscription.save(update_fields=["recent_accepted_delivery_digests"])
-
-    # delivery_is_replay must not raise and must not treat the naive entry as a replay.
-    assert delivery_is_replay(subscription, body_corrupt) is False
-
-    # record_websub_delivery must not raise while pruning the corrupted entries.
-    record_websub_delivery(subscription, body_new, content_type="application/atom+xml", status_code=204)
-    subscription.refresh_from_db()
-    history_digests = [entry["digest"] for entry in subscription.recent_accepted_delivery_digests]
-    assert hashlib.sha256(body_corrupt).hexdigest() not in history_digests
-    assert hashlib.sha256(body_new).hexdigest() in history_digests
+    # A fresh accept of the same body must succeed because the stale row is
+    # pruned before the unique-constraint insert runs.
+    assert accept_websub_delivery(subscription, digest_old) is True
+    assert accept_websub_delivery(subscription, digest_new) is True
+    remaining = set(
+        WebSubAcceptedDelivery.objects.filter(subscription=subscription).values_list("body_digest", flat=True)
+    )
+    assert remaining == {digest_old, digest_new}
 
 
 @pytest.mark.django_db
-def test_record_websub_delivery_treats_empty_history_max_as_default(settings, subscription):
-    """An empty INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX falls back to the default cap.
+def test_accept_websub_delivery_treats_empty_history_max_as_default(settings, subscription):
+    """An empty ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` falls back to the default cap.
 
     Regression: ``_positive_int`` translates an empty string to ``None``; without the
     explicit fallback the helper would have returned ``None`` and silently disabled the
@@ -1064,13 +1037,12 @@ def test_record_websub_delivery_treats_empty_history_max_as_default(settings, su
     """
     settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = ""
     # Many distinct payloads: the default cap (64) must apply.
-    bodies = [f"<feed><id>{index}</id></feed>".encode() for index in range(70)]
+    digests = [hashlib.sha256(f"<feed><id>{i}</id></feed>".encode()).hexdigest() for i in range(70)]
 
-    for body in bodies:
-        record_websub_delivery(subscription, body, content_type="application/atom+xml", status_code=204)
+    for digest in digests:
+        assert accept_websub_delivery(subscription, digest) is True
 
-    subscription.refresh_from_db()
-    assert len(subscription.recent_accepted_delivery_digests) == 64
+    assert WebSubAcceptedDelivery.objects.filter(subscription=subscription).count() == 64
 
 
 @pytest.mark.django_db
@@ -1345,3 +1317,159 @@ def test_subscription_with_secret_rejects_http_hub():
             secret="abc123" * 6,
             client=None,
         )
+
+
+@pytest.mark.django_db
+def test_callback_post_replay_does_not_re_invoke_hook(client, settings, subscription):
+    """Replay returns 409 and the hook is invoked exactly once for the body digest.
+
+    This proves the at-most-once-per-digest hook contract: the second identical
+    delivery is rejected by the unique-constraint gate before any hook
+    dispatch, so the configured hook only fires for the first acceptance.
+    """
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+    body = b"<feed><id>only-once</id></feed>"
+
+    first = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    second = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    third = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+
+    assert first.status_code == 204
+    assert second.status_code == 409
+    assert third.status_code == 409
+    assert len(websub_hooks.DELIVERIES) == 1
+
+
+@pytest.mark.django_db
+def test_callback_post_passes_body_digest_to_kwargs_hook(client, settings, subscription):
+    """Hooks accepting ``**kwargs`` (the existing ``capture_delivery``) receive ``body_digest``."""
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+    body = b"<feed><id>digest-via-kwargs</id></feed>"
+
+    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+
+    assert response.status_code == 204
+    assert len(websub_hooks.DELIVERIES) == 1
+    assert websub_hooks.DELIVERIES[0]["body_digest"] == hashlib.sha256(body).hexdigest()
+
+
+@pytest.mark.django_db
+def test_callback_post_passes_body_digest_to_explicit_parameter_hook(client, settings, subscription):
+    """Hooks with an explicit ``body_digest`` parameter receive it."""
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery_with_digest"
+    body = b"<feed><id>digest-explicit</id></feed>"
+
+    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+
+    assert response.status_code == 204
+    assert len(websub_hooks.DELIVERIES) == 1
+    assert websub_hooks.DELIVERIES[0]["body_digest"] == hashlib.sha256(body).hexdigest()
+
+
+@pytest.mark.django_db
+def test_callback_post_omits_body_digest_for_legacy_hook(client, settings, subscription):
+    """Hooks with the legacy signature (no ``body_digest``, no ``**kwargs``) are called unchanged."""
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery_legacy"
+    body = b"<feed><id>legacy</id></feed>"
+
+    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+
+    assert response.status_code == 204
+    assert len(websub_hooks.DELIVERIES) == 1
+    assert "body_digest" not in websub_hooks.DELIVERIES[0]
+
+
+def test_hook_accepts_body_digest_handles_inspect_failures():
+    """Callables that ``inspect.signature`` cannot introspect fall back to legacy."""
+    from indieweb.websub import _hook_accepts_body_digest
+
+    # Many builtins (e.g. ``range``) raise ``ValueError`` from ``inspect.signature``
+    # on older runtimes; on others they may succeed. Force the failure path
+    # explicitly with a callable whose ``__signature__`` raises.
+    class Bad:
+        @property
+        def __signature__(self):  # type: ignore[no-untyped-def]
+            raise TypeError("no signature for you")
+
+        def __call__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+    assert _hook_accepts_body_digest(Bad()) is False
+
+
+def test_hook_accepts_body_digest_detects_explicit_parameter():
+    """A function with an explicit ``body_digest`` parameter advertises it."""
+    from indieweb.websub import _hook_accepts_body_digest
+
+    def hook(*, subscription_id, hub_url, topic_url, body, headers, body_digest):  # type: ignore[no-untyped-def]
+        pass
+
+    assert _hook_accepts_body_digest(hook) is True
+
+
+def test_hook_accepts_body_digest_detects_var_keyword():
+    """A function that takes ``**kwargs`` is treated as accepting ``body_digest``."""
+    from indieweb.websub import _hook_accepts_body_digest
+
+    def hook(**kwargs):  # type: ignore[no-untyped-def]
+        pass
+
+    assert _hook_accepts_body_digest(hook) is True
+
+
+def test_hook_accepts_body_digest_rejects_legacy_signature():
+    """A function with neither ``body_digest`` nor ``**kwargs`` is treated as legacy."""
+    from indieweb.websub import _hook_accepts_body_digest
+
+    def hook(*, subscription_id, hub_url, topic_url, body, headers):  # type: ignore[no-untyped-def]
+        pass
+
+    assert _hook_accepts_body_digest(hook) is False
+
+
+@pytest.mark.django_db
+def test_delivery_is_replay_emits_deprecation_warning(subscription):
+    """The legacy ``delivery_is_replay`` helper now emits a deprecation warning."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        delivery_is_replay(subscription, b"<feed/>")
+
+    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+
+@pytest.mark.django_db
+def test_accept_websub_delivery_window_disabled_still_blocks_concurrent_duplicate(settings, subscription):
+    """The unique constraint gates duplicates even when the time window is disabled."""
+    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 0
+    digest = hashlib.sha256(b"<feed/>").hexdigest()
+
+    assert accept_websub_delivery(subscription, digest) is True
+    assert accept_websub_delivery(subscription, digest) is False
+
+
+@pytest.mark.django_db
+def test_concurrent_identical_deliveries_dispatch_hook_once(settings, subscription):
+    """Two competing acceptance attempts: only one wins.
+
+    Threaded ``live_server`` fixtures interact poorly with SQLite's
+    single-writer model and pytest-django's transaction isolation, so this
+    regression exercises the gate function directly. The proof is
+    backend-agnostic: the unique constraint on
+    ``(subscription, body_digest)`` plus Django's transaction write
+    serialization is what guarantees the second insert raises
+    ``IntegrityError``, regardless of whether the backend supports
+    ``SELECT FOR UPDATE``.
+    """
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+    digest = hashlib.sha256(b"<feed><id>parallel</id></feed>").hexdigest()
+
+    # Sequential proxies for "the two threads both reach the gate": the gate
+    # itself wraps a savepoint around ``create()`` and surfaces a clean
+    # ``False`` on the loser, so the worst-case interleaving collapses to
+    # this back-to-back pair.
+    outcomes = [accept_websub_delivery(subscription, digest) for _ in range(2)]
+    assert outcomes.count(True) == 1
+    assert outcomes.count(False) == 1
+    assert WebSubAcceptedDelivery.objects.filter(subscription=subscription).count() == 1

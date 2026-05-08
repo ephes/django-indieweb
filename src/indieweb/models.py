@@ -596,6 +596,44 @@ class WebSubSubscription(models.Model):
         return "configured" if self.pending_secret else ""
 
 
+class WebSubAcceptedDelivery(models.Model):
+    """An accepted WebSub delivery within the configured replay window.
+
+    A unique constraint on ``(subscription, body_digest)`` gives a portable
+    backend-agnostic atomic replay-detection gate: a second insert of the same
+    digest raises ``IntegrityError`` regardless of whether the backend supports
+    ``SELECT FOR UPDATE``. Rows are pruned by ``accepted_at`` after the
+    configured replay window expires; an optional cap-by-count maintenance
+    step trims the oldest rows beyond the configured maximum.
+    """
+
+    subscription = models.ForeignKey(
+        WebSubSubscription,
+        on_delete=models.CASCADE,
+        related_name="accepted_deliveries",
+    )
+    body_digest = models.CharField(max_length=128)
+    accepted_at = models.DateTimeField(db_index=True)
+
+    created = models.DateTimeField(auto_now_add=True)
+    modified = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["subscription", "body_digest"],
+                name="websub_accepted_unique_subscription_digest",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["subscription", "accepted_at"]),
+        ]
+        ordering = ("-accepted_at", "-pk")
+
+    def __str__(self) -> str:
+        return f"WebSub accepted delivery {self.body_digest[:12]}... at {self.accepted_at}"
+
+
 class WebSubDeliveryAttempt(models.Model):
     """Metadata-only history for one WebSub content distribution attempt."""
 

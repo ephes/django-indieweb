@@ -7,7 +7,15 @@ from django.core.exceptions import ValidationError
 from django.forms import CharField, ModelForm
 from django.http import HttpRequest
 
-from .models import Auth, Profile, Token, Webmention, WebSubDeliveryAttempt, WebSubSubscription
+from .models import (
+    Auth,
+    Profile,
+    Token,
+    Webmention,
+    WebSubAcceptedDelivery,
+    WebSubDeliveryAttempt,
+    WebSubSubscription,
+)
 
 
 @admin.register(Webmention)
@@ -146,6 +154,24 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
         ),
         ("Timestamps", {"fields": ("created", "modified")}),
     )
+
+
+@admin.register(WebSubAcceptedDelivery)
+class WebSubAcceptedDeliveryAdmin(admin.ModelAdmin):
+    list_display = ("subscription", "accepted_at", "body_digest")
+    list_filter = ("accepted_at",)
+    search_fields = ("subscription__topic_url", "subscription__hub_url", "body_digest")
+    readonly_fields = ("subscription", "body_digest", "accepted_at", "created", "modified")
+    ordering = ("-accepted_at", "-pk")
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
 
 
 @admin.register(WebSubDeliveryAttempt)

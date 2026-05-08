@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import inspect
 import logging
+import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -15,6 +17,7 @@ import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
+from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.http import HttpResponseBase
 from django.utils import timezone
@@ -28,7 +31,12 @@ from .http_client import (
     request_with_safe_redirects,
     validate_safe_http_url,
 )
-from .models import WEBSUB_SECRET_ENCRYPTED_PREFIX, WebSubDeliveryAttempt, WebSubSubscription
+from .models import (
+    WEBSUB_SECRET_ENCRYPTED_PREFIX,
+    WebSubAcceptedDelivery,
+    WebSubDeliveryAttempt,
+    WebSubSubscription,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -375,61 +383,6 @@ def _delivery_replay_history_max() -> int | None:
         )
         return DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX
     return parsed
-
-
-def _coerce_recent_accepted_entries(value: Any) -> list[dict[str, str]]:
-    """Return a sanitized list of replay-history entries from arbitrary stored data."""
-    if not isinstance(value, list):
-        return []
-    cleaned: list[dict[str, str]] = []
-    for entry in value:
-        if not isinstance(entry, dict):
-            continue
-        digest = entry.get("digest")
-        accepted_at = entry.get("accepted_at")
-        if isinstance(digest, str) and digest and isinstance(accepted_at, str) and accepted_at:
-            cleaned.append({"digest": digest, "accepted_at": accepted_at})
-    return cleaned
-
-
-def _parse_recent_accepted_at(value: str) -> datetime | None:
-    """Return an aware datetime from a stored ``accepted_at`` value, or ``None`` on failure.
-
-    A corrupted or legacy JSON column may contain offset-naive ISO timestamps that
-    ``datetime.fromisoformat`` will parse but cannot be compared to the aware
-    ``timezone.now()`` cutoff without raising ``TypeError``. Treat any naive value as
-    invalid and drop it rather than crashing the replay check.
-    """
-    try:
-        parsed = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
-        return None
-    return parsed
-
-
-def _prune_recent_accepted_entries(
-    entries: list[dict[str, str]],
-    *,
-    received_at: datetime,
-    replay_window_seconds: int | None,
-) -> list[dict[str, str]]:
-    """Drop replay-history entries older than the configured replay window."""
-    if replay_window_seconds is None:
-        return entries
-    cutoff = received_at - timedelta(seconds=replay_window_seconds)
-    pruned: list[dict[str, str]] = []
-    for entry in entries:
-        accepted_at = entry.get("accepted_at")
-        if not isinstance(accepted_at, str):
-            continue
-        entry_at = _parse_recent_accepted_at(accepted_at)
-        if entry_at is None:
-            continue
-        if entry_at >= cutoff:
-            pruned.append(entry)
-    return pruned
 
 
 def _delivery_replay_window_seconds() -> int | None:
@@ -1035,7 +988,19 @@ def delivery_is_replay(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Return whether ``body`` duplicates any retained accepted delivery in the window."""
+    """Return whether ``body`` duplicates any accepted delivery in the replay window.
+
+    .. deprecated::
+        ``delivery_is_replay`` is replaced by :func:`accept_websub_delivery`,
+        which performs the replay check and acceptance gate atomically against
+        the ``WebSubAcceptedDelivery`` table. The legacy helper is retained for
+        backwards compatibility and continues to consult the new table.
+    """
+    warnings.warn(
+        "delivery_is_replay is deprecated; use accept_websub_delivery for atomic replay-check + acceptance",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     replay_window_seconds = _delivery_replay_window_seconds()
     if replay_window_seconds is None:
         return False
@@ -1043,22 +1008,90 @@ def delivery_is_replay(
     cutoff = received_at - timedelta(seconds=replay_window_seconds)
     body_digest = hashlib.sha256(body).hexdigest()
 
-    entries = _coerce_recent_accepted_entries(subscription.recent_accepted_delivery_digests)
-    for entry in entries:
-        entry_at = _parse_recent_accepted_at(entry["accepted_at"])
-        if entry_at is None or entry_at < cutoff:
-            continue
-        if hmac.compare_digest(entry["digest"], body_digest):
-            return True
+    return WebSubAcceptedDelivery.objects.filter(
+        subscription=subscription,
+        body_digest=body_digest,
+        accepted_at__gte=cutoff,
+    ).exists()
 
-    # Fall back to the single-row diagnostics for rows written before the history cache
-    # was introduced; entries written by ``record_websub_delivery`` make this check
-    # redundant but harmless on upgraded subscriptions.
-    if subscription.last_accepted_delivery_at is None or not subscription.last_accepted_delivery_digest:
+
+def accept_websub_delivery(
+    subscription: WebSubSubscription,
+    body_digest: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Atomically gate a delivery body against the per-subscription replay window.
+
+    Returns ``True`` when the digest was accepted (this is a fresh delivery)
+    and ``False`` when the digest collides with an earlier accepted delivery
+    inside the configured replay window.
+
+    The implementation prunes expired rows inside an outer atomic block and
+    inserts the new row in an inner ``transaction.atomic()`` savepoint so an
+    ``IntegrityError`` from the unique constraint on ``(subscription,
+    body_digest)`` rolls back only the failing insert. The unique constraint
+    plus Django's transaction write serialization is what guarantees that two
+    concurrent identical deliveries cannot both record an acceptance,
+    independent of whether the backend supports ``SELECT FOR UPDATE``.
+
+    Cap-by-count maintenance is best-effort: under concurrent distinct-digest
+    deliveries the count can momentarily exceed the cap because we do not lock
+    the subscription row. Replay correctness is unaffected because each digest
+    still goes through the unique-constraint gate.
+    """
+    received_at = now or timezone.now()
+    replay_window_seconds = _delivery_replay_window_seconds()
+    history_max = _delivery_replay_history_max()
+
+    with transaction.atomic():
+        if replay_window_seconds is not None:
+            cutoff = received_at - timedelta(seconds=replay_window_seconds)
+            WebSubAcceptedDelivery.objects.filter(
+                subscription=subscription,
+                accepted_at__lt=cutoff,
+            ).delete()
+
+        try:
+            with transaction.atomic():  # savepoint
+                WebSubAcceptedDelivery.objects.create(
+                    subscription=subscription,
+                    body_digest=body_digest,
+                    accepted_at=received_at,
+                )
+        except IntegrityError:
+            return False
+
+        if history_max is not None and history_max > 0:
+            keep_ids = list(
+                WebSubAcceptedDelivery.objects.filter(subscription=subscription)
+                .order_by("-accepted_at", "-pk")
+                .values_list("pk", flat=True)[:history_max]
+            )
+            WebSubAcceptedDelivery.objects.filter(subscription=subscription).exclude(pk__in=keep_ids).delete()
+
+    return True
+
+
+def _hook_accepts_body_digest(callable_obj: Any) -> bool:
+    """Return whether ``callable_obj`` advertises a ``body_digest`` keyword argument.
+
+    A hook accepts ``body_digest`` if its signature has either an explicit
+    parameter named ``body_digest`` or a ``**kwargs``-style ``VAR_KEYWORD``
+    parameter. ``inspect.signature`` can raise ``TypeError`` or ``ValueError``
+    for some builtins or proxies — in that case we conservatively report
+    ``False`` so the hook receives the legacy keyword set unchanged.
+    """
+    try:
+        sig = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
         return False
-    if subscription.last_accepted_delivery_at < cutoff:
-        return False
-    return hmac.compare_digest(subscription.last_accepted_delivery_digest, body_digest)
+    for param in sig.parameters.values():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if param.name == "body_digest":
+            return True
+    return False
 
 
 def record_websub_delivery(
@@ -1097,18 +1130,11 @@ def record_websub_delivery(
         subscription.last_accepted_delivery_at = received_at
         subscription.last_accepted_delivery_digest = delivery_digest
         update_fields.extend(["last_accepted_delivery_at", "last_accepted_delivery_digest"])
-
-        replay_window_seconds = _delivery_replay_window_seconds()
-        history_max = _delivery_replay_history_max()
-        history = _coerce_recent_accepted_entries(subscription.recent_accepted_delivery_digests)
-        history = _prune_recent_accepted_entries(
-            history, received_at=received_at, replay_window_seconds=replay_window_seconds
-        )
-        history.append({"digest": delivery_digest, "accepted_at": received_at.isoformat()})
-        if history_max is not None and len(history) > history_max:
-            history = history[-history_max:]
-        subscription.recent_accepted_delivery_digests = history
-        update_fields.append("recent_accepted_delivery_digests")
+        # ``recent_accepted_delivery_digests`` is no longer the source of truth for
+        # replay detection: ``WebSubAcceptedDelivery`` rows written by
+        # :func:`accept_websub_delivery` provide an atomic per-digest gate.
+        # The JSON field is left in place on the model for migration
+        # compatibility and will be removed in a follow-up cleanup commit.
     subscription.save(update_fields=update_fields)
     WebSubDeliveryAttempt.objects.create(
         subscription=subscription,
@@ -1142,19 +1168,31 @@ def process_websub_delivery(
     subscription: WebSubSubscription,
     body: bytes,
     headers: Mapping[str, str],
+    *,
+    body_digest: str | None = None,
 ) -> None:
-    """Call the optional host hook for an accepted WebSub delivery."""
+    """Call the optional host hook for an accepted WebSub delivery.
+
+    When ``body_digest`` is supplied and the configured hook signature accepts
+    it (an explicit ``body_digest`` parameter or a ``**kwargs`` parameter),
+    the digest is forwarded so hosts can use it as an idempotency key. Hooks
+    with the legacy signature continue to receive the existing keyword set
+    unchanged.
+    """
     hook = get_websub_delivery_hook()
     if hook is None:
         return
+    hook_kwargs: dict[str, Any] = {
+        "subscription_id": subscription.pk,
+        "hub_url": subscription.hub_url,
+        "topic_url": subscription.topic_url,
+        "body": body,
+        "headers": dict(headers),
+    }
+    if body_digest is not None and _hook_accepts_body_digest(hook):
+        hook_kwargs["body_digest"] = body_digest
     try:
-        hook(
-            subscription_id=subscription.pk,
-            hub_url=subscription.hub_url,
-            topic_url=subscription.topic_url,
-            body=body,
-            headers=dict(headers),
-        )
+        hook(**hook_kwargs)
     except Exception as exc:
         logger.exception(f"WebSub delivery hook failed for subscription {subscription.pk}")
         raise WebSubDeliveryHookError from exc
@@ -1180,6 +1218,8 @@ def enqueue_websub_delivery(
     subscription: WebSubSubscription,
     body: bytes,
     headers: Mapping[str, str],
+    *,
+    body_digest: str | None = None,
 ) -> bool:
     """Hand an accepted WebSub delivery to the configured enqueue callable.
 
@@ -1188,18 +1228,26 @@ def enqueue_websub_delivery(
     ``WebSubDeliveryEnqueueError`` for import failures, non-callables, and
     runtime exceptions raised by the configured callable so the caller can
     record a failed delivery and return HTTP 500.
+
+    When ``body_digest`` is supplied and the configured callable advertises a
+    ``body_digest`` keyword argument (or a ``**kwargs`` parameter), the digest
+    is forwarded so the enqueued payload carries an idempotency key. Callables
+    with the legacy signature receive the existing keyword set unchanged.
     """
     enqueue = get_websub_delivery_enqueue()
     if enqueue is None:
         return False
+    enqueue_kwargs: dict[str, Any] = {
+        "subscription_id": subscription.pk,
+        "hub_url": subscription.hub_url,
+        "topic_url": subscription.topic_url,
+        "body": body,
+        "headers": dict(headers),
+    }
+    if body_digest is not None and _hook_accepts_body_digest(enqueue):
+        enqueue_kwargs["body_digest"] = body_digest
     try:
-        enqueue(
-            subscription_id=subscription.pk,
-            hub_url=subscription.hub_url,
-            topic_url=subscription.topic_url,
-            body=body,
-            headers=dict(headers),
-        )
+        enqueue(**enqueue_kwargs)
     except Exception as exc:
         logger.exception(f"WebSub delivery enqueue hook failed for subscription {subscription.pk}")
         raise WebSubDeliveryEnqueueError from exc

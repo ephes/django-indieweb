@@ -262,20 +262,28 @@ Content Distribution
 
 The callback ``POST`` accepts deliveries for active subscriptions only. It
 records latest-delivery metadata including content type, byte size, SHA-256
-digest, status code, delivery time, signature algorithm, the latest accepted
-delivery digest, and a bounded list of recently accepted SHA-256 digests used
-for replay checks. Each recorded delivery attempt also creates a
-``WebSubDeliveryAttempt`` row with the same bounded metadata for operator
-diagnostics. Duplicate bodies matching any retained accepted digest within the
-replay window are rejected with HTTP ``409`` for 300 seconds by default, so a
-captured payload A is rejected even after a different legitimate payload B
-has been accepted in between. Set
+digest, status code, delivery time, signature algorithm, and the latest
+accepted delivery digest. Each accepted delivery is recorded as a
+``WebSubAcceptedDelivery`` row used for replay detection; each recorded
+delivery attempt also creates a ``WebSubDeliveryAttempt`` row with the same
+bounded metadata for operator diagnostics. Duplicate bodies matching any
+retained accepted digest within the replay window are rejected with HTTP
+``409`` for 300 seconds by default, so a captured payload A is rejected even
+after a different legitimate payload B has been accepted in between. Set
 ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to tune or disable the
 window and ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` to bound the
-history (default 64 entries; the oldest digest is evicted once the cap is
+history (default 64 entries; the oldest row is evicted once the cap is
 reached). Entries older than the replay window are pruned on every accepted
 delivery. django-indieweb deliberately does not parse feeds or persist
 delivered content; host applications own those semantics.
+
+Replay detection is atomic. The ``WebSubAcceptedDelivery`` table carries a
+unique constraint on ``(subscription, body_digest)``; the callback wraps the
+prune-and-insert step in ``transaction.atomic()`` with an inner savepoint
+around ``create()`` so two concurrent identical deliveries cannot both
+record an acceptance, regardless of whether the database backend supports
+``SELECT FOR UPDATE``. The losing concurrent delivery sees the same HTTP
+``409`` response as a sequential replay.
 
 Subscribe with a strong ``hub.secret`` whenever possible. Deliveries for rows
 with a stored secret must include a valid SHA-256-or-stronger HMAC signature.
@@ -299,10 +307,33 @@ Configure ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` to receive accepted deliveries:
    INDIEWEB_WEBSUB_DELIVERY_HOOK = "myapp.websub.process_delivery"
 
 The hook is called with keyword arguments ``subscription_id``, ``hub_url``,
-``topic_url``, raw ``body`` bytes, and request ``headers``. Hook failures are
-logged, recorded on the subscription row, and returned as HTTP ``500`` so the
-hub can retry. When no hook is configured, accepted deliveries return
-``204 No Content`` after metadata is recorded.
+``topic_url``, raw ``body`` bytes, and request ``headers``. When the hook
+signature advertises a ``body_digest`` keyword argument or accepts
+``**kwargs``, the SHA-256 hex digest of the delivery body is also passed as
+``body_digest``. Hook failures are logged, recorded on the subscription row,
+and returned as HTTP ``500`` so the hub can retry. When no hook is configured,
+accepted deliveries return ``204 No Content`` after metadata is recorded.
+
+Idempotency contract
+~~~~~~~~~~~~~~~~~~~~
+
+Hooks are invoked at-most-once per accepted delivery digest within the
+configured replay window. The replay-check and acceptance gate is atomic:
+the ``WebSubAcceptedDelivery`` row is created inside a transaction, and the
+hook is dispatched only after that transaction commits. A crash between
+the commit and hook execution leaves an accepted-and-recorded delivery whose
+hook may not have run; on retry the unique-constraint conflict returns the
+same HTTP ``409`` replay response, and the hook is *not* re-invoked. This
+trades exactly-once delivery for at-most-once-per-digest hook invocation in
+exchange for eliminating duplicate side effects.
+
+Hooks should be idempotent. The optional ``body_digest`` keyword argument is
+the recommended idempotency key for host-side dedupe: hosts that opt in by
+declaring it in the hook signature receive a stable per-body identifier they
+can carry into queue payloads or downstream side-effect tracking. Operators
+who require at-least-once host-side processing should make their hook a
+queue producer (cheap, idempotent on the host side) rather than the
+side-effecting work directly so the queue worker can retry safely.
 
 Host-Owned Delivery Workflows
 -----------------------------

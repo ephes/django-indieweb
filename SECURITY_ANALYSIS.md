@@ -80,10 +80,13 @@ Validated high-priority residuals:
 
 Validated medium-priority residuals:
 
-- WebSub delivery hooks are dispatched before successful deliveries are
-  recorded in replay history. A worker crash or process kill between the hook
-  side effect and ``record_websub_delivery(..., status_code=204)`` can allow
-  duplicate hook execution on retry.
+- ~~WebSub delivery hooks are dispatched before successful deliveries are
+  recorded in replay history.~~ Resolved 2026-05-08 under P2.1: the atomic
+  ``WebSubAcceptedDelivery`` gate commits before hook dispatch, so a retry
+  after a crash between the gate commit and the hook returns the replay
+  response and does not re-invoke the hook. Hooks that opt in to the new
+  ``body_digest`` keyword argument get a stable idempotency key for any
+  remaining at-least-once host-side processing.
 - ``record_websub_denial`` clears staged renewal secret state for any valid
   denied callback matching the subscription token and topic. The callback token
   is high entropy, so this is not an unauthenticated public bypass, but it is a
@@ -130,12 +133,17 @@ Validated high-priority residuals:
   ``INDIEWEB_REDIRECT_URI_VALIDATOR`` is a fail-closed policy hook that
   short-circuits both layers. The bundled consent screen now displays the
   resolved ``redirect_uri``.
-- WebSub replay detection is not atomic under concurrent identical deliveries.
-  ``WebSubCallbackView.post`` calls ``delivery_is_replay(subscription, body)``
-  before any accepted digest is written, and the subscription row is not locked
-  around replay-check, hook/enqueue dispatch, and history update. Two parallel
-  valid deliveries with the same body can both pass the replay check and reach
-  host processing.
+- ~~WebSub replay detection is not atomic under concurrent identical deliveries.~~
+  Resolved 2026-05-08 under P2.1: a new ``WebSubAcceptedDelivery`` table
+  carries a unique constraint on ``(subscription, body_digest)``;
+  ``WebSubCallbackView.post`` now wraps the prune-and-insert step in
+  ``transaction.atomic()`` with an inner savepoint around ``create()`` so two
+  concurrent identical deliveries cannot both record an acceptance, regardless
+  of whether the database backend supports ``SELECT FOR UPDATE``. Hook
+  dispatch happens after the gate commits, giving an at-most-once-per-digest
+  hook contract within the configured replay window. The host hook and
+  enqueue callables can opt in to a ``body_digest`` keyword argument as a
+  stable idempotency key.
 
 Validated medium-priority residuals:
 

@@ -5,6 +5,31 @@ Changelog
 
 Unreleased
 ----------
+* Made WebSub delivery replay detection atomic against concurrent identical
+  deliveries and tightened the at-most-once-per-digest hook contract. A new
+  ``WebSubAcceptedDelivery`` model carries a unique constraint on
+  ``(subscription, body_digest)``; ``WebSubCallbackView.post`` now opens
+  ``transaction.atomic()``, prunes rows older than
+  ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` inside the block, and
+  inserts the new acceptance via an inner savepoint that surfaces a clean
+  replay signal on ``IntegrityError``. Two concurrent identical deliveries
+  cannot both record an acceptance, regardless of whether the database backend
+  supports ``SELECT FOR UPDATE``; the losing delivery returns the existing
+  HTTP ``409`` replay response. Hook dispatch happens after the gate commits,
+  so a crash between commit and hook execution leaves an
+  accepted-and-recorded delivery whose hook may not have run; on retry the
+  unique-constraint conflict returns ``409`` and the hook is not re-invoked.
+  ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` and ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE``
+  callables that advertise a ``body_digest`` parameter (or take ``**kwargs``)
+  receive the SHA-256 hex digest of the delivery body as a stable idempotency
+  key; legacy callables continue to receive the existing keyword set
+  unchanged. The ``recent_accepted_delivery_digests`` JSON column on
+  ``WebSubSubscription`` is no longer read or written and remains in place
+  for migration compatibility; cleanup is planned for a follow-up. The
+  legacy ``delivery_is_replay`` helper now consults the new table and emits
+  a ``DeprecationWarning`` for callers that have not migrated. This change
+  ships migration ``0025_websubaccepteddelivery``; deployments must run
+  ``manage.py migrate`` before serving traffic on the upgraded code.
 * Bound IndieAuth ``redirect_uri`` values to the submitted ``client_id`` so a
   trusted client identifier can no longer be paired with an attacker-controlled
   redirect target. ``AuthView.get`` and ``AuthView._handle_consent`` now run a

@@ -4,6 +4,59 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P2.1 — Harden WebSub delivery replay atomicity and side-effect ordering
+
+Reworked the WebSub delivery replay-detection path so two concurrent
+identical deliveries cannot both succeed, and dispatched the host hook with an
+at-most-once-per-digest contract within the configured replay window.
+
+- Added ``WebSubAcceptedDelivery`` in ``src/indieweb/models.py`` with a unique
+  constraint on ``(subscription, body_digest)`` and a
+  ``(subscription, accepted_at)`` index. Migration
+  ``0025_websubaccepteddelivery`` creates the table; deployments must run
+  ``manage.py migrate`` before serving traffic on the upgraded code. No
+  backfill: replay history is bounded to a small window, so a brief
+  post-deploy gap during which recently accepted digests are not protected
+  against replay is acceptable.
+- ``src/indieweb/websub.py`` adds ``accept_websub_delivery`` (the atomic
+  prune-and-insert gate around the new model) and ``_hook_accepts_body_digest``
+  (an ``inspect.signature``-based probe that tolerates ``TypeError`` and
+  ``ValueError`` and falls back to the legacy keyword set). The legacy
+  ``delivery_is_replay`` helper now reads from the new table and emits a
+  ``DeprecationWarning``. ``record_websub_delivery`` no longer writes to the
+  ``recent_accepted_delivery_digests`` JSON column. ``process_websub_delivery``
+  and ``enqueue_websub_delivery`` accept an optional ``body_digest`` keyword
+  argument and forward it to host callables that advertise it.
+- ``src/indieweb/views.py`` ``WebSubCallbackView.post`` now computes the body
+  digest, calls ``accept_websub_delivery`` for the atomic gate, and dispatches
+  the hook only after the gate commits. The 409 replay response and 500
+  failure responses keep the existing ``record_websub_delivery`` semantics.
+  ``_dispatch_delivery`` carries the digest through to both the hook and the
+  enqueue callable for opt-in idempotency keys.
+- ``src/indieweb/admin.py`` registers ``WebSubAcceptedDeliveryAdmin`` with
+  read-only fields for operator visibility into accepted-delivery state.
+- Tests in ``tests/test_websub_subscriber.py`` rewrite the JSON-list
+  history/eviction/window-prune coverage against the new
+  ``WebSubAcceptedDelivery`` table; new coverage exercises the at-most-once
+  hook contract on retry, the ``body_digest`` kwarg propagation across
+  ``**kwargs``/explicit/legacy hook signatures, ``_hook_accepts_body_digest``
+  edge cases, the ``DeprecationWarning`` from the legacy helper, the
+  window-disabled unique-constraint gate, and a sequential proxy for two
+  concurrent identical acceptances. ``tests/websub_hooks.py`` gains
+  ``capture_delivery_with_digest`` and ``capture_delivery_legacy`` fixtures.
+- Documentation: ``docs/websub.rst`` adds an "Idempotency contract" section
+  and notes the atomic gate and ``body_digest`` propagation;
+  ``docs/changelog.rst`` records the migration and the new contract;
+  ``SECURITY_ANALYSIS.md`` marks the residual resolved.
+
+The ``recent_accepted_delivery_digests`` JSON field on ``WebSubSubscription``
+is no longer read or written by any code path. It remains in place on the
+model for migration compatibility; a follow-up cleanup commit will drop the
+field.
+
+Validation: ``uv run pytest tests/test_websub_subscriber.py tests/test_websub.py
+--no-cov`` passes.
+
 ### P1.4 — Bind IndieAuth ``redirect_uri`` values to ``client_id``
 
 The IndieAuth authorization endpoint now binds the submitted ``redirect_uri``
