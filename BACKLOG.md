@@ -16,19 +16,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### API Hardening
 
-- [ ] Add a configurable URL policy for Micropub source and media hooks.
-  References: `src/indieweb/views.py` (`_handle_source_query`,
-  `MicropubMediaView._handle_source_by_url_query`,
-  `MicropubMediaView._handle_delete`), `src/indieweb/handlers.py`,
-  `docs/micropub.rst`, `docs/configuration.rst`,
-  `tests/test_micropub_source.py`, `tests/test_micropub_media.py`. Entry
-  source, media source-by-URL, and media delete pass submitted URLs unchanged
-  to host handlers. Keep handler ownership authoritative, but add an optional
-  view-level policy hook or allowlist for accepted entry/media URL hosts so
-  deployments can reject cross-origin, storage-external, or malformed URLs
-  before handler dispatch. Avoid a hard same-host rule because media may live
-  on storage or CDN hosts.
-
 - [ ] Document injected HTTP clients as trusted test/integration-only escape
   hatches. References: `src/indieweb/processors.py`,
   `src/indieweb/senders.py`, `src/indieweb/websub.py`,

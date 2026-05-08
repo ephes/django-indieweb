@@ -165,13 +165,29 @@ Validated medium-priority residuals:
   separately and returns ``400 invalid_request``; any other handler exception
   is logged via ``logger.exception`` and the response is ``500`` with an
   empty body, matching the rest of the action handlers.
-- Micropub entry source, media source-by-URL, and media delete operations pass
-  submitted URLs unchanged to the configured handler. This matches the
+- ~~Micropub entry source, media source-by-URL, and media delete operations
+  pass submitted URLs unchanged to the configured handler. This matches the
   documented host-owned adapter boundary, but it remains an integration risk
   for handlers that key on URL substrings or fetch arbitrary submitted URLs.
   If django-indieweb wants stronger guardrails, it needs a configurable
   host-owned URL policy rather than a hard same-host rule, because media may
-  legitimately live on storage/CDN hosts.
+  legitimately live on storage/CDN hosts.~~ **Resolved 2026-05-08 under
+  P3.1:** ``INDIEWEB_MICROPUB_URL_POLICY`` is an optional dotted-path setting
+  resolving to a callable
+  ``(url, kind: Literal["entry", "media"], request) -> bool``.
+  ``MicropubView._handle_source_query``,
+  ``MicropubMediaView._handle_source_by_url_query``, and
+  ``MicropubMediaView._handle_delete`` consult the gate before forwarding
+  the submitted URL to the handler; rejection yields
+  ``400 invalid_request``, and callable exceptions / import failures /
+  non-callable resolutions fail closed with ``500`` and are logged. The
+  setting is unset by default to preserve compatibility, and avoids a hard
+  same-host rule so media on storage or CDN hosts remains supported.
+  Documented in ``docs/configuration.rst`` (with a slot in the Production
+  hardening snippet) and ``docs/micropub.rst``. Tests:
+  ``tests/test_micropub_source.py`` and ``tests/test_micropub_media.py``
+  cover rejection, runtime errors, and import errors for all three
+  surfaces.
 - ~~Production IndieAuth and endpoint hardening remains opt-in:
   ``INDIEWEB_REQUIRE_PKCE``, ``INDIEWEB_REQUIRE_PKCE_S256``,
   ``INDIEWEB_ALLOWED_CLIENT_IDS``, ``INDIEWEB_BIND_ME_TO_USER``, and

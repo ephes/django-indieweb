@@ -4,6 +4,47 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P3.1 — Optional Micropub URL policy hook
+
+``INDIEWEB_MICROPUB_URL_POLICY`` is a new optional dotted-path setting that
+gates submitted URLs for the Micropub entry source query
+(``GET /indieweb/micropub/?q=source&url=...``), the media source-by-URL query
+(``GET /indieweb/media/?q=source&url=...``), and the media delete action
+(``POST /indieweb/media/`` with ``action=delete``) before the URL is forwarded
+to the configured ``INDIEWEB_MICROPUB_HANDLER``. The setting is unset by
+default; existing deployments are unaffected. Returning ``True`` permits the
+request; any other return value yields ``400 invalid_request``. Callable
+exceptions, import failures, and non-callable resolutions fail closed with
+``500`` and are logged. The hook intentionally avoids a hard same-host rule
+because media may legitimately live on storage or CDN hosts.
+
+- ``src/indieweb/views.py`` adds ``_resolve_micropub_url_policy``,
+  ``_policy_unavailable``, and ``_enforce_micropub_url_policy`` near the
+  other dotted-path resolvers. The three call sites
+  (``MicropubView._handle_source_query``,
+  ``MicropubMediaView._handle_source_by_url_query``,
+  ``MicropubMediaView._handle_delete``) consult the gate after URL extraction
+  and before any handler call. ``kind`` is ``"entry"`` for entry source and
+  ``"media"`` for both media surfaces so a single callable can apply
+  different rules per surface.
+- ``tests/micropub_policies.py`` adds reusable fixture callables
+  (``reject_all``, ``allow_all``, ``allow_only_https``, ``raise_runtime``).
+  ``tests/test_micropub_source.py`` and ``tests/test_micropub_media.py`` add
+  rejection, runtime-error, and import-error coverage for each surface, plus
+  an assertion that the media delete handler is not called when policy
+  rejects.
+- ``docs/configuration.rst`` documents the setting, fail-closed semantics,
+  and an example dotted path. The ``Production hardening`` snippet is
+  extended with the new setting and an explanatory bullet; the trailing
+  "future settings" note no longer mentions the URL policy hook.
+- ``docs/micropub.rst`` adds an "Optional URL policy hook" subsection under
+  the media source/delete documentation describing the callable signature,
+  ``kind`` values, and fail-closed semantics, with a cross-reference to the
+  hardening section.
+- ``tests/test_documentation_snippets.py`` adds
+  ``INDIEWEB_MICROPUB_URL_POLICY`` to ``KNOWN_SETTINGS`` so the snippet
+  guard fails CI if the setting name drifts.
+
 ### P2.6 — WebSub replay-history cap "unbounded by count" semantics
 
 ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` now accepts ``0`` as an

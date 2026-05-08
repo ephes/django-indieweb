@@ -624,6 +624,45 @@ ownership checks, storage deletion, and audit trail. django-indieweb does not
 add a media model, migration, management UI, image transform pipeline, or a
 non-Django storage abstraction for these hooks.
 
+INDIEWEB_MICROPUB_URL_POLICY
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional dotted path to a callable that gates submitted URLs for the Micropub
+entry source query (``GET /indieweb/micropub/?q=source&url=...``), the media
+source-by-URL query (``GET /indieweb/media/?q=source&url=...``), and the media
+delete action (``POST /indieweb/media/`` with ``action=delete``). The callable
+runs *before* the URL is forwarded to the configured handler.
+
+**Default:** ``None`` (no view-level URL gate; submitted URLs are passed
+unchanged to the handler, preserving the historical compatibility default)
+
+The callable signature is::
+
+   def policy(url: str, kind: Literal["entry", "media"], request: HttpRequest) -> bool: ...
+
+Return ``True`` to permit the request; any other value (``False``, a non-bool
+truthy value, ``None``) results in ``400 invalid_request`` and the handler is
+not invoked. Exceptions raised by the callable, import failures, and
+non-callable resolutions fail closed: the request returns ``500`` and the
+underlying error is logged via ``logger.exception`` / ``logger.error``.
+
+The hook intentionally avoids a hard same-host rule because media may live on
+storage or CDN hosts that are distinct from the resource server. Hosts with
+stricter requirements should encode them in their callable (e.g. allow only
+URLs whose scheme is ``https`` and whose host is in an operator-controlled
+allowlist of public origin and storage hosts).
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_MICROPUB_URL_POLICY = "your_project.micropub_policy.allow_only_owned_urls"
+
+The callable is the host-owned authorization boundary for cross-origin or
+storage-external URL submissions; it complements (not replaces) the
+ownership checks the configured ``INDIEWEB_MICROPUB_HANDLER`` performs.
+
 INDIEWEB_WEBSUB_HUBS
 ~~~~~~~~~~~~~~~~~~~~
 
@@ -1734,6 +1773,7 @@ domain:
        "webmention_status":   {"limit": 30,  "window": 60},
        "websub_callback":     {"limit": 120, "window": 60},
    }
+   INDIEWEB_MICROPUB_URL_POLICY = "your_project.micropub_policy.allow_only_owned_urls"
 
 Notes:
 
@@ -1751,9 +1791,15 @@ Notes:
 * See :doc:`indieauth` for ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` semantics
   (exact entries vs trailing-``/`` prefix entries) and for the
   ``INDIEWEB_REDIRECT_URI_VALIDATOR`` policy hook.
+* ``INDIEWEB_MICROPUB_URL_POLICY`` is a host-owned dotted path that gates
+  submitted URLs on the entry source query and media source/delete actions
+  before they reach the configured handler. Replace the placeholder above
+  with a callable that returns ``True`` only for URLs your deployment
+  considers safe (e.g. owned post URLs, plus your storage and CDN hosts).
+  Returning anything else yields ``400 invalid_request``; raises and import
+  failures fail closed with ``500``.
 * Additional production-relevant settings will be documented here as they
-  are introduced (logging redaction, public-safe Webmention status mode,
-  Micropub URL policy hook).
+  are introduced (logging redaction, public-safe Webmention status mode).
 
 Testing Configuration
 ---------------------

@@ -620,6 +620,26 @@ The response is a single media object:
 An empty, unknown, or rejected ``url`` returns ``400 invalid_request``.
 Unexpected hook exceptions return ``500`` and are logged.
 
+Optional URL policy hook
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The Micropub entry source query (``GET /indieweb/micropub/?q=source&url=...``),
+the media source-by-URL query, and the media delete action accept a submitted
+URL and forward it to the configured handler. Hosts that need to gate those
+URLs at the view layer — for example to reject cross-origin or storage-external
+URLs that could otherwise be passed unchanged into a substring-keyed handler —
+can set ``INDIEWEB_MICROPUB_URL_POLICY`` to a dotted path to a callable
+``(url: str, kind: Literal["entry", "media"], request: HttpRequest) -> bool``.
+The ``kind`` argument is ``"entry"`` for the Micropub entry source query and
+``"media"`` for the media endpoint's source and delete actions, so a single
+callable can apply different rules per surface.
+
+The hook runs *before* the URL is forwarded to the handler. Returning ``True``
+permits the request; any other return value yields ``400 invalid_request``.
+Exceptions, import failures, and non-callable resolutions fail closed with
+``500``. When the setting is unset, behavior is unchanged. See
+:ref:`production-hardening` for an example settings block.
+
 Delete host-owned media by submitting ``action=delete`` and ``url`` to the
 media endpoint with a ``media``-scoped token:
 

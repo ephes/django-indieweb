@@ -1191,3 +1191,81 @@ def test_micropub_create_photo_upload_rejects_missing_create_or_post_scope(clien
 
     assert response.status_code == 403
     assert response.content.decode("utf-8") == "authorization error"
+
+
+@pytest.mark.django_db
+def test_media_source_by_url_rejected_by_policy(client, monkeypatch, user, media_url, settings):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.reject_all"
+    token = _make_token(user, "media")
+    response = client.get(
+        media_url,
+        data={"q": "source", "url": "https://outside.example/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+    assert response.status_code == 400
+    assert b"invalid_request" in response.content
+
+
+@pytest.mark.django_db
+def test_media_source_by_url_policy_runtime_error_returns_500(client, monkeypatch, user, media_url, settings, caplog):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.raise_runtime"
+    token = _make_token(user, "media")
+    with caplog.at_level("ERROR"):
+        response = client.get(
+            media_url,
+            data={"q": "source", "url": "https://outside.example/media/photo.jpg"},
+            Authorization=f"Bearer {token.key}",
+        )
+    assert response.status_code == 500
+    assert b"policy explosion" not in response.content
+    assert "policy explosion" in caplog.text
+
+
+@pytest.mark.django_db
+def test_media_source_by_url_policy_import_error_returns_500(client, monkeypatch, user, media_url, settings):
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.does_not_exist.missing_callable"
+    token = _make_token(user, "media")
+    response = client.get(
+        media_url,
+        data={"q": "source", "url": "https://outside.example/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+    assert response.status_code == 500
+
+
+@pytest.mark.django_db
+def test_media_delete_by_url_rejected_by_policy(client, monkeypatch, user, media_url, settings):
+    handler = _MediaHookHandler()
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.reject_all"
+    token = _make_token(user, "media")
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+    )
+    assert response.status_code == 400
+    assert b"invalid_request" in response.content
+    # Policy must reject before the handler runs.
+    assert handler.deleted_urls == []
+
+
+@pytest.mark.django_db
+def test_media_delete_by_url_policy_runtime_error_returns_500(client, monkeypatch, user, media_url, settings, caplog):
+    handler = _MediaHookHandler()
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.raise_runtime"
+    token = _make_token(user, "media")
+    with caplog.at_level("ERROR"):
+        response = client.post(
+            media_url,
+            data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
+            Authorization=f"Bearer {token.key}",
+        )
+    assert response.status_code == 500
+    assert b"policy explosion" not in response.content
+    assert "policy explosion" in caplog.text
+    assert handler.deleted_urls == []

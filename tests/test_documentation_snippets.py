@@ -12,10 +12,11 @@ KNOWN_SETTINGS = {
     "INDIEWEB_ALLOWED_CLIENT_IDS",
     "INDIEWEB_RATE_LIMITS",
     "INDIEWEB_REDIRECT_URI_ALLOWLIST",
-    # Note: INDIEWEB_LOG_REDACTION, INDIEWEB_WEBMENTION_STATUS_PUBLIC, and
-    # INDIEWEB_MICROPUB_URL_POLICY are introduced in later tasks (P3/P4) of
-    # the same plan and will be referenced from the same hardening section
-    # then. They are intentionally omitted from this set until they exist.
+    "INDIEWEB_MICROPUB_URL_POLICY",
+    # Note: INDIEWEB_LOG_REDACTION and INDIEWEB_WEBMENTION_STATUS_PUBLIC are
+    # introduced in later tasks (P3/P4) of the same plan and will be
+    # referenced from the same hardening section then. They are intentionally
+    # omitted from this set until they exist.
 }
 
 

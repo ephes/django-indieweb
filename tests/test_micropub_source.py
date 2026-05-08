@@ -448,3 +448,57 @@ class TestMicropubSourceQuery:
 
         assert response.status_code == 500
         assert response.content == b""
+
+
+@pytest.mark.django_db
+def test_source_query_url_rejected_by_policy(client, user, micropub_url, shared_handler, settings):
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.reject_all"
+    token = _make_token(user, "update")
+    response = client.get(
+        micropub_url,
+        data={"q": "source", "url": "https://outside.example/post"},
+        Authorization=f"Bearer {token.key}",
+    )
+    assert response.status_code == 400
+    assert b"invalid_request" in response.content
+
+
+@pytest.mark.django_db
+def test_source_query_url_passes_when_no_policy(client, user, micropub_url, shared_handler):
+    # Default behavior (policy unset): no policy gate fires when the setting is
+    # absent. Existing tests cover the success path; this test asserts the
+    # gate's specific rejection message is never emitted in default config.
+    token = _make_token(user, "update")
+    response = client.get(
+        micropub_url,
+        data={"q": "source", "url": "https://allowed.example/post"},
+        Authorization=f"Bearer {token.key}",
+    )
+    assert b"url not permitted by policy" not in response.content
+
+
+@pytest.mark.django_db
+def test_source_query_policy_runtime_error_returns_500(client, user, micropub_url, shared_handler, settings, caplog):
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.raise_runtime"
+    token = _make_token(user, "update")
+    with caplog.at_level("ERROR"):
+        response = client.get(
+            micropub_url,
+            data={"q": "source", "url": "https://outside.example/post"},
+            Authorization=f"Bearer {token.key}",
+        )
+    assert response.status_code == 500
+    assert b"policy explosion" not in response.content
+    assert "policy explosion" in caplog.text
+
+
+@pytest.mark.django_db
+def test_source_query_policy_import_error_returns_500(client, user, micropub_url, shared_handler, settings):
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.does_not_exist.missing_callable"
+    token = _make_token(user, "update")
+    response = client.get(
+        micropub_url,
+        data={"q": "source", "url": "https://outside.example/post"},
+        Authorization=f"Bearer {token.key}",
+    )
+    assert response.status_code == 500

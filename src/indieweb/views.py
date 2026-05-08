@@ -623,6 +623,52 @@ def _introspection_authorizer_allows(caller_token: Token, target_token: Token) -
     return caller_client == target_client
 
 
+def _resolve_micropub_url_policy() -> Callable[[str, str, HttpRequest], bool] | None:
+    """Resolve ``INDIEWEB_MICROPUB_URL_POLICY`` to a callable, or ``None``.
+
+    Returns ``None`` when the setting is unset (compatibility default: no
+    view-level URL gate). On import failure, returns a sentinel callable that
+    raises so the gate fails closed and the request returns ``500`` rather
+    than silently skipping the policy.
+    """
+    path = getattr(settings, "INDIEWEB_MICROPUB_URL_POLICY", None)
+    if not path:
+        return None
+    try:
+        policy = import_string(path)
+    except Exception as exc:
+        logger.error(f"Failed to load INDIEWEB_MICROPUB_URL_POLICY {path!r}: {exc}")
+        return _policy_unavailable
+    if not callable(policy):
+        logger.error(f"INDIEWEB_MICROPUB_URL_POLICY {path!r} is not callable")
+        return _policy_unavailable
+    return cast("Callable[[str, str, HttpRequest], bool]", policy)
+
+
+def _policy_unavailable(url: str, kind: str, request: HttpRequest) -> bool:
+    raise RuntimeError("INDIEWEB_MICROPUB_URL_POLICY import failed; raising for fail-closed gate")
+
+
+def _enforce_micropub_url_policy(url: str, kind: str, request: HttpRequest) -> HttpResponse | None:
+    """Apply the optional URL policy hook for a Micropub source/media URL.
+
+    Returns ``None`` to permit the request, an ``HttpResponse`` to short-circuit
+    it. ``400 invalid_request`` for explicit deny / non-bool / non-True returns;
+    ``500`` for policy callable exceptions or import failures (fail-closed).
+    """
+    policy = _resolve_micropub_url_policy()
+    if policy is None:
+        return None
+    try:
+        allowed = policy(url, kind, request)
+    except Exception:
+        logger.exception(f"INDIEWEB_MICROPUB_URL_POLICY raised for url={url!r} kind={kind!r}")
+        return HttpResponse("internal error", status=500)
+    if allowed is not True:
+        return HttpResponse("invalid_request: url not permitted by policy", status=400)
+    return None
+
+
 def _get_webmention_enqueue() -> Callable[[int], None] | None:
     """Load the optional configured Webmention enqueue hook."""
     enqueue_path = getattr(settings, "INDIEWEB_WEBMENTION_ENQUEUE", None)
@@ -2242,6 +2288,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if not url:
             return self._invalid_request()
 
+        policy_response = _enforce_micropub_url_policy(url, "entry", request)
+        if policy_response is not None:
+            return policy_response
+
         try:
             entry = handler.get_entry(url, self.token.owner)
         except ValueError as exc:
@@ -2479,6 +2529,9 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         url = request.GET.get("url")
         if not url:
             return self._invalid_request()
+        policy_response = _enforce_micropub_url_policy(url, "media", request)
+        if policy_response is not None:
+            return policy_response
         if not self._handler_overrides(handler, "get_media"):
             return self._not_implemented()
         try:
@@ -2549,6 +2602,10 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         url = self._delete_url(request)
         if not url:
             return self._invalid_request()
+
+        policy_response = _enforce_micropub_url_policy(url, "media", request)
+        if policy_response is not None:
+            return policy_response
 
         handler = get_micropub_handler()
         if not self._handler_overrides(handler, "delete_media"):

@@ -5,6 +5,31 @@ Changelog
 
 Unreleased
 ----------
+* Added an optional view-level URL policy hook for Micropub source and media
+  operations. ``INDIEWEB_MICROPUB_URL_POLICY`` is a dotted path to a callable
+  ``(url, kind: Literal["entry", "media"], request) -> bool`` that gates the
+  Micropub entry source query (``GET /indieweb/micropub/?q=source&url=...``),
+  the media source-by-URL query (``GET /indieweb/media/?q=source&url=...``),
+  and the media delete action (``POST /indieweb/media/`` with
+  ``action=delete``) before the URL is forwarded to the configured
+  ``INDIEWEB_MICROPUB_HANDLER``. Returning ``True`` permits the request; any
+  other return value yields ``400 invalid_request``. Callable exceptions,
+  import failures, and non-callable resolutions fail closed with ``500`` and
+  are logged. The setting is unset by default; existing deployments behave
+  unchanged. The hook intentionally avoids a hard same-host rule because
+  media may legitimately live on storage or CDN hosts. ``src/indieweb/views.py``
+  adds ``_resolve_micropub_url_policy`` and ``_enforce_micropub_url_policy``
+  beside the other dotted-path resolvers; ``MicropubView._handle_source_query``,
+  ``MicropubMediaView._handle_source_by_url_query``, and
+  ``MicropubMediaView._handle_delete`` consult the gate immediately after
+  URL extraction. ``docs/configuration.rst`` documents the setting and adds
+  it to the ``Production hardening`` snippet; ``docs/micropub.rst`` adds an
+  "Optional URL policy hook" subsection. ``tests/micropub_policies.py``
+  provides fixture callables; ``tests/test_micropub_source.py`` and
+  ``tests/test_micropub_media.py`` cover rejection, runtime errors, and
+  import errors for all three surfaces.
+  ``tests/test_documentation_snippets.py`` adds
+  ``INDIEWEB_MICROPUB_URL_POLICY`` to its known-settings sanity check.
 * Added an "unbounded by count" interpretation to
   ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX``. Setting the cap to ``0``
   now disables count-based eviction in
