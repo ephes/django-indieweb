@@ -273,8 +273,15 @@ after a different legitimate payload B has been accepted in between. Set
 ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to tune or disable the
 window and ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` to bound the
 history (default 64 entries; the oldest row is evicted once the cap is
-reached). Entries older than the replay window are pruned on every accepted
-delivery. django-indieweb deliberately does not parse feeds or persist
+reached). Set ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` to ``0`` to
+disable count-based eviction entirely; pruning is then purely time-based by
+the replay window. The default cap of 64 suits most subscriptions, but a
+high-volume topic that receives more than 64 distinct delivery bodies inside
+the configured replay window can evict older accepted digests before the
+window closes — leaving room for an attacker who has captured one of those
+bodies to replay it. Signed deployments that retain every accepted body for
+the full window should set the cap to ``0``. Entries older than the replay
+window are pruned on every accepted delivery regardless of the cap. django-indieweb deliberately does not parse feeds or persist
 delivered content; host applications own those semantics.
 
 Replay detection is atomic. The ``WebSubAcceptedDelivery`` table carries a

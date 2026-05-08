@@ -12,16 +12,6 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ### Security Residuals
 
-- [ ] Revisit WebSub replay-history cap semantics for high-volume topics.
-  References: `src/indieweb/websub.py` (`DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`,
-  `_delivery_replay_history_max`, `delivery_is_replay`,
-  `record_websub_delivery`), `docs/websub.rst`, `docs/configuration.rst`,
-  `tests/test_websub_subscriber.py`. The current default retains 64 accepted
-  body digests within a 300-second window; busy topics can evict older digests
-  that are still inside the configured replay window. Consider sizing by
-  window volume, using an unbounded-by-count option for signed deployments, or
-  documenting the operational tradeoff more explicitly.
-
 ## Priority 3
 
 ### API Hardening

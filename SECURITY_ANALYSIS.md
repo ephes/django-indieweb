@@ -690,14 +690,18 @@ are closed.
 
 **Severity:** Medium
 
-**Status:** Mostly resolved 2026-05-07; residual replay-history sizing tracked
-as medium-priority hardening on 2026-05-08. WebSub signatures now prefer the
-strongest accepted algorithm, `sha1` is disabled by default, leases are clamped,
-shared secrets have byte-length bounds, secret headers are handled with
+**Status:** Resolved 2026-05-08. WebSub signatures now prefer the strongest
+accepted algorithm, `sha1` is disabled by default, leases are clamped, shared
+secrets have byte-length bounds, secret headers are handled with
 case-insensitive request headers, and a replay window now retains a bounded
-history of accepted delivery digests. Remaining gap: the default history cap can
-evict older accepted digests that are still inside the configured replay window
-for high-volume topics.
+history of accepted delivery digests. The default history cap of 64 still
+applies to most subscriptions, but high-volume topics can opt into
+"unbounded by count" semantics by setting
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 0``; pruning is then purely
+time-based by ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` so no
+accepted body is evicted while it remains inside the window. The high-volume
+eviction caveat for the default cap is documented in ``docs/websub.rst`` and
+``docs/configuration.rst``.
 
 Historical finding, mostly resolved on 2026-05-07:
 
@@ -707,11 +711,13 @@ Historical finding, mostly resolved on 2026-05-07:
 - Signature header handling was less robust for plain mappings.
 - Empty/short `hub.secret` values were accepted as effectively no secret.
 
-**Current residuals:** replay protection retains a bounded digest history, but
-the default cap can evict older digests that are still inside the replay window
-for high-volume topics, and replay-check/history-update is not atomic under
-parallel identical valid deliveries. Tune or document the cap semantics and
-serialize accepted-delivery replay state updates.
+**Current residuals:** none. Replay protection retains a bounded digest
+history with the default cap of 64; high-volume deployments can opt into
+"unbounded by count" semantics by setting
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 0`` so pruning is purely
+window-based, and replay-check/history-update is now atomic against parallel
+identical valid deliveries via the ``WebSubAcceptedDelivery`` unique
+constraint plus ``transaction.atomic()`` savepoint.
 
 ### Client Trust Is Permissive by Default
 

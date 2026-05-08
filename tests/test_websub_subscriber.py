@@ -1048,6 +1048,28 @@ def test_accept_websub_delivery_treats_empty_history_max_as_default(settings, su
 
 
 @pytest.mark.django_db
+def test_replay_history_cap_zero_means_unbounded_by_count(settings, subscription):
+    """Setting ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 0`` disables count-based eviction.
+
+    Pruning then happens purely via
+    ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS``: with a generous window
+    every distinct accepted delivery within the window is retained.
+    """
+    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 0
+    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 3600
+
+    digests = [hashlib.sha256(f"<feed><id>{i}</id></feed>".encode()).hexdigest() for i in range(100)]
+    for digest in digests:
+        assert accept_websub_delivery(subscription, digest) is True
+
+    assert WebSubAcceptedDelivery.objects.filter(subscription=subscription).count() == 100
+    # Each accepted digest is still tracked, so a replay of any of them is
+    # rejected by the unique-constraint gate.
+    assert accept_websub_delivery(subscription, digests[0]) is False
+    assert accept_websub_delivery(subscription, digests[-1]) is False
+
+
+@pytest.mark.django_db
 def test_callback_post_applies_delivery_size_limit(client, settings, subscription):
     settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = 4
 

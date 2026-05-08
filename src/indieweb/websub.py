@@ -358,10 +358,14 @@ def _clamp_confirmed_lease_seconds(lease_seconds: int | None) -> int | None:
 def _delivery_replay_history_max() -> int | None:
     """Return the per-subscription replay history cap, or ``None`` to disable pruning.
 
-    ``None`` is the explicit "disable cap" sentinel. Any other malformed value —
-    including the empty string that ``_positive_int`` translates back to ``None`` —
-    falls back to the default so an empty environment variable does not silently
-    weaken the protection by allowing the cache to grow without bound.
+    ``None`` is the explicit "disable cap" sentinel and is also returned for an
+    explicit ``0``: setting ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` to
+    ``0`` opts into "unbounded by count" semantics so pruning is purely
+    time-based by ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS``. Any other
+    malformed value — including the empty string that ``_positive_int``
+    translates back to ``None`` — falls back to the default so an empty
+    environment variable does not silently weaken the protection by allowing
+    the cache to grow without bound.
     """
     configured = getattr(
         settings,
@@ -370,6 +374,14 @@ def _delivery_replay_history_max() -> int | None:
     )
     if configured is None:
         return None
+    # An explicit ``0`` is the documented "disable count-based eviction"
+    # opt-in. Recognize it before ``_positive_int`` rejects it as non-positive.
+    try:
+        if int(configured) == 0:
+            return None
+    except (TypeError, ValueError):
+        # Fall through to the standard parser, which logs and uses the default.
+        pass
     try:
         parsed = _positive_int(configured, label="WebSub delivery replay history max")
     except ValueError:
@@ -1067,7 +1079,11 @@ def accept_websub_delivery(
         except IntegrityError:
             return False
 
-        if history_max is not None and history_max > 0:
+        # ``history_max is None`` covers both the explicit
+        # ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = None`` opt-out and the
+        # ``= 0`` "unbounded by count" opt-in; in either case count-based
+        # eviction is skipped and pruning happens purely via the replay window.
+        if history_max is not None:
             keep_ids = list(
                 WebSubAcceptedDelivery.objects.filter(subscription=subscription)
                 .order_by("-accepted_at", "-pk")

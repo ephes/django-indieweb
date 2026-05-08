@@ -5,6 +5,24 @@ Changelog
 
 Unreleased
 ----------
+* Added an "unbounded by count" interpretation to
+  ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX``. Setting the cap to ``0``
+  now disables count-based eviction in
+  ``indieweb.websub.accept_websub_delivery``; pruning happens purely by
+  ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` so every accepted
+  delivery body inside the window is retained against replay. The previous
+  behavior raised on ``0`` and silently fell back to the default cap of 64,
+  which re-enabled count-based eviction for operators who wanted unbounded
+  retention. ``_delivery_replay_history_max`` recognizes an explicit ``0``
+  before delegating to ``_positive_int`` and returns the same ``None``
+  "disabled" sentinel that ``= None`` produces; empty or otherwise malformed
+  values still fall back to the documented default cap and are logged.
+  ``docs/websub.rst`` and ``docs/configuration.rst`` document the ``0`` opt-in
+  alongside the high-volume eviction caveat for the default cap; signed
+  deployments that retain every accepted body for the full window should set
+  the cap to ``0``. ``tests/test_websub_subscriber.py`` adds
+  ``test_replay_history_cap_zero_means_unbounded_by_count``. No migrations
+  or other settings changes.
 * Prevented unauthenticated Vouch metadata downgrade on repeat Webmention
   submissions. A repeat submission for an existing source/target row whose
   newly submitted ``vouch`` URL fails verification (or whose verification is

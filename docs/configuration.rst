@@ -845,12 +845,20 @@ replay window. The history is bounded by
 accepts many distinct payloads inside the window cannot grow the cache without
 bound. When the cap is reached, the oldest accepted digest is evicted: a
 sufficiently old replay against a high-volume subscription may slip past the
-check. Tune the cap to match your hubs' burst rate. Set this to ``None`` to
-disable history pruning. Malformed values, including an empty environment
-variable that resolves to ``""``, are ignored and logged; the helper falls
-back to the default cap rather than disabling it. Entries older than the
-replay window are pruned on every accepted delivery regardless of the history
-cap.
+check. The default of 64 suits most subscriptions; a high-volume topic that
+receives more than 64 distinct delivery bodies inside the replay window can
+evict older accepted digests before the window closes, leaving room for an
+attacker who captured one of those bodies to replay it. Tune the cap to match
+your hubs' burst rate, or set this to ``0`` to opt into "unbounded by count"
+semantics — pruning is then purely time-based by the replay window. Signed
+deployments that want every accepted body retained for the full window
+should set the cap to ``0``. Set this to ``None`` to disable history pruning
+entirely (equivalent to ``0`` for the count-eviction path; both leave
+window-based pruning in place). Malformed values, including an empty
+environment variable that resolves to ``""``, are ignored and logged; the
+helper falls back to the default cap rather than disabling it. Entries older
+than the replay window are pruned on every accepted delivery regardless of
+the history cap.
 Subscribe verification clamps confirmed lease durations to the configured
 ``INDIEWEB_WEBSUB_MIN_LEASE_SECONDS`` and
 ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` bounds. Defaults are 300 seconds and 30

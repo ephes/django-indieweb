@@ -4,6 +4,36 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-08
 
+### P2.6 — WebSub replay-history cap "unbounded by count" semantics
+
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` now accepts ``0`` as an
+explicit "disable count-based eviction" opt-in. When set to ``0``,
+``accept_websub_delivery`` skips the cap-maintenance branch entirely and
+pruning happens purely by ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS``;
+every accepted delivery body within the window is retained against replay.
+The previous behavior (raising on ``0`` and falling back to the default cap)
+silently re-enabled count-based eviction for operators who wanted unbounded
+retention; the new behavior matches the documented intent.
+
+- ``src/indieweb/websub.py`` ``_delivery_replay_history_max`` recognizes an
+  explicit ``0`` before delegating to ``_positive_int`` and returns the same
+  ``None`` "disabled" sentinel that ``= None`` produces. The cap-maintenance
+  branch in ``accept_websub_delivery`` skips entirely when the helper returns
+  ``None``. Empty/malformed values still fall back to the default ``64`` and
+  are logged.
+- ``tests/test_websub_subscriber.py`` adds
+  ``test_replay_history_cap_zero_means_unbounded_by_count`` covering 100
+  distinct accepted deliveries with the cap at ``0`` and a generous replay
+  window; the existing
+  ``test_accept_websub_delivery_evicts_oldest_history_when_cap_exceeded`` and
+  ``test_accept_websub_delivery_treats_empty_history_max_as_default`` lock in
+  the count-based and default-fallback paths.
+- ``docs/websub.rst`` and ``docs/configuration.rst`` document the ``0``
+  opt-in alongside the high-volume eviction caveat for the default cap.
+- ``SECURITY_ANALYSIS.md`` marks the residual resolved.
+
+No migrations or other settings changes.
+
 ### P2.5 — Prevent unauthenticated Vouch metadata downgrade on existing Webmentions
 
 A repeat Webmention submission for an existing source/target row no longer
