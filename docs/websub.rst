@@ -238,8 +238,9 @@ request is made.
 
 ``request_websub_subscription()`` also accepts an optional ``client`` keyword
 for tests and tightly controlled integrations. See the injected-client warning
-above (:ref:`websub-injected-client-warning`); production callers should leave
-it unset so DNS-based SSRF blocking and IP pinning apply.
+under :ref:`WebSub publisher client safety warning
+<websub-injected-client-warning>`; production callers should leave it unset so
+DNS-based SSRF blocking and IP pinning apply.
 
 Callback Verification
 ---------------------

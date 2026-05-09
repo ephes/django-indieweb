@@ -1874,7 +1874,7 @@ Notes:
 .. _log-redaction:
 
 INDIEWEB_LOG_REDACTION
-^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~
 
 Default: ``"passthrough"``.
 
