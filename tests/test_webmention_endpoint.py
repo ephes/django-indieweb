@@ -558,6 +558,62 @@ class TestWebmentionEndpoint:
         assert view.is_valid_target("https://other.com/post") is False
         assert view.is_valid_target("not-a-url") is False
 
+    def test_is_valid_target_normalizes_default_ports(self, factory, site):
+        """Default ports must be treated as equivalent to omitted ports.
+
+        ``https://example.com/p`` and ``https://example.com:443/p`` denote
+        the same authority. Without normalization a sender could spoof a
+        target by adding the explicit default port to bypass per-domain
+        comparisons or downstream caches keyed by the raw netloc.
+        """
+        view = WebmentionEndpoint()
+        request = factory.post("/")
+        view.setup(request)
+
+        assert view.is_valid_target(f"https://{site.domain}:443/post") is True
+        assert view.is_valid_target(f"http://{site.domain}:80/post") is True
+        # Non-default ports must still differ.
+        assert view.is_valid_target(f"https://{site.domain}:8443/post") is False
+
+    def test_is_valid_target_rejects_invalid_url_shapes(self, factory, site):
+        """URLs with malformed authorities or non-HTTP schemes are not valid targets."""
+        view = WebmentionEndpoint()
+        request = factory.post("/")
+        view.setup(request)
+
+        assert view.is_valid_target(f"ftp://{site.domain}/post") is False
+        assert view.is_valid_target("https:///just-a-path") is False
+
+    def test_is_valid_target_normalizes_default_port_in_site_domain(self, factory, site):
+        """``Site.domain`` with an explicit default port must compare equal to a
+        target that omits the port (and vice versa).
+
+        Without symmetric normalization, ``Site.domain="example.com:443"`` would
+        accept ``https://example.com:443/post`` but reject the same URL with
+        the port omitted, because target-side normalization drops the default
+        port unconditionally.
+        """
+        original_domain = site.domain
+        try:
+            site.domain = f"{original_domain}:443"
+            site.save()
+
+            view = WebmentionEndpoint()
+            request = factory.post("/")
+            view.setup(request)
+
+            assert view.is_valid_target(f"https://{original_domain}/post") is True
+            assert view.is_valid_target(f"https://{original_domain}:443/post") is True
+            assert view.is_valid_target(f"http://{original_domain}/post") is True
+
+            site.domain = f"{original_domain}:80"
+            site.save()
+            assert view.is_valid_target(f"http://{original_domain}/post") is True
+            assert view.is_valid_target(f"https://{original_domain}/post") is True
+        finally:
+            site.domain = original_domain
+            site.save()
+
     @override_settings(SECURE_SSL_REDIRECT=True)
     def test_is_valid_target_with_https_redirect(self, factory, site):
         """Test is_valid_target respects HTTPS redirect setting."""

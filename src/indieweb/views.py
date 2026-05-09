@@ -39,7 +39,7 @@ from django.views.generic import View
 
 from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
-from .log_redaction import redact_state, redact_url, redact_url_origin
+from .log_redaction import redact_state, redact_token, redact_url, redact_url_origin
 from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
 from .processors import WebmentionProcessor
 from .rate_limit import RateLimitMixin
@@ -291,6 +291,40 @@ def _content_type_header_value(value: str | None) -> str:
 def _request_content_type(request: HttpRequest) -> str:
     """Return the structured request Content-Type without parameters."""
     return _content_type_header_value(request.headers.get("content-type") or request.content_type)
+
+
+_MICROPUB_JSON_UNSET = object()
+_MICROPUB_JSON_INVALID = object()
+
+
+def _load_micropub_json_object(request: HttpRequest) -> dict[str, Any] | object | None:
+    """Parse the JSON body of a Micropub or Micropub-media request once per request.
+
+    Returns:
+        - The parsed ``dict`` when the body is a valid JSON object.
+        - ``None`` when the request is not ``application/json``.
+        - The ``_MICROPUB_JSON_INVALID`` sentinel when the body is malformed
+          (syntax error, invalid UTF-8, or recursion-limited) or decodes to a
+          non-object value.
+
+    The parsed result is cached on the request so each authenticated body is
+    parsed at most once, regardless of how many helpers consume it.
+    ``RecursionError`` from extremely deeply nested JSON is treated as a
+    malformed body rather than escaping as an authenticated HTTP 500.
+    """
+    if _request_content_type(request) != "application/json":
+        return None
+    cached = getattr(request, "_indieweb_micropub_json_payload", _MICROPUB_JSON_UNSET)
+    if cached is not _MICROPUB_JSON_UNSET:
+        return cached
+    try:
+        payload = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, RecursionError):
+        result: dict[str, Any] | object = _MICROPUB_JSON_INVALID
+    else:
+        result = payload if isinstance(payload, dict) else _MICROPUB_JSON_INVALID
+    request._indieweb_micropub_json_payload = result  # type: ignore[attr-defined]
+    return result
 
 
 def _canonical_upload_content_type(value: str | None) -> str:
@@ -1194,14 +1228,14 @@ class TokenAuthMixin(View):
                     logger.warning(f"Token owner is not active: {self.token.owner}")
                     return False
                 if self.token.is_expired():
-                    logger.warning(f"Token expired: {key[:8]}...")
+                    logger.warning(f"Token expired: {redact_token(key)}")
                     return False
                 return True
             except Token.DoesNotExist:
-                logger.warning(f"Token not found: {key[:8]}...")
+                logger.warning(f"Token not found: {redact_token(key)}")
                 return False
             except Token.MultipleObjectsReturned:
-                logger.warning(f"Multiple tokens found for bearer key: {key[:8]}...")
+                logger.warning(f"Multiple tokens found for bearer key: {redact_token(key)}")
                 return False
         else:
             logger.warning("No authorization token provided in request")
@@ -1230,6 +1264,17 @@ class TokenAuthMixin(View):
             return HttpResponse("invalid_client", status=403)
 
         return super().dispatch(request, *args, **kwargs)
+
+
+def _auth_code_is_expired(auth: Auth) -> bool:
+    """Return ``True`` if ``auth`` has aged past ``INDIWEB_AUTH_CODE_TIMEOUT``.
+
+    Centralizes the expiry window so the token-exchange path and the legacy
+    code-verification POST stay in sync. The historical setting name retains
+    the ``INDIWEB`` typo for backward compatibility (default 60 seconds).
+    """
+    timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
+    return (timezone.now() - auth.created).total_seconds() > timeout
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1462,6 +1507,14 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             auth = Auth.get_for_raw_key(auth_code, client_id=client_id)
         except (Auth.DoesNotExist, Auth.MultipleObjectsReturned):
             return HttpResponse("Invalid authorization code", status=400)
+        if _auth_code_is_expired(auth):
+            # Mirror the token-exchange path: an expired authorization code is
+            # never reusable, and the row must not linger past its window
+            # because a future verifier could otherwise observe the same
+            # ``me`` for a long-stale code.
+            auth.delete()
+            logger.info(f"rejected expired auth code on code verification: {redact_url(client_id)!r}")
+            return HttpResponse("Invalid authorization code", status=400)
         response_values = {"me": auth.me}
         if _prefers_json_response(request):
             return JsonResponse(response_values, status=200)
@@ -1640,8 +1693,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         )
 
         # Check if auth code is still valid
-        timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
-        if (timezone.now() - auth.created).total_seconds() > timeout:
+        if _auth_code_is_expired(auth):
             return self._consume_invalid_grant(auth, f"Auth code expired for client_id={client_id}")
 
         # Serialize the consume-and-issue sequence so two concurrent token
@@ -1694,16 +1746,16 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         try:
             token = Token.get_for_raw_key(key)
         except Token.DoesNotExist:
-            logger.info(f"{log_prefix} token not found: {key[:8]}...")
+            logger.info(f"{log_prefix} token not found: {redact_token(key)}")
             return None
         except Token.MultipleObjectsReturned:
-            logger.warning(f"{log_prefix} found multiple tokens for submitted key: {key[:8]}...")
+            logger.warning(f"{log_prefix} found multiple tokens for submitted key: {redact_token(key)}")
             return None
         if not token.owner.is_active:
             logger.info(f"{log_prefix} rejected inactive token owner: {token.owner}")
             return None
         if token.is_expired():
-            logger.info(f"{log_prefix} rejected expired token: {key[:8]}...")
+            logger.info(f"{log_prefix} rejected expired token: {redact_token(key)}")
             return None
         if not _client_id_allowed(token.client_id):
             logger.warning(f"{log_prefix} rejected disallowed client_id: {redact_url(token.client_id)!r}")
@@ -1831,22 +1883,20 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
     def _parse_json_request(self, request: HttpRequest) -> dict[str, Any]:
         """Parse JSON formatted Micropub request."""
-        try:
-            data = json.loads(request.body)
-            # Convert JSON format to normalized properties format
-            if "type" in data and isinstance(data["type"], list):
-                # Already in microformats2 JSON format
-                properties: dict[str, Any] = data.get("properties", {})
-                return properties
-            else:
-                # Convert simple JSON to properties format
-                properties = {}
-                for key, value in data.items():
-                    if key not in ["access_token", "h", "action", "url"]:
-                        properties[key] = [value] if not isinstance(value, list) else value
-                return properties
-        except json.JSONDecodeError:
+        data = _load_micropub_json_object(request)
+        if not isinstance(data, dict):
             return {}
+        # Convert JSON format to normalized properties format
+        if "type" in data and isinstance(data["type"], list):
+            # Already in microformats2 JSON format
+            properties: dict[str, Any] = data.get("properties", {})
+            return properties
+        # Convert simple JSON to properties format
+        properties = {}
+        for key, value in data.items():
+            if key not in ["access_token", "h", "action", "url"]:
+                properties[key] = [value] if not isinstance(value, list) else value
+        return properties
 
     def _parse_form_property(self, request: HttpRequest, property_name: str, is_list: bool = False) -> dict[str, Any]:
         """Parse a single property from form data."""
@@ -1897,15 +1947,11 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         action = request.POST.get("action")
         if action:
             return action
-        if _request_content_type(request) == "application/json":
-            try:
-                payload = json.loads(request.body)
-            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-                return None
-            if isinstance(payload, dict):
-                value = payload.get("action")
-                if isinstance(value, str):
-                    return value
+        payload = _load_micropub_json_object(request)
+        if isinstance(payload, dict):
+            value = payload.get("action")
+            if isinstance(value, str):
+                return value
         return None
 
     def _required_scope(self, request: HttpRequest) -> str | None:
@@ -1959,19 +2005,16 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         so that malformed JSON cannot fall through to the create path or the action handlers
         and silently produce surprising behavior (e.g. an empty entry being created).
 
-        Catches ``json.JSONDecodeError`` (syntax errors), ``UnicodeDecodeError`` (invalid
-        UTF-8 in ``request.body``; ``json.loads`` decodes bytes as UTF-8 internally), and
+        Delegates to ``_load_micropub_json_object`` for parsing, which catches
+        ``json.JSONDecodeError`` (syntax errors), ``UnicodeDecodeError`` (invalid UTF-8 in
+        ``request.body``; ``json.loads`` decodes bytes as UTF-8 internally),
         ``AttributeError`` (defensive — ``request.body`` should always be bytes, but a
-        misbehaving middleware could substitute it). All three become ``400 invalid_request``
-        rather than a ``500`` from the unhandled exception path.
+        misbehaving middleware could substitute it), and ``RecursionError`` (raised by
+        ``json.loads`` on extremely deeply nested objects). All four become
+        ``400 invalid_request`` rather than a ``500`` from the unhandled exception path.
         """
-        if _request_content_type(request) != "application/json":
-            return None
-        try:
-            payload = json.loads(request.body)
-        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-            return self._invalid_request()
-        if not isinstance(payload, dict):
+        payload = _load_micropub_json_object(request)
+        if payload is _MICROPUB_JSON_INVALID:
             return self._invalid_request()
         return None
 
@@ -1979,20 +2022,15 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         """Return the parsed JSON body for an action POST, or ``None`` if it isn't JSON.
 
         Used by ``action=update`` (which is JSON-only per Micropub §3.7) and as a fallback
-        for ``url`` extraction on JSON-bodied delete/undelete requests. By the time this
-        runs in the action path the body has already been validated by ``_reject_invalid_json``,
-        so the ``json.loads`` call is expected to succeed; the defensive ``except`` mirrors
-        the guard's catch list so this helper is safe to call independently.
+        for ``url`` extraction on JSON-bodied delete/undelete requests. The shared loader
+        ``_load_micropub_json_object`` caches the parsed body on the request and treats
+        malformed (including ``RecursionError``-laden) bodies as invalid, so this helper
+        returns ``None`` for any non-object payload.
         """
-        if _request_content_type(request) != "application/json":
-            return None
-        try:
-            payload = json.loads(request.body)
-        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        return payload
+        payload = _load_micropub_json_object(request)
+        if isinstance(payload, dict):
+            return payload
+        return None
 
     def _action_url(self, request: HttpRequest) -> str | None:
         """Return the target ``url`` for an action POST, accepting form-encoded and JSON bodies."""
@@ -2599,15 +2637,10 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         return None
 
     def _json_payload(self, request: HttpRequest) -> dict[str, Any] | None:
-        if _request_content_type(request) != "application/json":
-            return None
-        try:
-            payload = json.loads(request.body)
-        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        return payload
+        payload = _load_micropub_json_object(request)
+        if isinstance(payload, dict):
+            return payload
+        return None
 
     def _delete_url(self, request: HttpRequest) -> str | None:
         url = request.POST.get("url")
@@ -3035,13 +3068,76 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             return HttpResponse(status=400)
 
     def is_valid_target(self, target_url: str) -> bool:
-        """Check if target URL is on our domain."""
+        """Check if target URL is on our domain.
+
+        Comparison is performed against a normalized authority: scheme and
+        host are lowercased, the host is IDNA-encoded so unicode and
+        punycode forms compare equal, and explicit default ports are
+        dropped (``:80`` for http, ``:443`` for https). Without these
+        normalizations a hostile sender could spoof targets like
+        ``https://EXAMPLE.com:443/p`` against a configured site domain of
+        ``example.com``.
+        """
         try:
             current_site = Site.objects.get_current()
-            parsed = urlparse(target_url)
-            return parsed.netloc.lower() == current_site.domain.lower()
         except Exception:
             return False
+        submitted = self._normalize_target_authority(target_url)
+        if submitted is None:
+            return False
+        expected = self._normalize_configured_authority(current_site.domain)
+        if expected is None:
+            return False
+        return submitted == expected
+
+    @staticmethod
+    def _normalize_target_authority(target_url: str) -> str | None:
+        """Return the normalized ``host[:port]`` of an HTTP(S) URL, or ``None``."""
+        try:
+            parsed = urlparse(target_url)
+        except ValueError:
+            return None
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in ("http", "https"):
+            return None
+        try:
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            return None
+        if not hostname:
+            return None
+        try:
+            host = hostname.encode("idna").decode("ascii").lower()
+        except (UnicodeError, UnicodeDecodeError):
+            return None
+        default_port = 443 if scheme == "https" else 80
+        if port is None or port == default_port:
+            return host
+        return f"{host}:{port}"
+
+    @staticmethod
+    def _normalize_configured_authority(domain: str) -> str | None:
+        """Normalize the configured ``Site.domain`` for comparison.
+
+        ``Site.domain`` is a host[:port] without a scheme. Strip any
+        explicit standard HTTP/HTTPS port (``:80`` / ``:443``) so the
+        configured authority normalizes the same way as a target URL —
+        otherwise ``Site.domain="example.com:443"`` would only match
+        targets that include ``:443`` explicitly, and a target without
+        the explicit port (which the target normalization strips) would
+        be rejected.
+        """
+        if not domain:
+            return None
+        host_part, sep, port_part = domain.partition(":")
+        try:
+            host = host_part.encode("idna").decode("ascii").lower()
+        except (UnicodeError, UnicodeDecodeError):
+            return None
+        if not sep or port_part in ("80", "443"):
+            return host
+        return f"{host}:{port_part}"
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         """Return endpoint discovery info."""

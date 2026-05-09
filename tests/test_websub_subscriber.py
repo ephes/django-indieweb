@@ -1580,3 +1580,199 @@ def test_denied_initial_subscribe_clears_pending_secret_state():
     assert subscription.pending_secret == ""
     assert subscription.pending_mode == ""
     assert subscription.last_denial_reason == "not allowed"
+
+
+# ----------------------------------------------------------------------------
+# WebSub secret encryption rotation across Django ``SECRET_KEY`` values.
+#
+# WebSub shared secrets are encrypted at rest with key material derived from
+# ``settings.SECRET_KEY``. Rotating ``SECRET_KEY`` previously required
+# re-subscribing every feed. The model now also accepts keys listed in
+# ``SECRET_KEY_FALLBACKS`` for decryption, mirroring how Django itself uses
+# fallbacks for cookie signing and password hashing.
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_decrypt_secret_uses_secret_key_fallback_after_rotation(settings):
+    """A secret encrypted under the old SECRET_KEY decrypts after rotation when the
+    old key is listed in ``SECRET_KEY_FALLBACKS``."""
+    settings.SECRET_KEY = "old-key"
+    settings.SECRET_KEY_FALLBACKS = []
+    encrypted_under_old = WebSubSubscription.encrypt_secret(SHARED_SECRET)
+
+    settings.SECRET_KEY = "new-key"
+    settings.SECRET_KEY_FALLBACKS = ["old-key"]
+
+    assert WebSubSubscription.decrypt_secret(encrypted_under_old) == SHARED_SECRET
+
+
+@pytest.mark.django_db
+def test_decrypt_secret_fails_when_no_key_can_decrypt(settings):
+    """Decrypt raises WebSubSecretDecryptionError when neither primary nor any
+    fallback can decrypt the stored ciphertext."""
+    from indieweb.models import WebSubSecretDecryptionError
+
+    settings.SECRET_KEY = "old-key"
+    settings.SECRET_KEY_FALLBACKS = []
+    encrypted_under_old = WebSubSubscription.encrypt_secret(SHARED_SECRET)
+
+    settings.SECRET_KEY = "completely-different-key"
+    settings.SECRET_KEY_FALLBACKS = []
+
+    with pytest.raises(WebSubSecretDecryptionError):
+        WebSubSubscription.decrypt_secret(encrypted_under_old)
+
+
+@pytest.mark.django_db
+def test_encrypt_secret_uses_primary_key_after_rotation(settings):
+    """New encryption always uses the current primary ``SECRET_KEY`` even when the
+    previous key remains in ``SECRET_KEY_FALLBACKS``."""
+    settings.SECRET_KEY = "new-key"
+    settings.SECRET_KEY_FALLBACKS = ["old-key"]
+    encrypted_under_new = WebSubSubscription.encrypt_secret(SHARED_SECRET)
+
+    # Removing the fallback must not break decryption: the cipher belongs to the primary.
+    settings.SECRET_KEY_FALLBACKS = []
+    assert WebSubSubscription.decrypt_secret(encrypted_under_new) == SHARED_SECRET
+
+    # Conversely, removing the primary and keeping only the old key as primary must fail —
+    # confirming the cipher really is bound to ``new-key``.
+    from indieweb.models import WebSubSecretDecryptionError
+
+    settings.SECRET_KEY = "old-key"
+    settings.SECRET_KEY_FALLBACKS = []
+    with pytest.raises(WebSubSecretDecryptionError):
+        WebSubSubscription.decrypt_secret(encrypted_under_new)
+
+
+@pytest.mark.django_db
+def test_set_secret_after_rotation_re_encrypts_under_primary(settings):
+    """When a subscription's secret is rewritten via ``set_secret`` after rotation,
+    the new ciphertext is bound to the new primary key. Existing rows passively
+    migrate this way at renewal time."""
+    settings.SECRET_KEY = "old-key"
+    settings.SECRET_KEY_FALLBACKS = []
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_ACTIVE,
+    )
+    subscription.set_secret(SHARED_SECRET)
+    subscription.save()
+    secret_under_old = subscription.secret
+
+    settings.SECRET_KEY = "new-key"
+    settings.SECRET_KEY_FALLBACKS = ["old-key"]
+    # Re-staging the same raw secret under the new primary produces a new ciphertext
+    # that no longer requires the fallback to decrypt.
+    subscription.set_secret(SHARED_SECRET)
+    subscription.save()
+    secret_under_new = subscription.secret
+
+    assert secret_under_old != secret_under_new
+    settings.SECRET_KEY_FALLBACKS = []
+    assert WebSubSubscription.decrypt_secret(secret_under_new) == SHARED_SECRET
+
+
+@pytest.mark.django_db
+def test_save_after_rotation_migrates_secret_without_set_secret_call(settings):
+    """A renewal that omits ``secret`` must still migrate the stored ciphertext.
+
+    Renewals via ``request_websub_subscription(secret=None)`` never call
+    ``set_secret`` for the active row. Without save-time passive
+    re-encryption, those rows would remain readable only via
+    ``SECRET_KEY_FALLBACKS`` indefinitely, and removing the fallback after
+    "every active subscription has been saved at least once under the new
+    primary" would break HMAC verification for those rows. The
+    :meth:`save` hook now opportunistically re-encrypts fallback-bound
+    ciphertext under the primary so the documented operator story holds.
+    """
+    settings.SECRET_KEY = "old-key"
+    settings.SECRET_KEY_FALLBACKS = []
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_ACTIVE,
+    )
+    subscription.set_secret(SHARED_SECRET)
+    subscription.save()
+    secret_under_old = subscription.secret
+
+    # Rotate. The renewal flow does not call ``set_secret`` for ``secret=None``;
+    # any save (e.g. updating lease bookkeeping) should still migrate the row.
+    settings.SECRET_KEY = "new-key"
+    settings.SECRET_KEY_FALLBACKS = ["old-key"]
+    subscription.save()
+    secret_after_save = subscription.secret
+
+    assert secret_after_save != secret_under_old, "Save did not re-encrypt the row under the new primary"
+
+    # Removing the fallback now must not break decryption of the rewritten row.
+    settings.SECRET_KEY_FALLBACKS = []
+    assert WebSubSubscription.decrypt_secret(secret_after_save) == SHARED_SECRET
+
+
+@pytest.mark.django_db
+def test_save_with_update_fields_persists_passive_reencryption(settings):
+    """A renewal-style ``save(update_fields=[...])`` that omits ``secret`` must still
+    persist a save-time passive re-encryption.
+
+    Renewal in ``request_websub_subscription`` calls
+    ``save(update_fields=[..., "pending_secret", ...])`` without including
+    ``secret``. If the in-memory mutation in :meth:`save` is not also
+    reflected in the column list passed to Django, the old-key ciphertext
+    remains in the database and removing the fallback later breaks
+    delivery verification. The save hook now adds ``secret`` to
+    ``update_fields`` whenever it actually mutated the column.
+    """
+    settings.SECRET_KEY = "old-key"
+    settings.SECRET_KEY_FALLBACKS = []
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_ACTIVE,
+    )
+    subscription.set_secret(SHARED_SECRET)
+    subscription.save()
+    secret_under_old = subscription.secret
+
+    # Rotate. Simulate the renewal save: only non-``secret`` fields in update_fields.
+    settings.SECRET_KEY = "new-key"
+    settings.SECRET_KEY_FALLBACKS = ["old-key"]
+    subscription.requested_lease_seconds = 3600
+    subscription.save(update_fields=["requested_lease_seconds", "modified"])
+
+    # In-memory: the row was migrated.
+    assert subscription.secret != secret_under_old
+
+    # Critically, the DB row must reflect the migration so removing the
+    # fallback does not break later decrypt.
+    persisted = WebSubSubscription.objects.get(pk=subscription.pk)
+    settings.SECRET_KEY_FALLBACKS = []
+    assert WebSubSubscription.decrypt_secret(persisted.secret) == SHARED_SECRET
+
+
+@pytest.mark.django_db
+def test_save_under_primary_is_idempotent_for_already_migrated_rows(settings):
+    """Saves on rows already under the primary key must be no-ops, not re-randomized.
+
+    ``Fernet.encrypt`` produces fresh ciphertext on every call (random IV),
+    so a naive "always re-encrypt" implementation would churn ciphertext on
+    every save. The fast-path check in ``_maybe_reencrypt_under_primary``
+    must avoid that by detecting that the primary already decrypts the row
+    and returning the input unchanged.
+    """
+    settings.SECRET_KEY = "primary-key"
+    settings.SECRET_KEY_FALLBACKS = []
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_ACTIVE,
+    )
+    subscription.set_secret(SHARED_SECRET)
+    subscription.save()
+    first_ciphertext = subscription.secret
+
+    subscription.save()
+    assert subscription.secret == first_ciphertext

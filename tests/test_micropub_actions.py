@@ -37,6 +37,26 @@ def _make_token(user, scope: str) -> "models.Token":
     )
 
 
+class _ProxyJson:
+    """Stand-in for the ``json`` module that overrides only ``loads``.
+
+    Used by tests that need to force ``json.loads`` to raise a specific
+    exception (e.g. ``RecursionError``) without disturbing other ``json``
+    callsites in the same import. Patches ``indieweb.views.json`` for
+    the duration of the test.
+    """
+
+    def __init__(self, real_module, *, loads):
+        self._real = real_module
+        self._loads = loads
+
+    def loads(self, *args, **kwargs):
+        return self._loads(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
 @pytest.mark.django_db
 class TestMicropubUpdate:
     def test_update_replace_returns_204_and_replaces_property(self, client, user, micropub_url, shared_handler):
@@ -669,6 +689,63 @@ class TestMicropubMalformedJsonBody:
         response = client.post(
             micropub_url,
             data=b"\xff",
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert shared_handler.entries == {}
+
+    def test_recursion_error_in_json_loads_returns_400_not_500(
+        self, client, user, micropub_url, shared_handler, monkeypatch
+    ):
+        """``RecursionError`` from ``json.loads`` must surface as ``400 invalid_request``.
+
+        Deeply nested JSON can cause the C-accelerated parser to raise
+        ``RecursionError`` (a ``BaseException`` outside the existing
+        ``JSONDecodeError`` / ``UnicodeDecodeError`` catch list).
+        Triggering that path in a test by interpreter stack alone is
+        non-portable across Python versions and stack-budget changes
+        (3.12 and 3.14 both touched this), so we monkeypatch
+        ``json.loads`` in the views module to raise ``RecursionError``
+        deterministically and assert the view classifies it as a
+        malformed body.
+        """
+        import json as json_module
+
+        def raising_loads(*_args, **_kwargs):
+            raise RecursionError("simulated deeply nested JSON body")
+
+        monkeypatch.setattr("indieweb.views.json", _ProxyJson(json_module, loads=raising_loads))
+
+        token = _make_token(user, "create")
+        response = client.post(
+            micropub_url,
+            data='{"valid":"object"}',
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content.decode("utf-8") == "invalid_request"
+        assert shared_handler.entries == {}
+
+    def test_recursion_error_on_action_post_returns_400_not_500(
+        self, client, user, micropub_url, shared_handler, monkeypatch
+    ):
+        """``RecursionError`` on an action POST also surfaces as ``400 invalid_request``."""
+        import json as json_module
+
+        def raising_loads(*_args, **_kwargs):
+            raise RecursionError("simulated deeply nested JSON body")
+
+        monkeypatch.setattr("indieweb.views.json", _ProxyJson(json_module, loads=raising_loads))
+
+        token = _make_token(user, "create update")
+        response = client.post(
+            micropub_url,
+            data='{"action":"update","url":"https://example.org/p/1","replace":{"content":["new"]}}',
             content_type="application/json",
             Authorization=f"Bearer {token.key}",
         )

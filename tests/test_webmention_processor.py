@@ -116,6 +116,25 @@ def test_sanitize_remote_webmention_url_allows_http_urls(value):
     assert sanitize_remote_webmention_url(value) == value
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://attacker.example@trusted.example/post",
+        "https://attacker.example:secret@trusted.example/post",
+        "http://user@trusted.example/post",
+    ],
+)
+def test_sanitize_remote_webmention_url_rejects_userinfo(value):
+    """URLs with userinfo are a phishing vector and must be dropped at sanitization.
+
+    A hostile sender can craft ``https://trusted.example@attacker.example/`` so
+    the leading authority looks like a familiar host. The sanitizer must
+    return an empty string for any URL that carries a user or password
+    component, even when the rest of the URL would otherwise validate.
+    """
+    assert sanitize_remote_webmention_url(value) == ""
+
+
 def test_sanitize_webmention_html_drops_relative_url_attributes():
     """Remote HTML fragments cannot create same-origin-looking relative links."""
     sanitized = sanitize_webmention_html(

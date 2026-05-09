@@ -251,6 +251,34 @@ def test_show_webmentions_sanitizes_existing_stored_nested_response_fields(
     assert "onload" not in rendered
 
 
+def test_show_webmentions_sanitizes_nested_response_identity_and_response_url(
+    reply, render_webmentions, create_nested_response
+):
+    """Latent unsafe ``identity`` / ``response_url`` rows must not produce dangerous hrefs.
+
+    The bundled ``nested_response.html`` template renders
+    ``firstof response_url identity as nested_response_url`` into the
+    response link's ``href``. Ingestion validation should already reject
+    bad values, but a display-time pass through
+    ``sanitize_remote_webmention_url`` guards against latent rows and any
+    future code path that bypasses ingestion validation.
+    """
+    create_nested_response(
+        reply,
+        "javascript:alert('latent identity')",
+        response_url="data:text/html,evil-response-url",
+        author_name="Nested Mallory",
+        author_url="https://safe.example/author",
+        content="Latent unsafe URL row",
+        content_html="<p>Latent unsafe URL row</p>",
+    )
+
+    rendered = render_webmentions()
+
+    assert "javascript:" not in rendered
+    assert "data:text/html" not in rendered
+
+
 def test_webmention_templates_harden_outbound_link_attributes(render_webmentions):
     """Bundled Webmention links include outbound safety attributes."""
     rendered = render_webmentions()

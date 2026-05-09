@@ -438,14 +438,17 @@ class WebmentionProcessor:
                 return _WebmentionOutcome(
                     status="failed",
                     received_at=received_at,
-                    log=("info", f"Source URL returned 410 Gone: {source_url}"),
+                    log=("info", f"Source URL returned 410 Gone: {redact_url(source_url)}"),
                 )
 
             if response.status_code != 200:
                 return _WebmentionOutcome(
                     status="failed",
                     received_at=received_at,
-                    log=("warning", f"Failed to fetch source URL {source_url}: {response.status_code}"),
+                    log=(
+                        "warning",
+                        f"Failed to fetch source URL {redact_url(source_url)}: {response.status_code}",
+                    ),
                 )
 
             content_type = response.headers.get("content-type", "").lower()
@@ -462,7 +465,7 @@ class WebmentionProcessor:
                 return _WebmentionOutcome(
                     status="failed",
                     received_at=received_at,
-                    log=("warning", f"Target URL {target_url} not found in source"),
+                    log=("warning", f"Target URL {redact_url(target_url)} not found in source"),
                 )
 
             # ``fetched_at`` records when we observed the source content; it is
@@ -485,7 +488,10 @@ class WebmentionProcessor:
                 return _WebmentionOutcome(
                     status="failed",
                     received_at=received_at,
-                    log=("warning", f"Vouch verification failed for webmention from {source_url}"),
+                    log=(
+                        "warning",
+                        f"Vouch verification failed for webmention from {redact_url(source_url)}",
+                    ),
                 )
             # Bind the timestamp to the URL we actually verified so the
             # persistence phase can refuse to apply it if the row's
@@ -503,7 +509,7 @@ class WebmentionProcessor:
                         spam_result=spam_result,
                         vouch_verified_at=vouch_verified_at,
                         verified_vouch_url=verified_vouch_url,
-                        log=("info", f"Webmention marked as spam: {source_url}"),
+                        log=("info", f"Webmention marked as spam: {redact_url(source_url)}"),
                     )
 
             previous_nested_identities = self._previous_nested_response_identities(webmention)
@@ -522,14 +528,17 @@ class WebmentionProcessor:
                 h_entry=h_entry,
                 nested_response_candidates=nested_response_candidates,
                 previous_nested_identities=previous_nested_identities,
-                log=("info", f"Successfully processed webmention from {source_url}"),
+                log=("info", f"Successfully processed webmention from {redact_url(source_url)}"),
             )
 
         except HTTPResponseTooLarge as e:
             return _WebmentionOutcome(
                 status="failed",
                 received_at=received_at,
-                log=("warning", f"Fetched Webmention source exceeded size limit for {source_url}: {e}"),
+                log=(
+                    "warning",
+                    f"Fetched Webmention source exceeded size limit for {redact_url(source_url)}: {e}",
+                ),
             )
         except Exception as e:
             return _WebmentionOutcome(

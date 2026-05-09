@@ -415,6 +415,10 @@ Security Considerations
 
 1. **HTTPS Required**: Always use HTTPS in production for all IndieAuth endpoints
 2. **Auth Code Timeout**: Auth codes expire after 60 seconds by default
+   (configured via ``INDIWEB_AUTH_CODE_TIMEOUT``). The token-exchange POST
+   and the legacy authorization-code verification POST both enforce this
+   window: a stale code is rejected with HTTP 400 and the ``Auth`` row is
+   deleted on either path so the code cannot be reused.
 3. **Token Expiration and Revocation**: Access tokens expire after 24 hours by
    default; the Micropub endpoint rejects expired tokens with HTTP 401. Users
    can also revoke their own tokens at ``/indieweb/tokens/``; revocation

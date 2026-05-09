@@ -1230,3 +1230,61 @@ def test_resend_salmentions_returns_empty_when_content_fetch_fails(sender, sourc
         results = sender.resend_salmentions(source_url)
 
     assert results == []
+
+
+# ----------------------------------------------------------------------------
+# Endpoint discovery must require an exact ``webmention`` rel token, not a
+# substring match. The previous regex ``\bwebmention\b`` matched values like
+# ``not-webmention`` and ``webmention-foo`` because ``-`` is a non-word
+# character at a regex word boundary.
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "link_value",
+    [
+        '<https://target.com/wm>; rel="not-webmention"',
+        '<https://target.com/wm>; rel="webmention-foo"',
+        '<https://target.com/wm>; rel="foo-webmention-bar"',
+    ],
+)
+def test_parse_link_header_rejects_substring_rel_values(sender, link_value):
+    """Substring matches for ``webmention`` in a rel value must not advertise an endpoint."""
+    assert sender._parse_link_header(link_value) is None
+
+
+@pytest.mark.parametrize(
+    "link_value, expected",
+    [
+        ('<https://target.com/wm>; rel="webmention"', "https://target.com/wm"),
+        ('<https://target.com/wm>; rel="webmention next"', "https://target.com/wm"),
+        ('<https://target.com/wm>; rel="next webmention"', "https://target.com/wm"),
+        ('<https://target.com/wm>; rel="WEBMENTION"', "https://target.com/wm"),
+        # ``rel`` may appear after other parameters (RFC 8288 makes no
+        # ordering requirement). The previous regex only matched ``rel``
+        # immediately after ``<url>;`` and silently dropped these.
+        ('<https://target.com/wm>; type="text/html"; rel="webmention"', "https://target.com/wm"),
+        ('<https://target.com/wm>; hreflang="en"; rel="webmention"; title="WM"', "https://target.com/wm"),
+    ],
+)
+def test_parse_link_header_accepts_exact_webmention_token(sender, link_value, expected):
+    assert sender._parse_link_header(link_value) == expected
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<link rel="not-webmention" href="https://target.com/wm">',
+        '<link rel="webmention-foo" href="https://target.com/wm">',
+        '<a rel="foo-webmention-bar" href="https://target.com/wm">x</a>',
+    ],
+)
+def test_parse_html_for_endpoint_rejects_substring_rel_values(sender, html):
+    """An HTML rel attribute that merely contains ``webmention`` as a substring must
+    not be treated as a webmention endpoint declaration."""
+    assert sender._parse_html_for_endpoint(html, "https://target.com/their-post") is None
+
+
+def test_parse_html_for_endpoint_accepts_exact_token_in_rel_list(sender):
+    html = '<link rel="next webmention" href="https://target.com/wm">'
+    assert sender._parse_html_for_endpoint(html, "https://target.com/their-post") == "https://target.com/wm"

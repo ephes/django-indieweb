@@ -53,9 +53,20 @@ def _attach_displayable_nested_responses(
 
 
 def _prepare_nested_response_for_display(nested_response: WebmentionNestedResponse) -> WebmentionNestedResponse:
-    """Sanitize remote child response fields before bundled templates render them."""
+    """Sanitize remote child response fields before bundled templates render them.
+
+    ``identity`` and ``response_url`` flow into the bundled
+    ``nested_response.html`` template as the ``href`` of the response link
+    (via ``firstof response_url identity as nested_response_url``). The
+    ingestion path already validates these values, but a display-time
+    sanitizer guards against latent bad rows and any future code path
+    that bypasses ingestion validation, in line with the same defensive
+    treatment applied to ``author_url`` / ``author_photo``.
+    """
     nested_response.author_url = sanitize_remote_webmention_url(nested_response.author_url)
     nested_response.author_photo = sanitize_remote_webmention_url(nested_response.author_photo)
+    nested_response.identity = sanitize_remote_webmention_url(nested_response.identity)
+    nested_response.response_url = sanitize_remote_webmention_url(nested_response.response_url)
     nested_response.content_html = sanitize_webmention_html(nested_response.content_html)
     return nested_response
 

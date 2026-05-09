@@ -59,3 +59,20 @@ def redact_state(value: str, *, mode: Mode | None = None) -> str:
     if _resolve_mode(mode) == "passthrough":
         return value
     return _digest(value)
+
+
+def redact_token(value: str, *, mode: Mode | None = None) -> str:
+    """Return a non-secret display form for a bearer token or auth code.
+
+    Bearer tokens and authorization codes must never be logged in full,
+    so even in passthrough mode this helper truncates the input to its
+    first 8 characters with a trailing ellipsis — matching the existing
+    diagnostic shape already used by ``TokenAuthMixin`` and
+    ``TokenIntrospectionView``. In redact mode the token is replaced
+    with a stable 12-hex HMAC digest so events for the same token can
+    still be correlated without exposing any leading bytes of the
+    secret.
+    """
+    if _resolve_mode(mode) == "passthrough":
+        return f"{value[:8]}..." if value else ""
+    return _digest(value)

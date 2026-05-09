@@ -512,6 +512,48 @@ def test_media_delete_accepts_json_body(client, monkeypatch, user, media_url):
 
 
 @pytest.mark.django_db
+def test_media_post_with_recursion_error_in_json_loads_returns_400_not_500(client, monkeypatch, user, media_url):
+    """``RecursionError`` from ``json.loads`` on the media endpoint must produce 400, not 500.
+
+    Triggered deterministically by monkeypatching ``json.loads`` so the
+    test exercises the ``RecursionError`` catch path regardless of the
+    interpreter's recursion limit or stack-budget accounting (which 3.12
+    and 3.14 both changed).
+    """
+    import json as json_module
+
+    class _ProxyJson:
+        def __init__(self, real_module):
+            self._real = real_module
+
+        def loads(self, *_args, **_kwargs):
+            raise RecursionError("simulated deeply nested JSON body")
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr("indieweb.views.json", _ProxyJson(json_module))
+
+    handler = _MediaHookHandler()
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data='{"action":"delete","url":"https://example.org/x"}',
+        content_type="application/json",
+        Authorization=f"Bearer {token.key}",
+    )
+
+    # The media POST does not currently return a structured invalid_request
+    # body for malformed JSON — it falls through to the multipart-required
+    # check, which returns 400. Either way, the ``RecursionError`` must be
+    # caught (no 500) and no delete hook may run.
+    assert response.status_code == 400
+    assert handler.deleted_urls == []
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("payload", [{"action": "delete"}, {"action": "delete", "url": ""}])
 def test_media_delete_rejects_missing_or_empty_url(client, monkeypatch, user, media_url, payload):
     monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())

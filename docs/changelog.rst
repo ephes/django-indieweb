@@ -5,6 +5,111 @@ Changelog
 
 Unreleased
 ----------
+* Tightened Webmention URL parsing and display URL sanitization. Five
+  defense-in-depth changes:
+  ``WebmentionSender._parse_link_header`` now requires an exact
+  ``webmention`` rel token (case-insensitive) instead of matching
+  substrings like ``not-webmention``;
+  ``_parse_html_for_endpoint`` applies the same exact-token rule to
+  HTML ``<link>`` and ``<a>`` discovery via a new
+  ``_rel_attribute_includes_webmention`` helper;
+  ``sanitize_remote_webmention_url`` rejects URLs with userinfo
+  (``user:pass@host``) — a phishing vector;
+  ``WebmentionEndpoint.is_valid_target`` compares a normalized
+  authority (lowercased scheme/host, IDNA-encoded host, default ports
+  dropped) so URLs that differ only in case, explicit default port, or
+  punycode form match the configured ``Site.domain`` consistently; and
+  ``_prepare_nested_response_for_display`` now also routes
+  ``identity`` / ``response_url`` through
+  ``sanitize_remote_webmention_url`` so the bundled
+  ``nested_response.html`` template never renders unsafe URLs from
+  latent rows.
+  ``tests/test_webmention_sender.py``, ``tests/test_webmention_endpoint.py``,
+  ``tests/test_webmention_processor.py``, and
+  ``tests/test_webmention_templatetags.py`` add focused regressions
+  for each sub-task.
+* Closed two log-redaction gaps under
+  ``INDIEWEB_LOG_REDACTION="redact"``. Webmention outcome log strings
+  in ``WebmentionProcessor._collect_webmention_outcome`` (410 Gone,
+  fetch failure, target-not-in-source, vouch failure, spam, success,
+  size-limit warning) now route ``source_url`` / ``target_url`` through
+  ``redact_url``. Token-auth failure logs in ``TokenAuthMixin`` and
+  ``TokenIntrospectionView`` route the submitted bearer key through a
+  new ``redact_token`` helper (``src/indieweb/log_redaction.py``) that
+  returns ``{value[:8]}...`` in passthrough mode and a stable 12-hex
+  HMAC digest in redact mode, so even the leading bytes of the
+  credential never appear in redacted logs. ERROR-level lines retain
+  raw URLs intentionally for incident response.
+  ``tests/test_log_redaction.py`` adds three pure-helper tests for
+  ``redact_token``, two end-to-end token-auth tests, and two
+  Webmention-outcome tests using an injected ``httpx.MockTransport``.
+  ``docs/configuration.rst`` documents the expanded coverage.
+* Added a WebSub secret encryption rotation path that honors Django's
+  ``SECRET_KEY_FALLBACKS``. WebSub shared secrets are still encrypted
+  at rest with key material derived from ``SECRET_KEY``, but
+  decryption now tries the primary key first and then each entry in
+  ``SECRET_KEY_FALLBACKS`` in declaration order. New encryption
+  continues to use the primary key. Crucially, every save of a
+  ``WebSubSubscription`` row also passively re-encrypts a
+  fallback-bound ciphertext under the primary, so subscriptions
+  migrate to the new key on the next save — including renewals that
+  omit ``secret`` (where ``set_secret`` is never called). Operators
+  can therefore rotate ``SECRET_KEY`` without re-subscribing every
+  feed: keep the previous value in ``SECRET_KEY_FALLBACKS`` until every
+  active subscription has been saved at least once under the new
+  primary (any successful renewal, callback verification, or
+  lease/state bookkeeping save triggers a save).
+  ``src/indieweb/models.py`` introduces ``_websub_secret_keys`` and
+  ``_websub_secret_multifernet`` helpers, plus a
+  ``WebSubSubscription._maybe_reencrypt_under_primary`` classmethod
+  invoked from ``save``. The save hook also adds the affected column(s)
+  to ``update_fields`` when it mutated them, so partial-column saves
+  (renewals, lease/state bookkeeping) actually persist the migrated
+  ciphertext. ``tests/test_websub_subscriber.py`` adds seven focused
+  regressions covering decrypt-with-fallback, fail-when-no-key,
+  encrypt-uses-primary, ``set_secret``-after-rotation,
+  save-without-``set_secret``-call-still-migrates,
+  ``save(update_fields=...)``-still-persists-migration, and
+  save-is-idempotent-for-already-migrated-rows.
+  ``docs/websub.rst`` and ``docs/configuration.rst`` replace the
+  "rotating ``SECRET_KEY`` requires re-subscribing" caveat with the
+  fallbacks-based rotation guide.
+* Enforced ``INDIWEB_AUTH_CODE_TIMEOUT`` on the legacy IndieAuth
+  authorization-code verification POST. Token exchange has always
+  rejected stale codes, but the verification POST returned ``me`` for
+  any matching ``code`` / ``client_id`` pair regardless of age. The
+  expiry check now lives in a small ``_auth_code_is_expired`` helper
+  shared by ``TokenView.post`` and ``AuthView._verify_auth_code``, so
+  both surfaces enforce the same window and delete the matched ``Auth``
+  row on rejection. ``tests/test_auth_endpoint.py`` adds
+  ``test_post_verify_auth_code_rejects_expired_code`` and
+  ``test_post_verify_auth_code_accepts_fresh_code_within_window``.
+  ``docs/indieauth.rst`` updates the auth-code-timeout
+  security-considerations entry to describe the shared window.
+* Hardened Micropub JSON parsing against extremely deeply nested request
+  bodies. ``json.loads`` raises ``RecursionError`` when a JSON object or
+  array exceeds the interpreter's recursion limit; the previous create,
+  update/delete/undelete, and media JSON paths only caught
+  ``json.JSONDecodeError`` / ``UnicodeDecodeError``, so a nested-bomb
+  body bypassed validation and surfaced as an authenticated HTTP 500.
+  A new module-level helper ``_load_micropub_json_object`` parses each
+  ``application/json`` body once per request, caches the result on the
+  request, and treats ``RecursionError`` (and non-object JSON roots) the
+  same as a syntactically invalid body — returning
+  ``400 invalid_request``. ``MicropubView`` (``_parse_json_request``,
+  ``_post_action``, ``_reject_invalid_json``, ``_action_payload``) and
+  ``MicropubMediaView._json_payload`` all consume the cached payload, so
+  each authenticated body is parsed at most once.
+  ``tests/test_micropub_actions.py`` adds two regressions covering the
+  ``RecursionError`` catch path on the create and action POSTs;
+  ``tests/test_micropub_media.py`` adds the same regression on the
+  media POST. All three deterministically force ``json.loads`` in the
+  views module to raise ``RecursionError`` via a thin ``_ProxyJson``
+  shim — the C-accelerated parser's recursion limits vary across the
+  supported Python matrix, so a fixed-depth payload is not a portable
+  trigger (a 4_000-deep payload decoded fine on Python 3.13.12).
+  Each test asserts ``400 invalid_request`` (or ``400`` on the media
+  fallthrough) with no entries or hook side effects.
 * Addressed three Warning-level findings from the security-residuals review:
   ``AuthView._handle_consent`` now applies the same ``_first_length_error``
   guard as ``AuthView.get`` and ``TokenView.post`` so overlong consent-POST

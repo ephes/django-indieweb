@@ -199,14 +199,46 @@ class WebmentionSender:
         if not link_header:
             return None
 
-        # Match <url>; rel="webmention" or rel="webmention ..." or rel="... webmention"
-        pattern = r'<([^>]+)>;\s*rel="[^"]*\bwebmention\b[^"]*"'
-        match = re.search(pattern, link_header)
-
-        if match:
-            return match.group(1)
+        # Per RFC 8288, a Link header is a comma-separated list of entries,
+        # each shaped ``<url>; param1=...; param2=...``. The ``rel``
+        # parameter can appear at any position within an entry. The
+        # previous regex pinned ``rel`` immediately after ``<url>;``,
+        # which silently dropped valid headers like
+        # ``<url>; type="text/html"; rel="webmention"``. The previous
+        # ``\bwebmention\b`` match also accepted substrings such as
+        # ``not-webmention`` and ``webmention-foo`` because ``-`` is a
+        # non-word character.
+        #
+        # Find each ``<url>`` and its trailing parameter section (up to
+        # the next entry or end of header), then look for any
+        # ``rel="..."`` parameter and require an exact ``webmention``
+        # token in its whitespace-separated value (case-insensitive).
+        entry_pattern = re.compile(r"<([^>]+)>([^,]*)")
+        rel_pattern = re.compile(r'rel\s*=\s*"([^"]*)"', re.IGNORECASE)
+        for url_match, params in entry_pattern.findall(link_header):
+            url_str = str(url_match).strip()
+            rel_match = rel_pattern.search(str(params))
+            if rel_match is None:
+                continue
+            if "webmention" in rel_match.group(1).lower().split():
+                return url_str
 
         return None
+
+    @staticmethod
+    def _rel_attribute_includes_webmention(value: object) -> bool:
+        """Return whether an HTML ``rel`` attribute names the exact ``webmention`` token.
+
+        BeautifulSoup may parse ``rel`` as either a list of tokens or a raw
+        string depending on the element and parser; require an exact token
+        match in both cases so adversarial values like ``not-webmention``
+        and ``webmention-foo`` are not accepted as endpoint declarations.
+        """
+        if isinstance(value, str):
+            return "webmention" in value.lower().split()
+        if isinstance(value, list):
+            return any(isinstance(token, str) and token.lower() == "webmention" for token in value)
+        return False
 
     def _parse_html_for_endpoint(self, html_content: str, base_url: str) -> str | None:
         """Parse HTML for webmention endpoint.
@@ -220,15 +252,17 @@ class WebmentionSender:
         """
         soup = BeautifulSoup(html_content, "html.parser")
 
+        rel_filter = self._rel_attribute_includes_webmention
+
         # Check <link> tags
-        link = soup.find("link", rel=lambda x: x and "webmention" in x)
+        link = soup.find("link", rel=rel_filter)
         if link and isinstance(link, Tag):
             href = link.get("href")
             if href and isinstance(href, str):
                 return urljoin(base_url, href)
 
         # Check <a> tags
-        a = soup.find("a", rel=lambda x: x and "webmention" in x)
+        a = soup.find("a", rel=rel_filter)
         if a and isinstance(a, Tag):
             href = a.get("href")
             if href and isinstance(href, str):

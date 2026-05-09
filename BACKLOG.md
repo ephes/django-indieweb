@@ -6,17 +6,15 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 ## Priority 1
 
-### Security Residuals
+No current Priority 1 items.
 
 ## Priority 2
 
-### Security Residuals
+No current Priority 2 items.
 
 ## Priority 3
 
-### API Hardening
-
-No current Priority 3 API Hardening items.
+No current Priority 3 items.
 
 ## Priority 4
 

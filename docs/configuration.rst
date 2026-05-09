@@ -853,8 +853,17 @@ inline in the callback request.
 
 ``hub.secret`` values stored on ``WebSubSubscription`` are encrypted at rest
 with key material derived from Django's ``SECRET_KEY``. Raw secrets are still
-needed briefly at runtime to validate hub HMAC signatures, so rotating
-``SECRET_KEY`` requires re-subscribing with fresh secrets. Secrets passed to
+needed briefly at runtime to validate hub HMAC signatures. To rotate
+``SECRET_KEY`` without re-subscribing every feed, add the previous value to
+``SECRET_KEY_FALLBACKS``: decryption tries the primary key first and then each
+fallback in declaration order, while new encryption always uses the primary
+key. Every save of a ``WebSubSubscription`` row passively re-encrypts a
+fallback-bound ciphertext under the primary, so existing subscriptions migrate
+to the new key on the next save — including renewals that omit ``secret`` and
+lease/state bookkeeping saves that pass an ``update_fields`` list. Operators
+can therefore remove the old value from ``SECRET_KEY_FALLBACKS`` once every
+active subscription has been saved at least once under the new primary.
+Secrets passed to
 ``request_websub_subscription()`` must be non-empty, at least 20 bytes when
 UTF-8 encoded, and at most 200 bytes when UTF-8 encoded. Renewal requests
 preserve the existing stored secret when
@@ -1871,17 +1880,26 @@ Default: ``"passthrough"``.
 
 Controls whether INFO/WARNING log lines emitted by the views, processors,
 and WebSub modules render IndieAuth/Micropub URLs, the OAuth ``state``
-parameter, the verified ``me`` URL, and webmention/WebSub source/target
-URLs verbatim or as a stable HMAC-SHA256 digest.
+parameter, the verified ``me`` URL, webmention/WebSub source/target URLs,
+Webmention outcome URLs (410 Gone, fetch failures, vouch verification
+failures, spam, success, size-limit warnings), and bearer-token /
+authorization-code prefixes verbatim or as a stable HMAC-SHA256 digest.
 
-* ``"passthrough"`` (default): values appear verbatim. Backwards-compatible
-  with existing log pipelines.
-* ``"redact"``: values are replaced by a 12-character hex digest derived
-  from ``SECRET_KEY``. The digest is one-way and stable per input, so
-  log consumers can correlate events for the same URL/state without
-  seeing the underlying value. ``redact_url_origin`` (used for the ``me``
-  parameter) digests scheme+host so multiple paths under the same origin
-  collapse to a shared digest.
+* ``"passthrough"`` (default): URL/state/me values appear verbatim, and
+  bearer tokens are rendered in the existing ``{value[:8]}...``
+  diagnostic form (``redact_token`` truncates even in passthrough so the
+  full credential is never written to logs). Backwards-compatible with
+  existing log pipelines.
+* ``"redact"``: URL/state/me/token values are replaced by a 12-character
+  hex digest derived from ``SECRET_KEY``. The digest is one-way and
+  stable per input, so log consumers can correlate events for the same
+  value without seeing the underlying secret or URL.
+  ``redact_url_origin`` (used for the ``me`` parameter) digests scheme+host
+  so multiple paths under the same origin collapse to a shared digest.
+  ``redact_token`` (used by ``TokenAuthMixin`` and
+  ``TokenIntrospectionView`` for token-not-found / expired-token /
+  duplicate-token failure logs) digests the full token so even the
+  leading bytes never appear in redacted logs.
 
 ERROR-level logs are not redacted, so operators retain full URLs for
 incident response. Rotate ``SECRET_KEY`` to invalidate previously-emitted

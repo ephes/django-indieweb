@@ -522,11 +522,22 @@ Production deployments should also set a tight Django
 host-owned workers when feed parsing or persistence is non-trivial.
 
 Raw ``hub.secret`` values are encrypted at rest with key material derived from
-Django's ``SECRET_KEY``. Rotating ``SECRET_KEY`` requires re-subscribing with
-fresh WebSub secrets so future deliveries can still be validated. Rolling the
-migration back after rotating ``SECRET_KEY`` may leave encrypted values in
-place; the reverse migration logs a warning when it cannot decrypt a stored
-secret.
+Django's ``SECRET_KEY``. To rotate ``SECRET_KEY`` without re-subscribing every
+feed, list the previous value in ``SECRET_KEY_FALLBACKS``: WebSub secret
+decryption tries the primary key first and then each fallback in declaration
+order, mirroring how Django itself handles cookie signing and password hashing
+across rotations. New encryption always uses the primary key. Every save of a
+``WebSubSubscription`` row also passively re-encrypts a fallback-bound
+ciphertext under the primary, so subscriptions migrate to the new key on the
+next save — including renewals that omit ``secret`` and lease/state
+bookkeeping saves that go through ``update_fields``. Keep the old value in
+``SECRET_KEY_FALLBACKS`` until every active subscription has been saved at
+least once under the new primary (any successful renewal or callback
+verification triggers a save); once removed, ciphertexts still bound to the
+old key can no longer be decrypted. Rolling the
+``0021_encrypt_websub_secrets`` migration back after rotating ``SECRET_KEY``
+may leave encrypted values in place; the reverse migration logs a warning when
+it cannot decrypt a stored secret.
 
 django-indieweb does not auto-discover feeds, auto-subscribe to arbitrary
 topics, renew leases in the background, parse delivered feeds, create calendar

@@ -4,6 +4,231 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-09
 
+### Tighten Webmention URL parsing and display URL sanitization
+
+Five defense-in-depth changes harden the Webmention sender, target
+validation, sanitizer, and bundled display templates:
+
+- ``src/indieweb/senders.py`` ``_parse_link_header`` now captures the
+  ``<url>`` and ``rel`` parameter separately, splits ``rel`` on
+  whitespace, and requires an exact ``webmention`` token. The previous
+  ``\bwebmention\b`` regex matched ``not-webmention`` and
+  ``webmention-foo`` because ``-`` is a non-word boundary. Matching is
+  also case-insensitive so ``rel="WEBMENTION"`` is honored.
+- ``_parse_html_for_endpoint`` routes both ``<link>`` and ``<a>`` rel
+  filtering through a new ``_rel_attribute_includes_webmention``
+  classmethod that requires an exact ``webmention`` token whether
+  BeautifulSoup parsed ``rel`` as a list or a raw string.
+- ``src/indieweb/sanitizers.py`` ``sanitize_remote_webmention_url``
+  drops any URL containing userinfo (``user:pass@host``).
+  ``https://attacker.example@trusted.example/`` is a known phishing
+  vector that previously passed validation because the host portion is
+  syntactically a valid HTTP URL.
+- ``src/indieweb/views.py`` ``WebmentionEndpoint.is_valid_target`` now
+  compares a normalized authority — lowercased scheme/host,
+  IDNA-encoded host, and explicit default ports (``:80`` for ``http``,
+  ``:443`` for ``https``) dropped — against an equally normalized
+  ``Site.domain``. Without this normalization a sender could spoof
+  targets like ``https://EXAMPLE.com:443/p`` against a configured
+  ``example.com``.
+- ``src/indieweb/templatetags/webmention_tags.py``
+  ``_prepare_nested_response_for_display`` now also routes
+  ``identity`` and ``response_url`` through
+  ``sanitize_remote_webmention_url``. The bundled
+  ``nested_response.html`` template renders ``firstof response_url
+  identity`` into the response link's ``href``; sanitizing at display
+  time defends latent rows and any future code path that bypasses
+  ingestion validation.
+
+Tests: ``tests/test_webmention_sender.py`` adds parametrized
+regressions covering substring rel rejection (``not-webmention``,
+``webmention-foo``, ``foo-webmention-bar``), exact-token acceptance
+(including ``WEBMENTION`` and multi-token rel values), and the same
+substring-rejection check for HTML ``<link>`` and ``<a>`` discovery.
+``tests/test_webmention_endpoint.py`` adds ``is_valid_target``
+regressions for default-port normalization, non-default-port mismatch,
+and non-HTTP schemes. ``tests/test_webmention_processor.py`` adds a
+parametrized regression covering userinfo rejection in
+``sanitize_remote_webmention_url``.
+``tests/test_webmention_templatetags.py`` adds
+``test_show_webmentions_sanitizes_nested_response_identity_and_response_url``
+asserting that latent ``javascript:`` / ``data:`` values in
+``identity`` / ``response_url`` never reach the rendered HTML.
+
+Documentation: no documentation needed updating because the public
+HTTP and rendering contracts are unchanged; the changes are
+defensive narrowings of values the spec already required to be
+HTTP(S) URLs. ``docs/changelog.rst`` records the change.
+
+Validation: ``uv run pytest`` (1449 passed, coverage 90.80%);
+``uv run mypy`` (no issues); ``uv run prek run --all-files`` (clean).
+
+### Close log-redaction gaps for Webmention outcomes and bearer tokens
+
+``INDIEWEB_LOG_REDACTION="redact"`` previously left two INFO/WARNING
+paths open: Webmention outcome log strings interpolated raw
+``source_url`` / ``target_url`` values, and token-auth failure logs in
+``TokenAuthMixin`` / ``TokenIntrospectionView`` echoed the first eight
+bytes of submitted bearer tokens. Both paths now route through the
+existing redaction helpers (with a new ``redact_token`` helper that
+truncates in passthrough and digests in redact mode), so rotating
+``SECRET_KEY`` invalidates digests and operators can run with
+``INDIEWEB_LOG_REDACTION="redact"`` without leaking URLs or token
+prefixes.
+
+- ``src/indieweb/log_redaction.py`` adds ``redact_token``: in
+  passthrough mode it returns ``{value[:8]}...`` (matching the existing
+  diagnostic shape) and in redact mode a stable 12-hex HMAC digest
+  keyed with ``SECRET_KEY``. Empty input returns ``""``.
+- ``src/indieweb/views.py`` ``TokenAuthMixin.authenticated`` and
+  ``TokenIntrospectionView._token_for_key`` now log via
+  ``redact_token(key)`` for token-not-found / expired-token /
+  duplicate-token / introspection-not-found / introspection-expired
+  paths.
+- ``src/indieweb/processors.py`` wraps every INFO/WARNING ``source_url``
+  / ``target_url`` interpolation in the ``_WebmentionOutcome`` log
+  strings (410 Gone, fetch failure, target-not-in-source, vouch
+  verification failure, spam, success, size-limit warning) with
+  ``redact_url``. ERROR-level log lines retain raw URLs intentionally
+  for incident response.
+- ``tests/test_log_redaction.py`` adds: three pure-helper tests for
+  ``redact_token`` (passthrough truncates, redact digests stably,
+  empty value); two end-to-end token-auth tests asserting the
+  submitted token's first eight bytes never appear in INFO/WARNING
+  logs in redact mode (one for ``TokenAuthMixin``, one for
+  ``TokenIntrospectionView``); and two Webmention-outcome tests
+  exercising the 410 Gone path with an injected ``httpx.MockTransport``
+  to assert the source URL is absent in redact mode and present in
+  passthrough mode.
+- ``docs/configuration.rst`` extends the ``INDIEWEB_LOG_REDACTION``
+  section to document Webmention outcome coverage and the new
+  ``redact_token`` behavior across both modes. ``docs/changelog.rst``
+  records the change.
+
+Validation: ``uv run pytest`` (suite passes); ``uv run mypy``
+(no issues); ``uv run prek run --all-files`` (clean).
+
+### Add a WebSub secret encryption rotation path
+
+WebSub shared secrets are encrypted at rest with key material derived
+from Django's ``SECRET_KEY``. Rotating ``SECRET_KEY`` previously
+required re-subscribing every feed. The model now also accepts keys
+listed in ``SECRET_KEY_FALLBACKS`` for decryption, mirroring how Django
+itself handles cookie signing and password hashing across rotations.
+New encryption always uses the primary key. Crucially, every save of a
+``WebSubSubscription`` row also passively re-encrypts a
+fallback-bound ciphertext under the primary, so subscriptions migrate
+to the new key on the next save — including renewals that omit
+``secret`` (where ``set_secret`` is never called).
+
+- ``src/indieweb/models.py`` extracts ``_websub_secret_fernet_for_key``
+  (single Fernet from one ``SECRET_KEY`` value) plus a new
+  ``_websub_secret_keys()`` helper that returns the primary and any
+  ``SECRET_KEY_FALLBACKS``. ``_websub_secret_fernet()`` now returns the
+  primary Fernet only (used for new encryption) and a sibling
+  ``_websub_secret_multifernet()`` returns a ``MultiFernet`` over
+  primary + fallbacks for decryption. ``WebSubSubscription.decrypt_secret``
+  uses the multi-fernet so existing rows remain readable across
+  rotations.
+- ``WebSubSubscription.save`` now routes any
+  already-encrypted ``secret`` / ``pending_secret`` through a new
+  ``_maybe_reencrypt_under_primary`` classmethod. The fast path tries
+  to decrypt with the primary Fernet only; on success the input is
+  returned unchanged so saves are idempotent for already-migrated
+  rows. On primary failure the helper round-trips through the
+  multi-fernet to recover the plaintext and re-encrypts under the
+  primary. When the save mutated either column it adds the affected
+  field name(s) plus ``modified`` to ``update_fields`` if the caller
+  passed one — without this, renewal saves
+  (``request_websub_subscription`` calls ``save(update_fields=[...])``
+  without ``secret``) would mutate the in-memory object but never
+  persist the migrated ciphertext. This is the mechanism that makes
+  the documented "rotation completes after every active subscription
+  has been saved at least once" behavior accurate.
+- ``tests/test_websub_subscriber.py`` adds seven focused regression
+  tests covering: decrypt-with-fallback, fail-when-no-key,
+  encrypt-uses-primary-after-rotation, ``set_secret``-after-rotation
+  binding, save-without-``set_secret``-call-still-migrates,
+  ``save(update_fields=...)``-still-persists-migration, and
+  save-is-idempotent-for-already-migrated-rows.
+- ``docs/websub.rst`` and ``docs/configuration.rst`` replace the
+  "rotating ``SECRET_KEY`` requires re-subscribing" caveat with
+  instructions for using ``SECRET_KEY_FALLBACKS`` for staged rotation
+  and note that operators can remove the old key once every active
+  subscription has been saved at least once under the new primary
+  (any successful renewal, callback verification, or lease/state
+  bookkeeping save triggers a save).
+
+Validation: ``uv run pytest`` (suite passes); ``uv run mypy``
+(no issues); ``uv run prek run --all-files`` (clean).
+
+### Enforce authorization-code expiry in legacy IndieAuth code verification
+
+The legacy ``code`` / ``client_id`` verification POST on the authorization
+endpoint now enforces the same ``INDIWEB_AUTH_CODE_TIMEOUT`` window the
+token-exchange path has always applied. A stale code is rejected with
+``400 Invalid authorization code`` and the matched ``Auth`` row is deleted
+so the same code cannot be reused for verification or exchange.
+
+- ``src/indieweb/views.py`` extracts the expiry check into a module-level
+  ``_auth_code_is_expired`` helper used by both ``TokenView.post`` and
+  ``AuthView._verify_auth_code``. The helper preserves the historical
+  ``INDIWEB`` setting-name typo for backward compatibility.
+- ``tests/test_auth_endpoint.py`` adds
+  ``test_post_verify_auth_code_rejects_expired_code`` (asserts 400 and that
+  the row is gone) and
+  ``test_post_verify_auth_code_accepts_fresh_code_within_window``
+  (asserts 200 with the row still present, since verification is
+  non-destructive on success).
+- ``docs/indieauth.rst`` updates the security-considerations entry on
+  auth-code timeout to note that both the token-exchange POST and the
+  legacy verification POST enforce the same window and delete the row
+  on rejection. ``docs/changelog.rst`` records the change.
+
+Validation: ``uv run pytest`` (suite passes); ``uv run mypy``
+(no issues); ``uv run prek run --all-files`` (clean).
+
+### Harden Micropub JSON parsing against deeply nested bodies
+
+``json.loads`` raises ``RecursionError`` (not ``JSONDecodeError``) for
+JSON objects or arrays nested beyond the interpreter's recursion limit.
+The previous Micropub create, action, and media JSON paths only caught
+``JSONDecodeError`` / ``UnicodeDecodeError``, so a nested-bomb body
+bypassed validation and surfaced as an authenticated HTTP 500. The
+shared loader now catches ``RecursionError`` and treats it the same as
+any other malformed body: ``400 invalid_request``.
+
+- ``src/indieweb/views.py`` introduces ``_load_micropub_json_object``,
+  a module-level helper that parses each ``application/json`` request
+  body once, caches the result on the request, and returns either the
+  parsed ``dict`` or a sentinel indicating malformed/non-object JSON.
+  ``MicropubView._parse_json_request``, ``_post_action``,
+  ``_reject_invalid_json``, ``_action_payload``, and
+  ``MicropubMediaView._json_payload`` all delegate to the helper, so
+  each authenticated body is parsed at most once. The catch list now
+  includes ``RecursionError`` alongside ``JSONDecodeError``,
+  ``UnicodeDecodeError``, and the existing defensive
+  ``AttributeError``.
+- ``tests/test_micropub_actions.py`` adds
+  ``test_recursion_error_in_json_loads_returns_400_not_500`` and
+  ``test_recursion_error_on_action_post_returns_400_not_500`` to
+  ``TestMicropubMalformedJsonBody``.
+  ``tests/test_micropub_media.py`` adds
+  ``test_media_post_with_recursion_error_in_json_loads_returns_400_not_500``.
+  All three deterministically force ``json.loads`` in the views
+  module to raise ``RecursionError`` via a thin ``_ProxyJson`` shim,
+  rather than relying on a deeply nested payload — interpreter stack
+  budgets and the C-accelerated ``_json`` module's recursion
+  accounting vary across the supported Python matrix (a 4_000-deep
+  payload decoded fine on Python 3.13.12 in this repo, missing the
+  catch path entirely). Each test asserts ``400`` with no entries
+  created or hook calls observed.
+- ``docs/changelog.rst`` records the change. No other documentation
+  needed updating because the public response shape is unchanged.
+
+Validation: ``uv run pytest`` (1449 passed, coverage 90.80%);
+``uv run mypy`` (no issues); ``uv run prek run --all-files`` (clean).
+
 ### Security residuals review follow-up
 
 Independent review of the recently-landed security-residuals work surfaced

@@ -1138,6 +1138,70 @@ def test_post_verify_auth_code_keeps_default_form_response_for_wildcard_accept(c
 
 
 @pytest.mark.django_db
+def test_post_verify_auth_code_rejects_expired_code(client, user):
+    """Legacy code verification must apply ``INDIWEB_AUTH_CODE_TIMEOUT``.
+
+    Token exchange has always rejected stale codes, but the verification POST
+    previously returned ``me`` for any matching ``code`` / ``client_id`` pair
+    regardless of age. An attacker with a leaked but expired code could
+    therefore confirm the bound ``me`` indefinitely. The verification POST now
+    enforces the same expiry window and deletes the row on failure so the
+    code cannot be reused on either path.
+    """
+    auth = Auth.objects.create(
+        owner=user,
+        client_id="https://webapp.example.org",
+        redirect_uri="https://webapp.example.org/auth/callback",
+        state="1234567890",
+        scope="post",
+        me="http://example.org",
+    )
+
+    timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
+    auth.created = auth.created - timedelta(seconds=timeout + 1)
+    auth.save()
+
+    response = client.post(
+        reverse("indieweb:auth"),
+        data={"code": auth.key, "client_id": auth.client_id},
+    )
+
+    assert response.status_code == 400
+    assert response.content == b"Invalid authorization code"
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_post_verify_auth_code_accepts_fresh_code_within_window(client, user):
+    """A code aged within the expiry window still succeeds at verification."""
+    auth = Auth.objects.create(
+        owner=user,
+        client_id="https://webapp.example.org",
+        redirect_uri="https://webapp.example.org/auth/callback",
+        state="1234567890",
+        scope="post",
+        me="http://example.org",
+    )
+
+    # Age the code to half the expiry window — still inside the window.
+    timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
+    auth.created = auth.created - timedelta(seconds=timeout // 2)
+    auth.save()
+
+    response = client.post(
+        reverse("indieweb:auth"),
+        data={"code": auth.key, "client_id": auth.client_id},
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/x-www-form-urlencoded"
+    assert "me=http%3A%2F%2Fexample.org" in response.content.decode("utf-8")
+    # Verification is non-destructive on success — the row is consumed only
+    # by token exchange.
+    assert Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
 def test_authorize_rejects_cross_origin_redirect_by_default(client, user):
     client.force_login(user)
     response = client.get(

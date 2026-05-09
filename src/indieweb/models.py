@@ -5,7 +5,7 @@ import hashlib
 import hmac
 from typing import Any
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator, URLValidator
@@ -28,13 +28,46 @@ def generate_webmention_status_token() -> str:
     return get_random_string(length=WEBMENTION_STATUS_TOKEN_LENGTH)
 
 
-def _websub_secret_fernet() -> Fernet:
+def _websub_secret_fernet_for_key(secret_key: str) -> Fernet:
+    """Return a Fernet derived from a single Django ``SECRET_KEY`` value."""
     key_material = hmac.new(
-        str(settings.SECRET_KEY).encode("utf-8"),
+        secret_key.encode("utf-8"),
         WEBSUB_SECRET_KEY_SALT,
         hashlib.sha256,
     ).digest()
     return Fernet(base64.urlsafe_b64encode(key_material))
+
+
+def _websub_secret_keys() -> list[str]:
+    """Return all Django secret keys eligible for WebSub secret crypto.
+
+    The primary ``SECRET_KEY`` always comes first; entries from
+    ``SECRET_KEY_FALLBACKS`` follow in declaration order so the order
+    matches Django's own rotation conventions for cookie signing and
+    password hashing. Operators can therefore rotate ``SECRET_KEY``
+    without re-subscribing every WebSub feed: the previous value stays in
+    ``SECRET_KEY_FALLBACKS`` until subscriptions renew under the new
+    primary.
+    """
+    keys: list[str] = [str(settings.SECRET_KEY)]
+    for fallback in getattr(settings, "SECRET_KEY_FALLBACKS", ()):
+        keys.append(str(fallback))
+    return keys
+
+
+def _websub_secret_fernet() -> Fernet:
+    """Return the primary Fernet used for new WebSub secret encryption."""
+    return _websub_secret_fernet_for_key(_websub_secret_keys()[0])
+
+
+def _websub_secret_multifernet() -> MultiFernet:
+    """Return a MultiFernet over the primary key plus any ``SECRET_KEY_FALLBACKS``.
+
+    Used for decryption so a stored WebSub secret encrypted under any
+    historical key remains readable across rotations. New encryption
+    always uses the primary key (see ``_websub_secret_fernet``).
+    """
+    return MultiFernet([_websub_secret_fernet_for_key(key) for key in _websub_secret_keys()])
 
 
 class WebSubSecretDecryptionError(ValueError):
@@ -535,10 +568,37 @@ class WebSubSubscription(models.Model):
         return f"WebSub {self.state}: {self.topic_url} via {self.hub_url}"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
-        if self.secret and not self.is_encrypted_secret(self.secret):
-            self.secret = self.encrypt_secret(self.secret)
-        if self.pending_secret and not self.is_encrypted_secret(self.pending_secret):
-            self.pending_secret = self.encrypt_secret(self.pending_secret)
+        secret_changed = False
+        pending_secret_changed = False
+        if self.secret:
+            original_secret = self.secret
+            if not self.is_encrypted_secret(self.secret):
+                self.secret = self.encrypt_secret(self.secret)
+            else:
+                self.secret = self._maybe_reencrypt_under_primary(self.secret)
+            secret_changed = self.secret != original_secret
+        if self.pending_secret:
+            original_pending = self.pending_secret
+            if not self.is_encrypted_secret(self.pending_secret):
+                self.pending_secret = self.encrypt_secret(self.pending_secret)
+            else:
+                self.pending_secret = self._maybe_reencrypt_under_primary(self.pending_secret)
+            pending_secret_changed = self.pending_secret != original_pending
+        # ``update_fields`` callers (renewal, callback handling, lease
+        # bookkeeping) typically scope writes tightly and would otherwise
+        # drop a passive re-encryption from the COLUMN list, leaving the
+        # old-key ciphertext in the DB despite the in-memory object being
+        # migrated. Add the affected columns when we mutated them so the
+        # migration is durable across every save path.
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and (secret_changed or pending_secret_changed):
+            merged = set(update_fields)
+            if secret_changed:
+                merged.add("secret")
+            if pending_secret_changed:
+                merged.add("pending_secret")
+            merged.add("modified")
+            kwargs["update_fields"] = merged
         super().save(*args, **kwargs)
 
     @classmethod
@@ -553,15 +613,66 @@ class WebSubSubscription(models.Model):
         return f"{WEBSUB_SECRET_ENCRYPTED_PREFIX}{token}"
 
     @classmethod
+    def _maybe_reencrypt_under_primary(cls, stored_secret: str) -> str:
+        """Re-encrypt ``stored_secret`` under the current primary key, if needed.
+
+        Called from :meth:`save` so any persistence of an active or pending
+        secret opportunistically migrates ciphertext that was produced under
+        a key now listed only in ``SECRET_KEY_FALLBACKS``. The fast path —
+        when the cipher is already under the primary — performs a single
+        Fernet decrypt and returns the input unchanged. Only when the
+        primary key fails (i.e. a fallback was needed) do we round-trip
+        through the multi-fernet to recover the plaintext and re-encrypt
+        under the primary.
+
+        Without this, a renewal that omits ``secret`` (the common case for
+        long-lived subscriptions) would never call :meth:`set_secret` and
+        the row would remain readable only with the fallback key. Removing
+        the fallback after subscriptions had been saved would then break
+        HMAC verification for those rows. With this helper in place every
+        successful save migrates the row, so the documented operator story
+        ("keep the old key in ``SECRET_KEY_FALLBACKS`` until every active
+        subscription has been saved at least once under the new
+        primary") becomes accurate.
+        """
+        if not stored_secret or not cls.is_encrypted_secret(stored_secret):
+            return stored_secret
+        token = stored_secret.removeprefix(WEBSUB_SECRET_ENCRYPTED_PREFIX)
+        try:
+            _websub_secret_fernet().decrypt(token.encode("ascii"))
+            return stored_secret
+        except InvalidToken:
+            pass
+        try:
+            plaintext = _websub_secret_multifernet().decrypt(token.encode("ascii")).decode("utf-8")
+        except (InvalidToken, UnicodeDecodeError):
+            # No available key can decrypt the row. Don't lose the existing
+            # ciphertext on save — leave it for the documented decrypt
+            # failure path to surface as ``WebSubSecretDecryptionError``.
+            return stored_secret
+        return cls.encrypt_secret(plaintext)
+
+    @classmethod
     def decrypt_secret(cls, stored_secret: str) -> str:
-        """Return the raw WebSub shared secret from storage."""
+        """Return the raw WebSub shared secret from storage.
+
+        Decryption tries the primary key first and then each entry in
+        ``SECRET_KEY_FALLBACKS``, so subscriptions encrypted before a
+        ``SECRET_KEY`` rotation continue to verify deliveries. New
+        encryption always uses the primary key. Any save of a
+        ``WebSubSubscription`` row passively re-encrypts a fallback-bound
+        ciphertext under the primary key (see
+        :meth:`_maybe_reencrypt_under_primary`), so subscriptions migrate
+        to the new key on the next save regardless of whether the
+        renewal supplied a fresh ``secret``.
+        """
         if not stored_secret:
             return ""
         if not cls.is_encrypted_secret(stored_secret):
             return stored_secret
         token = stored_secret.removeprefix(WEBSUB_SECRET_ENCRYPTED_PREFIX)
         try:
-            return _websub_secret_fernet().decrypt(token.encode("ascii")).decode("utf-8")
+            return _websub_secret_multifernet().decrypt(token.encode("ascii")).decode("utf-8")
         except (InvalidToken, UnicodeDecodeError) as exc:
             raise WebSubSecretDecryptionError("WebSub secret could not be decrypted") from exc
 

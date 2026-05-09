@@ -85,6 +85,13 @@ def sanitize_remote_webmention_url(value: str | None) -> str:
         parsed = urlparse(candidate)
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
             return ""
+        # Userinfo (``user:pass@host``) has no legitimate use in remote
+        # Webmention URLs and is a known phishing vector — a hostile sender
+        # can craft ``https://trusted.example@attacker.example/`` so the
+        # leading authority looks like a familiar host. Drop any URL that
+        # carries either the user or password component.
+        if parsed.username is not None or parsed.password is not None:
+            return ""
         # Accessing these properties raises ValueError for malformed IPv6 or ports.
         if parsed.hostname is None:
             return ""
