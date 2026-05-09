@@ -5,6 +5,17 @@ Changelog
 
 Unreleased
 ----------
+* Addressed three Warning-level findings from the security-residuals review:
+  ``AuthView._handle_consent`` now applies the same ``_first_length_error``
+  guard as ``AuthView.get`` and ``TokenView.post`` so overlong consent-POST
+  fields are rejected before ``Auth.objects.create`` (closing a P4.2 gap);
+  ``accept_websub_delivery`` short-circuits when
+  ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` is ``0``/``None`` so
+  duplicates are accepted unconditionally and no row is recorded in
+  ``WebSubAcceptedDelivery``, restoring the documented "disable replay
+  detection" semantics; and ``tests/test_documentation_snippets.py``
+  ``KNOWN_SETTINGS`` now includes ``INDIEWEB_REDIRECT_URI_VALIDATOR`` so
+  the documentation sanity-check covers all documented settings.
 * Added length validation for inbound IndieAuth and Webmention protocol
   fields. ``WebmentionEndpoint.post`` now rejects ``source``, ``target``,
   and ``vouch`` URLs longer than the backing ``Webmention`` model

@@ -1344,3 +1344,60 @@ def test_auth_get_rejects_overlong_scope(client, user):
     )
     assert response.status_code == 400
     assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_auth_consent_post_rejects_overlong_state(client, user):
+    """The consent POST path must reject overlong ``state`` before ``Auth.objects.create``."""
+    client.force_login(user)
+    response = client.post(
+        reverse("indieweb:auth"),
+        {
+            "action": "approve",
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/cb",
+            "state": "x" * 5000,
+            "me": "https://me.example/",
+            "scope": "create",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_auth_consent_post_rejects_overlong_client_id(client, user):
+    """The consent POST path must reject overlong ``client_id`` before ``Auth.objects.create``."""
+    client.force_login(user)
+    response = client.post(
+        reverse("indieweb:auth"),
+        {
+            "action": "approve",
+            "client_id": "https://c.example/" + ("a" * 5000),
+            "redirect_uri": "https://c.example/cb",
+            "state": "abc",
+            "me": "https://me.example/",
+            "scope": "create",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_auth_consent_post_rejects_overlong_redirect_uri(client, user):
+    """The consent POST path must reject overlong ``redirect_uri`` before ``Auth.objects.create``."""
+    client.force_login(user)
+    response = client.post(
+        reverse("indieweb:auth"),
+        {
+            "action": "approve",
+            "client_id": "https://c.example/",
+            "redirect_uri": "https://c.example/" + ("a" * 5000),
+            "state": "abc",
+            "me": "https://me.example/",
+            "scope": "create",
+        },
+    )
+    assert response.status_code == 400
+    assert Auth.objects.count() == 0

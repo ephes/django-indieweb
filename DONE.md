@@ -2,6 +2,44 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-09
+
+### Security residuals review follow-up
+
+Independent review of the recently-landed security-residuals work surfaced
+three Warning-level findings; all three are addressed in a single change.
+
+- ``src/indieweb/views.py`` ``AuthView._handle_consent`` now applies the
+  same ``_first_length_error`` guard used by ``AuthView.get`` and
+  ``TokenView.post`` (P4.2 gap). Overlong ``client_id``, ``redirect_uri``,
+  ``state``, ``me``, and ``scope`` on the consent POST are rejected with
+  ``400 invalid_request`` before any ``Auth.objects.create``.
+  ``tests/test_auth_endpoint.py`` adds three consent-POST regressions
+  covering overlong ``state``, ``client_id``, and ``redirect_uri``.
+- ``src/indieweb/websub.py`` ``accept_websub_delivery`` now short-circuits
+  when ``_delivery_replay_window_seconds()`` returns ``None`` (operator set
+  ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` to ``0`` or unset to
+  disable). Disabling the window again means duplicates are accepted
+  unconditionally and the configured hook fires for every delivery, with
+  no row inserted into ``WebSubAcceptedDelivery``. This restores the
+  documented "disable replay detection" semantics.
+  ``tests/test_websub_subscriber.py``: the prior
+  ``test_accept_websub_delivery_window_disabled_still_blocks_concurrent_duplicate``
+  codified the wrong behavior and was rewritten as
+  ``test_accept_websub_delivery_window_disabled_accepts_all_duplicates``;
+  a new HTTP-level regression
+  ``test_replay_window_disabled_accepts_all_duplicates`` confirms the
+  callback view accepts duplicate POSTs and dispatches the hook twice.
+- ``tests/test_documentation_snippets.py`` ``KNOWN_SETTINGS`` now lists
+  ``INDIEWEB_REDIRECT_URI_VALIDATOR`` (it is documented in
+  ``docs/configuration.rst`` alongside ``INDIEWEB_REDIRECT_URI_ALLOWLIST``,
+  but was missing from the documentation snippet sanity-check). The
+  assertion message is also relaxed from "hardening snippet" to
+  "configuration.rst" to match the actual file-wide check.
+
+Validation: ``uv run pytest -q`` (1410 passing), ``uv run mypy`` (no
+issues), and ``uv run prek run --all-files`` (all hooks pass).
+
 ## 2026-05-08
 
 ### P4.2 — Validate inbound protocol field lengths

@@ -1045,6 +1045,12 @@ def accept_websub_delivery(
     and ``False`` when the digest collides with an earlier accepted delivery
     inside the configured replay window.
 
+    When ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` is unset or ``0``
+    (i.e. ``_delivery_replay_window_seconds()`` returns ``None``), the in-process
+    replay window is disabled per the documented semantics: every delivery is
+    accepted, no row is inserted into ``WebSubAcceptedDelivery``, and the
+    configured hook fires for each duplicate.
+
     The implementation prunes expired rows inside an outer atomic block and
     inserts the new row in an inner ``transaction.atomic()`` savepoint so an
     ``IntegrityError`` from the unique constraint on ``(subscription,
@@ -1062,13 +1068,22 @@ def accept_websub_delivery(
     replay_window_seconds = _delivery_replay_window_seconds()
     history_max = _delivery_replay_history_max()
 
+    # ``replay_window_seconds is None`` means the operator opted out of
+    # in-process replay detection (``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS``
+    # set to ``0`` or unset to disable). Skip the unique-constraint gate
+    # entirely so duplicate deliveries are accepted unconditionally and the
+    # configured hook fires every time. Nothing is recorded in
+    # ``WebSubAcceptedDelivery`` because there is no window in which to
+    # consult those rows.
+    if replay_window_seconds is None:
+        return True
+
     with transaction.atomic():
-        if replay_window_seconds is not None:
-            cutoff = received_at - timedelta(seconds=replay_window_seconds)
-            WebSubAcceptedDelivery.objects.filter(
-                subscription=subscription,
-                accepted_at__lt=cutoff,
-            ).delete()
+        cutoff = received_at - timedelta(seconds=replay_window_seconds)
+        WebSubAcceptedDelivery.objects.filter(
+            subscription=subscription,
+            accepted_at__lt=cutoff,
+        ).delete()
 
         try:
             with transaction.atomic():  # savepoint

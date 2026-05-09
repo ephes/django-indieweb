@@ -1365,7 +1365,8 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         redirect_uri = request.POST.get("redirect_uri")
         state = request.POST.get("state")
         me = request.POST.get("me")
-        scope = _normalize_scope(request.POST.get("scope"))
+        raw_scope = request.POST.get("scope")
+        scope = _normalize_scope(raw_scope)
 
         if not all([client_id, redirect_uri, state, me]):
             return HttpResponse("Missing required parameters", status=400)
@@ -1374,6 +1375,18 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         assert redirect_uri is not None
         assert state is not None
         assert me is not None
+
+        length_error = _first_length_error(
+            (
+                ("client_id", client_id, AUTH_CLIENT_ID_MAX_LENGTH),
+                ("redirect_uri", redirect_uri, AUTH_REDIRECT_URI_MAX_LENGTH),
+                ("state", state, AUTH_STATE_MAX_LENGTH),
+                ("me", me, AUTH_ME_MAX_LENGTH),
+                ("scope", raw_scope, AUTH_SCOPE_MAX_LENGTH),
+            )
+        )
+        if length_error is not None:
+            return length_error
 
         if not request.user.is_authenticated:
             return HttpResponse("User not authenticated", status=401)

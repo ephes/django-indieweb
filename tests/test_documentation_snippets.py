@@ -12,6 +12,7 @@ KNOWN_SETTINGS = {
     "INDIEWEB_ALLOWED_CLIENT_IDS",
     "INDIEWEB_RATE_LIMITS",
     "INDIEWEB_REDIRECT_URI_ALLOWLIST",
+    "INDIEWEB_REDIRECT_URI_VALIDATOR",
     "INDIEWEB_MICROPUB_URL_POLICY",
     "INDIEWEB_WEBMENTION_STATUS_PUBLIC",
     "INDIEWEB_LOG_REDACTION",
@@ -22,7 +23,7 @@ def test_production_hardening_snippet_references_known_settings():
     text = Path("docs/configuration.rst").read_text()
     assert "Production hardening" in text, "configuration.rst missing 'Production hardening' section"
     for name in KNOWN_SETTINGS:
-        assert name in text, f"{name} missing from configuration.rst hardening snippet"
+        assert name in text, f"{name} missing from configuration.rst"
 
 
 def test_injected_client_warning_present():

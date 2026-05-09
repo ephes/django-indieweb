@@ -1464,13 +1464,36 @@ def test_delivery_is_replay_emits_deprecation_warning(subscription):
 
 
 @pytest.mark.django_db
-def test_accept_websub_delivery_window_disabled_still_blocks_concurrent_duplicate(settings, subscription):
-    """The unique constraint gates duplicates even when the time window is disabled."""
+def test_accept_websub_delivery_window_disabled_accepts_all_duplicates(settings, subscription):
+    """Disabling the replay window disables the unique-constraint gate too.
+
+    ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 0`` is documented as
+    "disable in-process replay detection". Identical deliveries must therefore
+    be accepted unconditionally, with no row inserted into
+    ``WebSubAcceptedDelivery``.
+    """
     settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 0
     digest = hashlib.sha256(b"<feed/>").hexdigest()
 
     assert accept_websub_delivery(subscription, digest) is True
-    assert accept_websub_delivery(subscription, digest) is False
+    assert accept_websub_delivery(subscription, digest) is True
+    assert WebSubAcceptedDelivery.objects.filter(subscription=subscription).count() == 0
+
+
+@pytest.mark.django_db
+def test_replay_window_disabled_accepts_all_duplicates(client, settings, subscription):
+    """When the replay window is disabled, callback POSTs accept duplicates and the hook fires every time."""
+    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 0
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+    body = b"<feed><id>dup</id></feed>"
+
+    first = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    second = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+
+    assert first.status_code == 204
+    assert second.status_code == 204
+    assert len(websub_hooks.DELIVERIES) == 2
+    assert WebSubAcceptedDelivery.objects.filter(subscription=subscription).count() == 0
 
 
 @pytest.mark.django_db
