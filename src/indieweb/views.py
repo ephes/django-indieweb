@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from email.message import Message
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import parse_qsl, urlparse, urlunparse
+from urllib.parse import parse_qsl, unquote, urlparse, urlunparse
 from urllib.parse import urlencode as urllib_urlencode
 
 import filetype
@@ -41,7 +41,7 @@ from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
 from .log_redaction import redact_state, redact_token, redact_url, redact_url_origin
 from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
-from .processors import WebmentionProcessor
+from .processors import WebmentionProcessor, canonicalize_webmention_storage_url
 from .rate_limit import RateLimitMixin
 from .websub import (
     WebSubDeliveryEnqueueError,
@@ -762,6 +762,41 @@ def _get_webmention_enqueue() -> Callable[[int], None] | None:
     return cast("Callable[[int], None]", enqueue)
 
 
+def _webmention_pair_cooldown_seconds() -> int:
+    """Return the configured cooldown window for a canonical Webmention pair.
+
+    Defaults to 0 (disabled) for backwards compatibility. The cooldown is
+    independent of IP-based rate limits; it suppresses redundant fetch/parse
+    pipelines for repeat submissions of the same canonical
+    ``(source, target)`` pair.
+    """
+    raw = getattr(settings, "INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS", 0)
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, seconds)
+
+
+def _webmention_pair_cooldown_row(source: str, target: str) -> Webmention | None:
+    """Return the existing canonical row when a recent receive must short-circuit.
+
+    Returns ``None`` when no row exists, when the cooldown is disabled, or when
+    the prior receive is older than the configured window.
+    """
+    seconds = _webmention_pair_cooldown_seconds()
+    if seconds <= 0:
+        return None
+    canonical_source = canonicalize_webmention_storage_url(source)
+    canonical_target = canonicalize_webmention_storage_url(target)
+    threshold = timezone.now() - timedelta(seconds=seconds)
+    return Webmention.objects.filter(
+        source_url=canonical_source,
+        target_url=canonical_target,
+        last_received_at__gte=threshold,
+    ).first()
+
+
 def _store_webmention_submission(source: str, target: str, vouch: str | None) -> Webmention:
     """Create or reuse a submitted Webmention row, preserving existing state.
 
@@ -772,10 +807,17 @@ def _store_webmention_submission(source: str, target: str, vouch: str | None) ->
     submitted URL is stashed on a non-persisted attribute so any in-memory
     consumer can still see it; the queued path discards it because the worker
     only loads the row by id.
+
+    The (``source_url``, ``target_url``) lookup uses
+    :func:`canonicalize_webmention_storage_url` so cosmetic URL variants of the
+    same logical pair collapse onto a single row instead of sprawling new
+    status-token-bearing rows.
     """
+    canonical_source = canonicalize_webmention_storage_url(source)
+    canonical_target = canonicalize_webmention_storage_url(target)
     webmention, _created = Webmention.objects.get_or_create(
-        source_url=source,
-        target_url=target,
+        source_url=canonical_source,
+        target_url=canonical_target,
     )
     if vouch is not None and webmention.vouch_url != vouch:
         if webmention.vouch_verified_at is not None:
@@ -871,13 +913,47 @@ def _redirect_uri_origin_match(client_id: str, redirect_uri: str) -> bool:
     return a is not None and a == b
 
 
+_DECODE_ITERATION_LIMIT = 8
+
+
+def _path_has_dot_segments(raw_path: str) -> bool:
+    """Return whether ``raw_path`` carries any ``.``/``..`` segments.
+
+    Both literal and percent-encoded forms are checked so a candidate cannot
+    smuggle traversal through ``%2e%2e``. Multiple layers of encoding (for
+    example ``%252e%252e``, which decodes once to ``%2e%2e`` and again to
+    ``..``) are handled by iteratively decoding until the result is stable
+    or a small bound is exceeded. The bound prevents a pathological
+    deeply-encoded input from costing unbounded CPU. If the bound is hit
+    before stability, the function fails closed (returns ``True``) so a
+    9th-layer-encoded ``..`` cannot bypass the rejection.
+    """
+    candidate = raw_path
+    for _ in range(_DECODE_ITERATION_LIMIT):
+        decoded = unquote(candidate)
+        if decoded == candidate:
+            break
+        candidate = decoded
+    else:
+        # Iteration limit hit while decoding was still progressing — treat
+        # as a traversal candidate rather than gambling on the partially
+        # decoded result.
+        return True
+    for segment in candidate.split("/"):
+        if segment in (".", ".."):
+            return True
+    return False
+
+
 def _redirect_uri_allowlist_match(allowlist_entry: str, candidate: str) -> bool:
     """Return whether ``candidate`` matches an ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` entry.
 
     Trailing-slash entries are prefix entries: the candidate must share the
     entry's origin and its path must start with the entry's path. Entries
     without a trailing slash are exact entries: origin, path, and query must
-    match. Fragments on either side are rejected.
+    match. Fragments on either side are rejected. Candidates whose path
+    carries any literal or percent-encoded ``.``/``..`` segments are rejected
+    so a prefix entry cannot be escaped via traversal.
     """
     entry_parts = urlparse(allowlist_entry)
     cand_parts = urlparse(candidate)
@@ -886,6 +962,8 @@ def _redirect_uri_allowlist_match(allowlist_entry: str, candidate: str) -> bool:
     entry_origin = _origin_tuple(allowlist_entry)
     cand_origin = _origin_tuple(candidate)
     if entry_origin is None or cand_origin is None or entry_origin != cand_origin:
+        return False
+    if _path_has_dot_segments(cand_parts.path) or _path_has_dot_segments(entry_parts.path):
         return False
     if allowlist_entry.endswith("/"):
         return cand_parts.path.startswith(entry_parts.path)
@@ -1634,7 +1712,20 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             )
         )
 
-    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+    def _check_me_binding(self, auth: Auth, me: str | None, client_id: str) -> HttpResponse | None:
+        """Reject token exchanges whose request-supplied ``me`` does not match ``auth.me``.
+
+        The issued token is always bound to the consent-validated ``auth.me``;
+        a different submitted ``me`` is treated as a substitution attempt.
+        """
+        if me and auth.me and _normalize_redirect_uri(me) != _normalize_redirect_uri(auth.me):
+            return self._consume_invalid_grant(
+                auth,
+                f"Rejected token exchange with mismatched me for client_id={client_id}",
+            )
+        return None
+
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:  # noqa: C901
         # Get parameters from request
         code = request.POST.get("code")
         client_id = request.POST.get("client_id")
@@ -1683,8 +1774,10 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         if requested_scope is not None and normalized_request_scope != stored_scope:
             return self._consume_invalid_grant(auth, f"Scope mismatch on token exchange for client_id={client_id}")
 
-        # Use values from auth object if not provided in request
-        me = me or auth.me
+        me_error = self._check_me_binding(auth, me, client_id)
+        if me_error is not None:
+            return me_error
+        me = auth.me
         scope = stored_scope
 
         logger.info(
@@ -1824,13 +1917,16 @@ class TokenManagementView(UserLoginRequiredMixin, View):
         return response
 
 
+@method_decorator(xframe_options_deny, name="dispatch")
 class TokenRevokeView(UserLoginRequiredMixin, View):
     """Revoke an access token owned by the authenticated user."""
 
     def post(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponseBase:
         token = get_object_or_404(Token, pk=pk, owner_id=request.user.pk)
         token.delete()
-        return redirect("indieweb:tokens")
+        response = redirect("indieweb:tokens")
+        response["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return response
 
 
 class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, View):
@@ -2156,6 +2252,16 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
     def _valid_http_url(self, value: Any, request: HttpRequest) -> bool:
         if not isinstance(value, str):
+            return False
+        # Reject userinfo before structural validation so a syntactically
+        # legal URL like ``https://user:pass@example.org/`` cannot leak
+        # credentials through a stored Micropub property. The same-host
+        # fallback also rejects userinfo for parity.
+        try:
+            parsed = urlparse(value)
+        except ValueError:
+            return False
+        if parsed.username is not None or parsed.password is not None:
             return False
         try:
             MICROPUB_HTTP_URL_VALIDATOR(value)
@@ -2998,7 +3104,7 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     rate_limit_key = "webmention"
     cors_allowed_methods = ("GET", "POST")
 
-    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
+    def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:  # noqa: C901
         """Handle incoming webmentions."""
         source = request.POST.get("source")
         target = request.POST.get("target")
@@ -3031,6 +3137,20 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         except ValidationError:
             return HttpResponse(status=400)
 
+        # Reject URLs that carry userinfo before canonicalization. Two
+        # submissions like ``https://alice@example.com/post`` and
+        # ``https://bob@example.com/post`` would otherwise collapse onto a
+        # single canonical row that drops the userinfo, conflating two
+        # logically distinct submissions.
+        for value in (source, target, vouch):
+            if value is not None:
+                try:
+                    parsed = urlparse(value)
+                except ValueError:
+                    return HttpResponse(status=400)
+                if parsed.username is not None or parsed.password is not None:
+                    return HttpResponse(status=400)
+
         # Check target is on our domain
         if not self.is_valid_target(target):
             return HttpResponse(status=400)
@@ -3039,6 +3159,10 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             enqueue_webmention = _get_webmention_enqueue()
         except _WebmentionEnqueueError:
             return HttpResponse(status=500)
+
+        cooldown_response = self._webmention_cooldown_short_circuit(request, source, target)
+        if cooldown_response is not None:
+            return cooldown_response
 
         if enqueue_webmention is not None:
             webmention = _store_webmention_submission(source, target, vouch)
@@ -3066,6 +3190,19 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         except Exception as e:
             logger.error(f"Failed to process webmention: {e}")
             return HttpResponse(status=400)
+
+    def _webmention_cooldown_short_circuit(
+        self, request: HttpRequest, source: str, target: str
+    ) -> HttpResponse | None:
+        """Return a cached status response when the canonical pair is within cooldown."""
+        existing = _webmention_pair_cooldown_row(source, target)
+        if existing is None:
+            return None
+        response = HttpResponse(status=200)
+        response["Location"] = request.build_absolute_uri(
+            reverse("indieweb:webmention-status", args=[existing.status_token])
+        )
+        return response
 
     def is_valid_target(self, target_url: str) -> bool:
         """Check if target URL is on our domain.
@@ -3184,7 +3321,13 @@ class WebmentionStatusView(CorsMixin, RateLimitMixin, View):
             if webmention.verified_at:
                 status_data["verified_at"] = webmention.verified_at.isoformat()
 
-        return HttpResponse(
+        response = HttpResponse(
             json.dumps(status_data),
             content_type="application/json",
         )
+        # Status responses are token-bearing diagnostics. Prevent shared
+        # caches between the public surface and a holder of a leaked
+        # status token from echoing the response.
+        response["Cache-Control"] = "no-store"
+        response["Vary"] = "Cookie"
+        return response

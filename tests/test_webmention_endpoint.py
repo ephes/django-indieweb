@@ -636,6 +636,19 @@ class TestWebmentionEndpoint:
         assert url in link_header
         assert 'rel="webmention"' in link_header
 
+    def test_userinfo_in_pair_is_rejected(self, client, site):
+        """``alice@example`` and ``bob@example`` must not collapse to one canonical row."""
+        url = reverse("indieweb:webmention")
+        for source in [
+            "https://alice@other.com/post",
+            "https://alice:secret@other.com/post",
+        ]:
+            response = client.post(
+                url,
+                {"source": source, "target": f"https://{site.domain}/post"},
+            )
+            assert response.status_code == 400
+
     def test_csrf_exempt(self, client):
         """Test that the endpoint is CSRF exempt."""
         url = reverse("indieweb:webmention")
@@ -646,6 +659,58 @@ class TestWebmentionEndpoint:
             response = client.post(url)
             # Should get 400 for missing params, not 403 for CSRF
             assert response.status_code == 400
+
+    @override_settings(INDIEWEB_WEBMENTION_ENQUEUE="tests.webmention_enqueue_hooks.capture_webmention_id")
+    def test_async_canonicalizes_pair_and_collapses_cosmetic_variants(self, client, site):
+        """Cosmetic source/target variants must collapse onto a single canonical Webmention row."""
+        url = reverse("indieweb:webmention")
+        domain = site.domain
+
+        variants = [
+            ("https://Other.com/Reply", f"https://{domain}/post"),
+            ("https://other.com:443/Reply", f"https://{domain}:443/post"),
+            ("HTTPS://other.com/Reply", f"HTTPS://{domain}/post"),
+            ("https://OTHER.com/Reply", f"https://{domain.upper()}/post"),
+        ]
+        for source, target in variants:
+            response = client.post(url, {"source": source, "target": target})
+            assert response.status_code == 202
+
+        # Despite cosmetic variation across submissions, the canonicalizer must
+        # collapse them to a single stored row rather than spawning new rows.
+        assert Webmention.objects.count() == 1
+
+    @patch("indieweb.views.WebmentionProcessor")
+    def test_sync_pair_cooldown_reuses_existing_row_without_reprocessing(self, mock_processor_class, client, site):
+        """A repeat sync receive of the same canonical pair within the cooldown must skip processing."""
+        url = reverse("indieweb:webmention")
+        domain = site.domain
+
+        mock_processor = MagicMock()
+        mock_processor_class.return_value = mock_processor
+        existing = Webmention.objects.create(
+            source_url="https://other.com/reply",
+            target_url=f"https://{domain}/post",
+            status="verified",
+            last_received_at=timezone.now(),
+        )
+        # Configure a 60-second cooldown.
+        with override_settings(INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS=60):
+            response = client.post(
+                url,
+                {
+                    "source": "https://Other.com:443/reply",  # cosmetic variant
+                    "target": f"https://{domain}/post",
+                },
+            )
+
+        assert response.status_code == 200
+        # Processor must NOT be called within the cooldown window for the same pair.
+        mock_processor.process_webmention.assert_not_called()
+        status_url = reverse("indieweb:webmention-status", args=[existing.status_token])
+        assert response["Location"].endswith(status_url)
+        # No additional rows.
+        assert Webmention.objects.count() == 1
 
     @patch("indieweb.views.WebmentionProcessor")
     def test_location_header_on_201(self, mock_processor_class, client, site):
@@ -695,6 +760,18 @@ class TestWebmentionEndpoint:
         assert data["source"] == webmention.source_url
         assert data["target"] == webmention.target_url
         assert data["status"] == webmention.status
+
+    def test_webmention_status_view_emits_no_store_cache_control(self, client):
+        """The status endpoint must opt out of shared caches."""
+        webmention = Webmention.objects.create(
+            source_url="https://other.com/reply",
+            target_url="https://example.com/post",
+            status="verified",
+        )
+        url = reverse("indieweb:webmention-status", args=[webmention.status_token])
+        response = client.get(url)
+        assert response["Cache-Control"] == "no-store"
+        assert "Cookie" in response["Vary"]
 
     def test_webmention_status_view_omits_vouch_metadata(self, client):
         """Test the status endpoint does not expose stored Vouch metadata."""

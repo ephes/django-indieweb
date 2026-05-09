@@ -221,8 +221,14 @@ Make sure to commit any migration files created.
 Debugging
 ~~~~~~~~~
 
-To run the Django development server with the example project script::
+To run the Django development server with the example project script
+(local smoke-testing only — see the warning at the top of the file)::
 
-    $ python example_project.py
+    $ python example_project.py runserver
+
+The script refuses to start without ``DJANGO_SECRET_KEY`` unless
+``ALLOW_UNSAFE_DEV_SECRET=1`` is set, never auto-creates a superuser
+(use ``python example_project.py createsuperuser`` to make one), and
+binds to ``localhost``/``127.0.0.1`` by default.
 
 You can then test the endpoints at http://localhost:8000/indieweb/

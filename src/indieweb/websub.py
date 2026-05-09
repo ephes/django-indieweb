@@ -24,10 +24,13 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from .http_client import (
+    SAFE_HTTP_DEFAULT_LIMITS,
     HTTPResponseTooLarge,
     UnsafeHTTPUrlError,
     WebmentionRedirectError,
     default_address_resolver,
+    disable_client_cookies,
+    outbound_user_agent,
     request_with_safe_redirects,
     validate_safe_http_url,
 )
@@ -356,6 +359,25 @@ def _clamp_confirmed_lease_seconds(lease_seconds: int | None) -> int | None:
     return min(max(lease_seconds, minimum), maximum)
 
 
+def _ratchet_renewal_lease(subscription: WebSubSubscription, confirmed_lease: int | None) -> int | None:
+    """Floor a renewal lease at half of the prior confirmed value.
+
+    Prevents a hostile-but-trusted hub from amplifying our renewal traffic
+    by shrinking every renewal to the minimum allowed lease.
+    """
+    if (
+        subscription.state != WebSubSubscription.STATE_ACTIVE
+        or subscription.confirmed_lease_seconds is None
+        or confirmed_lease is None
+    ):
+        return confirmed_lease
+    floor_minimum, _ = _confirmed_lease_bounds()
+    ratchet_floor = max(floor_minimum, subscription.confirmed_lease_seconds // 2)
+    if confirmed_lease < ratchet_floor:
+        return ratchet_floor
+    return confirmed_lease
+
+
 def _delivery_replay_history_max() -> int | None:
     """Return the per-subscription replay history cap, or ``None`` to disable pruning.
 
@@ -610,7 +632,16 @@ def _post_subscription_request(
 
     request_timeout = _websub_timeout(timeout)
     close_client = client is None
-    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True, trust_env=False)
+    http_client = client or disable_client_cookies(
+        httpx.Client(
+            timeout=request_timeout,
+            follow_redirects=False,
+            verify=True,
+            trust_env=False,
+            limits=SAFE_HTTP_DEFAULT_LIMITS,
+            headers={"User-Agent": outbound_user_agent()},
+        )
+    )
     if use_resolver is None:
         use_resolver = close_client
     resolver = default_address_resolver if use_resolver else None
@@ -668,7 +699,16 @@ def request_websub_subscription(
     request_timeout = _websub_timeout(configured_timeout)
 
     close_client = client is None
-    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True, trust_env=False)
+    http_client = client or disable_client_cookies(
+        httpx.Client(
+            timeout=request_timeout,
+            follow_redirects=False,
+            verify=True,
+            trust_env=False,
+            limits=SAFE_HTTP_DEFAULT_LIMITS,
+            headers={"User-Agent": outbound_user_agent()},
+        )
+    )
     try:
         try:
             response = _post_subscription_request(
@@ -764,6 +804,7 @@ def confirm_websub_verification(
         if confirmed_lease is None:
             confirmed_lease = subscription.requested_lease_seconds
         confirmed_lease = _clamp_confirmed_lease_seconds(confirmed_lease)
+        confirmed_lease = _ratchet_renewal_lease(subscription, confirmed_lease)
         subscription.state = WebSubSubscription.STATE_ACTIVE
         subscription.confirmed_lease_seconds = confirmed_lease
         subscription.lease_expires_at = (
@@ -778,7 +819,11 @@ def confirm_websub_verification(
         subscription.confirmed_lease_seconds = None
         subscription.lease_expires_at = None
 
-    subscription.last_challenge = challenge
+    # Truncate ``hub.challenge`` to the field's declared max length. SQLite
+    # silently stores beyond ``CharField(max_length=200)`` so a hostile hub
+    # could otherwise inflate row sizes without bound.
+    last_challenge_max = WebSubSubscription._meta.get_field("last_challenge").max_length or 200
+    subscription.last_challenge = challenge[:last_challenge_max]
     subscription.last_verified_at = timezone.now()
     subscription.pending_mode = ""
     subscription.pending_secret = ""
@@ -1167,11 +1212,6 @@ def record_websub_delivery(
         subscription.last_accepted_delivery_at = received_at
         subscription.last_accepted_delivery_digest = delivery_digest
         update_fields.extend(["last_accepted_delivery_at", "last_accepted_delivery_digest"])
-        # ``recent_accepted_delivery_digests`` is no longer the source of truth for
-        # replay detection: ``WebSubAcceptedDelivery`` rows written by
-        # :func:`accept_websub_delivery` provide an atomic per-digest gate.
-        # The JSON field is left in place on the model for migration
-        # compatibility and will be removed in a follow-up cleanup commit.
     subscription.save(update_fields=update_fields)
     WebSubDeliveryAttempt.objects.create(
         subscription=subscription,
@@ -1316,7 +1356,16 @@ def notify_hubs(
     data = {"hub.mode": "publish", "hub.url": validated_topic_url}
 
     close_client = client is None
-    http_client = client or httpx.Client(timeout=request_timeout, follow_redirects=False, verify=True, trust_env=False)
+    http_client = client or disable_client_cookies(
+        httpx.Client(
+            timeout=request_timeout,
+            follow_redirects=False,
+            verify=True,
+            trust_env=False,
+            limits=SAFE_HTTP_DEFAULT_LIMITS,
+            headers={"User-Agent": outbound_user_agent()},
+        )
+    )
     resolver = default_address_resolver if close_client else None
     results: list[WebSubNotificationResult] = []
     try:

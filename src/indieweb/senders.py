@@ -10,10 +10,13 @@ from django.conf import settings
 from django.utils import timezone
 
 from .http_client import (
+    SAFE_HTTP_DEFAULT_LIMITS,
     SAFE_HTTP_DEFAULT_TIMEOUT,
     HTTPResponseTooLarge,
     default_address_resolver,
+    disable_client_cookies,
     is_safe_http_url,
+    outbound_user_agent,
     request_with_webmention_redirects,
     stream_with_safe_redirects,
     validate_safe_http_url,
@@ -144,7 +147,18 @@ class WebmentionSender:
             The webmention endpoint URL or None if not found
         """
         close_client = client is None
-        http_client = client if client is not None else httpx.Client(verify=True, trust_env=False)
+        http_client = (
+            client
+            if client is not None
+            else disable_client_cookies(
+                httpx.Client(
+                    verify=True,
+                    trust_env=False,
+                    limits=SAFE_HTTP_DEFAULT_LIMITS,
+                    headers={"User-Agent": outbound_user_agent()},
+                )
+            )
+        )
         resolver = default_address_resolver if close_client else None
         try:
             validate_safe_http_url(target_url, resolver=resolver)
@@ -293,7 +307,18 @@ class WebmentionSender:
             Dict with 'success', 'status_code', and optionally 'error'
         """
         close_client = client is None
-        http_client = client if client is not None else httpx.Client(verify=True, trust_env=False)
+        http_client = (
+            client
+            if client is not None
+            else disable_client_cookies(
+                httpx.Client(
+                    verify=True,
+                    trust_env=False,
+                    limits=SAFE_HTTP_DEFAULT_LIMITS,
+                    headers={"User-Agent": outbound_user_agent()},
+                )
+            )
+        )
         resolver = default_address_resolver if close_client else None
         try:
             validate_safe_http_url(endpoint, resolver=resolver)
@@ -351,7 +376,18 @@ class WebmentionSender:
             HTML content or None if error
         """
         close_client = client is None
-        http_client = client if client is not None else httpx.Client(verify=True, trust_env=False)
+        http_client = (
+            client
+            if client is not None
+            else disable_client_cookies(
+                httpx.Client(
+                    verify=True,
+                    trust_env=False,
+                    limits=SAFE_HTTP_DEFAULT_LIMITS,
+                    headers={"User-Agent": outbound_user_agent()},
+                )
+            )
+        )
         resolver = default_address_resolver if close_client else None
         try:
             validate_safe_http_url(url, resolver=resolver)

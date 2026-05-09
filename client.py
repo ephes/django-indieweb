@@ -38,7 +38,10 @@ class Client:
         }
         r = self.session.post(login_url, payload, headers=dict(Referer=login_url))
         print(r.status_code)
-        open("/tmp/blubber.html", "w").write(r.content.decode("utf-8"))
+        # Login response HTML is intentionally not persisted: writing it to a
+        # fixed filesystem path was a debugging hack that would clobber files
+        # owned by other users on a shared host. If you need the body for
+        # debugging, capture ``r.content`` from a Python REPL.
         print(r.cookies)
 
     def logout(self):

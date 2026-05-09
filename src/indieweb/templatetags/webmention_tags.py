@@ -87,11 +87,32 @@ def webmention_endpoint_link(endpoint_url: str | None = None) -> SafeString:
     Usage:
         {% webmention_endpoint_link %}
         {% webmention_endpoint_link "https://custom.endpoint/webmention" %}
+
+    The optional override is rejected unless it is an absolute HTTP(S) URL
+    or a same-origin path. Non-conforming arguments fall back to the
+    reversed indieweb webmention endpoint so a templating mistake cannot
+    smuggle a ``javascript:`` or ``data:`` href into the rendered link.
     """
-    if endpoint_url is None:
+    if endpoint_url is None or not _is_safe_endpoint_link_argument(endpoint_url):
         endpoint_url = reverse("indieweb:webmention")
 
     return format_html('<link rel="webmention" href="{}" />', endpoint_url)
+
+
+def _is_safe_endpoint_link_argument(value: object) -> bool:
+    """Return whether ``value`` is a safe href for the bundled webmention link tag."""
+    if not isinstance(value, str) or not value:
+        return False
+    if value.startswith("/") and not value.startswith("//"):
+        # Same-origin absolute paths are always safe to render.
+        return True
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
 @register.inclusion_tag("indieweb/webmentions.html")

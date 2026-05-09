@@ -468,6 +468,58 @@ def test_confirmed_lease_bounds_clamps_min_below_floor(settings, client):
 
 
 @pytest.mark.django_db
+def test_confirm_renewal_does_not_shrink_active_lease_below_half(client):
+    """A hostile hub cannot floor an already-active lease to <50% of the prior value."""
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed-ratchet",
+        state=WebSubSubscription.STATE_ACTIVE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+        confirmed_lease_seconds=24 * 60 * 60,  # 1 day prior
+    )
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "subscribe",
+            "hub.topic": subscription.topic_url,
+            "hub.challenge": "abc123",
+            "hub.lease_seconds": "60",  # hub tries to floor to 60s
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    # The new confirmed lease must not drop below half of the prior value.
+    assert subscription.confirmed_lease_seconds >= 12 * 60 * 60
+
+
+@pytest.mark.django_db
+def test_confirm_truncates_oversized_hub_challenge(client):
+    """An oversized ``hub.challenge`` must be truncated to the field's declared max length."""
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed-truncate",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+    big_challenge = "X" * 5000
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "subscribe",
+            "hub.topic": subscription.topic_url,
+            "hub.challenge": big_challenge,
+            "hub.lease_seconds": "3600",
+        },
+    )
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    max_length = WebSubSubscription._meta.get_field("last_challenge").max_length
+    assert len(subscription.last_challenge) == max_length
+
+
+@pytest.mark.django_db
 def test_confirmed_lease_bounds_clamps_max_above_ceiling(settings, client):
     """An ``INDIEWEB_WEBSUB_MAX_LEASE_SECONDS`` above the documented ceiling is pulled down.
 

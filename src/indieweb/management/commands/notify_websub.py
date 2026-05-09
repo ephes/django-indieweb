@@ -6,6 +6,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
+from indieweb.log_redaction import redact_url
 from indieweb.websub import notify_hubs
 
 
@@ -31,7 +32,12 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        """Notify hubs and print one line per attempted hub."""
+        """Notify hubs and print one line per attempted hub.
+
+        Topic and hub URLs are emitted through ``indieweb.log_redaction.redact_url``
+        so deployments that opted into ``INDIEWEB_LOG_REDACTION = "redact"`` keep
+        the same privacy guarantees on stdout as in INFO/WARNING logs.
+        """
         topic_url = options["topic"]
         hubs = options["hubs"]
         timeout = options["timeout"]
@@ -45,11 +51,12 @@ class Command(BaseCommand):
             raise CommandError("No WebSub hubs configured; set INDIEWEB_WEBSUB_HUBS or pass --hub")
 
         success_count = sum(1 for result in results if result.success)
-        self.stdout.write(f"Notified {success_count}/{len(results)} WebSub hubs for {topic_url}")
+        self.stdout.write(f"Notified {success_count}/{len(results)} WebSub hubs for {redact_url(topic_url)}")
 
         for result in results:
+            displayed_hub = redact_url(result.hub_url)
             if result.success:
-                self.stdout.write(self.style.SUCCESS(f"✓ {result.hub_url} (HTTP {result.status_code})"))
+                self.stdout.write(self.style.SUCCESS(f"✓ {displayed_hub} (HTTP {result.status_code})"))
             else:
                 detail = f"HTTP {result.status_code}" if result.status_code is not None else result.error
-                self.stdout.write(self.style.ERROR(f"✗ {result.hub_url} ({detail})"))
+                self.stdout.write(self.style.ERROR(f"✗ {displayed_hub} ({detail})"))

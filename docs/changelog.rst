@@ -5,6 +5,96 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** ``TokenView.post`` no longer accepts a request-supplied
+  ``me`` that differs from the consent-validated ``auth.me``. The issued
+  bearer token is always bound to ``auth.me``; a mismatched submitted
+  ``me`` is consumed and rejected with ``invalid_grant``. Introspection
+  and the Micropub default config response now echo the bound identity
+  rather than an attacker-supplied exchange parameter.
+* **Security:** Webmention receive pairs are now keyed by a canonical
+  ``(source_url, target_url)`` form (lowercased scheme, IDNA-encoded
+  host, default port collapsed, empty path normalized to ``/``). Cosmetic
+  URL variants of the same logical pair collapse onto a single stored
+  row instead of sprawling new ``status_token`` URLs. A new
+  ``INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS`` setting (default ``0``,
+  disabled) suppresses the synchronous fetch/parse/verify pipeline for
+  repeat submissions of the same canonical pair within the cooldown
+  window. Submitted ``source``/``target``/``vouch`` URLs that carry
+  userinfo are rejected at the receive endpoint before canonicalization,
+  and ``canonicalize_webmention_storage_url`` raises
+  ``WebmentionCanonicalizationError`` on userinfo so direct callers of
+  ``WebmentionProcessor.process_webmention`` cannot conflate two URLs
+  differing only in userinfo either.
+* **Security:** ``INDIEWEB_REDIRECT_URI_ALLOWLIST`` prefix entries
+  reject candidates with literal or percent-encoded ``.``/``..`` path
+  segments. ``_path_has_dot_segments`` iteratively decodes
+  percent-encoded forms (bounded at 8 iterations) and fails closed if
+  the decode has not stabilised within the bound, so multi-layer
+  encodings such as ``%252e%252e`` and deeper cannot bypass the
+  rejection. A trailing-slash prefix entry of
+  ``https://client.example/oauth/`` no longer matches the traversal
+  candidate ``https://client.example/oauth/../admin``.
+* **Security:** ``Auth.get_for_raw_key`` and ``Token.get_for_raw_key``
+  now hash submitted raw keys under every active Django secret key
+  (primary plus ``SECRET_KEY_FALLBACKS``). Rotating ``SECRET_KEY``
+  no longer invalidates active bearer tokens or outstanding
+  authorization codes during the configured rotation window. New
+  ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP`` setting (default ``True``)
+  gates the legacy plaintext lookup fallback for rows persisted before
+  at-rest hashing landed; set to ``False`` once the migration window has
+  closed.
+* **Security:** ``example_project.py`` now requires an explicit
+  ``DJANGO_SECRET_KEY`` in the environment (or
+  ``ALLOW_UNSAFE_DEV_SECRET=1`` to opt into the development sentinel),
+  binds to ``localhost``/``127.0.0.1`` by default rather than ``["*"]``,
+  and never auto-creates an ``admin/admin`` superuser. Use
+  ``python example_project.py createsuperuser`` to make one.
+  ``examples/custom_consent_template.html`` now carries the missing
+  ``code_challenge`` / ``code_challenge_method`` hidden inputs so a
+  copied custom consent template no longer silently strips PKCE
+  bindings. ``handlers_example.py`` moved out of the installed
+  ``indieweb`` package to ``examples/handlers_example.py`` so the
+  example ``models.Model`` cannot accidentally attach to the
+  ``indieweb`` migration graph.
+* **Security:** ``WebmentionStatusView`` responses now emit
+  ``Cache-Control: no-store`` and ``Vary: Cookie`` so a leaked status
+  token cannot be replayed through a shared cache. ``TokenRevokeView``
+  emits ``X-Frame-Options: DENY`` plus a ``frame-ancestors 'none'`` CSP
+  header. ``MicropubView._valid_http_url`` rejects URL-typed Micropub
+  create/update properties that carry userinfo. The
+  ``webmention_endpoint_link`` template tag rejects non-HTTP(S),
+  non-same-origin arguments and falls back to the configured indieweb
+  webmention endpoint. ``Webmention.author_url`` and ``author_photo``
+  enforce ``http``/``https`` schemes at the model layer.
+* **Security:** ``http_client._blocked_ip_address`` rejects IPv6
+  ``fec0::/10`` site-local addresses explicitly. ``_canonical_host``
+  rejects URL hosts with empty labels. Default ``httpx.Client`` instances
+  in ``processors.py``, ``senders.py``, and ``websub.py`` now configure
+  bounded ``httpx.Limits``, drop ``Set-Cookie`` jar persistence via
+  ``http_client.disable_client_cookies`` (because ``cookies=None``
+  silently re-wraps to a real jar in ``httpx``), and emit a consistent
+  operator-configurable ``User-Agent`` (set ``INDIEWEB_USER_AGENT`` to
+  override the default ``django-indieweb/1.0``). The ``notify_websub``
+  management command routes topic and hub URLs through ``redact_url``
+  so deployments using ``INDIEWEB_LOG_REDACTION = "redact"`` extend the
+  same privacy guarantee to its stdout. ``client.py`` no longer writes
+  login response HTML to a fixed ``/tmp/blubber.html`` debug path.
+* **Security:** WebSub renewal verification now applies a
+  lease-shrink ratchet — an active confirmed lease cannot drop below
+  half the prior value (or the configured floor, whichever is larger) —
+  to defeat hub-driven renewal-traffic amplification. ``hub.challenge``
+  is truncated to ``last_challenge``'s declared 200-character maximum
+  before storage, preventing SQLite from silently growing the column.
+  The vestigial ``WebSubSubscription.recent_accepted_delivery_digests``
+  JSON column is removed via migration ``0026``;
+  ``WebSubAcceptedDelivery`` rows are the authoritative replay gate.
+  ``WebSubSubscription.callback_token`` preservation across successful
+  resubscribes is documented as an intentional design choice.
+* Documented Django's ``DATA_UPLOAD_MAX_NUMBER_FILES`` alongside the
+  existing Micropub upload-size guidance in ``docs/micropub.rst``;
+  Django parses multipart bodies before the view-level media-count cap
+  runs, so a too-large ``DATA_UPLOAD_MAX_NUMBER_FILES`` lets a hostile
+  sender exhaust memory before the view's per-request cap fires.
 * Tightened Webmention URL parsing and display URL sanitization. Five
   defense-in-depth changes:
   ``WebmentionSender._parse_link_header`` now requires an exact

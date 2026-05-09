@@ -525,6 +525,22 @@ def test_get_no_query_has_no_scope_gate(client, user, micropub_endpoint_url, sco
 
 
 @pytest.mark.django_db
+def test_get_default_response_echoes_bound_me(client, user, micropub_endpoint_url):
+    """The default Micropub response must echo the ``Token.me`` value bound at consent."""
+    token = models.Token.objects.create(
+        me="https://owner.example/",
+        client_id="https://webapp.example.org",
+        scope="create",
+        owner=user,
+    )
+    auth_header = f"Bearer {token.key}"
+    response = client.get(micropub_endpoint_url, Authorization=auth_header)
+    assert response.status_code == 200
+    body = response.content.decode("utf-8")
+    assert "me=https%3A%2F%2Fowner.example%2F" in body
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("scope", ["update", "create update", "update delete"])
 def test_get_source_query_accepts_update_scope(client, user, micropub_endpoint_url, scope):
     """``GET ?q=source`` requires ``update`` scope and reaches the source-list handler."""

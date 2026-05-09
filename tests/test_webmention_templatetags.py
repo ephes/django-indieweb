@@ -160,6 +160,15 @@ def test_webmention_endpoint_link_escapes_custom_endpoint():
     assert '" onload="' not in rendered
 
 
+def test_webmention_endpoint_link_falls_back_for_unsafe_scheme():
+    """A non-HTTP(S), non-same-origin argument must not be rendered into the href."""
+    template = Template("{% load webmention_tags %}{% webmention_endpoint_link endpoint %}")
+    rendered = template.render(Context({"endpoint": "javascript:alert(1)"}))
+
+    assert "javascript:alert" not in rendered
+    assert reverse("indieweb:webmention") in rendered
+
+
 def test_show_webmentions_tag(render_webmentions):
     """Test the show_webmentions tag."""
     rendered = render_webmentions()

@@ -2,7 +2,9 @@
 Example Micropub content handlers for common use cases.
 
 These examples show how to integrate Micropub with different Django models.
-Copy and adapt these for your own application.
+Copy and adapt these for your own application — this file lives outside the
+installed ``indieweb`` package so its example ``models.Model`` definition
+cannot accidentally attach to the ``indieweb`` app's migration graph.
 """
 
 from typing import Any
@@ -10,7 +12,7 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.db import models
 
-from .handlers import MicropubContentHandler, MicropubEntry
+from indieweb.handlers import MicropubContentHandler, MicropubEntry
 
 User = get_user_model()
 
@@ -243,5 +245,7 @@ class ExistingBlogIntegrationHandler(MicropubContentHandler):
         raise NotImplementedError("Undelete not supported")
 
 
-# Usage in settings.py:
-# INDIEWEB_MICROPUB_HANDLER = 'indieweb.handlers_example.SimpleBlogHandler'
+# Usage:
+# Copy SimpleBlogHandler (or one of the other examples below) into your own
+# Django app, then point INDIEWEB_MICROPUB_HANDLER at the imported path:
+# INDIEWEB_MICROPUB_HANDLER = 'myapp.handlers.SimpleBlogHandler'

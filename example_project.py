@@ -1,9 +1,20 @@
 #!/usr/bin/env python
 """
-Simple Django project to test webmentions.
-Run with: python example_project.py
+Development-only Django smoke-test project for django-indieweb.
+
+WARNING: THIS FILE IS A DEVELOPMENT/SMOKE-TEST HARNESS. DO NOT COPY THIS
+SETTINGS FILE INTO A PRODUCTION DEPLOYMENT.
+
+It binds to ``localhost``, requires an explicit ``DJANGO_SECRET_KEY``
+environment variable (refusing to start with the unsafe development
+sentinel unless ``ALLOW_UNSAFE_DEV_SECRET=1`` is set), and never
+auto-creates a superuser. Create one explicitly with
+``python example_project.py createsuperuser``.
+
+Run with: ``python example_project.py runserver``
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -11,13 +22,39 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 # Django settings
-from django.conf import settings
+from django.conf import settings  # noqa: E402
+
+UNSAFE_DEV_SECRET = "unsafe-development-secret-do-not-use"  # noqa: S105
+
+_secret_key_from_env = os.environ.get("DJANGO_SECRET_KEY")
+if _secret_key_from_env:
+    SECRET_KEY = _secret_key_from_env
+else:
+    if os.environ.get("ALLOW_UNSAFE_DEV_SECRET") != "1":
+        sys.stderr.write(
+            "example_project.py refuses to start without DJANGO_SECRET_KEY.\n"
+            "Set DJANGO_SECRET_KEY in the environment, or set\n"
+            "ALLOW_UNSAFE_DEV_SECRET=1 to opt into the unsafe development\n"
+            "sentinel for local smoke-testing only.\n"
+        )
+        raise SystemExit(2)
+    sys.stderr.write(
+        "WARNING: example_project.py is using the UNSAFE development SECRET_KEY.\n"
+        "Never run this configuration on a public host.\n"
+    )
+    SECRET_KEY = UNSAFE_DEV_SECRET
+
+_allowed_hosts_env = os.environ.get("DJANGO_ALLOWED_HOSTS")
+if _allowed_hosts_env:
+    ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(",") if h.strip()]
+else:
+    ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
 settings.configure(
     DEBUG=True,
-    SECRET_KEY="test-secret-key-for-webmentions",
+    SECRET_KEY=SECRET_KEY,
     ROOT_URLCONF=__name__,
-    ALLOWED_HOSTS=["*"],
+    ALLOWED_HOSTS=ALLOWED_HOSTS,
     INSTALLED_APPS=[
         "django.contrib.admin",
         "django.contrib.auth",
@@ -145,16 +182,10 @@ if __name__ == "__main__":
     # Run migrations if needed
     migrate_if_needed()
 
-    # Ensure admin user exists
-    from django.contrib.auth import get_user_model
-
-    User = get_user_model()
-    if not User.objects.filter(username="admin").exists():
-        User.objects.create_superuser("admin", "admin@example.com", "admin")
-        print("Created admin user (username: admin, password: admin)")
-
-    print("\nStarting test server...")
+    print("\n*** DEVELOPMENT-ONLY CONFIGURATION ***")
+    print("This example_project.py is for local smoke-testing only.")
+    print("Create an admin user manually with:\n  python example_project.py createsuperuser")
     print("Visit http://localhost:8000/ to test webmentions")
-    print("Admin interface: http://localhost:8000/admin/ (admin/admin)")
+    print("Admin interface: http://localhost:8000/admin/\n")
 
-    execute_from_command_line(["manage.py", "runserver"])
+    execute_from_command_line(sys.argv if len(sys.argv) > 1 else ["manage.py", "runserver"])

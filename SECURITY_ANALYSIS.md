@@ -1,6 +1,6 @@
 # Security Analysis
 
-Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source.
+Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source; updated 2026-05-09 after a fresh six-agent parallel review pass surfaced new findings against the post-P1/P2/P3 codebase; updated 2026-05-09 (later) after the P1/P2/P3/P4 batch landed every 2026-05-09 finding.
 
 This document summarises a security review of `django-indieweb` as a third-party Django app. It focuses on risks when the app's public IndieWeb endpoints are installed on an internet-facing Django site.
 
@@ -21,6 +21,21 @@ The most urgent remaining production blockers are:
    exact and prefix entries; ``INDIEWEB_REDIRECT_URI_VALIDATOR`` policy hook),
    the consent screen now displays the resolved ``redirect_uri``, and the
    change is documented as a backwards-incompatible default.
+
+2. ~~``TokenView.post`` accepts a request-supplied ``me`` and prefers it
+   over the consent-validated ``auth.me``.~~ Resolved 2026-05-09: a new
+   ``TokenView._check_me_binding`` consumes the auth code and returns
+   ``invalid_grant`` when a submitted ``me`` does not match ``auth.me``
+   under the redirect-URI normalization policy. The issued token is
+   always bound to ``auth.me``; introspection
+   (``TokenIntrospectionView._active_response``) and the Micropub
+   default config response (``MicropubView._handle_*``) echo the
+   consent-bound identity. Regression coverage:
+   ``tests/test_token_endpoint.py::test_token_exchange_rejects_me_substitution_attack``,
+   ``test_token_exchange_introspection_echoes_consent_me_not_substituted``,
+   and ``tests/test_micropub_endpoint.py::test_get_default_response_echoes_bound_me``.
+
+There are no remaining open production blockers as of 2026-05-09.
 
 The concurrent authorization-code exchange race called out in earlier passes
 is fully resolved as of 2026-05-08; see Finding 5 below.
@@ -239,6 +254,155 @@ Validated lower-priority hardening:
   ``docs/configuration.rst`` documents the setting (anchored at
   ``log-redaction``) and adds ``INDIEWEB_LOG_REDACTION = "redact"`` to
   the ``Production hardening`` snippet.
+
+## Verification Status 2026-05-09
+
+A six-agent parallel review pass examined the post-P1/P2/P3 codebase against
+the resolved findings and looked for new vulnerabilities. The reviewers
+covered IndieAuth/token endpoints, Webmention receive + processing, Webmention
+sender + Micropub, WebSub subscriber, cross-cutting infrastructure
+(``http_client``, ``rate_limit``, ``cors``, ``log_redaction``, sanitizers,
+``h_card``, models, admin, migrations), and templates/URLs/management
+commands/examples. The pass did not run the full test suite; claims below
+were verified against the current source.
+
+The pass confirmed that all 2026-05-07 and 2026-05-08 fixes hold up against
+the current source. New findings:
+
+Validated high-priority residual:
+
+- ~~``TokenView.post`` overwrites the consent-validated ``auth.me`` with a
+  request-supplied ``me``.~~ Resolved 2026-05-09 (P1): see blocker #2 above
+  for the implementation summary and regression coverage.
+
+Validated medium residuals:
+
+- ~~``Webmention.objects.get_or_create`` runs against raw, un-canonicalized
+  strings.~~ Resolved 2026-05-09 (P2):
+  ``processors.canonicalize_webmention_storage_url`` lowercases scheme,
+  IDNA-encodes the host, drops default ports, and maps an empty path to
+  ``/`` before ``_store_webmention_submission`` and
+  ``WebmentionProcessor.process_webmention`` call ``get_or_create``.
+- ~~The synchronous Webmention receive path has no per-(source, target)
+  cooldown.~~ Resolved 2026-05-09 (P2): new
+  ``INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS`` setting (default ``0``,
+  disabled) gates the synchronous fetch/parse/verify pipeline for repeat
+  submissions of the same canonical pair.
+  ``WebmentionEndpoint._webmention_cooldown_short_circuit`` returns the
+  existing status URL with ``HTTP 200`` when within the cooldown window.
+- ~~``INDIEWEB_REDIRECT_URI_ALLOWLIST`` prefix entries permit ``..``
+  traversal.~~ Resolved 2026-05-09 (P2):
+  ``_redirect_uri_allowlist_match`` calls ``_path_has_dot_segments``
+  on the candidate path (and the entry path) to reject literal or
+  percent-encoded ``.``/``..`` segments before the existing
+  origin/prefix check runs.
+- ~~Top-level ``example_project.py`` is an unmarked production foot-gun.~~
+  Resolved 2026-05-09 (P2): the script now requires ``DJANGO_SECRET_KEY``
+  in the environment unless ``ALLOW_UNSAFE_DEV_SECRET=1`` opts into the
+  development sentinel, defaults to ``ALLOWED_HOSTS=["localhost",
+  "127.0.0.1"]``, and never auto-creates a superuser.
+- ~~``examples/custom_consent_template.html`` omits the PKCE hidden
+  inputs.~~ Resolved 2026-05-09 (P2): the template now mirrors the
+  bundled ``consent.html`` with ``code_challenge`` /
+  ``code_challenge_method`` hidden inputs (gated on the same context
+  variable).
+- ~~``src/indieweb/handlers_example.py`` declares a Django model inside
+  the installable package.~~ Resolved 2026-05-09 (P2): the file moved to
+  ``examples/handlers_example.py`` and now imports from
+  ``indieweb.handlers``. The mypy override pinned to the old module path
+  was removed.
+- ~~``Token.hash_key()`` and ``Auth.hash_key()`` consult only
+  ``settings.SECRET_KEY``.~~ Resolved 2026-05-09 (P2):
+  ``Auth.get_for_raw_key`` and ``Token.get_for_raw_key`` now look up
+  by ``key__in=_candidate_token_hashes(raw_key)``, which iterates
+  ``[SECRET_KEY] + SECRET_KEY_FALLBACKS``. New issuance still hashes
+  under the primary key only.
+- ~~``Auth.get_for_raw_key`` / ``Token.get_for_raw_key`` keep a legacy
+  plaintext fallback.~~ Resolved 2026-05-09 (P2): the fallback is now
+  gated on ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP`` (default ``True``);
+  set to ``False`` once the migration window has closed.
+
+Validated lower-priority hardening (non-exhaustive):
+
+- ~~``http_client._blocked_ip_address`` does not check
+  ``is_site_local``.~~ Resolved 2026-05-09 (P3): IPv6 ``fec0::/10``
+  site-local addresses are now rejected explicitly.
+- ~~Default ``httpx.Client`` instances persist a cookie jar and do not
+  configure ``httpx.Limits``.~~ Resolved 2026-05-09 (P3 + review
+  follow-up): default clients in ``processors.py``, ``senders.py``, and
+  ``websub.py`` set ``limits=SAFE_HTTP_DEFAULT_LIMITS`` and route the
+  client through ``http_client.disable_client_cookies(...)`` after
+  construction. The helper monkey-patches ``client.cookies.extract_cookies``
+  to a no-op, because ``httpx.Client(cookies=None)`` still constructs a
+  real jar and ``httpx.Client`` re-wraps any ``Cookies`` subclass passed
+  in via the constructor (so a subclass override is silently dropped).
+  Regression coverage:
+  ``tests/test_http_client.py::test_disable_client_cookies_drops_set_cookie_responses``.
+- ~~``Webmention.author_url`` and ``author_photo`` lack
+  ``schemes=["http","https"]``.~~ Resolved 2026-05-09 (P3): both fields
+  now carry an ``URLValidator(schemes=["http", "https"])`` at the model
+  layer (migration ``0027``).
+- ~~``MicropubView._valid_http_url`` does not reject userinfo on
+  URL-typed Micropub create properties.~~ Resolved 2026-05-09 (P3): the
+  helper now rejects userinfo before structural validation.
+- ~~``WebmentionStatusView.get`` emits no ``Cache-Control: no-store`` /
+  ``Vary: Cookie``.~~ Resolved 2026-05-09 (P3): both headers are now
+  emitted on every response.
+- ~~``confirm_websub_verification`` permits arbitrary lease shrinkage on
+  active subscriptions.~~ Resolved 2026-05-09 (P3):
+  ``_ratchet_renewal_lease`` floors renewals at ``max(floor, prior //
+  2)``.
+- ``WebSubSubscription.callback_token`` is intentionally preserved
+  across successful resubscribes. Documented in ``models.py`` as a
+  design choice: the hub keys subscriber identity by callback URL, so
+  rotating mid-flight would invalidate the URL the hub still has cached
+  and force a fresh handshake. New subscriptions always receive a fresh
+  high-entropy token at row creation time.
+- ~~``confirm_websub_verification`` writes hub-supplied ``hub.challenge``
+  without truncation.~~ Resolved 2026-05-09 (P3): the value is truncated
+  to ``last_challenge.max_length`` (200) before save.
+- ~~Migration ``0022`` left a vestigial
+  ``recent_accepted_delivery_digests`` JSON field.~~ Resolved 2026-05-09
+  (P3): migration ``0026`` removes the column.
+- ~~``commands/notify_websub.py`` echoes raw topic and hub URLs.~~
+  Resolved 2026-05-09 (P3): topic and hub URLs are routed through
+  ``redact_url`` so the management command honors the
+  ``INDIEWEB_LOG_REDACTION`` setting.
+- ~~Outbound ``User-Agent`` is hard-coded.~~ Resolved 2026-05-09 (P3):
+  new ``outbound_user_agent`` helper backed by ``INDIEWEB_USER_AGENT``;
+  default clients in all outbound modules set ``User-Agent`` from this
+  helper.
+- ~~``webmention_endpoint_link`` does not scheme-validate its
+  argument.~~ Resolved 2026-05-09 (P3): unsafe scheme arguments fall
+  back to the configured ``indieweb:webmention`` reverse URL.
+- ~~``client.py`` writes login response HTML to ``/tmp/blubber.html``.~~
+  Resolved 2026-05-09 (P3): the unsafe debug write removed.
+- ~~``TokenRevokeView`` lacks ``xframe_options_deny``.~~ Resolved
+  2026-05-09 (P3): ``TokenRevokeView`` now mirrors
+  ``TokenManagementView`` with ``xframe_options_deny`` on dispatch and
+  a ``frame-ancestors 'none'`` CSP header on the response.
+- ~~``docs/micropub.rst`` does not mention
+  ``DATA_UPLOAD_MAX_NUMBER_FILES``.~~ Resolved 2026-05-09 (P4): the
+  setting is documented alongside the existing upload-size guidance,
+  with a documentation snippet test guarding against drift.
+- ~~``http_client._canonical_host`` accepts empty-label edge cases.~~
+  Resolved 2026-05-09 (P3): empty-label hosts are rejected explicitly.
+
+Claims reviewed but rejected:
+
+- nh3 sanitizer allowlist drift (``frame``, ``frameset``, ``xmp``,
+  ``plaintext``, ``marquee``, ``formaction``, ``srcset``): the allowlist
+  is default-deny, and the carriers for each of these constructs
+  (``<button>``, ``<input>``, ``<source>``, etc.) are not in the tag
+  allowlist, so smuggling is not possible through ``content_html``.
+- ``filetype.guess`` confusion via partial-buffer padding: Django buffers
+  the upload before the view runs, so the 261-byte sniff cannot be
+  evaded by post-sniff bytes.
+- Storage filename traversal via UUID/suffix: server-derived, no client
+  input enters the storage path.
+- Concurrent reissue race for ``Token.key`` rotation: the auth-code
+  delete-count gate already serializes the predecessor exchange, so
+  ``send_token``'s ``select_for_update`` runs at most once per code.
 
 ## Positive Security Properties
 
@@ -860,9 +1024,48 @@ compatibility.
 
 ## Remaining Fix Order
 
-The three production blockers identified in the 2026-05-07 verification pass
-were resolved on 2026-05-07, but the 2026-05-08 residual review found a new
-fix order:
+There are no remaining open items as of 2026-05-09. Every 2026-05-09
+finding (one production blocker, three medium-priority residuals, and the
+lower-priority hardening batch) is closed in code; see the resolved
+notes earlier in this document and the corresponding ``DONE.md``
+2026-05-09 entry.
+
+### Historical fix order (2026-05-09 batch, resolved)
+
+1. ~~Drop request-supplied ``me`` in ``TokenView.post``.~~ Resolved
+   2026-05-09 (P1): ``TokenView._check_me_binding`` rejects mismatched
+   submitted ``me`` and consumes the auth code; the issued token is
+   bound to ``auth.me``.
+2. ~~Canonicalize Webmention ``source_url``/``target_url`` and add a
+   per-canonical-pair cooldown.~~ Resolved 2026-05-09 (P2):
+   ``processors.canonicalize_webmention_storage_url`` plus
+   ``INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS``. URLs with userinfo are
+   rejected at the receive endpoint to prevent identity collapse.
+3. ~~Reject ``..`` segments in ``INDIEWEB_REDIRECT_URI_ALLOWLIST``
+   prefix matching.~~ Resolved 2026-05-09 (P2):
+   ``_path_has_dot_segments`` iteratively decodes percent-encoded forms
+   to defeat ``%252e%252e`` smuggling.
+4. ~~Mark ``example_project.py`` development-only and move
+   ``handlers_example.py`` out of the installable package.~~ Resolved
+   2026-05-09 (P2).
+5. ~~Iterate ``[SECRET_KEY] + SECRET_KEY_FALLBACKS`` in ``Auth``/``Token``
+   key verification.~~ Resolved 2026-05-09 (P2):
+   ``_candidate_token_hashes`` plus ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP``.
+6. ~~Lower-priority hardening batch.~~ Resolved 2026-05-09 (P3):
+   userinfo rejection in Micropub URL properties, ``Cache-Control:
+   no-store`` and ``Vary: Cookie`` on status endpoint, lease-shrink
+   ratchet, ``hub.challenge`` truncation, retired
+   ``recent_accepted_delivery_digests`` removal, ``notify_websub`` URL
+   redaction, ``TokenRevokeView`` xframe + frame-ancestors,
+   ``DATA_UPLOAD_MAX_NUMBER_FILES`` documentation, empty-label
+   ``_canonical_host`` rejection, IPv6 ``fec0::/10`` block, default
+   ``httpx.Client`` cookie-jar disabling via
+   ``http_client.disable_client_cookies``.
+
+### Historical fix order (resolved)
+
+The following items, listed in the 2026-05-08 fix order, are all
+resolved:
 
 1. ~~Restrict Webmention and Vouch source proof to rendered anchor links.~~
    Resolved 2026-05-08.
@@ -903,21 +1106,30 @@ fix order:
    ``docs/api.rst``, and ``README.rst``.
    ``tests/test_documentation_snippets.py`` guards against setting-name
    drift.
-8. Follow with WebSub denial hardening and Vouch metadata downgrade protection.
-9. Then address Micropub source/media URL policy, injected HTTP-client safety
-   docs, and status-token privacy controls.
-10. Finish with privacy-oriented logging guidance or redaction mode.
+8. ~~Follow with WebSub denial hardening and Vouch metadata downgrade
+   protection.~~ Resolved 2026-05-08 (P2.4, P2.5).
+9. ~~Then address Micropub source/media URL policy, injected HTTP-client
+   safety docs, and status-token privacy controls.~~ Resolved 2026-05-08
+   (P3.1) and concurrently for the docs/status items.
+10. ~~Finish with privacy-oriented logging guidance or redaction mode.~~
+    Resolved 2026-05-08 via ``INDIEWEB_LOG_REDACTION``.
 
 ## Documentation Impact
 
-Documentation updates have landed alongside historical fixes. The current
-residual backlog includes several documentation-only or documentation-heavy
-items: production hardening profiles, injected-client safety, host adapter
-boundaries, status-token privacy, and privacy-oriented logging. ``AGENTS.md``
-does not need a change for these residuals.
+Documentation updates have landed alongside every historical fix. As of
+2026-05-09 there is no current residual backlog, so no documentation work
+is outstanding. The 2026-05-09 batch updated ``docs/changelog.rst``,
+``docs/configuration.rst`` (new sections for
+``INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS``, ``INDIEWEB_USER_AGENT``,
+and ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP``), ``docs/micropub.rst``
+(``DATA_UPLOAD_MAX_NUMBER_FILES`` guidance), ``CONTRIBUTING.rst`` (new
+``example_project.py runserver`` flow), ``DONE.md`` (consolidated entry),
+and this analysis. ``AGENTS.md`` did not need a change.
 
 ## Current Backlog Coverage
 
-The current residual items from the 2026-05-08 verification pass are mirrored
-in `BACKLOG.md` as current planned work. Historical issues marked resolved above
-have corresponding entries in `DONE.md`.
+As of 2026-05-09 (post-batch), ``BACKLOG.md`` is empty across all
+priorities. Every resolved item — including the 2026-05-09 batch — has a
+corresponding entry in ``DONE.md``. New residuals or recommendations
+should be added back to ``BACKLOG.md`` with explicit references to
+affected files, docs, and this analysis.

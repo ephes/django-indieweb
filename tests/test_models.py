@@ -124,3 +124,62 @@ def test_auth_masked_key_does_not_disclose_raw_value():
 
     empty = Auth(key="")
     assert empty.masked_key() == ""
+
+
+@pytest.mark.django_db
+def test_auth_get_for_raw_key_honors_secret_key_fallbacks(settings):
+    """A row hashed under a now-fallback secret must still be findable after rotation."""
+    from indieweb.models import Token
+
+    user = User.objects.create_user(username="rotation-auth", email="r@example.com", password="x")
+    # Encode the row under the OLD secret key.
+    settings.SECRET_KEY = "old-secret"
+    auth = Auth.objects.create(
+        owner=user,
+        key="rotationcode",
+        state="state",
+        me="http://example.org",
+        scope="post",
+        client_id="https://webapp.example.org",
+    )
+    stored_under_old = Auth.hash_key("rotationcode")
+    # Rotate: new primary, old becomes fallback.
+    settings.SECRET_KEY = "new-secret"
+    settings.SECRET_KEY_FALLBACKS = ["old-secret"]
+
+    found = Auth.get_for_raw_key("rotationcode", client_id="https://webapp.example.org")
+    assert found.pk == auth.pk
+    # The stored key on the row must remain the old digest until it is reissued.
+    assert found.key == stored_under_old
+
+    # And similarly for Token.
+    token = Token.objects.create(
+        owner=user,
+        key="rotation-token-raw",
+        client_id="https://webapp.example.org",
+        me="http://example.org",
+        scope="create",
+    )
+    # Token.save hashes under the current primary (now "new-secret"). To
+    # exercise fallback resolution, manually re-encode under the old key.
+    settings.SECRET_KEY = "old-secret"
+    token.key = Token.hash_key("rotation-token-raw")
+    token.save(update_fields=["key"])
+
+    settings.SECRET_KEY = "new-secret"
+    settings.SECRET_KEY_FALLBACKS = ["old-secret"]
+    refound = Token.get_for_raw_key("rotation-token-raw")
+    assert refound.pk == token.pk
+
+
+@pytest.mark.django_db
+def test_token_hash_key_uses_only_primary_secret(settings):
+    """``hash_key`` must continue to write under the primary secret regardless of fallbacks."""
+    from indieweb.models import Token
+
+    settings.SECRET_KEY = "primary-secret"
+    settings.SECRET_KEY_FALLBACKS = ["fallback-secret"]
+    digest = Token.hash_key("abc")
+    settings.SECRET_KEY = "primary-secret"
+    settings.SECRET_KEY_FALLBACKS = []
+    assert Token.hash_key("abc") == digest

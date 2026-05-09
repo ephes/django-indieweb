@@ -66,3 +66,6 @@ current_task.md
 .agent-transcripts/
 codex-session-*.md
 claude-session-*.md
+
+# Superpowers / agent skill plans and specs are session artifacts
+docs/superpowers/

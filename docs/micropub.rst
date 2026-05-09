@@ -549,6 +549,13 @@ types, serve uploads defensively:
 - Keep Django ``DATA_UPLOAD_MAX_MEMORY_SIZE``, web-server body limits, reverse
   proxy limits, CDN limits, and storage quotas tight enough for your
   deployment.
+- Set Django's ``DATA_UPLOAD_MAX_NUMBER_FILES`` (see Django's settings docs)
+  to a small value matching your application's expected per-request media
+  count. Django parses the multipart body and counts uploaded files before
+  the view-level media-count validation in
+  ``_validate_micropub_media_uploads`` runs, so a too-large or unset
+  ``DATA_UPLOAD_MAX_NUMBER_FILES`` lets a hostile sender exhaust memory
+  with thousands of file parts before the view's per-request cap fires.
 
 Media Source and Delete Hooks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

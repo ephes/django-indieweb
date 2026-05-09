@@ -1277,6 +1277,77 @@ verification fails closed for submitted vouchers. Configure a trust policy or
 at least one trusted voucher domain before enabling required mode in
 production.
 
+INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Per-canonical-pair cooldown for the Webmention receive endpoint, in seconds.
+
+**Default:** ``0`` (disabled)
+
+When set to a positive integer, repeat submissions of the same canonical
+``(source_url, target_url)`` pair within the cooldown window short-circuit
+to ``HTTP 200`` with the existing status URL in the ``Location`` header,
+skipping the synchronous fetch/parse/verify pipeline (or the queued
+enqueue). Canonicalization lowercases the scheme, IDNA-encodes the host,
+collapses default HTTP(S) ports, and normalizes an empty path to ``/``.
+Independent from ``INDIEWEB_RATE_LIMITS``: the cooldown is keyed by the
+canonical pair, not the submitter's IP, so a single attacker who
+varies cosmetic URL forms cannot amplify a single POST into a full
+fetch pipeline per cosmetic variant.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS = 60
+
+INDIEWEB_USER_AGENT
+~~~~~~~~~~~~~~~~~~~
+
+Operator-configurable User-Agent for outbound HTTP requests issued by
+the Webmention receive fetch path, the Webmention sender, and WebSub
+subscribe/publish.
+
+**Default:** ``"django-indieweb/1.0"``
+
+A non-empty string overrides the default. Leave unset to fall back to
+the default. The setting applies only to clients constructed by
+django-indieweb's defaults; injected ``httpx.Client`` instances bring
+their own headers.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_USER_AGENT = "myorg-indieweb/2.3 (+https://myorg.example/contact)"
+
+INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Gate the legacy plaintext fallback in ``Auth.get_for_raw_key`` and
+``Token.get_for_raw_key``.
+
+**Default:** ``True``
+
+Authorization codes and bearer tokens are stored at rest as
+``hmac-sha256$...`` digests under ``SECRET_KEY`` (with rotation
+support via ``SECRET_KEY_FALLBACKS``). The plaintext fallback covers
+rows persisted before at-rest hashing landed; once the migration
+window has closed and there are no remaining plaintext-keyed rows in
+the database, set this to ``False`` to ensure that any future fixture,
+``bulk_update``, or admin path that accidentally re-introduces a
+plaintext-keyed row cannot be authenticated by submitting the raw
+value verbatim.
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP = False
+
 INDIEWEB_WEBMENTION_STATUS_PUBLIC
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

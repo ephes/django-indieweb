@@ -1283,6 +1283,98 @@ def test_authorize_allowlist_prefix_boundary(client, settings, user):
 
 
 @pytest.mark.django_db
+def test_authorize_allowlist_prefix_rejects_dot_segment_traversal(client, settings, user):
+    """A prefix entry must not match a candidate that uses ``..`` to escape the path scope."""
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "https://client.example/": ["https://callback.example/oauth/"],
+    }
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://callback.example/oauth/../admin",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_authorize_allowlist_prefix_rejects_percent_encoded_dot_segments(client, settings, user):
+    """A percent-encoded dot segment must not bypass the allowlist scoping rule."""
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "https://client.example/": ["https://callback.example/oauth/"],
+    }
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://callback.example/oauth/%2e%2e/admin",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_authorize_allowlist_prefix_fails_closed_on_deeply_encoded_dot_segments(client, settings, user):
+    """A deep-encoded ``..`` must not slip past the iteration bound.
+
+    Each layer wraps the prior encoded form by replacing every ``%`` with
+    ``%25``. Layer 2 is ``%2e%2e``; layer N requires N-1 unquote passes to
+    fully decode. The matcher's decode bound is 8 iterations: at layer 9
+    decoding lands on ``..`` exactly at the bound; at layer 10+ the bound
+    is hit while decoding is still progressing and the matcher must fail
+    closed rather than match the partially decoded path.
+    """
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "https://client.example/": ["https://callback.example/oauth/"],
+    }
+    client.force_login(user)
+    # Build a layer-12 encoding so decoding cannot complete within the bound.
+    deep = "%2e%2e"
+    for _ in range(10):
+        deep = deep.replace("%", "%25")
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": f"https://callback.example/oauth/{deep}/admin",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_authorize_allowlist_prefix_rejects_double_encoded_dot_segments(client, settings, user):
+    """Doubly-encoded ``%252e%252e`` must also be rejected by the allowlist matcher."""
+    settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {
+        "https://client.example/": ["https://callback.example/oauth/"],
+    }
+    client.force_login(user)
+    response = client.get(
+        "/indieweb/auth/",
+        {
+            "client_id": "https://client.example/",
+            "redirect_uri": "https://callback.example/oauth/%252e%252e/admin",
+            "state": "abc",
+            "me": "https://me.example/",
+            "response_type": "code",
+        },
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
 def test_authorize_validator_hook_overrides_allowlist(client, settings, user):
     settings.INDIEWEB_REDIRECT_URI_VALIDATOR = "tests.test_redirect_validators.allow_all"
     settings.INDIEWEB_REDIRECT_URI_ALLOWLIST = {

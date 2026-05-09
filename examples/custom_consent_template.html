@@ -61,6 +61,13 @@
               {% if scope %}
                 <input type="hidden" name="scope" value="{{ scope }}">
               {% endif %}
+              {# PKCE binding: these hidden inputs are required so a consent #}
+              {# POST cannot silently strip the PKCE challenge selected by   #}
+              {# the client at the authorization-request stage.              #}
+              {% if code_challenge %}
+                <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+                <input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">
+              {% endif %}
 
               <div class="d-grid gap-2 d-md-flex justify-content-md-center">
                 <button type="submit" name="action" value="approve" class="btn btn-success">

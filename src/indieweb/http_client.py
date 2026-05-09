@@ -10,12 +10,49 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from django.conf import settings
 
 WEBMENTION_ALLOWED_REDIRECT_SCHEMES = ("http", "https")
 WEBMENTION_MAX_REDIRECTS = 5
 WEBMENTION_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 SAFE_HTTP_ALLOWED_SCHEMES = ("http", "https")
 SAFE_HTTP_DEFAULT_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=5.0, pool=2.0)
+SAFE_HTTP_DEFAULT_LIMITS = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+DEFAULT_OUTBOUND_USER_AGENT = "django-indieweb/1.0"
+
+
+def outbound_user_agent() -> str:
+    """Return the operator-configurable User-Agent for outbound HTTP."""
+    configured = getattr(settings, "INDIEWEB_USER_AGENT", None)
+    if isinstance(configured, str) and configured.strip():
+        return configured
+    return DEFAULT_OUTBOUND_USER_AGENT
+
+
+def disable_client_cookies(client: httpx.Client) -> httpx.Client:
+    """Disable cookie persistence on an ``httpx.Client`` and return it.
+
+    ``httpx.Client(cookies=None)`` still constructs a real cookie jar that
+    harvests ``Set-Cookie`` from every response and replays the cookies on
+    later requests through the same client. ``httpx.Client`` also re-wraps
+    any ``Cookies`` subclass passed in via the constructor in a vanilla
+    ``Cookies`` instance, so a subclass override of ``extract_cookies`` is
+    silently dropped. This helper instead binds a no-op ``extract_cookies``
+    onto the live ``client.cookies`` instance after construction so
+    inbound ``Set-Cookie`` headers are dropped on the floor.
+
+    The IndieWeb protocol clients are never authenticated against an
+    inbound site, so any state collected in the cookie jar is at best
+    wasted memory and at worst a cross-request fingerprinting hazard.
+    """
+    import types
+
+    def _drop(self: httpx.Cookies, response: httpx.Response) -> None:
+        return None
+
+    client.cookies.extract_cookies = types.MethodType(_drop, client.cookies)  # type: ignore[method-assign]
+    return client
+
 
 AddressResolver = Callable[[str, int], Iterable[str]]
 
@@ -48,6 +85,13 @@ def default_address_resolver(host: str, port: int) -> Iterable[str]:
 
 def _canonical_host(host: str) -> str:
     stripped = host.strip("[]").rstrip(".").lower()
+    if not stripped:
+        raise UnsafeHTTPUrlError("URL host is empty after canonicalization")
+    # Reject empty labels like ``foo..bar`` or leading/trailing dots before
+    # IDNA encoding. Some runtimes accept these silently; we never want a
+    # connection attempt against a malformed host.
+    if any(label == "" for label in stripped.split(".")):
+        raise UnsafeHTTPUrlError("URL host contains empty labels")
     try:
         return str(ipaddress.ip_address(stripped))
     except ValueError:
@@ -73,6 +117,11 @@ def _blocked_ip_address(address: str) -> bool:
         if ip in NAT64_WELL_KNOWN_PREFIX or ip in NAT64_LOCAL_USE_PREFIX:
             embedded_v4 = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
             return _blocked_ip_address(str(embedded_v4))
+        # Block deprecated IPv6 site-local ``fec0::/10`` explicitly even
+        # though ``not ip.is_global`` should already cover it. Defense in
+        # depth against runtime classification drift.
+        if getattr(ip, "is_site_local", False):
+            return True
     if not ip.is_global:
         return True
     if ip.is_multicast or ip.is_reserved or ip.is_unspecified or ip.is_loopback or ip.is_link_local or ip.is_private:

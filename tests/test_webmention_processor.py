@@ -3161,3 +3161,25 @@ def test_html_links_to_source_domain_rejects_non_anchor(html, label):
 def test_html_links_to_source_domain_accepts_anchor():
     html = '<a href="https://source.example/about">about</a>'
     assert _html_links_to_source_domain(html, "https://source.example/page") is True
+
+
+def test_canonicalize_storage_url_rejects_userinfo():
+    """Direct callers must not be able to collapse userinfo via canonicalization."""
+    from indieweb.processors import (
+        WebmentionCanonicalizationError,
+        canonicalize_webmention_storage_url,
+    )
+
+    with pytest.raises(WebmentionCanonicalizationError):
+        canonicalize_webmention_storage_url("https://alice@example.com/post")
+    with pytest.raises(WebmentionCanonicalizationError):
+        canonicalize_webmention_storage_url("https://alice:secret@example.com/post")
+
+
+def test_canonicalize_storage_url_collapses_cosmetic_variants():
+    """Two cosmetic variants of the same logical pair must canonicalize equal."""
+    from indieweb.processors import canonicalize_webmention_storage_url
+
+    a = canonicalize_webmention_storage_url("HTTPS://Example.com:443/post")
+    b = canonicalize_webmention_storage_url("https://example.com/post")
+    assert a == b

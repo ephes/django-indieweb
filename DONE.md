@@ -4,6 +4,138 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-09
 
+### Address 2026-05-09 batch review feedback (round 2)
+
+Second-pass review surfaced three more residuals; all closed:
+
+- **Dot-segment iteration bound fail-open.** ``_path_has_dot_segments``
+  now uses a ``for/else`` so when 8 unquote passes finish without
+  reaching decode stability the function fails closed (returns
+  ``True``) instead of accepting the partially decoded path. Regression
+  in
+  ``tests/test_auth_endpoint.py::test_authorize_allowlist_prefix_fails_closed_on_deeply_encoded_dot_segments``.
+- **Direct processor canonicalizer dropped userinfo.**
+  ``canonicalize_webmention_storage_url`` now raises a new
+  ``WebmentionCanonicalizationError`` when ``value`` carries userinfo,
+  so direct callers of ``WebmentionProcessor.process_webmention`` cannot
+  conflate ``alice@example`` and ``bob@example``. The
+  ``WebmentionEndpoint.post`` guard from round 1 still rejects userinfo
+  earlier on the public path. Regressions in
+  ``tests/test_webmention_processor.py``.
+- **Stale ``SECURITY_ANALYSIS.md`` claims.** Cookie residual now
+  references ``disable_client_cookies`` instead of the inaccurate
+  ``cookies=None`` claim. ``Documentation Impact`` rewritten to
+  acknowledge the empty residual backlog.
+
+Validation: ``uv run pytest`` (1471 passed); ``uv run mypy`` (no issues);
+``uv run ruff check .`` (clean); ``uv run prek run --all-files`` (clean).
+
+### Address 2026-05-09 batch review feedback
+
+Independent review of the P1+P2+P3+P4 batch flagged five real residuals;
+all are now closed:
+
+- **Cookie-jar persistence.** ``httpx.Client(cookies=None)`` still
+  constructs a real jar and re-wraps any ``Cookies`` subclass passed in,
+  so the original "explicit empty cookies" claim was inaccurate. Replaced
+  the ``cookies=None`` argument across ``processors.py``, ``senders.py``,
+  and ``websub.py`` with a new
+  ``http_client.disable_client_cookies(client)`` helper that monkey-patches
+  ``client.cookies.extract_cookies`` to a no-op on the live jar.
+  Regression in ``tests/test_http_client.py::test_disable_client_cookies_drops_set_cookie_responses``.
+- **Multi-layer percent-encoded ``..``.** Updated
+  ``views._path_has_dot_segments`` to iteratively unquote (bound at 8
+  iterations) so ``%252e%252e`` can no longer bypass the allowlist
+  rejection. Regression in
+  ``tests/test_auth_endpoint.py::test_authorize_allowlist_prefix_rejects_double_encoded_dot_segments``.
+- **Userinfo collapse on Webmention pair.** ``WebmentionEndpoint.post``
+  now rejects submitted ``source`` / ``target`` / ``vouch`` URLs that
+  carry userinfo before canonicalization, so
+  ``alice@example.com/post`` and ``bob@example.com/post`` no longer
+  collapse to one canonical row. Regression in
+  ``tests/test_webmention_endpoint.py::TestWebmentionEndpoint::test_userinfo_in_pair_is_rejected``.
+- **Missing settings docs.** ``docs/configuration.rst`` now documents
+  ``INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS``, ``INDIEWEB_USER_AGENT``,
+  and ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP``.
+- **Stale ``SECURITY_ANALYSIS.md`` sections.** "Remaining Fix Order"
+  rewritten to reflect 2026-05-09 closure; "Current Backlog Coverage"
+  notes the empty backlog state.
+
+Validation: ``uv run pytest`` (1468 passed); ``uv run mypy`` (no issues);
+``uv run ruff check .`` (clean); ``uv run prek run --all-files`` (clean).
+Coverage 92.26%.
+
+### Land 2026-05-09 backlog (P1+P2+P3+P4)
+
+Eight backlog items landed in a single slice, addressing every open
+2026-05-09 finding in `SECURITY_ANALYSIS.md`:
+
+- **P1 token exchange identity binding.** `TokenView.post` now binds the
+  issued token's `me` to `auth.me`. A request-supplied `me` that does
+  not match `auth.me` after the redirect-URI normalization policy
+  consumes the auth code and returns `invalid_grant`. Regression
+  coverage in `tests/test_token_endpoint.py` and
+  `tests/test_micropub_endpoint.py` proves introspection and the
+  Micropub default config response echo the consent-bound identity.
+- **P2 canonicalize and throttle Webmention pairs.** Added
+  `processors.canonicalize_webmention_storage_url` and applied it in
+  `_store_webmention_submission` and `WebmentionProcessor.process_webmention`
+  before `get_or_create`. Cosmetic URL variants now collapse to a single
+  row. New `INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS` setting (default
+  `0`) gates the synchronous fetch pipeline for repeat submissions.
+- **P2 redirect allowlist normalization.** `_redirect_uri_allowlist_match`
+  rejects candidates whose path carries literal or percent-encoded
+  `.`/`..` segments. Existing prefix-boundary semantics preserved.
+- **P2 example surfaces.** `example_project.py` rewritten to load
+  `SECRET_KEY` from env (with sentinel guard), bind to localhost, and
+  drop auto-`admin/admin`. `examples/custom_consent_template.html`
+  carries the missing PKCE hidden inputs. `handlers_example.py` moved
+  out of `src/indieweb/` into `examples/`; `pyproject.toml` mypy
+  override removed; `CONTRIBUTING.rst` updated with the new run
+  procedure.
+- **P2 SECRET_KEY_FALLBACKS for Auth/Token.** New
+  `_candidate_token_hashes` helper iterates `[SECRET_KEY] +
+  SECRET_KEY_FALLBACKS`. `Auth.get_for_raw_key` and
+  `Token.get_for_raw_key` look up by `key__in=candidates`. New
+  `INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP` setting (default `True`) gates
+  the plaintext fallback.
+- **P3 WebSub residuals.** Lease-shrink ratchet added in
+  `_ratchet_renewal_lease`. `confirm_websub_verification` truncates
+  `hub.challenge` to the declared `last_challenge.max_length` (200).
+  Migration `0026` drops the retired
+  `WebSubSubscription.recent_accepted_delivery_digests` JSON field.
+  Callback-token preservation across successful resubscribes is
+  documented as an intentional design choice.
+- **P3 endpoint cache, frame, URL-property hardening.**
+  `WebmentionStatusView` emits `Cache-Control: no-store` and `Vary:
+  Cookie`. `TokenRevokeView` emits `xframe_options_deny` plus
+  `frame-ancestors 'none'`. `MicropubView._valid_http_url` rejects
+  userinfo. `webmention_endpoint_link` falls back to the configured
+  endpoint when the argument is not HTTP(S) or same-origin.
+  `Webmention.author_url` and `Webmention.author_photo` carry an
+  HTTP(S) scheme validator at the model layer (migration `0027`).
+- **P3 outbound HTTP and operational hardening.**
+  `_blocked_ip_address` rejects IPv6 `fec0::/10` site-local addresses.
+  `_canonical_host` rejects empty-label hosts. New `outbound_user_agent`
+  helper and `INDIEWEB_USER_AGENT` setting; default `httpx.Client`
+  instances in `processors.py`, `senders.py`, and `websub.py` configure
+  `httpx.Limits` plus explicit empty cookies and consistent
+  `User-Agent`. The `notify_websub` command routes topic/hub URLs
+  through `redact_url`. `client.py` no longer writes login HTML to
+  `/tmp/blubber.html`.
+- **P4 Micropub multipart upload-count documentation.** Deployment
+  guidance for `DATA_UPLOAD_MAX_NUMBER_FILES` added to
+  `docs/micropub.rst`; documentation snippet test guards the setting
+  name against drift.
+
+Validation: `uv run pytest` (1465 passed); `uv run mypy` (no issues);
+`uv run ruff check .` (clean); `uv run prek run --all-files` (clean).
+Documentation: `docs/changelog.rst` carries one bullet per security
+fix; `docs/micropub.rst` documents `DATA_UPLOAD_MAX_NUMBER_FILES`;
+`CONTRIBUTING.rst` documents the hardened `example_project.py` run
+procedure. `SECURITY_ANALYSIS.md` updated to mark the 2026-05-09
+findings as resolved.
+
 ### Tighten Webmention URL parsing and display URL sanitization
 
 Five defense-in-depth changes harden the Webmention sender, target

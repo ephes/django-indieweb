@@ -27,10 +27,13 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from .http_client import (
+    SAFE_HTTP_DEFAULT_LIMITS,
     SAFE_HTTP_DEFAULT_TIMEOUT,
     HTTPResponseTooLarge,
     RedirectedResponse,
     default_address_resolver,
+    disable_client_cookies,
+    outbound_user_agent,
     response_text_with_limit,
     stream_with_safe_redirects,
 )
@@ -134,6 +137,65 @@ def _canonical_netloc_for_match(parsed: ParseResult) -> str | None:
     if port is not None:
         netloc = f"{netloc}:{port}"
     return netloc
+
+
+class WebmentionCanonicalizationError(ValueError):
+    """Raised when a Webmention URL cannot safely be canonicalized for storage."""
+
+
+def canonicalize_webmention_storage_url(value: str) -> str:
+    """Return a canonical form of ``value`` for Webmention ``(source, target)`` storage keys.
+
+    Lowercases scheme and host, IDNA-encodes the host, drops default HTTP(S)
+    ports, treats an empty root path as ``/``, and lowercases percent-encoded
+    triplets. Query strings, params, and fragments are preserved as submitted.
+    A canonical-form deviation must not silently re-introduce row sprawl, so
+    malformed inputs fall back to the original string.
+
+    Raises :class:`WebmentionCanonicalizationError` when ``value`` carries
+    userinfo. Two URLs differing only in userinfo would otherwise collapse
+    to a single canonical row that drops the credentials, conflating two
+    logically distinct submissions; callers must reject userinfo at the
+    submission boundary instead.
+    """
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return value
+
+    if parsed.username is not None or parsed.password is not None:
+        raise WebmentionCanonicalizationError("Webmention URL must not carry userinfo")
+
+    if not parsed.scheme or not parsed.hostname:
+        return value
+
+    scheme = parsed.scheme.lower()
+
+    def lower_percent(component: str) -> str:
+        return re.sub(r"%[0-9A-Fa-f]{2}", lambda match: match.group(0).lower(), component)
+
+    host_raw = parsed.hostname
+    try:
+        host = host_raw.encode("idna").decode("ascii").lower()
+    except (UnicodeError, UnicodeDecodeError):
+        host = host_raw.lower()
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return value
+    default_port = 443 if scheme == "https" else 80 if scheme == "http" else None
+    netloc_host = f"[{host}]" if (":" in host and not host.startswith("[")) else host
+    if port is not None and port != default_port:
+        netloc = f"{netloc_host}:{port}"
+    else:
+        netloc = netloc_host
+
+    path = lower_percent(parsed.path) or "/"
+    query = lower_percent(parsed.query)
+    params = lower_percent(parsed.params)
+    fragment = lower_percent(parsed.fragment)
+    return urlunparse((scheme, netloc, path, params, query, fragment))
 
 
 def _canonicalize_url_for_match(value: str) -> str:
@@ -333,10 +395,13 @@ class WebmentionProcessor:
         """
         logger.info(f"Processing webmention from {redact_url(source_url)} to {redact_url(target_url)}")
 
-        # Get or create webmention
+        # Get or create webmention against the canonical pair so cosmetic URL
+        # variants of the same logical pair share a single stored row.
+        canonical_source = canonicalize_webmention_storage_url(source_url)
+        canonical_target = canonicalize_webmention_storage_url(target_url)
         webmention, _created = Webmention.objects.get_or_create(
-            source_url=source_url,
-            target_url=target_url,
+            source_url=canonical_source,
+            target_url=canonical_target,
         )
 
         # If a different Vouch URL is being submitted, we attempt verification
@@ -648,10 +713,14 @@ class WebmentionProcessor:
 
     def _fetch_source(self, source_url: str) -> RedirectedResponse:
         """Fetch the source URL with explicit bounded redirect handling."""
-        headers = {"User-Agent": "django-indieweb/1.0"}
+        headers = {"User-Agent": outbound_user_agent()}
         injected = self._injected_client
         close_client = injected is None
-        client = injected if injected is not None else httpx.Client(verify=True, trust_env=False)
+        client = (
+            injected
+            if injected is not None
+            else disable_client_cookies(httpx.Client(verify=True, trust_env=False, limits=SAFE_HTTP_DEFAULT_LIMITS))
+        )
         resolver = default_address_resolver if close_client else None
         try:
             return stream_with_safe_redirects(
@@ -669,10 +738,14 @@ class WebmentionProcessor:
 
     def _fetch_vouch(self, vouch_url: str) -> RedirectedResponse:
         """Fetch a Vouch URL with the same bounded redirect policy as source fetches."""
-        headers = {"User-Agent": "django-indieweb/1.0"}
+        headers = {"User-Agent": outbound_user_agent()}
         injected = self._injected_client
         close_client = injected is None
-        client = injected if injected is not None else httpx.Client(verify=True, trust_env=False)
+        client = (
+            injected
+            if injected is not None
+            else disable_client_cookies(httpx.Client(verify=True, trust_env=False, limits=SAFE_HTTP_DEFAULT_LIMITS))
+        )
         resolver = default_address_resolver if close_client else None
         try:
             return stream_with_safe_redirects(

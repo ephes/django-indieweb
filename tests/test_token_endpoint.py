@@ -446,6 +446,75 @@ def test_token_exchange_without_me_parameter(client, auth, token_endpoint_url):
 
 
 @pytest.mark.django_db
+def test_token_exchange_rejects_me_substitution_attack(client, auth, token_endpoint_url):
+    """A request-supplied ``me`` that doesn't match the auth-bound ``me`` must be rejected."""
+    token_payload = {
+        "code": auth.key,
+        "client_id": auth.client_id,
+        "me": "https://attacker.example/",
+    }
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+    # The auth code must be consumed on rejection so it cannot be re-used.
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
+    assert models.Token.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_token_exchange_accepts_normalized_equal_me(client, auth, token_endpoint_url):
+    """A request-supplied ``me`` equivalent to ``auth.me`` after normalization must be accepted."""
+    # auth.me is "http://example.org" (no trailing slash). The same origin with a
+    # trailing slash and uppercase host normalises to the same canonical value.
+    token_payload = {
+        "code": auth.key,
+        "client_id": auth.client_id,
+        "me": "http://EXAMPLE.org/",
+    }
+    response = client.post(token_endpoint_url, data=token_payload)
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    # The issued token must echo the consent-validated auth.me, not the
+    # client-supplied variant.
+    assert data["me"][0] == auth.me
+
+
+@pytest.mark.django_db
+def test_token_exchange_issues_consent_bound_me_when_request_me_omitted(client, auth, token_endpoint_url):
+    """The issued token's ``me`` must come from ``auth.me`` verbatim."""
+    response = client.post(
+        token_endpoint_url,
+        data={"code": auth.key, "client_id": auth.client_id},
+    )
+    assert response.status_code == 201
+    data = parse_qs(unquote(response.content.decode("utf-8")))
+    raw_token = data["access_token"][0]
+    token = models.Token.get_for_raw_key(raw_token)
+    assert token.me == auth.me
+
+
+@pytest.mark.django_db
+def test_token_exchange_introspection_echoes_consent_me_not_substituted(
+    client, auth, token_endpoint_url, token_introspection_endpoint_url
+):
+    """Introspection on a token issued via /token must echo ``auth.me``, not any attacker value."""
+    response = client.post(
+        token_endpoint_url,
+        data={"code": auth.key, "client_id": auth.client_id},
+    )
+    assert response.status_code == 201
+    raw_token = parse_qs(unquote(response.content.decode("utf-8")))["access_token"][0]
+
+    introspection = client.post(
+        token_introspection_endpoint_url,
+        data={"token": raw_token},
+        HTTP_AUTHORIZATION=f"Bearer {raw_token}",
+    )
+    assert introspection.status_code == 200
+    assert introspection.json()["me"] == auth.me
+
+
+@pytest.mark.django_db
 def test_auth_code_timeout_multi_day(client, auth, token_endpoint_url, token_payload):
     """Auth codes older than one day must be rejected even when seconds-of-day is small."""
     # timedelta.seconds wraps at one day; total_seconds() must be used.
@@ -1551,7 +1620,8 @@ def test_token_introspection_rejects_duplicate_token_key_lookup_without_500(
 
     class DuplicateTokenQuery:
         def get(self, *args, **kwargs):
-            if kwargs.get("key") == models.Token.hash_key(caller.key):
+            keys = kwargs.get("key__in") or ([kwargs["key"]] if "key" in kwargs else [])
+            if models.Token.hash_key(caller.key) in keys:
                 return caller
             raise models.Token.MultipleObjectsReturned
 

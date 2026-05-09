@@ -55,6 +55,32 @@ def _websub_secret_keys() -> list[str]:
     return keys
 
 
+def _candidate_token_hashes(raw_key: str) -> list[str]:
+    """Return HMAC digests of ``raw_key`` under every active Django secret key.
+
+    The primary ``SECRET_KEY`` always comes first so a successful lookup
+    against the primary digest does not waste cycles on fallback hashes.
+    ``SECRET_KEY_FALLBACKS`` follow in declaration order; this is what
+    keeps active bearer tokens and outstanding authorization codes valid
+    across a Django secret rotation.
+    """
+    candidates: list[str] = []
+    for key in _websub_secret_keys():
+        digest = hmac.new(key.encode("utf-8"), raw_key.encode("utf-8"), hashlib.sha256).hexdigest()
+        candidates.append(f"{TOKEN_KEY_HASH_PREFIX}{digest}")
+    return candidates
+
+
+def _legacy_plaintext_lookup_enabled() -> bool:
+    """Return whether ``Auth``/``Token`` lookups may fall back to plaintext key matching.
+
+    Defaults to ``True`` to preserve compatibility with rows persisted before
+    at-rest hashing landed; set ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP`` to
+    ``False`` once the migration window has closed.
+    """
+    return bool(getattr(settings, "INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP", True))
+
+
 def _websub_secret_fernet() -> Fernet:
     """Return the primary Fernet used for new WebSub secret encryption."""
     return _websub_secret_fernet_for_key(_websub_secret_keys()[0])
@@ -155,17 +181,27 @@ class Auth(models.Model):
 
     @classmethod
     def get_for_raw_key(cls, raw_key: str, **filters: Any) -> Auth:
-        """Return the authorization row matching ``raw_key`` without storing the raw value."""
+        """Return the authorization row matching ``raw_key`` without storing the raw value.
+
+        The submitted value is hashed under every active Django secret key
+        (primary + ``SECRET_KEY_FALLBACKS``) so a row hashed before a key
+        rotation remains findable after rotating ``SECRET_KEY``.
+        """
         if cls.is_hashed_key(raw_key):
             raise cls.DoesNotExist
-        hashed_key = cls.hash_key(raw_key)
+        candidate_hashes = _candidate_token_hashes(raw_key)
         try:
-            auth = cls.objects.get(key=hashed_key, **filters)
+            auth = cls.objects.get(key__in=candidate_hashes, **filters)
         except cls.DoesNotExist:
+            if not _legacy_plaintext_lookup_enabled():
+                raise
             auth = cls.objects.get(key=raw_key, **filters)
-        if not hmac.compare_digest(auth.key, hashed_key) and not hmac.compare_digest(auth.key, raw_key):
-            raise cls.DoesNotExist
-        return auth
+        for candidate in candidate_hashes:
+            if hmac.compare_digest(auth.key, candidate):
+                return auth
+        if _legacy_plaintext_lookup_enabled() and hmac.compare_digest(auth.key, raw_key):
+            return auth
+        raise cls.DoesNotExist
 
     def set_key(self, raw_key: str | None = None) -> str:
         """Set a new authorization code hash and return the raw value for issuance."""
@@ -256,20 +292,30 @@ class Token(GenKeyMixin):
 
     @classmethod
     def get_for_raw_key(cls, raw_key: str) -> Token:
-        """Return the token matching ``raw_key`` without storing the raw value."""
+        """Return the token matching ``raw_key`` without storing the raw value.
+
+        The submitted value is hashed under every active Django secret key
+        (primary + ``SECRET_KEY_FALLBACKS``) so an issued bearer token hashed
+        before a key rotation remains valid until it expires or is replaced.
+        """
         if cls.is_hashed_key(raw_key):
             raise cls.DoesNotExist
         queryset = cls.objects.select_related("owner")
-        hashed_key = cls.hash_key(raw_key)
+        candidate_hashes = _candidate_token_hashes(raw_key)
         try:
-            token = queryset.get(key=hashed_key)
+            token = queryset.get(key__in=candidate_hashes)
         except cls.DoesNotExist:
+            if not _legacy_plaintext_lookup_enabled():
+                raise
             token = queryset.get(key=raw_key)
         # Keep the final secret comparison constant-time even though the indexed
         # lookup should already have constrained the candidate row.
-        if not hmac.compare_digest(token.key, hashed_key) and not hmac.compare_digest(token.key, raw_key):
-            raise cls.DoesNotExist
-        return token
+        for candidate in candidate_hashes:
+            if hmac.compare_digest(token.key, candidate):
+                return token
+        if _legacy_plaintext_lookup_enabled() and hmac.compare_digest(token.key, raw_key):
+            return token
+        raise cls.DoesNotExist
 
     def set_key(self, raw_key: str | None = None) -> str:
         """Set a new bearer token hash and return the raw value for issuance."""
@@ -335,8 +381,12 @@ class Webmention(models.Model):
 
     # Parsed content from microformats2
     author_name = models.CharField(max_length=200, blank=True)
-    author_url = models.URLField(blank=True)
-    author_photo = models.URLField(blank=True)
+    # Restrict the author URL/photo schemes at the model layer so a custom
+    # template that reads these fields directly cannot render a stored
+    # ``javascript:`` or ``data:`` URL. Bundled rendering also re-sanitizes
+    # via ``sanitize_remote_webmention_url`` for defense in depth.
+    author_url = models.URLField(blank=True, validators=[URLValidator(schemes=["http", "https"])])
+    author_photo = models.URLField(blank=True, validators=[URLValidator(schemes=["http", "https"])])
 
     content = models.TextField(blank=True)
     content_html = models.TextField(blank=True)
@@ -518,6 +568,12 @@ class WebSubSubscription(models.Model):
 
     hub_url = models.URLField(max_length=500, validators=[URLValidator(schemes=["http", "https"])])
     topic_url = models.URLField(max_length=500, validators=[URLValidator(schemes=["http", "https"])])
+    # ``callback_token`` is intentionally preserved across successful
+    # resubscribe verifications. The hub keys subscriber identity by the
+    # callback URL; rotating the token mid-flight would invalidate the URL
+    # the hub still has cached and force a fresh subscription handshake,
+    # losing in-flight deliveries against the prior URL. New subscriptions
+    # always receive a fresh high-entropy token at row creation time.
     callback_token = models.CharField(
         max_length=64, unique=True, db_index=True, default=generate_websub_callback_token
     )
@@ -550,7 +606,6 @@ class WebSubSubscription(models.Model):
     last_delivery_error = models.TextField(blank=True)
     last_accepted_delivery_at = models.DateTimeField(null=True, blank=True)
     last_accepted_delivery_digest = models.CharField(max_length=64, blank=True)
-    recent_accepted_delivery_digests = models.JSONField(default=list, blank=True)
 
     created = models.DateTimeField(auto_now_add=True)
     modified = models.DateTimeField(auto_now=True)

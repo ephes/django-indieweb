@@ -30,3 +30,9 @@ def test_injected_client_warning_present():
     for path in ("docs/webmention.rst", "docs/websub.rst"):
         text = Path(path).read_text()
         assert "Leave ``client`` unset in production" in text, path
+
+
+def test_micropub_docs_mention_data_upload_max_number_files():
+    """The Micropub deployment guidance must call out Django's per-request file count cap."""
+    text = Path("docs/micropub.rst").read_text()
+    assert "DATA_UPLOAD_MAX_NUMBER_FILES" in text

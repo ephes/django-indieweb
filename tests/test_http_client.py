@@ -9,6 +9,7 @@ from indieweb.http_client import (
     UnsafeHTTPUrlError,
     WebmentionRedirectError,
     _blocked_ip_address,
+    disable_client_cookies,
     request_with_safe_redirects,
     request_with_webmention_redirects,
     resolve_safe_http_url,
@@ -599,6 +600,27 @@ def test_strict_redirect_rejects_cross_origin():
                 pin_to_resolved_ip=False,
                 cross_origin_strip=True,
             )
+
+
+def test_disable_client_cookies_drops_set_cookie_responses():
+    """Default protocol clients must not persist Set-Cookie across requests."""
+    visits: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        visits.append(dict(request.headers))
+        return httpx.Response(200, headers={"set-cookie": "session=should-not-stick; Path=/"})
+
+    transport = httpx.MockTransport(handler)
+    client = disable_client_cookies(httpx.Client(transport=transport, trust_env=False))
+    with client:
+        client.get("https://a.example/")
+        client.get("https://a.example/again")
+
+    # Neither request must carry a Cookie header — the harvested Set-Cookie
+    # was dropped by ``disable_client_cookies``.
+    for headers in visits:
+        cookie_header = headers.get("cookie") or headers.get("Cookie")
+        assert not cookie_header, f"unexpected cookie replayed: {cookie_header!r}"
 
 
 def test_safe_redirect_allows_same_origin_when_strict():
