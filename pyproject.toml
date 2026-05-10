@@ -70,11 +70,11 @@ dev = [
 Documentation = "https://django-indieweb.readthedocs.io/en/latest/"
 Source = "https://github.com/ephes/django-indieweb"
 
-[project.scripts]
-count-lines-of-code = "indieweb.loc:count_lines_of_code"
-
 [tool.uv.build-backend]
 module-name = "indieweb"
+
+[tool.slopscope]
+exclude_dirs = ["docs/_build"]
 
 [tool.ruff]
 line-length = 119

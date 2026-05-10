@@ -567,6 +567,11 @@ Unreleased
   pipeline. Sender and processor tests now inject ``httpx.MockTransport``-backed
   clients through this kwarg instead of patching ``httpx.Client`` with
   ``unittest.mock.Mock``.
+* Replaced the package-local ``count-lines-of-code`` implementation with the
+  shared ``slopscope`` line-count workflow. ``just loc`` now installs
+  ``slopscope`` from PyPI by default with ``--prerelease allow`` and explicit
+  ``rich`` support, while ``SLOPSCOPE_SPEC`` can point at a local checkout for
+  ``slopscope`` development.
 * Fixed Webmention ``dt-published`` parsing on Python 3.10 for microformats
   timestamps that serialize UTC offsets without a colon, such as
   ``2026-05-01T10:00:00+0000``. Nested Webmention responses now retain their

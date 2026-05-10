@@ -72,6 +72,19 @@ Documentation: ``docs/changelog.rst`` and ``SECURITY_ANALYSIS.md`` updated.
 Changelog: security bullets added for nested-response URL validator parity
 and media-delete same-host enforcement.
 
+### Migrate line counts to ``slopscope``
+
+- ``just loc`` now runs ``slopscope`` from PyPI by default through
+  ``uv run --prerelease allow --with "{{SLOPSCOPE_SPEC}}" --with rich``,
+  with ``SLOPSCOPE_SPEC`` available for local checkout overrides.
+- Removed the package-local ``count-lines-of-code`` console script, the
+  ``src/indieweb/loc.py`` implementation, and its unit tests.
+- Added ``[tool.slopscope]`` configuration to keep generated Sphinx output out
+  of fallback discovery.
+- Validation: ``just loc``; ``just check`` (1286 passed); ``just docs``.
+- Documentation: updated ``docs/development.rst`` and this DONE entry.
+- Changelog: added an Unreleased developer-workflow entry.
+
 ## 2026-05-09
 
 ### Address 2026-05-09 batch review feedback (round 2)

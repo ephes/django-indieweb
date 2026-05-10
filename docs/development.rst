@@ -102,9 +102,11 @@ To print repository line-count summaries by language, area, and directory::
 
     just loc
 
-The ``just loc`` recipe runs ``uv run count-lines-of-code``. The command uses
-``cloc`` when it is available and otherwise falls back to a package-local
-Python counter over tracked text files.
+During the ``slopscope`` pre-release phase, the ``just loc`` recipe installs
+``slopscope`` from PyPI with ``uv run --prerelease allow`` and explicit
+``rich`` support. Override ``SLOPSCOPE_SPEC`` with a local path when developing
+``slopscope`` from a sibling checkout. ``slopscope`` uses ``cloc`` when it is
+available and otherwise falls back to its Python physical-line counter.
 
 Type Checking
 -------------

@@ -4,6 +4,8 @@
 default:
     @just --list
 
+SLOPSCOPE_SPEC := env_var_or_default("SLOPSCOPE_SPEC", "slopscope")
+
 # Install Python dependencies via uv
 install:
     uv sync
@@ -37,7 +39,7 @@ hooks:
 
 # Count repository lines with language, area, and directory summaries
 loc:
-    @uv run count-lines-of-code
+    @uv run --prerelease allow --with "{{SLOPSCOPE_SPEC}}" --with rich slopscope .
 
 # Generate a CycloneDX SBOM from the locked runtime dependency graph
 sbom:
