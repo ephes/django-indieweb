@@ -991,10 +991,95 @@ def delivery_content_type_allowed(content_type: str) -> bool:
     return _delivery_content_type_allowed(content_type)
 
 
+def _get_header(headers: Mapping[str, str], name: str) -> str | None:
+    """Return a header value from a possibly case-sensitive mapping."""
+    direct = headers.get(name)
+    if direct is not None:
+        return direct
+    name_lower = name.lower()
+    for header_name, value in headers.items():
+        if header_name.lower() == name_lower:
+            return value
+    return None
+
+
+def _split_quoted_header_value(value: str, separator: str) -> list[str]:
+    """Split an HTTP header list while respecting quoted strings."""
+    parts: list[str] = []
+    current: list[str] = []
+    in_quote = False
+    escaped = False
+    for char in value:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if in_quote and char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char == '"':
+            current.append(char)
+            in_quote = not in_quote
+            continue
+        if char == separator and not in_quote:
+            part = "".join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+            continue
+        current.append(char)
+
+    part = "".join(current).strip()
+    if part:
+        parts.append(part)
+    return parts
+
+
+def _unquote_link_parameter(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        return value[1:-1].replace(r"\\", "\\").replace(r"\"", '"')
+    return value
+
+
+def _link_targets_for_rel(link_header: str, rel_token: str) -> list[str]:
+    """Return Link header target URLs whose ``rel`` parameter includes ``rel_token``."""
+    rel_token = rel_token.lower()
+    targets: list[str] = []
+    for entry in _split_quoted_header_value(link_header, ","):
+        pieces = _split_quoted_header_value(entry, ";")
+        if not pieces:
+            continue
+        target_part = pieces[0].strip()
+        if not (target_part.startswith("<") and target_part.endswith(">")):
+            continue
+        target = target_part[1:-1]
+        for param in pieces[1:]:
+            name, separator, value = param.partition("=")
+            if separator != "=" or name.strip().lower() != "rel":
+                continue
+            rel_values = _unquote_link_parameter(value).lower().split()
+            if rel_token in rel_values:
+                targets.append(target)
+                break
+    return targets
+
+
+def delivery_topic_link_allowed(headers: Mapping[str, str], topic_url: str) -> bool:
+    """Return whether delivery headers bind the body to the subscribed topic."""
+    if not _setting_enabled("INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK", default=True):
+        return True
+    link_header = _get_header(headers, "Link")
+    if not link_header:
+        return False
+    return topic_url in _link_targets_for_rel(link_header, "self")
+
+
 def _signature_headers(headers: Mapping[str, str]) -> list[tuple[str, str]]:
     values: list[tuple[str, str]] = []
     for header_name in ("X-Hub-Signature-256", "X-Hub-Signature"):
-        value = headers.get(header_name)
+        value = _get_header(headers, header_name)
         if value:
             for part in (part.strip() for part in value.split(",") if part.strip()):
                 algorithm, separator, received_digest = part.partition("=")

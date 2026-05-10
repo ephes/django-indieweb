@@ -24,7 +24,10 @@ from .http_client import (
 from .models import WebmentionOutboundTarget
 
 DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES = 64 * 1024
 DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBMENTION_MAX_TARGETS_PER_SOURCE = 50
+DEFAULT_WEBMENTION_MAX_TARGETS_PER_HOST = 5
 DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS = 24 * 60 * 60
 DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
@@ -58,6 +61,21 @@ def _sender_response_max_bytes() -> int | None:
     except (TypeError, ValueError):
         return DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
     return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
+
+
+def _sender_head_max_bytes() -> int | None:
+    configured = getattr(
+        settings,
+        "INDIEWEB_WEBMENTION_HEAD_MAX_BYTES",
+        DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES,
+    )
+    if configured is None:
+        return None
+    try:
+        parsed = int(configured)
+    except (TypeError, ValueError):
+        return DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES
+    return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES
 
 
 def _positive_int_setting(name: str, default: int) -> int:
@@ -102,6 +120,42 @@ def _salmention_max_consecutive_failures() -> int:
     )
 
 
+def _canonical_destination_host(url: str) -> str | None:
+    """Return a stable destination-host key for outbound fanout limits."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    try:
+        normalized_host = host.encode("idna").decode("ascii").lower()
+    except (UnicodeError, UnicodeDecodeError):
+        normalized_host = host.lower()
+    if ":" in normalized_host and not normalized_host.startswith("["):
+        normalized_host = f"[{normalized_host}]"
+    default_port = 443 if parsed.scheme.lower() == "https" else 80 if parsed.scheme.lower() == "http" else None
+    if port is not None and port != default_port:
+        return f"{normalized_host}:{port}"
+    return normalized_host
+
+
+def _webmention_max_targets_per_source() -> int | None:
+    return _optional_positive_int_setting(
+        "INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE",
+        DEFAULT_WEBMENTION_MAX_TARGETS_PER_SOURCE,
+    )
+
+
+def _webmention_max_targets_per_host() -> int | None:
+    return _optional_positive_int_setting(
+        "INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST",
+        DEFAULT_WEBMENTION_MAX_TARGETS_PER_HOST,
+    )
+
+
 class WebmentionSender:
     """Sends webmentions to target URLs."""
 
@@ -119,16 +173,18 @@ class WebmentionSender:
             List of unique URLs found in the content
         """
         soup = BeautifulSoup(html_content, "html.parser")
-        urls: set[str] = set()
+        urls: list[str] = []
+        seen: set[str] = set()
 
         # Find all anchor tags with href attributes
         for tag in soup.find_all("a", href=True):
             if isinstance(tag, Tag):
                 href = tag.get("href")
-                if href and isinstance(href, str):
-                    urls.add(href)
+                if href and isinstance(href, str) and href not in seen:
+                    seen.add(href)
+                    urls.append(href)
 
-        return list(urls)
+        return urls
 
     def discover_endpoint(self, target_url: str, *, client: httpx.Client | None = None) -> str | None:
         """Discover the webmention endpoint for a target URL.
@@ -164,7 +220,12 @@ class WebmentionSender:
             validate_safe_http_url(target_url, resolver=resolver)
             # First try HEAD request to check Link headers
             discovered = request_with_webmention_redirects(
-                http_client, "HEAD", target_url, resolver=resolver, timeout=self.timeout
+                http_client,
+                "HEAD",
+                target_url,
+                resolver=resolver,
+                timeout=self.timeout,
+                max_bytes=_sender_head_max_bytes(),
             )
             response = discovered.response
             response.raise_for_status()
@@ -433,7 +494,7 @@ class WebmentionSender:
                 return []
 
         # Extract deliverable target URLs from content
-        target_urls = self._extract_external_target_urls(source_url, html_content)
+        target_urls = self._limit_target_urls(self._extract_external_target_urls(source_url, html_content))
 
         # Send webmentions to each URL
         results = []
@@ -481,14 +542,13 @@ class WebmentionSender:
             if html_content is None:
                 return []
 
-        current_targets = set(self._extract_external_target_urls(source_url, html_content))
-        historical_rows = {
-            row.target_url: row for row in WebmentionOutboundTarget.objects.filter(source_url=source_url)
-        }
-        historical_targets = set(historical_rows)
+        target_urls, current_targets, historical_rows, historical_targets = self._salmention_target_context(
+            source_url,
+            html_content,
+        )
 
         results = []
-        for target_url in sorted(current_targets | historical_targets):
+        for target_url in target_urls:
             provenance = self._target_provenance(target_url, current_targets, historical_targets)
             historical_only = provenance == "history"
             if historical_only:
@@ -536,14 +596,13 @@ class WebmentionSender:
         html_content: str,
     ) -> list[dict]:
         """Return a dry-run Salmention resend preview without sending or recording history."""
-        current_targets = set(self._extract_external_target_urls(source_url, html_content))
-        historical_rows = {
-            row.target_url: row for row in WebmentionOutboundTarget.objects.filter(source_url=source_url)
-        }
-        historical_targets = set(historical_rows)
+        target_urls, current_targets, historical_rows, historical_targets = self._salmention_target_context(
+            source_url,
+            html_content,
+        )
 
         results = []
-        for target_url in sorted(current_targets | historical_targets):
+        for target_url in target_urls:
             provenance = self._target_provenance(target_url, current_targets, historical_targets)
             if provenance == "history":
                 skipped = self._salmention_historical_skip_result(historical_rows[target_url], dry_run=True)
@@ -564,6 +623,37 @@ class WebmentionSender:
             )
         return results
 
+    def _salmention_target_context(
+        self,
+        source_url: str,
+        html_content: str,
+    ) -> tuple[list[str], set[str], dict[str, WebmentionOutboundTarget], set[str]]:
+        """Return capped Salmention targets plus provenance inputs.
+
+        Current source links are considered first, in document order, followed
+        by exact-source historical targets that are not still present. The
+        outbound fanout caps apply to the combined list before any endpoint
+        discovery so resend and dry-run paths cannot bypass the ordinary
+        sender's amplification guard.
+        """
+        current_target_urls = self._extract_external_target_urls(source_url, html_content)
+        current_targets = set(current_target_urls)
+        historical_rows = {
+            row.target_url: row
+            for row in WebmentionOutboundTarget.objects.filter(source_url=source_url).order_by("target_url")
+        }
+        historical_targets = set(historical_rows)
+
+        ordered_targets: list[str] = []
+        seen: set[str] = set()
+        for target_url in [*current_target_urls, *historical_rows]:
+            if target_url in seen:
+                continue
+            seen.add(target_url)
+            ordered_targets.append(target_url)
+
+        return self._limit_target_urls(ordered_targets), current_targets, historical_rows, historical_targets
+
     def _extract_external_target_urls(self, source_url: str, html_content: str) -> list[str]:
         """Extract current absolute external HTTP(S) targets from HTML content."""
         urls = self.extract_urls(html_content)
@@ -581,6 +671,29 @@ class WebmentionSender:
             target_urls.append(target_url)
 
         return target_urls
+
+    def _limit_target_urls(self, target_urls: list[str]) -> list[str]:
+        """Apply per-source and per-destination fanout caps to outbound targets."""
+        max_per_source = _webmention_max_targets_per_source()
+        max_per_host = _webmention_max_targets_per_host()
+        if max_per_source is None and max_per_host is None:
+            return target_urls
+
+        limited: list[str] = []
+        host_counts: dict[str, int] = {}
+        for target_url in target_urls:
+            if max_per_source is not None and len(limited) >= max_per_source:
+                break
+
+            host = _canonical_destination_host(target_url)
+            if host is None:
+                continue
+            if max_per_host is not None and host_counts.get(host, 0) >= max_per_host:
+                continue
+
+            host_counts[host] = host_counts.get(host, 0) + 1
+            limited.append(target_url)
+        return limited
 
     def _record_outbound_target(
         self,

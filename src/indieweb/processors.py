@@ -929,7 +929,7 @@ class WebmentionProcessor:
 
         # Check if this is a local author
         author_url = author.get("url", "")
-        local_profile = self._get_local_profile(author_url)
+        local_profile = self._get_local_profile(author_url, source_url=base_url)
 
         if local_profile:
             # Use local profile data
@@ -1648,17 +1648,27 @@ class WebmentionProcessor:
                 return value.get("value", "")  # type: ignore[no-any-return]
         return ""
 
-    def _get_local_profile(self, author_url: str) -> Profile | None:
-        """Check if author URL belongs to a local user."""
+    def _get_local_profile(self, author_url: str, *, source_url: str | None = None) -> Profile | None:
+        """Return a local profile only when a local source page claimed it.
+
+        Remote Webmention source pages are attacker-controlled. They may claim
+        a local ``u-url`` in their author h-card, so local profile data is only
+        trusted as an override when the source document itself is hosted on the
+        current Django ``Site`` domain.
+        """
         if not author_url:
             return None
 
         try:
-            # Check if URL matches a local profile
             current_site = Site.objects.get_current()
-            parsed = urlparse(author_url)
+            current_domain = _canonical_domain_for_vouch(f"https://{current_site.domain}")
+            if current_domain is None:
+                return None
 
-            if parsed.netloc == current_site.domain:
+            if source_url is None or _canonical_domain_for_vouch(source_url) != current_domain:
+                return None
+
+            if _canonical_domain_for_vouch(author_url) == current_domain:
                 return Profile.objects.get(url=author_url)
         except (Profile.DoesNotExist, Site.DoesNotExist):
             pass

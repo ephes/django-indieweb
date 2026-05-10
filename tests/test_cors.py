@@ -367,6 +367,7 @@ def test_websub_callback_is_excluded_from_cors_even_when_cors_is_configured(clie
         data=b"<feed/>",
         content_type="application/atom+xml",
         HTTP_ORIGIN=ALLOWED_ORIGIN,
+        HTTP_LINK=f'<{websub_subscription.topic_url}>; rel="self"',
     )
     options_response = _preflight(client, url, method="POST")
 

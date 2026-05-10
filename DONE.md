@@ -4,6 +4,44 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-05-10
 
+### Close fourth-pass medium security residuals
+
+Resolved the four Medium findings from the 2026-05-10 later fourth-pass
+security review:
+
+- Remote Webmention source pages no longer trigger local ``Profile`` author
+  rewrites by claiming a local author ``u-url``; local profile metadata is
+  used only for source documents on the current Django ``Site`` domain.
+- ``WebmentionSender.send_webmentions()`` and Salmention resend/preview
+  workflows now apply per-source and per-host target caps before outbound
+  endpoint discovery, with trusted-content opt-out settings.
+- ``WebmentionSender.discover_endpoint()`` now applies a decoded byte cap to
+  ``HEAD`` discovery responses so hostile targets cannot force unbounded
+  buffering before the ``GET`` fallback.
+- WebSub delivery callbacks now require ``Link: <topic>; rel="self"`` by
+  default before replay acceptance or host hook/enqueue dispatch; trusted
+  non-conforming hubs can opt out with
+  ``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = False``.
+- Review follow-up: Salmention resend and dry-run preview now share the same
+  capped target-context construction as ordinary sends, so the fanout limits
+  cannot be bypassed through re-fanout workflows.
+
+Validation: ``uv run pytest`` (1485 passed, coverage 92.08%);
+``uv run mypy`` (no issues); ``uv run ruff check .`` (clean);
+``uv run ruff format --check .`` (clean); ``uv run prek run --all-files``
+(clean); ``uv run sphinx-build -W -b html docs docs/_build/html``
+(succeeded); ``uv run python -m django makemigrations --check --dry-run --settings tests.settings``
+(no changes detected). Focused regression runs:
+``uv run pytest tests/test_webmention_processor.py tests/test_webmention_sender.py tests/test_websub_subscriber.py tests/test_documentation_snippets.py -q --no-cov``
+(323 passed before review follow-up);
+``uv run pytest tests/test_webmention_sender.py tests/test_documentation_snippets.py -q --no-cov``
+(85 passed after review follow-up).
+Documentation: ``docs/changelog.rst``, ``docs/configuration.rst``,
+``docs/webmention.rst``, ``docs/websub.rst``, ``BACKLOG.md``, and
+``SECURITY_ANALYSIS.md`` updated.
+Changelog: security bullets added for author attribution, sender fanout/HEAD
+limits, and WebSub topic binding.
+
 ### Close third-pass medium security residuals
 
 Resolved the two Medium findings from the 2026-05-09 later third-pass

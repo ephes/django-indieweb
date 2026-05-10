@@ -52,6 +52,7 @@ from .websub import (
     delivery_content_length_too_large,
     delivery_content_type_allowed,
     delivery_max_bytes,
+    delivery_topic_link_allowed,
     enqueue_websub_delivery,
     process_websub_delivery,
     record_websub_delivery,
@@ -3006,6 +3007,18 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
                 error="invalid signature",
             )
             return HttpResponse(status=403)
+
+        if not delivery_topic_link_allowed(request.headers, subscription.topic_url):
+            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: topic Link header mismatch")
+            record_websub_delivery(
+                subscription,
+                body,
+                content_type=content_type,
+                status_code=400,
+                error="topic link mismatch",
+                signature_algorithm=signature_algorithm,
+            )
+            return HttpResponse(status=400)
 
         body_digest = hashlib.sha256(body).hexdigest()
         # Atomic replay-check + acceptance gate. The unique constraint on

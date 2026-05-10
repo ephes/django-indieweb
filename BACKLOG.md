@@ -66,6 +66,50 @@ Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django user
 
 `_signature_headers` (`websub.py:994-1003`) accepts `X-Hub-Signature-256: sha1=<digest>` and trusts the algorithm token rather than the header name. Currently safe because sha1 is off by default. Add a test asserting that `X-Hub-Signature-256: sha1=...` is rejected even when sha1 is otherwise allowed, so a future change conditioning trust on the header name cannot regress.
 
+### WebSub delivery-attempt retention policy
+
+`WebSubDeliveryAttempt` rows are written for every callback POST and never pruned (`websub.py:1216-1225`; `models.py:803-829`). Add `INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS` plus a pruning command or documented operator workflow so a noisy hub or leaked active callback URL cannot grow the diagnostics table indefinitely.
+
+### WebSub denial and verification state updates should lock rows
+
+`record_websub_denial` (`websub.py:847-909`) and `confirm_websub_verification` (`websub.py:780-844`) branch from in-memory subscription state and then save. Wrap the read/branch/save paths in `transaction.atomic()` with `select_for_update()` so concurrent denial/confirmation callbacks cannot demote a just-confirmed row or defeat the renewal lease ratchet.
+
+### WebSub callback token existence oracle
+
+`WebSubCallbackView.get` returns distinguishable 404 vs 400/200/204 responses for unknown vs known callback tokens (`views.py:2921-2930`), and `post` returns 404 for unknown-or-inactive subscriptions (`views.py:2962-2966`). Token entropy is high, but a partial leak becomes testable. Return uniform 404 for tokens that do not match an active subscription, optionally with a small constant-time delay.
+
+### Webmention templates: no-referrer image loads
+
+Bundled Webmention author-photo `<img class="u-photo">` tags lack `referrerpolicy="no-referrer"` in `templates/indieweb/webmention_types/{like,mention,reply,repost,nested_response}.html`. Add `referrerpolicy="no-referrer"` (and consider `crossorigin="anonymous"`) so visitor browsers do not send the rendering page URL to attacker-chosen photo origins.
+
+### Enforce nested-response URL validators on ingest
+
+`WebmentionNestedResponse` URL fields have model validators, but `_upsert_nested_response` (`processors.py:1239-1271`) writes via `get_or_create` / `save(update_fields=...)` without `full_clean()`. `_first_url_identity` currently filters to HTTP(S), but the invariant is producer-side. Call `full_clean(exclude=...)` before save or add explicit assertions/tests at the ingest boundary.
+
+### Webmention Link header parser should be quote-aware
+
+`WebmentionSender._parse_link_header` (`senders.py:230-238`) splits Link entries on bare commas, so an RFC 8288 quoted parameter containing a comma can mis-pair a `rel="webmention"` token with another URL. Replace with a quote-aware parser and add regression coverage for quoted commas.
+
+### Micropub action POSTs should reject multipart before parsing action
+
+`MicropubView` / `MicropubMediaView` call `request.POST.get("action")` before per-action authorization (`views.py:2080-2090, 2170-2181, 2745-2755`). For multipart requests this invokes Django upload handlers before dispatch. Reject multipart for action verbs that never accept files before reading `request.POST`.
+
+### Micropub JSON properties must be a mapping
+
+JSON Micropub create/update handling assumes `properties` is a mapping (`views.py:2025-2034, 2285-2297, 2340-2346`). A string value can bypass membership checks and then raise `TypeError` into a 500. Add an `isinstance(properties, dict)` guard in `_parse_json_request`.
+
+### Token and cookie debug prints in `client.py`
+
+`client.py:113-115` prints issued bearer tokens, and `client.py:23-25, 39, 45` print raw cookies. Keep the debug helper useful without normalizing credential leaks: redact by default or require an explicit `INDIEWEB_DEBUG_TOKEN=1` opt-in for full values.
+
+### `log_redaction.redact_token` prefix and mode parsing
+
+`log_redaction.redact_token` preserves an 8-character token prefix in passthrough mode (`log_redaction.py:77`), and `_resolve_mode` accepts only exact `"redact"` while silently treating `"REDACT"`, `"true"`, or booleans as passthrough. Trim the prefix or default-redact when `DEBUG=False`, and log/document non-canonical `INDIEWEB_LOG_REDACTION` values.
+
+### Rate-limit cache increment fallback can lose increments
+
+`rate_limit.py:118-122` handles `cache.incr` `ValueError` by unconditionally setting the counter to `1`. Under cache eviction pressure, concurrent requests can both fall into the fallback and lose one increment. Retry `cache.add` / `cache.incr` once or document the accepted burst behavior.
+
 ## Priority 4
 
 ### Housekeeping
@@ -82,9 +126,9 @@ Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django user
 
 `models.py:437` is `models.TextField()`; `processors._webmention_fetch_max_bytes()` defaults to 1 MiB. Each verified webmention persists up to ~1 MiB of attacker-controlled HTML. Document a snapshot retention policy (gzip the column, retain only the last N snapshots, or cap snapshot size lower than fetch size).
 
-#### `_get_local_profile` authority normalization
+#### `_get_local_profile` profile URL canonical lookup
 
-`processors.py:1659-1662` matches `parsed.netloc` against bare `Site.domain` without IDNA / case / default-port normalization. The receive endpoint already normalizes both sides (`views.py:3231-3254`); the local-profile lookup should match. Defense-in-depth — `sanitize_remote_webmention_url` and the bundled re-sanitizer keep this from being exploitable for stored XSS.
+The 2026-05-10 Medium fix restricted local-profile author rewrites to source pages on the current Django `Site` domain and normalized the source/author domains before trusting them. The remaining low-priority gap is exact `Profile.objects.get(url=author_url)` matching (`processors.py`) for same-site source pages: case, default-port, IDNA, or trailing-slash variants may fail to match the intended local profile. Consider canonical matching against stored profile URLs or a normalized indexed field.
 
 #### Tighten `NON_RENDERED_LINK_ANCESTORS` (and Vouch proof location)
 
@@ -97,6 +141,26 @@ Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django user
 #### `send_webmention` vouch URL: comment intent or pass `default_address_resolver`
 
 `senders.py:326` calls `validate_safe_http_url(vouch, resolver=None)` (syntactic only). The vouch URL is not fetched on this path, so this is future-proofing. Either add a comment documenting the intentional `resolver=None`, or pass `default_address_resolver` to be consistent and let the comment be the future-proof note.
+
+#### Sanity-check HEAD-discovered Webmention endpoints against GET
+
+`WebmentionSender.discover_endpoint` accepts a HEAD-discovered endpoint without checking whether a following GET would advertise the same endpoint (`senders.py:165-178`). Each hop remains SSRF-screened, so this is delivery accuracy rather than a direct network bypass. Document the accepted behavior or add a cheap GET sniff before sending.
+
+#### Strip interior `..` from Micropub slugs
+
+`MicropubView._sanitize_slug_value` (`views.py:2314-2320`) strips control characters, slashes, and leading dots, but leaves values like `foo..bar`. Handlers must still defend before path joins, but stripping interior `..` is cheap hardening.
+
+#### Move `example_project.py` runtime template into a real template file
+
+`example_project.py:118-148` builds a `django.template.Template` from a hardcoded literal per request. It is not currently exploitable because the source is constant, but it normalizes a runtime-template pattern. Move the markup to a real template file.
+
+#### Add clickjacking middleware to `example_project.py`
+
+`example_project.py` omits `django.middleware.clickjacking.XFrameOptionsMiddleware`. The IndieAuth consent view sets its own frame protections, but copy/paste users inherit a non-default middleware list missing global clickjacking protection.
+
+#### Validate h-card mailto email shape before rendering
+
+`templates/indieweb/h-card.html` renders `Profile.email` as a `mailto:` URL without validating email shape. Malformed values are percent-encoded and inert, but confusing. Add an `EmailValidator` filter or skip rendering when the value is not an addr-spec.
 
 ### WebSub Enhancements
 

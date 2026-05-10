@@ -1,6 +1,6 @@
 # Security Analysis
 
-Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source; updated 2026-05-09 after a fresh six-agent parallel review pass surfaced new findings against the post-P1/P2/P3 codebase; updated 2026-05-09 (later) after the P1/P2/P3/P4 batch landed every 2026-05-09 finding; updated 2026-05-09 (later, third pass) after a six-agent parallel review against the post-P4 codebase surfaced no new Critical/High issues but identified two Medium residuals and a hardening backlog of 22 Lows (24 residual items total); updated 2026-05-10 after both Medium residuals were resolved.
+Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source; updated 2026-05-09 after a fresh six-agent parallel review pass surfaced new findings against the post-P1/P2/P3 codebase; updated 2026-05-09 (later) after the P1/P2/P3/P4 batch landed every 2026-05-09 finding; updated 2026-05-09 (later, third pass) after a six-agent parallel review against the post-P4 codebase surfaced no new Critical/High issues but identified two Medium residuals and a hardening backlog of 22 Lows (24 residual items total); updated 2026-05-10 after both Medium residuals were resolved; updated 2026-05-10 (later, fourth pass) after a six-agent parallel review surfaced four NEW Medium residuals (Webmention author-identity spoofing, WebSub topic-binding gap, sender HEAD memory-DoS, sender fanout amplification) and ~17 NEW Lows; updated 2026-05-10 again after those four Medium residuals were resolved. No new Critical or High findings.
 
 This document summarises a security review of `django-indieweb` as a third-party Django app. It focuses on risks when the app's public IndieWeb endpoints are installed on an internet-facing Django site.
 
@@ -35,7 +35,12 @@ The most urgent remaining production blockers are:
    ``test_token_exchange_introspection_echoes_consent_me_not_substituted``,
    and ``tests/test_micropub_endpoint.py::test_get_default_response_echoes_bound_me``.
 
-There are no remaining open production blockers as of 2026-05-09.
+There are no remaining open production blockers as of 2026-05-09. The
+2026-05-10 (later, fourth pass) review identified four NEW Medium residuals
+(Webmention author-identity spoofing via local-profile attribution, sender
+fanout amplification with no per-source target cap, WebSub ``Link;
+rel="self"`` topic binding gap, and sender HEAD discovery memory-DoS). All
+four were resolved on 2026-05-10.
 
 The concurrent authorization-code exchange race called out in earlier passes
 is fully resolved as of 2026-05-08; see Finding 5 below.
@@ -603,6 +608,263 @@ Claims reviewed but rejected:
   ``content_html``.
 - Connection-pool / cookie-jar leakage: ``disable_client_cookies`` is
   applied consistently on every default outbound client.
+
+## Verification Status 2026-05-10 (later, fourth pass)
+
+A six-agent parallel review against the post-third-pass codebase examined
+IndieAuth/Token, Webmention receive + processors, Micropub + outbound
+sender, WebSub subscriber, cross-cutting infrastructure
+(``http_client``/``rate_limit``/``cors``/``log_redaction``/``sanitizers``/
+``models``/``admin``/migrations), and templates/h-card/examples/management
+commands. Each reviewer was briefed against the prior `SECURITY_ANALYSIS.md`
+so previously resolved findings were not re-reported. The pass did not run
+the full test suite; every claim below was independently re-verified by
+reading the referenced source.
+
+The pass confirmed that all 2026-05-07 / 2026-05-08 / 2026-05-09 (P1–P4) /
+2026-05-10 (Medium-residual closures) fixes hold up against the current
+source. **No new Critical or High-severity findings.** Four NEW Medium
+residuals were identified and later resolved on 2026-05-10; a small batch
+of new Lows remains.
+
+Validated NEW Medium residuals:
+
+- ~~**Webmention author identity spoofing via local-profile attribution.**
+  ``WebmentionProcessor._get_local_profile`` (``processors.py:1651-1666``)
+  matches a parsed source-page author URL to ``Profile.objects.get(url=...)``
+  on bare ``parsed.netloc == current_site.domain``. ``_parse_microformats``
+  (``processors.py:931-938``) then rewrites ``webmention.author_name`` /
+  ``author_url`` / ``author_photo`` from the local profile when matched.
+  Source pages are attacker-controlled microformat content: an attacker can
+  declare a ``u-url`` pointing at a real local profile URL (or use
+  ``<base href>`` to make a relative URL resolve there) and have their
+  comment rendered as if authored by that local user. The displayed author
+  name and avatar come from the legitimate profile; only ``source_url``
+  betrays the impersonation, and the bundled templates wrap that anchor
+  around a date/label rather than a hostname. Independently flagged by the
+  Webmention receive reviewer; the Low entry on
+  ``_get_local_profile`` netloc normalization in the third pass touched
+  the same helper but stopped at IDNA/case/port and missed the
+  attribution-without-verification spoof. Suggested fix: drop the
+  ``_get_local_profile`` rewrite (display the parsed remote author as-is),
+  or only adopt the local profile when the source URL itself is on
+  ``current_site.domain``, or perform the IndieWeb authorship rel-me /
+  fetch step against the claimed author URL before trusting it.~~
+  Resolved 2026-05-10: local ``Profile`` data is now used only when the
+  source document itself is on the current Django ``Site`` domain; remote
+  source pages that claim a local ``u-url`` render with their parsed remote
+  author fields.
+
+- ~~**WebSub subscriber accepts deliveries without verifying ``Link;
+  rel="self"`` topic binding.** ``WebSubCallbackView.post``
+  (``views.py:2962-3053``) validates the HMAC over the body and the
+  callback-token-derived subscription identity, then forwards
+  ``topic_url=subscription.topic_url`` to the host hook regardless of the
+  ``Link`` header(s) the hub attached to the delivery. Per WebSub §7.3 a
+  subscriber SHOULD verify that the distribution carries
+  ``Link: <topic>; rel="self"`` matching the subscribed topic. Practical
+  impact is bounded by hub trust — the HMAC binds the bytes to the
+  hub-shared secret — but a misrouting bug on a shared hub
+  (Superfeedr / WebSub.rocks / hosted Switchboard) lands one publisher's
+  body inside another publisher's subscription queue with our subscriber
+  attributing it to the legitimate topic. Suggested fix: parse the
+  ``Link`` header(s) on POST and reject (e.g. 400) when no ``rel="self"``
+  value matches ``subscription.topic_url``; opt-out setting for
+  non-conforming hubs.~~ Resolved 2026-05-10:
+  ``delivery_topic_link_allowed`` parses the delivery ``Link`` header and
+  ``WebSubCallbackView.post`` rejects mismatches with ``400`` before replay
+  acceptance or hook dispatch. ``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK``
+  defaults to ``True`` and can be disabled for trusted non-conforming hubs.
+
+- ~~**Webmention sender HEAD discovery is not bounded by ``max_bytes``
+  (memory-DoS amplifier).** ``WebmentionSender.discover_endpoint``
+  (``senders.py:166-168``) calls
+  ``request_with_webmention_redirects(http_client, "HEAD", target_url, ...)``
+  without a byte cap, so the helper takes its non-streaming branch
+  (``http_client.py:387``) and ``client.head()`` buffers the entire
+  response body into memory. The GET fallback (``senders.py:181-188``)
+  and ``fetch_content`` both pass ``max_bytes=_sender_fetch_max_bytes()``;
+  HEAD does not. RFC 7231 lets servers attach a body to HEAD, and ``httpx``
+  auto-decodes ``Content-Encoding: gzip`` even on HEAD, so a hostile
+  target advertising a webmention endpoint can return a small gzip that
+  decodes to gigabytes (or just return hundreds of MiB raw) and exhaust
+  the sender's memory. Suggested fix: pass ``max_bytes`` to the HEAD
+  call (a small cap such as 64 KiB easily fits ``Link`` headers) so it
+  takes the streaming branch, or set ``Accept-Encoding: identity`` on
+  HEAD to defeat decompression bombs.~~ Resolved 2026-05-10:
+  ``WebmentionSender.discover_endpoint`` now passes
+  ``INDIEWEB_WEBMENTION_HEAD_MAX_BYTES`` (default 64 KiB) to the redirect
+  helper, routing HEAD discovery through the streaming bounded branch.
+
+- ~~**Webmention sender has no per-source URL fanout cap (outbound DDoS
+  amplifier in multi-author deployments).**
+  ``WebmentionSender.send_webmentions`` (``senders.py:411-461``) iterates
+  every external HTTP(S) link returned by ``_extract_external_target_urls``
+  (``senders.py:567-583``); the only filters are SSRF safety and
+  same-origin. ``_extract_external_target_urls`` itself enumerates every
+  ``<a href>`` in the source HTML via ``extract_urls``
+  (``senders.py:112-131``) with no per-source cap and no per-host cap.
+  For single-author IndieWeb deployments this is the trusted-content
+  case. For multi-author CMS / wiki / comment surfaces where attackers
+  can inject HTML that the operator subsequently feeds into
+  ``send_webmentions``, the bundled sender becomes a reflective HTTP
+  amplification path against any victim host the attacker chooses.
+  Combined with the already-known scalar timeouts (10 s HEAD / 30 s POST
+  with up to 5 redirects per hop), the worst-case per-target wall-clock
+  also amplifies sender-thread starvation. Suggested fix: add
+  ``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE`` (default e.g. 50) and a
+  per-destination-host cap (default e.g. 5), enforced after
+  ``_extract_external_target_urls``; document that operators with
+  trusted-content-only deployments can raise the cap.~~ Resolved
+  2026-05-10: ``WebmentionSender.send_webmentions`` and Salmention
+  resend/preview workflows now apply
+  ``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE`` (default 50) and
+  ``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST`` (default 5) before endpoint
+  discovery; either cap can be set to ``None`` for trusted-content
+  deployments with equivalent external throttling.
+
+Validated NEW lower-priority residuals (hardening / defense-in-depth):
+
+- ``WebSubDeliveryAttempt`` rows are written for every callback POST
+  (signature failures, 413 / 415 / 409 replay collisions, hook failures,
+  accepted 204s) and never pruned. ``websub.py:1216-1225``;
+  ``models.py:803-829``. Unlike ``WebSubAcceptedDelivery``, no retention
+  cap or pruning command exists. A misbehaving hub or a botnet that
+  learns one ACTIVE callback URL can fill the audit table indefinitely.
+  Add ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS`` and a
+  management command, or document the expected growth profile.
+- ``record_websub_denial`` (``websub.py:847-909``) reads
+  ``subscription.pending_mode`` / ``state`` from the in-memory instance,
+  branches on whether the row is an active-renewal denial, then
+  ``save()``s without ``select_for_update``. A concurrent
+  ``confirm_websub_verification`` flipping ``state`` to
+  ``STATE_ACTIVE`` between the read and the save lets a
+  ``record_websub_denial`` write demote the just-confirmed subscription
+  back to ``STATE_DENIED`` and clear ``pending_secret_set`` — bypassing
+  the P2.4 active-renewal protection. Wrap the read+branch+save in
+  ``transaction.atomic()`` with ``select_for_update``.
+- ``confirm_websub_verification`` ratchet is computed against an in-memory
+  ``confirmed_lease_seconds`` (``websub.py:780-844``,
+  ``_ratchet_renewal_lease`` ``websub.py:362-378``); two concurrent
+  verification GETs each base ``max(floor, N // 2)`` on the same prior
+  ``N`` and either may store a smaller-than-ratcheted lease. Modest
+  amplification but defeats the documented monotonic ratchet. Wrap in
+  ``select_for_update`` or ``UPDATE … WHERE confirmed_lease_seconds =
+  prior_value``.
+- WebSub callback existence oracle: ``WebSubCallbackView.get`` returns
+  404 for an unknown token but 400 / 200 / 204 for a known one
+  (``views.py:2921-2930``); ``post`` returns 404 for unknown-or-non-active
+  (``views.py:2962-2966``). Token entropy (~382 bits) makes brute-force
+  infeasible, but a partial leak (truncated log line, browser history)
+  becomes testable: distinguishing 400 from 404 confirms a prefix
+  completion. Return 404 uniformly when the token does not match an
+  active subscription, optionally with a small constant-time delay.
+- Webmention author photo ``<img>`` tags lack ``referrerpolicy="no-referrer"``.
+  ``templates/indieweb/webmention_types/{like,mention,reply,repost,nested_response}.html``.
+  The sibling ``<a>`` tags already set ``rel="nofollow noopener ugc"`` and
+  ``referrerpolicy="no-referrer"``, but the ``u-photo`` images do not, so
+  every visitor's browser sends ``Referer`` (containing the rendering
+  page URL) to the attacker-chosen photo origin. Privacy/visitor-tracking
+  leak. Add ``referrerpolicy="no-referrer"`` (and ``crossorigin="anonymous"``)
+  to all ``<img class="u-photo" ...>`` tags.
+- ``WebmentionNestedResponse`` URL fields gained
+  ``URLValidator(schemes=["http","https"])`` in migration ``0028``, but
+  ``_upsert_nested_response`` (``processors.py:1239-1271``) writes via
+  ``get_or_create`` / ``save(update_fields=...)`` and never calls
+  ``full_clean()``, so the validator does not actually run on ingest.
+  Today ``_first_url_identity`` already filters to ``http(s)`` before
+  storage, but the protection is producer-side only; any future code
+  path that bypasses the producer would persist a hostile scheme.
+  Either call ``full_clean(exclude=...)`` before save, or document the
+  invariant explicitly with an assertion.
+- WebmentionSender HEAD-discovered endpoint is never sanity-checked
+  against a GET response (``senders.py:165-178``). HEAD/GET divergence
+  on hostile targets steers delivery toward an endpoint a browser
+  auto-discovery would not pick. Each hop is still SSRF-screened, so
+  the impact is limited to "delivered to a different endpoint than a
+  browser would". Document as accepted, or add a cheap GET sniff before
+  sending.
+- ``WebmentionSender._parse_link_header`` (``senders.py:230-238``)
+  splits Link entries on bare commas; an RFC 8288 quoted parameter
+  containing a comma is mis-parsed and can pair the rel="webmention"
+  token from one entry with the URL of another. Use a quote-aware
+  parser (``email.utils`` or ``httpx.Headers``).
+- Micropub action POSTs invoke ``request.POST.get("action")`` before
+  any per-action authorization decision (``views.py:2080-2090, 2170-2181,
+  2745-2755``); for multipart bodies this triggers Django's
+  ``MultiPartParser`` and writes uploaded parts to the configured upload
+  handlers (memory and ``/tmp``) before action dispatch. Bounded by
+  ``DATA_UPLOAD_MAX_MEMORY_SIZE`` / ``DATA_UPLOAD_MAX_NUMBER_FILES``,
+  but wasted disk/memory on bogus action POSTs. Reject multipart for
+  action verbs explicitly (Micropub ``update`` is JSON-only;
+  ``delete``/``undelete`` accept form-encoded but no files).
+- ``MicropubView._sanitize_slug_value`` (``views.py:2314-2320``) strips
+  control characters, slashes, and leading dots, but a submitted slug
+  ``"foo..bar"`` survives unchanged. Handlers that route slug into a
+  path-joining call still must defend, but stripping interior ``..``
+  here is the cheap hardening.
+- JSON Micropub ``properties`` value type-confusion (e.g.
+  ``{"type":["h-entry"], "properties":"photo audio"}``) bypasses the
+  validator's ``in`` check (substring match on the string) and triggers
+  ``TypeError`` → 500 (``views.py:2025-2034, 2285-2297, 2340-2346``).
+  Recovery noise rather than exploit. Add an ``isinstance(properties,
+  dict)`` guard in ``_parse_json_request``.
+- ``client.py:113-115`` prints the issued bearer token to stdout
+  (``print("token: ", token)``); ``client.py:23-25, 39, 45`` print raw
+  response cookies (session + CSRF). The CLI is a debug helper, but the
+  prints normalize a pattern that leaks long-lived bearers into shell
+  history / CI logs. Print only a redacted prefix or guard behind
+  ``INDIEWEB_DEBUG_TOKEN=1``.
+- ``example_project.py:118-148`` builds a ``django.template.Template``
+  from a hardcoded literal and renders it per request. Not exploitable
+  today (the source is constant), but it normalizes a runtime-template
+  pattern that becomes SSTI the moment a developer interpolates a
+  request value. Move the markup to a real template file.
+- ``example_project.py`` MIDDLEWARE list omits
+  ``django.middleware.clickjacking.XFrameOptionsMiddleware``. The
+  IndieAuth consent view sets ``X-Frame-Options: DENY`` itself, so the
+  consent flow is safe, but copy/paste users inherit a non-default
+  middleware list missing global clickjacking protection. Add it to the
+  example.
+- ``templates/indieweb/h-card.html`` ``mailto:`` ``href`` does not
+  validate the email shape — a malformed ``Profile.email`` such as
+  ``"javascript:alert(1)"`` becomes ``mailto:javascript%3Aalert%281%29``
+  (inert but confusing). Add an ``EmailValidator`` filter or skip
+  rendering when the value is not an addr-spec.
+- ``log_redaction.redact_token`` preserves an 8-char prefix in
+  passthrough mode (``log_redaction.py:77``); for 32-char
+  ``get_random_string`` tokens that is ~47.6 bits of carried entropy.
+  Trim to 4 chars or default-redact when the setting is unset and
+  ``DEBUG=False``.
+- ``rate_limit`` ``cache.incr`` ``ValueError`` fallback (``rate_limit.py:118-122``)
+  unconditionally ``cache.set(counter_key, 1, config.window)``; under
+  cache eviction pressure two concurrent requests can both fall into
+  the fallback and lose one increment, allowing burst = 2× cap. Retry
+  ``cache.add`` / ``cache.incr`` once or accept the burst as an SLO.
+- ``log_redaction._resolve_mode`` accepts ``"redact"`` exact-string
+  only; ``"REDACT"`` / ``"true"`` / Python ``bool`` silently fall back
+  to passthrough without warning. Log a one-shot warning on
+  non-canonical values; document the accepted strings.
+
+Claims reviewed but rejected:
+
+- IndieAuth/Token surface: PKCE verifier handling, scope smuggling,
+  IDOR on TokenManagement / TokenRevoke, header injection on consent
+  redirect, timing oracle on Token/Auth lookup — all already addressed.
+- Webmention SSRF / decompression-bomb / smuggling / ReDoS — bounded
+  by the existing ``http_client`` hardening and ``_decoded_response_content_with_limit``.
+- ``cross_origin_strip`` HTTPS→HTTP downgrade: ``_origin_for_url`` keys
+  on scheme too, so a downgrade is treated as cross-origin and
+  rejected.
+- CORS preflight reflection: ``Access-Control-Allow-Methods`` and
+  ``Access-Control-Allow-Headers`` echo the *server-configured* sets,
+  not the request's ``Access-Control-Request-*`` values.
+- IPv6 6to4 / Teredo / IPv4-compatible / link-local / ULA classes are
+  all already blocked by the ``not is_global`` / ``is_private`` /
+  ``is_reserved`` guards.
+- ``disable_client_cookies`` covers both ``httpx._client.extract_cookies``
+  call sites; ``response.cookies`` is a derived property over
+  ``Set-Cookie`` and protocol clients never read it.
 
 ## Positive Security Properties
 
@@ -1224,10 +1486,10 @@ compatibility.
 
 ## Remaining Fix Order
 
-The 2026-05-09 (later, third pass) review surfaced two Medium residuals,
-both resolved on 2026-05-10, and a hardening backlog of 22 Lows. There
-are no Critical / High / Medium items and no remaining production
-blockers. The recommended low-priority hardening order is:
+The 2026-05-10 (later, fourth pass) review surfaced four NEW Medium
+residuals and ~17 NEW Lows; the Medium residuals are resolved. There are no
+Critical / High / Medium items and no remaining production blockers. The
+recommended low-priority hardening order is:
 
 1. Set ``Cache-Control: no-store`` on token-endpoint and introspection
    success responses; add ``Cache-Control: no-store`` and
@@ -1255,6 +1517,23 @@ blockers. The recommended low-priority hardening order is:
    ``WebmentionStatusView`` default to public-safe; document a
    ``WebmentionSourceSnapshot`` retention/compression policy; add
    ``Vary: Origin`` to the wildcard-branch CORS preflight rejection.
+5. Fourth-pass Lows: add ``referrerpolicy="no-referrer"`` to
+   ``u-photo`` ``<img>`` tags in the bundled webmention templates;
+   call ``full_clean(exclude=...)`` (or assert) before
+   ``WebmentionNestedResponse`` saves so migration ``0028``'s
+   validators actually run; ``WebSubDeliveryAttempt`` retention setting
+   + pruning command; ``select_for_update`` on
+   ``record_websub_denial`` and ``confirm_websub_verification``;
+   uniform 404 on WebSub callback unknown-token paths; quote-aware
+   ``_parse_link_header`` (RFC 8288); reject multipart Micropub action
+   POSTs before ``request.POST.get("action")``; strip interior ``..``
+   from ``mp-slug``; ``isinstance(properties, dict)`` guard in
+   Micropub JSON parsing; ``client.py`` token / cookie redact;
+   ``example_project.py`` clickjacking middleware + drop runtime
+   ``Template(...)`` literal; h-card ``mailto:`` email-shape filter;
+   trim ``redact_token`` prefix to 4 chars (or default-redact when
+   ``DEBUG=False``); rate-limit ``cache.incr`` ``ValueError`` retry;
+   warn on non-canonical ``INDIEWEB_LOG_REDACTION`` values.
 
 ### Historical fix order (2026-05-09 batch, resolved)
 
@@ -1343,7 +1622,16 @@ resolved:
 ## Documentation Impact
 
 Documentation updates have landed alongside every historical fix. The
-2026-05-09 (later, third pass) review introduced 24 new residuals (two
+2026-05-10 (later, fourth pass) review introduced four NEW Medium
+residuals and ~17 NEW Lows; the Medium fixes updated
+``docs/changelog.rst``, ``docs/configuration.rst``, and protocol docs for
+``INDIEWEB_WEBMENTION_HEAD_MAX_BYTES``,
+``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE`` /
+``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST`` /
+``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK``. The remaining Low documentation
+work will land alongside those fixes (notably
+``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS``). The
+2026-05-09 (later, third pass) review introduced 24 residuals (two
 Mediums and 22 Lows); the two Mediums were resolved on 2026-05-10 and
 the remaining 22 Lows are tracked in ``BACKLOG.md`` (13 Priority 3 + 9
 Priority 4). The 2026-05-10 Medium closure updated
@@ -1364,3 +1652,10 @@ Medium residuals and a Low hardening backlog (24 residual items total);
 the two Mediums are complete and the remaining 22 Lows are recorded in
 ``BACKLOG.md`` (13 Priority 3 + 9 Priority 4) with explicit references
 to affected files, docs, and this analysis.
+
+The 2026-05-10 (later, fourth pass) review introduced four NEW Medium
+residuals (Webmention author-identity spoofing via ``_get_local_profile``
+rewrite; Webmention sender per-source / per-host fanout cap; Webmention
+sender HEAD ``max_bytes`` gap; WebSub subscriber ``Link; rel="self"`` topic
+binding) and ~17 NEW Lows. The four Mediums are complete; the new Lows are
+recorded in ``BACKLOG.md``.

@@ -320,6 +320,13 @@ are present. Legacy ``sha1`` signatures are rejected by default; enable
 SHA-256. Set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` to reject unsigned
 deliveries for rows that still have no stored secret.
 
+Delivery ``POST`` requests must also carry a ``Link`` header containing
+``rel="self"`` for the subscribed topic URL. This default
+(``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = True``) follows WebSub's topic-binding
+guidance and rejects misrouted shared-hub deliveries before host hooks or
+enqueue callables run. Disable it only for a non-conforming hub that you trust
+to route callback deliveries correctly.
+
 Configure ``INDIEWEB_WEBSUB_DELIVERY_HOOK`` to receive accepted deliveries:
 
 .. code-block:: python

@@ -93,6 +93,75 @@ def test_extract_external_target_urls_filters_unsafe_hosts(sender, source_url):
     assert sender._extract_external_target_urls(source_url, html) == ["https://target.com/post"]
 
 
+@override_settings(INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE=3, INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST=2)
+def test_limit_target_urls_caps_per_source_and_per_host(sender):
+    """Outbound sender fanout caps keep one source page from targeting unbounded URLs."""
+    urls = [
+        "https://a.example/1",
+        "https://a.example/2",
+        "https://a.example/3",
+        "https://b.example/1",
+        "https://c.example/1",
+    ]
+
+    assert sender._limit_target_urls(urls) == [
+        "https://a.example/1",
+        "https://a.example/2",
+        "https://b.example/1",
+    ]
+
+
+@override_settings(INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE=None, INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST=None)
+def test_limit_target_urls_can_be_disabled_for_trusted_content(sender):
+    urls = [f"https://target{i}.example/post" for i in range(60)]
+
+    assert sender._limit_target_urls(urls) == urls
+
+
+@override_settings(INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE=3, INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST=2)
+def test_resend_salmentions_applies_fanout_caps_before_discovery(sender, source_url):
+    """Salmention resend cannot bypass sender fanout caps with current or historical targets."""
+    html_content = """
+    <a href="https://a.example/1">A1</a>
+    <a href="https://a.example/2">A2</a>
+    <a href="https://a.example/3">A3</a>
+    <a href="https://b.example/1">B1</a>
+    """
+    WebmentionOutboundTarget.objects.create(source_url=source_url, target_url="https://history.example/1")
+    WebmentionOutboundTarget.objects.create(source_url=source_url, target_url="https://history.example/2")
+
+    with patch.object(sender, "discover_endpoint", side_effect=lambda target: f"{target}/webmention") as discover:
+        with patch.object(
+            sender,
+            "send_webmention",
+            side_effect=lambda *args, **kwargs: {"success": True, "status_code": 202},
+        ):
+            results = sender.resend_salmentions(source_url, html_content)
+
+    expected_targets = ["https://a.example/1", "https://a.example/2", "https://b.example/1"]
+    assert [result["target"] for result in results] == expected_targets
+    assert [call.args[0] for call in discover.call_args_list] == expected_targets
+
+
+@override_settings(INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE=3, INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST=2)
+def test_salmention_preview_applies_fanout_caps_before_discovery(sender, source_url):
+    """Dry-run Salmention previews reflect the capped resend target set."""
+    for target_url in (
+        "https://a.example/1",
+        "https://a.example/2",
+        "https://a.example/3",
+        "https://b.example/1",
+    ):
+        WebmentionOutboundTarget.objects.create(source_url=source_url, target_url=target_url)
+
+    with patch.object(sender, "discover_endpoint", return_value=None) as discover:
+        results = sender.preview_salmention_resend_targets(source_url, "<p>No current links</p>")
+
+    expected_targets = ["https://a.example/1", "https://a.example/2", "https://b.example/1"]
+    assert [result["target"] for result in results] == expected_targets
+    assert [call.args[0] for call in discover.call_args_list] == expected_targets
+
+
 def test_discover_endpoint_from_link_header(sender, source_url, target_url):
     """Test discovering webmention endpoint from Link header."""
     captured: list[httpx.Request] = []
@@ -107,6 +176,26 @@ def test_discover_endpoint_from_link_header(sender, source_url, target_url):
     assert len(captured) == 1
     assert captured[0].method == "HEAD"
     assert str(captured[0].url) == target_url
+
+
+@override_settings(INDIEWEB_WEBMENTION_HEAD_MAX_BYTES=4096)
+@patch("indieweb.senders.request_with_webmention_redirects")
+def test_discover_endpoint_passes_head_response_cap_to_helper(
+    mock_request_with_redirects, sender, source_url, target_url
+):
+    """HEAD discovery is routed through the bounded streaming redirect helper."""
+
+    class _Discovered:
+        response = httpx.Response(200)
+        final_url = target_url
+
+    mock_request_with_redirects.return_value = _Discovered()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    assert sender.discover_endpoint(target_url, client=_make_test_client(handler)) is None
+    assert mock_request_with_redirects.call_args.kwargs["max_bytes"] == 4096
 
 
 def test_discover_endpoint_follows_redirect_to_link_header(sender, source_url, target_url):

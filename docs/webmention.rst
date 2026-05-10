@@ -350,6 +350,19 @@ Outgoing Webmentions can include Vouch metadata explicitly:
 The ``send_webmentions`` management command also accepts ``--vouch`` to include
 the same voucher URL with each delivered Webmention.
 
+``WebmentionSender.send_webmentions()`` and Salmention resend/preview workflows
+bound outbound fanout before endpoint discovery starts. By default they attempt
+at most 50 external targets per source page and at most 5 targets per
+destination host (``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE`` and
+``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST``). This keeps multi-author or
+user-influenced content from turning one source page into an unbounded outbound
+HTTP amplifier, including later ``resend_salmentions()`` re-fanout cycles.
+Trusted-author deployments can raise these caps or set either value to
+``None`` when an external queue supplies equivalent throttling.
+Endpoint discovery also caps decoded ``HEAD`` responses at 64 KiB
+(``INDIEWEB_WEBMENTION_HEAD_MAX_BYTES``) before falling back to ``GET`` HTML
+discovery.
+
 ``WebmentionSender`` methods such as ``discover_endpoint``,
 ``send_webmention``, and ``fetch_content`` accept an optional ``client``
 keyword for tests and tightly controlled integrations. See the injected-client

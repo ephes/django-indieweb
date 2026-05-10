@@ -3058,8 +3058,8 @@ class TestWebmentionProcessor:
             assert webmention.author_url == ""
             assert webmention.author_photo == ""
 
-    def test_processor_uses_local_profile_for_rel_author_hcard(self, processor):
-        """Test local Profile data still overrides authors extracted through rel=author."""
+    def test_processor_does_not_use_local_profile_for_remote_source_author_claim(self, processor):
+        """Remote source pages cannot impersonate local profiles by claiming their u-url."""
         user = get_user_model().objects.create_user(username="localauthor", email="local@example.com")
         Profile.objects.create(
             user=user,
@@ -3091,9 +3091,9 @@ class TestWebmentionProcessor:
             webmention = processor.process_webmention(source_url, target_url)
 
             assert webmention.status == "verified"
-            assert webmention.author_name == "Local Profile Name"
+            assert webmention.author_name == "Remote Parsed Name"
             assert webmention.author_url == "https://example.com/authors/local"
-            assert webmention.author_photo == "https://example.com/local-profile.jpg"
+            assert webmention.author_photo == "https://remote.example.com/remote.jpg"
 
     def test_processor_uses_local_profile_after_canonical_hcard_url_match(self, processor):
         """Test Profile overrides still apply after canonical h-card URL matching."""
@@ -3106,7 +3106,7 @@ class TestWebmentionProcessor:
                 "photo": ["https://example.com/canonical-profile.jpg"],
             },
         )
-        source_url = "https://remote.example.com/posts/source"
+        source_url = "https://example.com/posts/source"
         target_url = "https://mysite.com/article"
 
         html_content = f'''

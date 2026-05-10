@@ -18,6 +18,7 @@ from indieweb.websub import (
     accept_websub_delivery,
     build_websub_callback_url,
     delivery_is_replay,
+    delivery_topic_link_allowed,
     get_websub_expired_subscriptions,
     get_websub_renewal_candidates,
     record_websub_denial,
@@ -52,6 +53,27 @@ def subscription(db):
 
 def _callback_url(subscription: WebSubSubscription) -> str:
     return reverse("indieweb:websub-callback", args=[subscription.callback_token])
+
+
+def _topic_link(subscription: WebSubSubscription) -> str:
+    return f'<{subscription.topic_url}>; rel="self"'
+
+
+def _post_delivery(
+    client: Client,
+    subscription: WebSubSubscription,
+    *,
+    data: bytes,
+    content_type: str,
+    **headers: str,
+):
+    return client.post(
+        _callback_url(subscription),
+        data=data,
+        content_type=content_type,
+        HTTP_LINK=_topic_link(subscription),
+        **headers,
+    )
 
 
 @pytest.mark.django_db
@@ -840,7 +862,7 @@ def test_callback_post_records_delivery_and_calls_hook(client, settings, subscri
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><updated>now</updated></feed>"
 
-    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert response.status_code == 204
@@ -866,10 +888,47 @@ def test_callback_post_is_csrf_exempt(settings, subscription):
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     csrf_client = Client(enforce_csrf_checks=True)
 
-    response = csrf_client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+    response = _post_delivery(csrf_client, subscription, data=b"<feed/>", content_type="application/atom+xml")
 
     assert response.status_code == 204
     assert len(websub_hooks.DELIVERIES) == 1
+
+
+@pytest.mark.django_db
+def test_callback_post_requires_self_topic_link(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+
+    response = client.post(
+        _callback_url(subscription),
+        data=b"<feed/>",
+        content_type="application/atom+xml",
+        HTTP_LINK='<https://attacker.example/feed>; rel="self"',
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 400
+    assert subscription.last_delivery_status_code == 400
+    assert subscription.last_delivery_error == "topic link mismatch"
+    assert websub_hooks.DELIVERIES == []
+
+
+@pytest.mark.django_db
+def test_callback_post_topic_link_check_can_be_disabled(client, settings, subscription):
+    settings.INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = False
+
+    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+
+    assert response.status_code == 204
+
+
+def test_delivery_topic_link_parser_handles_quoted_commas(subscription):
+    headers = {
+        "Link": (
+            f'<https://other.example/feed>; rel="self"; title="not, this", <{subscription.topic_url}>; rel="hub self"'
+        )
+    }
+
+    assert delivery_topic_link_allowed(headers, subscription.topic_url) is True
 
 
 @pytest.mark.django_db
@@ -879,8 +938,9 @@ def test_callback_post_validates_signed_delivery(client, subscription):
     body = b'{"items":[]}'
     digest = hmac.new(SHARED_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
-    response = client.post(
-        _callback_url(subscription),
+    response = _post_delivery(
+        client,
+        subscription,
         data=body,
         content_type="application/json",
         HTTP_X_HUB_SIGNATURE_256=f"sha256={digest}",
@@ -912,8 +972,9 @@ def test_callback_post_rejects_missing_or_bad_signature(client, subscription, si
     if signature_header is not None:
         headers["HTTP_X_HUB_SIGNATURE_256"] = signature_header
 
-    response = client.post(
-        _callback_url(subscription),
+    response = _post_delivery(
+        client,
+        subscription,
         data=b'{"items":[]}',
         content_type="application/json",
         **headers,
@@ -936,8 +997,9 @@ def test_callback_post_reports_secret_decryption_failure(client, settings, subsc
     subscription.save()
     settings.SECRET_KEY = "rotated-secret-key"
 
-    response = client.post(
-        _callback_url(subscription),
+    response = _post_delivery(
+        client,
+        subscription,
         data=b'{"items":[]}',
         content_type="application/json",
         HTTP_X_HUB_SIGNATURE_256="sha256=bad",
@@ -994,8 +1056,8 @@ def test_callback_post_rejects_duplicate_delivery_within_replay_window(client, s
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><id>1</id></feed>"
 
-    first_response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
-    second_response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    first_response = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
+    second_response = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert first_response.status_code == 204
@@ -1015,9 +1077,9 @@ def test_callback_post_rejects_a_b_a_replay_within_replay_window(client, setting
     body_a = b"<feed><id>A</id></feed>"
     body_b = b"<feed><id>B</id></feed>"
 
-    first_a = client.post(_callback_url(subscription), data=body_a, content_type="application/atom+xml")
-    accept_b = client.post(_callback_url(subscription), data=body_b, content_type="application/atom+xml")
-    replay_a = client.post(_callback_url(subscription), data=body_a, content_type="application/atom+xml")
+    first_a = _post_delivery(client, subscription, data=body_a, content_type="application/atom+xml")
+    accept_b = _post_delivery(client, subscription, data=body_b, content_type="application/atom+xml")
+    replay_a = _post_delivery(client, subscription, data=body_a, content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert first_a.status_code == 204
@@ -1170,7 +1232,7 @@ def test_callback_post_invalid_content_length_falls_back_to_body_limit(client, s
 def test_callback_post_uses_default_delivery_size_limit_when_setting_is_invalid(client, settings, subscription):
     settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = "bad"
 
-    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=b"<feed/>", content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert response.status_code == 204
@@ -1208,7 +1270,7 @@ def test_callback_post_treats_empty_string_max_bytes_as_default(client, settings
 def test_callback_post_applies_delivery_content_type_allowlist(client, settings, subscription):
     settings.INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES = ("application/atom+xml",)
 
-    response = client.post(_callback_url(subscription), data=b"{}", content_type="application/json")
+    response = _post_delivery(client, subscription, data=b"{}", content_type="application/json")
 
     subscription.refresh_from_db()
     assert response.status_code == 415
@@ -1219,7 +1281,7 @@ def test_callback_post_applies_delivery_content_type_allowlist(client, settings,
 def test_callback_post_allows_delivery_when_content_type_setting_is_invalid(client, settings, subscription):
     settings.INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES = object()
 
-    response = client.post(_callback_url(subscription), data=b"{}", content_type="application/json")
+    response = _post_delivery(client, subscription, data=b"{}", content_type="application/json")
 
     subscription.refresh_from_db()
     assert response.status_code == 204
@@ -1230,7 +1292,7 @@ def test_callback_post_allows_delivery_when_content_type_setting_is_invalid(clie
 def test_callback_post_reports_delivery_hook_failure(client, settings, subscription):
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.failing_delivery"
 
-    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=b"<feed/>", content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert response.status_code == 500
@@ -1244,7 +1306,7 @@ def test_callback_post_enqueue_records_204_and_skips_sync_hook(client, settings,
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><updated>now</updated></feed>"
 
-    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert response.status_code == 204
@@ -1265,7 +1327,7 @@ def test_callback_post_reports_enqueue_failure(client, settings, subscription):
     settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.failing_enqueue"
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
-    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=b"<feed/>", content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert response.status_code == 500
@@ -1279,7 +1341,7 @@ def test_callback_post_reports_enqueue_import_failure(client, settings, subscrip
     settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.does_not_exist"
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
-    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=b"<feed/>", content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert response.status_code == 500
@@ -1293,7 +1355,7 @@ def test_callback_post_reports_enqueue_non_callable(client, settings, subscripti
     settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.DELIVERIES"
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
-    response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=b"<feed/>", content_type="application/atom+xml")
 
     subscription.refresh_from_db()
     assert response.status_code == 500
@@ -1406,9 +1468,9 @@ def test_callback_post_replay_does_not_re_invoke_hook(client, settings, subscrip
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><id>only-once</id></feed>"
 
-    first = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
-    second = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
-    third = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    first = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
+    second = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
+    third = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     assert first.status_code == 204
     assert second.status_code == 409
@@ -1422,7 +1484,7 @@ def test_callback_post_passes_body_digest_to_kwargs_hook(client, settings, subsc
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><id>digest-via-kwargs</id></feed>"
 
-    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     assert response.status_code == 204
     assert len(websub_hooks.DELIVERIES) == 1
@@ -1435,7 +1497,7 @@ def test_callback_post_passes_body_digest_to_explicit_parameter_hook(client, set
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery_with_digest"
     body = b"<feed><id>digest-explicit</id></feed>"
 
-    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     assert response.status_code == 204
     assert len(websub_hooks.DELIVERIES) == 1
@@ -1448,7 +1510,7 @@ def test_callback_post_omits_body_digest_for_legacy_hook(client, settings, subsc
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery_legacy"
     body = b"<feed><id>legacy</id></feed>"
 
-    response = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    response = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     assert response.status_code == 204
     assert len(websub_hooks.DELIVERIES) == 1
@@ -1539,8 +1601,8 @@ def test_replay_window_disabled_accepts_all_duplicates(client, settings, subscri
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><id>dup</id></feed>"
 
-    first = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
-    second = client.post(_callback_url(subscription), data=body, content_type="application/atom+xml")
+    first = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
+    second = _post_delivery(client, subscription, data=body, content_type="application/atom+xml")
 
     assert first.status_code == 204
     assert second.status_code == 204

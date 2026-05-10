@@ -883,6 +883,15 @@ headers are present. ``sha1`` signatures are rejected by default; set
 ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True`` only for a hub that cannot
 send SHA-256 signatures.
 
+``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK`` defaults to ``True``. When enabled,
+callback ``POST`` deliveries must include a ``Link`` header with a
+``rel="self"`` target exactly matching the subscribed topic URL before the
+host delivery hook or enqueue callable runs. This follows WebSub's topic
+binding guidance and prevents a shared or misrouting hub from delivering one
+topic's body through another topic's callback. Set it to ``False`` only for a
+hub that cannot emit the required ``Link`` header and that you otherwise
+trust to route deliveries correctly.
+
 Accepted delivery bodies are replay-checked for 300 seconds by default against
 every retained accepted SHA-256 digest on the subscription, so a captured
 payload A cannot be replayed after a different legitimate payload B has been
@@ -1122,6 +1131,52 @@ be reported as a failure (``success=False``, ``status_code=None``,
 ``error="response too large: ..."``) instead of buffering the unbounded body.
 Set this to ``None`` only when an upstream proxy, queue, or worker boundary
 enforces an equivalent limit; malformed values fall back to the default cap.
+
+INDIEWEB_WEBMENTION_HEAD_MAX_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum decoded response size accepted while probing a target URL with
+``HEAD`` during outbound Webmention endpoint discovery.
+
+**Default:** ``65536`` (64 KiB)
+
+The sender checks ``Link`` headers with a ``HEAD`` request before falling back
+to ``GET`` and HTML discovery. Some hostile servers still attach large or
+compressed bodies to ``HEAD`` responses; this cap routes the request through
+the same streaming redirect helper used by body-fetching calls so decoded
+content is bounded before buffering. Set this to ``None`` only when an
+equivalent upstream boundary exists.
+
+INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum number of outbound Webmention targets attempted for one source page
+by ``WebmentionSender.send_webmentions()`` and Salmention resend/preview
+workflows.
+
+**Default:** ``50``
+
+This bounds fanout when untrusted or multi-author content is fed into the
+bundled sender. The cap is applied after unsafe and same-site URLs are
+filtered, before endpoint discovery starts. Salmention resends consider current
+source links first, then exact-source historical targets, and apply the cap to
+that combined list. Set this to ``None`` only for trusted-author deployments
+that intentionally allow unbounded outbound mentions.
+
+INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum number of outbound Webmention targets attempted for one destination
+host by ``WebmentionSender.send_webmentions()`` and Salmention resend/preview
+workflows.
+
+**Default:** ``5``
+
+The per-host cap works alongside
+``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE`` so one source page cannot
+concentrate all outbound discovery and delivery attempts on a single victim
+host. Set this to ``None`` only for trusted content or when an external queue
+enforces equivalent per-host throttling.
 
 INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1904,6 +1959,9 @@ domain:
        "websub_callback":     {"limit": 120, "window": 60},
    }
    INDIEWEB_MICROPUB_URL_POLICY = "your_project.micropub_policy.allow_only_owned_urls"
+   INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = True
+   INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE = 50
+   INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST = 5
    INDIEWEB_WEBMENTION_STATUS_PUBLIC = True
    INDIEWEB_LOG_REDACTION = "redact"
 
@@ -1930,6 +1988,13 @@ Notes:
   considers safe (e.g. owned post URLs, plus your storage and CDN hosts).
   Returning anything else yields ``400 invalid_request``; raises and import
   failures fail closed with ``500``.
+* ``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = True`` is the default, but keeping it
+  explicit in hardened settings documents that callback deliveries must bind
+  the body to the subscribed topic with ``Link: <topic>; rel="self"``.
+* The Webmention sender fanout caps bound outbound endpoint discovery and
+  delivery when posts may contain user-influenced links. Raise or disable
+  them only when the source content is trusted or an external queue supplies
+  equivalent throttling.
 * ``INDIEWEB_WEBMENTION_STATUS_PUBLIC = True`` restricts the Webmention
   status endpoint response to ``status`` and (when set) ``verified_at``,
   omitting the stored ``source`` and ``target`` URLs. The default response

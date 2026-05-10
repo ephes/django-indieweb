@@ -5,6 +5,23 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** Webmention author attribution no longer rewrites a remote
+  source page's claimed author URL to a local ``Profile``. Local profile
+  metadata is used only when the source document itself is hosted on the
+  current Django ``Site`` domain, preventing remote pages from rendering as a
+  legitimate local author by declaring that author's ``u-url``.
+* **Security:** Outbound Webmention sending and Salmention resend/preview
+  workflows now cap fanout at 50 targets per source page and 5 targets per
+  destination host by default
+  (``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE`` /
+  ``INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST``), and ``HEAD`` endpoint
+  discovery responses are decoded under a 64 KiB cap
+  (``INDIEWEB_WEBMENTION_HEAD_MAX_BYTES``). Trusted-author deployments can set
+  these caps to ``None`` when an external queue supplies equivalent limits.
+* **Security:** WebSub delivery callbacks now require a ``Link`` header with
+  ``rel="self"`` exactly matching the subscribed topic URL before hook or
+  enqueue dispatch. ``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK`` defaults to
+  ``True`` and can be set to ``False`` only for trusted non-conforming hubs.
 * **Security:** ``WebmentionNestedResponse`` now enforces the same
   ``http``/``https`` URL-scheme validation as parent ``Webmention`` rows
   on ``identity``, ``response_url``, ``author_url``, and

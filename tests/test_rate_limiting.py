@@ -292,6 +292,7 @@ def test_websub_callback_endpoint_key_is_limited(client, settings):
     )
     settings.INDIEWEB_RATE_LIMITS = {"websub_callback": {"limit": 1, "window": 60}}
     url = reverse("indieweb:websub-callback", args=[subscription.callback_token])
+    headers = {"HTTP_LINK": f'<{subscription.topic_url}>; rel="self"'}
 
-    assert client.post(url, data=b"<feed/>", content_type="application/atom+xml").status_code == 204
-    assert client.post(url, data=b"<feed/>", content_type="application/atom+xml").status_code == 429
+    assert client.post(url, data=b"<feed/>", content_type="application/atom+xml", **headers).status_code == 204
+    assert client.post(url, data=b"<feed/>", content_type="application/atom+xml", **headers).status_code == 429
