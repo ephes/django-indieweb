@@ -158,31 +158,54 @@ Building and Publishing Releases
    - ``src/indieweb/__init__.py``
    - ``docs/conf.py``
 
-2. Update the changelog in ``docs/changelog.rst``
+2. Update the changelog in ``docs/changelog.rst``:
 
-3. Build the package::
+   - Move the prior ``Unreleased`` entries under a new
+     ``X.Y.Z (YYYY-MM-DD)`` heading.
+   - Leave a fresh ``Unreleased`` section above the new release entry.
+   - Add a note when the published package version skips over a
+     repository-local version that was never published to PyPI.
 
+3. Run the release validation gates::
+
+    uv run pytest
+    uv run mypy
+    uv run prek run --all-files
+    uv run sphinx-build -W -b html docs docs/_build/html
+    tox -p auto
+
+4. Clean old package artifacts and build the package::
+
+    just clean-build
     uv build
 
    This will create distribution files in the ``dist/`` directory.
 
-4. Generate a CycloneDX SBOM from the locked runtime dependency graph::
+5. Validate the built wheel and source distribution metadata::
+
+    uvx twine check dist/django_indieweb-*.whl dist/django_indieweb-*.tar.gz
+
+6. Generate a CycloneDX SBOM from the locked runtime dependency graph::
 
     just sbom
 
    ``uv.lock`` is tracked for reproducible release dependency review, and the
    SBOM is written to ``dist/django-indieweb-sbom.cdx.json``.
 
-5. Upload to PyPI::
+7. Upload to PyPI::
 
     uv publish --token your_token
 
    Replace ``your_token`` with your PyPI API token.
 
-6. Create a git tag for the release::
+8. Create a git tag for the release. Current tags use plain version numbers::
 
-    git tag -a v0.0.8 -m "Release version 0.0.8"
-    git push origin v0.0.8
+    git tag -a 0.6.0 -m "Release version 0.6.0"
+    git push origin 0.6.0
+
+Publishing and pushing are maintainer actions. Agents preparing a release must
+stop after validation and artifact generation, then report the remaining
+``uv publish`` and ``git push`` commands for the maintainer to run.
 
 Development Commands Summary
 ----------------------------

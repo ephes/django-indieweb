@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* No changes yet.
+
+0.6.0 (2026-05-10)
+------------------
+* **Note:** PyPI users upgrading from ``0.5.2`` receive both the
+  changes listed here and the ``0.5.3`` changes below; ``0.5.3`` existed
+  in repository metadata but was not published to PyPI.
 * **Security:** Webmention author attribution no longer rewrites a remote
   source page's claimed author URL to a local ``Profile``. Local profile
   metadata is used only when the source document itself is hosted on the

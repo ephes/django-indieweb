@@ -19,6 +19,7 @@ This is a Django application that implements IndieWeb protocols including IndieA
   - `test_token_endpoint.py` - Token endpoint tests
   - `test_models.py` - Model tests
 - `docs/` - Sphinx documentation (`just docs` builds HTML)
+- `docs/development.rst` - contributor setup, quality gates, and the detailed release process
 - `examples/`, `example_project.py`, `client.py` - Reference integrations and smoke-test helpers
 - `BACKLOG.md` - Planned work items, grouped by priority. The single source of truth for upcoming work; this project no longer uses Beads or any external issue tracker.
 - `DONE.md` - Completed backlog items, append-only, grouped by date. Each entry records the completion date, summary, validation commands, documentation note, and changelog note.
@@ -110,6 +111,14 @@ just clean
 ```
 
 ### Building & Publishing
+See `docs/development.rst` for the full release checklist, including version bumps, changelog updates, validation,
+artifact building, SBOM generation, publishing, and tagging.
+
+Quick command reference:
+
+Maintainer-only commands. Agents may run `uv build` and `just sbom` for
+validation, but stop before `uv publish` and `git push`.
+
 ```bash
 # Build the package
 uv build
