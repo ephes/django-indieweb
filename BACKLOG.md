@@ -10,17 +10,7 @@ No current Priority 1 items.
 
 ## Priority 2
 
-### `WebmentionNestedResponse` URL field validator parity
-
-Apply `URLValidator(schemes=["http","https"])` to `WebmentionNestedResponse.author_url`, `author_photo`, `response_url`, and `identity` in a new migration that mirrors `migrations/0027_alter_webmention_author_photo_and_more.py`. The parent `Webmention` model received these validators in P3 of the 2026-05-09 batch; the nested-response sibling was missed. Bundled templates re-sanitize via `_prepare_nested_response_for_display` (`templatetags/webmention_tags.py:55-79`), so the bundled render path is safe today, but downstream templates that read these fields directly, or any write path that bypasses ingestion (`QuerySet.update`, `bulk_update`, raw SQL, fixtures), get attacker-controlled values unfiltered. Affected: `src/indieweb/models.py:466-471`. Independently flagged by two reviewers in the 2026-05-09 (later, third pass) review. See `SECURITY_ANALYSIS.md` Verification Status 2026-05-09 (later, third pass).
-
-### Same-host gating asymmetry on `MicropubMediaView._handle_delete`
-
-`MicropubView._handle_delete` (`views.py:2367`) hard-requires same-host with `if not url or not self._action_url_is_same_host(request, url): return self._invalid_request()` — there is no `INDIEWEB_MICROPUB_URL_POLICY` escape hatch on this path. `MicropubMediaView._handle_delete` (`views.py:2836-2860`) does not enforce same-host at all. A `media`-scoped token can submit `action=delete url=https://attacker.example/...` and the request reaches the host adapter's `delete_media` relying entirely on its ownership check.
-
-**Implementation:** match the entry-side contract exactly — add the structural same-host check before the policy hook, with no override path. This keeps the entry-delete and media-delete contracts consistent. If a future host genuinely needs cross-host media deletion (e.g. CDN URLs that resolve elsewhere), that should be handled by a separate, explicit setting rather than by widening `INDIEWEB_MICROPUB_URL_POLICY` to override structural same-host on either path.
-
-Source-by-URL tightening is a separate, optional follow-up: both `MicropubView._handle_source_query` (`views.py:2521`) and `MicropubMediaView._handle_source_by_url_query` (`views.py:2763`) are at parity with each other (policy hook + host adapter only) and should be tightened together if at all.
+No current Priority 2 items.
 
 ## Priority 3
 

@@ -260,6 +260,45 @@ MICROPUB_MEDIA_TYPE_PREFERRED_SUFFIX = {
 MICROPUB_HTTP_URL_VALIDATOR = URLValidator(schemes=["http", "https"])
 
 
+def _normalized_micropub_host_port(netloc: str, scheme: str) -> tuple[str, int | None] | None:
+    """Return a comparable host/port tuple, ignoring explicit default ports."""
+    try:
+        parsed = urlparse(f"//{netloc}")
+        port = parsed.port
+    except ValueError:
+        return None
+    if not parsed.hostname:
+        return None
+    default_port = 443 if scheme == "https" else 80 if scheme == "http" else None
+    return parsed.hostname.lower(), None if port == default_port else port
+
+
+def _micropub_absolute_url_is_same_request_host(request: HttpRequest, url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    submitted = _normalized_micropub_host_port(parsed.netloc, scheme)
+    request_host = _normalized_micropub_host_port(request.get_host(), request.scheme or scheme)
+    return submitted is not None and submitted == request_host
+
+
+def _micropub_action_url_is_same_host(request: HttpRequest, url: str) -> bool:
+    """Return whether a Micropub action URL is local to the current request host."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme or parsed.netloc:
+        return _micropub_absolute_url_is_same_request_host(request, url)
+    return True
+
+
 @dataclass(frozen=True)
 class _ValidatedMicropubMediaUpload:
     upload: UploadedFile
@@ -2143,40 +2182,14 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
     @staticmethod
     def _normalized_host_port(netloc: str, scheme: str) -> tuple[str, int | None] | None:
-        """Return a comparable host/port tuple, ignoring explicit default ports."""
-        try:
-            parsed = urlparse(f"//{netloc}")
-            port = parsed.port
-        except ValueError:
-            return None
-        if not parsed.hostname:
-            return None
-        default_port = 443 if scheme == "https" else 80 if scheme == "http" else None
-        return parsed.hostname.lower(), None if port == default_port else port
+        return _normalized_micropub_host_port(netloc, scheme)
 
     def _absolute_url_is_same_request_host(self, request: HttpRequest, url: str) -> bool:
-        try:
-            parsed = urlparse(url)
-        except ValueError:
-            return False
-        scheme = parsed.scheme.lower()
-        if scheme not in {"http", "https"} or not parsed.netloc:
-            return False
-        if parsed.username is not None or parsed.password is not None:
-            return False
-        submitted = self._normalized_host_port(parsed.netloc, scheme)
-        request_host = self._normalized_host_port(request.get_host(), request.scheme or scheme)
-        return submitted is not None and submitted == request_host
+        return _micropub_absolute_url_is_same_request_host(request, url)
 
     def _action_url_is_same_host(self, request: HttpRequest, url: str) -> bool:
         """Return whether an action URL is local to the current request host."""
-        try:
-            parsed = urlparse(url)
-        except ValueError:
-            return False
-        if parsed.scheme or parsed.netloc:
-            return self._absolute_url_is_same_request_host(request, url)
-        return True
+        return _micropub_action_url_is_same_host(request, url)
 
     def _invalid_request(self) -> HttpResponse:
         """Return the standard 400 plain-text body the action handlers use for client errors."""
@@ -2835,7 +2848,7 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
 
     def _handle_delete(self, request: HttpRequest) -> HttpResponse:
         url = self._delete_url(request)
-        if not url:
+        if not url or not _micropub_action_url_is_same_host(request, url):
             return self._invalid_request()
 
         policy_response = _enforce_micropub_url_policy(url, "media", request)

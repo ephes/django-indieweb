@@ -1,6 +1,6 @@
 # Security Analysis
 
-Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source; updated 2026-05-09 after a fresh six-agent parallel review pass surfaced new findings against the post-P1/P2/P3 codebase; updated 2026-05-09 (later) after the P1/P2/P3/P4 batch landed every 2026-05-09 finding; updated 2026-05-09 (later, third pass) after a six-agent parallel review against the post-P4 codebase surfaced no new Critical/High issues but identified two Medium residuals and a hardening backlog of 22 Lows (24 residual items total).
+Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source; updated 2026-05-09 after a fresh six-agent parallel review pass surfaced new findings against the post-P1/P2/P3 codebase; updated 2026-05-09 (later) after the P1/P2/P3/P4 batch landed every 2026-05-09 finding; updated 2026-05-09 (later, third pass) after a six-agent parallel review against the post-P4 codebase surfaced no new Critical/High issues but identified two Medium residuals and a hardening backlog of 22 Lows (24 residual items total); updated 2026-05-10 after both Medium residuals were resolved.
 
 This document summarises a security review of `django-indieweb` as a third-party Django app. It focuses on risks when the app's public IndieWeb endpoints are installed on an internet-facing Django site.
 
@@ -415,12 +415,13 @@ verified against the current source.
 
 The pass confirmed that all 2026-05-07 / 2026-05-08 / 2026-05-09 (P1–P4)
 fixes hold up against the current source. **No new Critical or High-severity
-findings.** Two Medium residuals (one independently flagged by two
-reviewers) and a hardening backlog of 22 Lows follow.
+findings.** The two Medium residuals (one independently flagged by two
+reviewers) were resolved on 2026-05-10; a hardening backlog of 22 Lows
+remains.
 
 Validated medium residuals:
 
-- ``WebmentionNestedResponse.author_url`` / ``author_photo`` /
+- ~~``WebmentionNestedResponse.author_url`` / ``author_photo`` /
   ``response_url`` / ``identity`` lack the model-layer
   ``URLValidator(schemes=["http","https"])`` that migration ``0027``
   applied to the parent ``Webmention`` model. Independently flagged by
@@ -431,9 +432,12 @@ Validated medium residuals:
   remains safe; downstream templates that read these fields directly, or
   any write path that bypasses ingestion (``QuerySet.update``,
   ``bulk_update``, raw SQL, fixtures), get attacker-controlled values
-  unfiltered. Sibling migration applying the same validators restores
-  parity.
-- ``MicropubMediaView._handle_delete`` skips the
+  unfiltered.~~ Resolved 2026-05-10: ``WebmentionNestedResponse`` now
+  applies HTTP(S)-only validators to all four URL-bearing fields, and
+  migration ``0028`` persists the model-state parity with parent
+  ``Webmention`` rows. Regression:
+  ``tests/test_webmention_models.py::TestWebmentionNestedResponseModel::test_nested_response_url_fields_restrict_schemes``.
+- ~~``MicropubMediaView._handle_delete`` skips the
   ``_action_url_is_same_host`` check that ``MicropubView._handle_delete``
   / ``_handle_update`` / ``_handle_undelete`` enforce.
   ``src/indieweb/views.py:2836-2860`` vs ``views.py:2367``. A
@@ -450,7 +454,12 @@ Validated medium residuals:
   with no ``INDIEWEB_MICROPUB_URL_POLICY`` override path on the delete
   surface. If the same-host invariant is also desirable for
   ``q=source&url=`` paths, both entry and media source handlers should
-  be tightened together as a separate follow-up.
+  be tightened together as a separate follow-up.~~ Resolved 2026-05-10:
+  media delete now runs the same structural same-host gate before
+  ``INDIEWEB_MICROPUB_URL_POLICY`` or ``delete_media`` can run.
+  Cross-host delete attempts return ``400 invalid_request`` and do not
+  reach the policy hook or host adapter. Regression:
+  ``tests/test_micropub_media.py::test_media_delete_rejects_cross_host_url_before_policy_or_handler``.
 
 Validated lower-priority residuals (hardening / defense-in-depth):
 
@@ -1215,38 +1224,25 @@ compatibility.
 
 ## Remaining Fix Order
 
-The 2026-05-09 (later, third pass) review surfaced two Medium residuals
-and a hardening backlog of 22 Lows (24 residual items total). There are
-no Critical / High items and no remaining production blockers. The
-recommended fix order is:
+The 2026-05-09 (later, third pass) review surfaced two Medium residuals,
+both resolved on 2026-05-10, and a hardening backlog of 22 Lows. There
+are no Critical / High / Medium items and no remaining production
+blockers. The recommended low-priority hardening order is:
 
-1. Apply ``URLValidator(schemes=["http","https"])`` to
-   ``WebmentionNestedResponse.author_url``, ``author_photo``,
-   ``response_url``, and ``identity`` in a sibling migration that mirrors
-   ``0027``. This restores the parent / nested-response invariant that
-   bundled templates already rely on at render time.
-2. Add ``_action_url_is_same_host`` to
-   ``MicropubMediaView._handle_delete`` so the media-delete path matches
-   ``MicropubView._handle_delete``'s hard-required same-host gate
-   (``views.py:2367``). Tightening the source-by-URL paths is an
-   optional follow-up that should be applied to ``MicropubView._handle_source_query``
-   *and* ``MicropubMediaView._handle_source_by_url_query`` together,
-   since both currently rely on ``_enforce_micropub_url_policy`` plus
-   the host adapter and are at parity with each other.
-3. Set ``Cache-Control: no-store`` on token-endpoint and introspection
+1. Set ``Cache-Control: no-store`` on token-endpoint and introspection
    success responses; add ``Cache-Control: no-store`` and
    ``Referrer-Policy: no-referrer`` to the consent GET response and the
    redirect carrying ``code``/``state``/``iss``. RFC-compliance
    one-liners.
-4. Logging-hygiene sweep: replace ``_redact_auth_code`` with
+2. Logging-hygiene sweep: replace ``_redact_auth_code`` with
    ``log_redaction.redact_token``; route ``client_id`` through
    ``redact_url`` and ``token.owner`` through a hashed-id helper at
    ``views.py:1306, 1682, 1686, 1742, 1804, 1848``; pass
    ``notify_websub`` ``result.error`` through ``redact_url``.
-5. Drop ``:{method}:`` from the rate-limit cache key (or normalize
+3. Drop ``:{method}:`` from the rate-limit cache key (or normalize
    unsupported methods to one bucket) to prevent per-IP allowance
    multiplication.
-6. Lower-priority hardening: opt-in
+4. Lower-priority hardening: opt-in
    ``INDIEWEB_WEBMENTION_STRICT_REDIRECTS``; layered
    ``httpx.Timeout`` for ``WebmentionSender``; consume the auth code
    on legacy verification success; coerce ``scope=None`` to ``""`` in
@@ -1348,10 +1344,11 @@ resolved:
 
 Documentation updates have landed alongside every historical fix. The
 2026-05-09 (later, third pass) review introduced 24 new residuals (two
-Mediums and 22 Lows); these are tracked in ``BACKLOG.md`` (2 Priority
-2 + 13 Priority 3 + 9 Priority 4). Each will require corresponding
-``docs/changelog.rst`` notes when fixed. The 2026-05-09 batch updated
-``docs/changelog.rst``,
+Mediums and 22 Lows); the two Mediums were resolved on 2026-05-10 and
+the remaining 22 Lows are tracked in ``BACKLOG.md`` (13 Priority 3 + 9
+Priority 4). The 2026-05-10 Medium closure updated
+``docs/changelog.rst``, ``DONE.md``, and this analysis. The 2026-05-09
+batch updated ``docs/changelog.rst``,
 ``docs/configuration.rst`` (new sections for
 ``INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS``, ``INDIEWEB_USER_AGENT``,
 and ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP``), ``docs/micropub.rst``
@@ -1361,9 +1358,9 @@ and this analysis. ``AGENTS.md`` did not need a change.
 
 ## Current Backlog Coverage
 
-As of 2026-05-09 (post-batch and post-third-pass), every previously
-resolved item has a corresponding entry in ``DONE.md``. The 2026-05-09
-(later, third pass) review introduced two Medium residuals and a Low
-hardening backlog (24 residual items total); all 24 are recorded in
-``BACKLOG.md`` (2 Priority 2 + 13 Priority 3 + 9 Priority 4) with
-explicit references to affected files, docs, and this analysis.
+As of 2026-05-10, every resolved item has a corresponding entry in
+``DONE.md``. The 2026-05-09 (later, third pass) review introduced two
+Medium residuals and a Low hardening backlog (24 residual items total);
+the two Mediums are complete and the remaining 22 Lows are recorded in
+``BACKLOG.md`` (13 Priority 3 + 9 Priority 4) with explicit references
+to affected files, docs, and this analysis.

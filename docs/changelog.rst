@@ -5,6 +5,17 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** ``WebmentionNestedResponse`` now enforces the same
+  ``http``/``https`` URL-scheme validation as parent ``Webmention`` rows
+  on ``identity``, ``response_url``, ``author_url``, and
+  ``author_photo``. Migration ``0028`` applies the model-layer
+  validators so downstream templates and bulk write paths no longer have
+  weaker URL-field guarantees for nested responses.
+* **Security:** Micropub media deletion now requires submitted
+  ``action=delete`` URLs to be relative/local or absolute URLs on the
+  current request host, matching entry delete/update/undelete behavior.
+  Cross-host media delete requests are rejected before
+  ``INDIEWEB_MICROPUB_URL_POLICY`` or the host adapter can run.
 * **Security:** ``TokenView.post`` no longer accepts a request-supplied
   ``me`` that differs from the consent-validated ``auth.me``. The issued
   bearer token is always bound to ``auth.me``; a mismatched submitted

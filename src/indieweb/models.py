@@ -463,12 +463,12 @@ class WebmentionNestedResponse(models.Model):
         on_delete=models.CASCADE,
         related_name="nested_responses",
     )
-    identity = models.CharField(max_length=500)
-    response_url = models.URLField(max_length=500, blank=True)
+    identity = models.CharField(max_length=500, validators=[URLValidator(schemes=["http", "https"])])
+    response_url = models.URLField(max_length=500, blank=True, validators=[URLValidator(schemes=["http", "https"])])
 
     author_name = models.CharField(max_length=200, blank=True)
-    author_url = models.URLField(blank=True)
-    author_photo = models.URLField(blank=True)
+    author_url = models.URLField(blank=True, validators=[URLValidator(schemes=["http", "https"])])
+    author_photo = models.URLField(blank=True, validators=[URLValidator(schemes=["http", "https"])])
 
     content = models.TextField(blank=True)
     content_html = models.TextField(blank=True)

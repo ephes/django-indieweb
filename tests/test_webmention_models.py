@@ -287,6 +287,38 @@ class TestWebmentionNestedResponseModel:
         assert child.created
         assert child.modified
 
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("identity", "javascript:alert(1)"),
+            ("identity", "ftp://example.com/comment"),
+            ("response_url", "data:text/html,evil"),
+            ("author_url", "javascript:alert(1)"),
+            ("author_photo", "data:image/svg+xml,<svg onload=alert(1)>"),
+        ],
+    )
+    def test_nested_response_url_fields_restrict_schemes(self, field, value):
+        """Nested-response URL fields enforce the same HTTP(S)-only scheme policy."""
+        webmention = Webmention.objects.create(
+            source_url="https://example.com/post",
+            target_url="https://mysite.com/article",
+            status="verified",
+        )
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        child = WebmentionNestedResponse(
+            webmention=webmention,
+            identity="https://example.com/comments/1",
+            response_url="https://example.com/comments/1",
+            author_url="https://author.example/",
+            author_photo="https://author.example/photo.jpg",
+            first_seen_at=seen_at,
+            last_seen_at=seen_at,
+        )
+        setattr(child, field, value)
+
+        with pytest.raises(ValidationError):
+            child.full_clean()
+
     def test_nested_response_defaults_and_displayability(self):
         """Test defaults and parent-status-dependent displayability."""
         webmention = Webmention.objects.create(

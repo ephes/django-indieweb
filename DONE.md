@@ -2,6 +2,38 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-10
+
+### Close third-pass medium security residuals
+
+Resolved the two Medium findings from the 2026-05-09 later third-pass
+security review:
+
+- ``WebmentionNestedResponse`` now applies HTTP(S)-only validators to
+  ``identity``, ``response_url``, ``author_url``, and ``author_photo``.
+  Migration ``0028`` mirrors the parent ``Webmention`` validator
+  hardening from migration ``0027``.
+- ``MicropubMediaView._handle_delete`` now enforces the same structural
+  same-host action URL gate as entry delete before consulting
+  ``INDIEWEB_MICROPUB_URL_POLICY`` or the host adapter.
+- Review follow-up: the same-host parser/comparison logic now lives in
+  shared module-level helpers used by entry and media action paths; the
+  media-delete test host override is scoped to tests that need it, and
+  the nested-response validator test wording was narrowed.
+
+Validation: ``uv run pytest`` (1477 passed, coverage 92.26%);
+``uv run mypy`` (no issues); ``uv run ruff check .`` (clean);
+``uv run prek run --all-files`` (clean after formatting);
+``uv run python -m django makemigrations --check --dry-run --settings tests.settings``
+(no changes detected); ``uv run pytest tests/test_webmention_models.py::TestWebmentionNestedResponseModel tests/test_micropub_media.py -q --no-cov``
+(104 passed after formatting);
+``uv run pytest tests/test_micropub_actions.py tests/test_micropub_endpoint.py tests/test_micropub_media.py -q --no-cov``
+(293 passed after review follow-up); ``uv run sphinx-build -W -b html docs docs/_build/html``
+(succeeded).
+Documentation: ``docs/changelog.rst`` and ``SECURITY_ANALYSIS.md`` updated.
+Changelog: security bullets added for nested-response URL validator parity
+and media-delete same-host enforcement.
+
 ## 2026-05-09
 
 ### Address 2026-05-09 batch review feedback (round 2)

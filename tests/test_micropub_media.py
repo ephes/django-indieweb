@@ -28,6 +28,11 @@ def media_url():
 
 
 @pytest.fixture
+def allow_example_host(settings):
+    settings.ALLOWED_HOSTS = ["testserver", "example.org"]
+
+
+@pytest.fixture
 def micropub_url():
     return reverse("indieweb:micropub")
 
@@ -268,13 +273,14 @@ def test_media_source_query_requires_media_scope(client, user, media_url, scope)
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("scope", [None, "", "create", "post", "update", "delete", "mediaXYZ", "create_media"])
-def test_media_delete_action_requires_media_scope(client, user, media_url, scope):
+def test_media_delete_action_requires_media_scope(client, allow_example_host, user, media_url, scope):
     token = _make_token(user, scope)
 
     response = client.post(
         media_url,
         data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
 
     assert response.status_code == 403
@@ -464,13 +470,14 @@ def test_media_source_query_unexpected_hook_exception_returns_500(client, caplog
 
 
 @pytest.mark.django_db
-def test_media_delete_without_hook_returns_not_implemented(client, user, media_url):
+def test_media_delete_without_hook_returns_not_implemented(client, allow_example_host, user, media_url):
     token = _make_token(user, "media")
 
     response = client.post(
         media_url,
         data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
 
     assert response.status_code == 501
@@ -478,7 +485,7 @@ def test_media_delete_without_hook_returns_not_implemented(client, user, media_u
 
 
 @pytest.mark.django_db
-def test_media_delete_with_hook_returns_no_content(client, monkeypatch, user, media_url):
+def test_media_delete_with_hook_returns_no_content(client, allow_example_host, monkeypatch, user, media_url):
     handler = _MediaHookHandler()
     monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
     token = _make_token(user, "media")
@@ -487,6 +494,7 @@ def test_media_delete_with_hook_returns_no_content(client, monkeypatch, user, me
         media_url,
         data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
 
     assert response.status_code == 204
@@ -495,7 +503,28 @@ def test_media_delete_with_hook_returns_no_content(client, monkeypatch, user, me
 
 
 @pytest.mark.django_db
-def test_media_delete_accepts_json_body(client, monkeypatch, user, media_url):
+def test_media_delete_rejects_cross_host_url_before_policy_or_handler(
+    client, allow_example_host, monkeypatch, settings, user, media_url
+):
+    handler = _MediaHookHandler()
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
+    settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.raise_runtime"
+    token = _make_token(user, "media")
+
+    response = client.post(
+        media_url,
+        data={"action": "delete", "url": "https://attacker.example/media/photo.jpg"},
+        Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
+    )
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"
+    assert handler.deleted_urls == []
+
+
+@pytest.mark.django_db
+def test_media_delete_accepts_json_body(client, allow_example_host, monkeypatch, user, media_url):
     handler = _MediaHookHandler()
     monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
     token = _make_token(user, "media")
@@ -505,6 +534,7 @@ def test_media_delete_accepts_json_body(client, monkeypatch, user, media_url):
         data=json.dumps({"action": "delete", "url": "https://example.org/media/photo.jpg"}),
         content_type="application/json",
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
 
     assert response.status_code == 204
@@ -566,7 +596,7 @@ def test_media_delete_rejects_missing_or_empty_url(client, monkeypatch, user, me
 
 
 @pytest.mark.django_db
-def test_media_delete_rejects_unknown_url(client, monkeypatch, user, media_url):
+def test_media_delete_rejects_unknown_url(client, allow_example_host, monkeypatch, user, media_url):
     monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: _MediaHookHandler())
     token = _make_token(user, "media")
 
@@ -574,6 +604,7 @@ def test_media_delete_rejects_unknown_url(client, monkeypatch, user, media_url):
         media_url,
         data={"action": "delete", "url": "https://example.org/media/missing.jpg"},
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
 
     assert response.status_code == 400
@@ -581,7 +612,9 @@ def test_media_delete_rejects_unknown_url(client, monkeypatch, user, media_url):
 
 
 @pytest.mark.django_db
-def test_media_delete_returns_invalid_request_for_hook_value_error(client, monkeypatch, user, media_url):
+def test_media_delete_returns_invalid_request_for_hook_value_error(
+    client, allow_example_host, monkeypatch, user, media_url
+):
     class RejectingMediaHandler(_MediaHookHandler):
         def delete_media(self, url, user):
             raise ValueError("not host-owned")
@@ -593,6 +626,7 @@ def test_media_delete_returns_invalid_request_for_hook_value_error(client, monke
         media_url,
         data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
 
     assert response.status_code == 400
@@ -600,7 +634,9 @@ def test_media_delete_returns_invalid_request_for_hook_value_error(client, monke
 
 
 @pytest.mark.django_db
-def test_media_delete_unexpected_hook_exception_returns_500(client, caplog, monkeypatch, user, media_url):
+def test_media_delete_unexpected_hook_exception_returns_500(
+    client, allow_example_host, caplog, monkeypatch, user, media_url
+):
     class BrokenMediaHandler(_MediaHookHandler):
         def delete_media(self, url, user):
             raise RuntimeError("storage unavailable")
@@ -612,6 +648,7 @@ def test_media_delete_unexpected_hook_exception_returns_500(client, caplog, monk
         media_url,
         data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
 
     assert response.status_code == 500
@@ -1279,7 +1316,7 @@ def test_media_source_by_url_policy_import_error_returns_500(client, monkeypatch
 
 
 @pytest.mark.django_db
-def test_media_delete_by_url_rejected_by_policy(client, monkeypatch, user, media_url, settings):
+def test_media_delete_by_url_rejected_by_policy(client, allow_example_host, monkeypatch, user, media_url, settings):
     handler = _MediaHookHandler()
     monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
     settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.reject_all"
@@ -1288,6 +1325,7 @@ def test_media_delete_by_url_rejected_by_policy(client, monkeypatch, user, media
         media_url,
         data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
         Authorization=f"Bearer {token.key}",
+        HTTP_HOST="example.org",
     )
     assert response.status_code == 400
     assert b"invalid_request" in response.content
@@ -1296,7 +1334,9 @@ def test_media_delete_by_url_rejected_by_policy(client, monkeypatch, user, media
 
 
 @pytest.mark.django_db
-def test_media_delete_by_url_policy_runtime_error_returns_500(client, monkeypatch, user, media_url, settings, caplog):
+def test_media_delete_by_url_policy_runtime_error_returns_500(
+    client, allow_example_host, monkeypatch, user, media_url, settings, caplog
+):
     handler = _MediaHookHandler()
     monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
     settings.INDIEWEB_MICROPUB_URL_POLICY = "tests.micropub_policies.raise_runtime"
@@ -1306,6 +1346,7 @@ def test_media_delete_by_url_policy_runtime_error_returns_500(client, monkeypatc
             media_url,
             data={"action": "delete", "url": "https://example.org/media/photo.jpg"},
             Authorization=f"Bearer {token.key}",
+            HTTP_HOST="example.org",
         )
     assert response.status_code == 500
     assert b"policy explosion" not in response.content
