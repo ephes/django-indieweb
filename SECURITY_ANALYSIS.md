@@ -1,6 +1,6 @@
 # Security Analysis
 
-Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source; updated 2026-05-09 after a fresh six-agent parallel review pass surfaced new findings against the post-P1/P2/P3 codebase; updated 2026-05-09 (later) after the P1/P2/P3/P4 batch landed every 2026-05-09 finding.
+Date: 2026-05-06 (initial); updated 2026-05-06 with second-pass deep review across the full codebase, then revised after independent claim-verification review; updated 2026-05-07 after implementation verification and residual-risk review; updated 2026-05-08 after an additional six-agent residual-risk review was verified against the current source; updated 2026-05-09 after a fresh six-agent parallel review pass surfaced new findings against the post-P1/P2/P3 codebase; updated 2026-05-09 (later) after the P1/P2/P3/P4 batch landed every 2026-05-09 finding; updated 2026-05-09 (later, third pass) after a six-agent parallel review against the post-P4 codebase surfaced no new Critical/High issues but identified two Medium residuals and a hardening backlog of 22 Lows (24 residual items total).
 
 This document summarises a security review of `django-indieweb` as a third-party Django app. It focuses on risks when the app's public IndieWeb endpoints are installed on an internet-facing Django site.
 
@@ -403,6 +403,197 @@ Claims reviewed but rejected:
 - Concurrent reissue race for ``Token.key`` rotation: the auth-code
   delete-count gate already serializes the predecessor exchange, so
   ``send_token``'s ``select_for_update`` runs at most once per code.
+
+## Verification Status 2026-05-09 (later, third pass)
+
+A six-agent parallel review against the post-P4 codebase examined IndieAuth,
+Token + Micropub, Webmention receive + processors, outbound HTTP + senders,
+WebSub, and cross-cutting infrastructure + templates. Each reviewer was
+briefed against the prior `SECURITY_ANALYSIS.md` so resolved findings were
+not re-reported. The pass did not run the full test suite; claims below were
+verified against the current source.
+
+The pass confirmed that all 2026-05-07 / 2026-05-08 / 2026-05-09 (P1–P4)
+fixes hold up against the current source. **No new Critical or High-severity
+findings.** Two Medium residuals (one independently flagged by two
+reviewers) and a hardening backlog of 22 Lows follow.
+
+Validated medium residuals:
+
+- ``WebmentionNestedResponse.author_url`` / ``author_photo`` /
+  ``response_url`` / ``identity`` lack the model-layer
+  ``URLValidator(schemes=["http","https"])`` that migration ``0027``
+  applied to the parent ``Webmention`` model. Independently flagged by
+  two reviewers (Webmention-receive M1 and cross-cutting M2).
+  ``src/indieweb/models.py:466-471``. Bundled templates re-sanitize via
+  ``_prepare_nested_response_for_display``
+  (``templatetags/webmention_tags.py:55-79``), so the bundled render path
+  remains safe; downstream templates that read these fields directly, or
+  any write path that bypasses ingestion (``QuerySet.update``,
+  ``bulk_update``, raw SQL, fixtures), get attacker-controlled values
+  unfiltered. Sibling migration applying the same validators restores
+  parity.
+- ``MicropubMediaView._handle_delete`` skips the
+  ``_action_url_is_same_host`` check that ``MicropubView._handle_delete``
+  / ``_handle_update`` / ``_handle_undelete`` enforce.
+  ``src/indieweb/views.py:2836-2860`` vs ``views.py:2367``. A
+  ``media``-scoped token can submit
+  ``action=delete url=https://attacker.example/...`` and the request
+  reaches the host adapter relying entirely on its ownership check.
+  Note that ``MicropubView._handle_source_query``
+  (``views.py:2521-2533``) and ``MicropubMediaView._handle_source_by_url_query``
+  (``views.py:2763-2783``) are at parity with each other — both rely on
+  ``_enforce_micropub_url_policy`` plus the host adapter and neither
+  applies the same-host gate. The asymmetry to fix is therefore
+  delete-only, and the implementation should match the entry-side
+  ``_handle_delete`` contract exactly — a structural same-host check
+  with no ``INDIEWEB_MICROPUB_URL_POLICY`` override path on the delete
+  surface. If the same-host invariant is also desirable for
+  ``q=source&url=`` paths, both entry and media source handlers should
+  be tightened together as a separate follow-up.
+
+Validated lower-priority residuals (hardening / defense-in-depth):
+
+- Token issuance and introspection success responses do not set
+  ``Cache-Control: no-store``. ``views.py:1644-1655`` (``send_token``),
+  ``views.py:1869-1879`` (``_active_response``), ``views.py:1829-1830``
+  (``_inactive_response``). RFC 6749 §5.1 mandates ``no-store`` on
+  token-endpoint responses; the 401 path already sets it
+  (``views.py:1253-1256``).
+- Consent GET response lacks ``Cache-Control: no-store`` and
+  ``Referrer-Policy: no-referrer``. ``views.py:1473-1476``. The redirect
+  response carrying ``code``/``state`` should also receive the same
+  treatment.
+- Legacy code-verification POST does not consume the auth code on
+  success. ``views.py:1568-1599`` — ``_verify_auth_code`` returns
+  ``{"me": auth.me}`` without ``auth.delete()``, leaving the row
+  redeemable until expiry as a ``me``-validity oracle. The token
+  endpoint's delete-count gate is symmetric (``views.py:1800-1810``);
+  the legacy verification path should match.
+- ``_handle_consent`` deletes the prior ``Auth`` row before the new row
+  is created, outside ``transaction.atomic()``. ``views.py:1540-1555``.
+  Reliability rather than privilege issue: two concurrent approves can
+  race on ``IntegrityError``.
+- Permissive cross-origin redirects on the outbound Webmention sender:
+  ``send_webmention`` does not opt into ``cross_origin_strip``, so
+  ``request_with_webmention_redirects`` replays the POST body up to five
+  times across origins. ``senders.py:330-338``;
+  ``http_client.py:300-326``. Each hop is still SSRF-screened. Consider
+  an opt-in ``INDIEWEB_WEBMENTION_STRICT_REDIRECTS`` for operators who
+  do not need bug-for-bug compatibility.
+- ``WebmentionSender`` uses scalar ``httpx`` timeouts (10 s HEAD, 30 s
+  POST), so worst-case wall-clock with the configured five redirects
+  (initial request + 5 redirected hops = 6 requests) is ~180 s per
+  POST delivery and ~60 s per HEAD discovery.
+  ``senders.py:108-110, 167, 336``; ``http_client.py:16``. Replace
+  with the layered ``SAFE_HTTP_DEFAULT_TIMEOUT`` and a per-call
+  deadline.
+- ``_extract_external_target_urls`` performs a case-sensitive netloc
+  compare for the same-domain test. ``senders.py:567-583``. Lowercase
+  both sides (or use ``_origin_for_url``) and strip default ports.
+- ``send_webmention`` validates the ``vouch`` URL with ``resolver=None``
+  (syntactic only). ``senders.py:326``. The URL is not fetched on this
+  path, so this is future-proofing only — comment the intent or pass
+  ``default_address_resolver``.
+- Per-method rate-limit counter multiplies effective allowance and
+  bloats key space. ``rate_limit.py:88-94, 110-127``. The counter key
+  embeds ``:{method}:`` and increments before ``super().dispatch``, so
+  unsupported-method requests still consume slots and the effective
+  per-IP limit is ``limit × distinct-methods-tried``. Drop ``method``
+  from the key.
+- ``Token.objects.get_or_create`` with ``scope=None`` may proliferate
+  rows on PostgreSQL/MySQL because ``unique_together = ("me",
+  "client_id", "scope", "owner")`` does not collapse on NULL.
+  ``views.py:1623-1629``; ``models.py:247, 251``. Coerce ``scope=None``
+  to ``""`` for the storage key, or add a partial unique index.
+- ``_check_redirect_uri`` lets a submitted ``redirect_uri`` pass when
+  the stored ``auth.redirect_uri`` is empty. ``views.py:1692-1701``.
+  Currently-issued codes always have a stored ``redirect_uri``
+  (consent and ``required_params`` enforce it), so the gap is latent.
+  Add the missing branch defensively.
+- ``_redact_auth_code`` always discloses 6 leading characters
+  regardless of ``INDIEWEB_LOG_REDACTION`` mode.
+  ``views.py:1221-1227``. With a 32-char ``get_random_string`` (charset
+  62), six chars is ~35 bits and is inconsistent with the redaction
+  policy operators opted into. Replace call sites with
+  ``log_redaction.redact_token`` or have the helper consult
+  ``_resolve_mode``.
+- Several logger sites still emit unredacted ``client_id`` /
+  ``token.owner`` despite ``INDIEWEB_LOG_REDACTION=redact``.
+  ``views.py:1306, 1682, 1686, 1742, 1804, 1848``. Sibling lines on the
+  same view do redact (e.g. ``views.py:1341, 1399, 1583``); apply the
+  same pattern.
+- ``WebmentionNestedResponse``-related: ``_get_local_profile`` matches
+  ``parsed.netloc`` against bare ``Site.domain`` without IDNA / case /
+  default-port normalization. ``processors.py:1659-1662``. Defense-in-
+  depth — ``sanitize_remote_webmention_url`` and the bundled
+  re-sanitizer keep this from being exploitable for stored XSS, but the
+  receive endpoint normalizes on both sides
+  (``views.py:3231-3254``); the local-profile lookup should match.
+- Source-link verification (``processors.py:244-254``) excludes only
+  ``noscript`` and ``template`` ancestors. ``<a href>`` inside
+  ``<head>``, foreign content, or CSS-hidden ancestors still satisfies
+  the rendered-anchor invariant. Self-attestation by the source author
+  bounds practical impact; tightening
+  ``NON_RENDERED_LINK_ANCESTORS`` (or requiring the link inside an
+  h-card / visible body region for Vouch proof) is the cheap
+  hardening.
+- ``WebmentionStatusView`` default response leaks ``source`` /
+  ``target`` URLs to opaque-token holders.
+  ``views.py:3314-3320``. Already toggleable via
+  ``INDIEWEB_WEBMENTION_STATUS_PUBLIC=True``; consider flipping the
+  default to public-safe or scoping diagnostics to staff.
+- ``WebmentionSourceSnapshot.raw_source_html`` is unbounded ``TextField``
+  capped only by the ingest fetch ceiling (default 1 MiB). Each
+  accepted webmention persists up to ~1 MiB of attacker-controlled
+  HTML. ``models.py:437``; ``processors.py:88-89``. Document a
+  retention/compression policy or cap the stored snapshot size below
+  the fetch size.
+- ``delivery_content_length_too_large`` accepts negative
+  ``Content-Length``. ``websub.py:977-986``. ``int("-1") > max_bytes``
+  is False, so the early reject is skipped. The post-read length check
+  still bounds the body; treat negative parsed values as malformed.
+- WebSub migration ``0026`` drops
+  ``recent_accepted_delivery_digests`` without backfilling. Brief
+  replay-protection gap during deploy. Either backfill in a
+  ``RunPython`` step, or note the deploy-window gap explicitly in the
+  changelog so operators schedule during a quiet period.
+- ``_signature_headers`` does not bind algorithm-name token to header-
+  name suffix. ``websub.py:994-1003``. Currently safe because sha1 is
+  off by default; add a regression test that locks in "trust the
+  algorithm token only" so a future change cannot regress.
+- ``commands/notify_websub.py`` echoes raw ``result.error`` content (up
+  to 500 chars of the hub response body). ``notify_websub.py:60-62``.
+  Pass through ``redact_url`` (or strip URL-shaped substrings) for
+  parity with the redacted topic/hub URLs.
+- CORS preflight 405 lacks ``Vary: Origin`` on the wildcard-origin
+  branch. ``cors.py:142-145``. Upstream cache could pin a 405 across
+  origins. Always emit ``Vary: Origin`` on preflight rejections.
+
+Claims reviewed but rejected:
+
+- ``WebSubAcceptedDelivery`` per-subscription scoping: the unique
+  constraint ``(subscription, body_digest)`` is correct — a digest
+  accepted for subscription A does not block subscription B.
+  ``models.py:787-792``.
+- WebSub HMAC body capture re-encoding: bytes are read once via
+  ``request.body`` and forwarded unchanged to
+  ``validate_websub_delivery_signature`` and the body-digest hash;
+  no normalization. ``views.py:2960-2997``.
+- DNS rebinding TOCTOU on outbound HTTP: closed by IP pinning + per-
+  redirect re-validation in ``http_client.py``;
+  ``tests/test_http_client.py:335-372`` proves the rebinding-resolver
+  case is rejected on hop 2 before any second connection.
+- Webmention sender / WebSub callback connection-pool reuse leaking
+  ``Authorization`` across hosts: no default outbound client carries
+  an ``Authorization`` header; secret-bearing WebSub callers route
+  through ``cross_origin_strip=True``.
+- nh3 sanitizer SVG/MathML smuggling via re-introduced carriers
+  (``<button>``, ``<input>``, ``<source>``): the carriers themselves
+  are not in the allowlist, so smuggling is not possible through
+  ``content_html``.
+- Connection-pool / cookie-jar leakage: ``disable_client_cookies`` is
+  applied consistently on every default outbound client.
 
 ## Positive Security Properties
 
@@ -1024,11 +1215,50 @@ compatibility.
 
 ## Remaining Fix Order
 
-There are no remaining open items as of 2026-05-09. Every 2026-05-09
-finding (one production blocker, three medium-priority residuals, and the
-lower-priority hardening batch) is closed in code; see the resolved
-notes earlier in this document and the corresponding ``DONE.md``
-2026-05-09 entry.
+The 2026-05-09 (later, third pass) review surfaced two Medium residuals
+and a hardening backlog of 22 Lows (24 residual items total). There are
+no Critical / High items and no remaining production blockers. The
+recommended fix order is:
+
+1. Apply ``URLValidator(schemes=["http","https"])`` to
+   ``WebmentionNestedResponse.author_url``, ``author_photo``,
+   ``response_url``, and ``identity`` in a sibling migration that mirrors
+   ``0027``. This restores the parent / nested-response invariant that
+   bundled templates already rely on at render time.
+2. Add ``_action_url_is_same_host`` to
+   ``MicropubMediaView._handle_delete`` so the media-delete path matches
+   ``MicropubView._handle_delete``'s hard-required same-host gate
+   (``views.py:2367``). Tightening the source-by-URL paths is an
+   optional follow-up that should be applied to ``MicropubView._handle_source_query``
+   *and* ``MicropubMediaView._handle_source_by_url_query`` together,
+   since both currently rely on ``_enforce_micropub_url_policy`` plus
+   the host adapter and are at parity with each other.
+3. Set ``Cache-Control: no-store`` on token-endpoint and introspection
+   success responses; add ``Cache-Control: no-store`` and
+   ``Referrer-Policy: no-referrer`` to the consent GET response and the
+   redirect carrying ``code``/``state``/``iss``. RFC-compliance
+   one-liners.
+4. Logging-hygiene sweep: replace ``_redact_auth_code`` with
+   ``log_redaction.redact_token``; route ``client_id`` through
+   ``redact_url`` and ``token.owner`` through a hashed-id helper at
+   ``views.py:1306, 1682, 1686, 1742, 1804, 1848``; pass
+   ``notify_websub`` ``result.error`` through ``redact_url``.
+5. Drop ``:{method}:`` from the rate-limit cache key (or normalize
+   unsupported methods to one bucket) to prevent per-IP allowance
+   multiplication.
+6. Lower-priority hardening: opt-in
+   ``INDIEWEB_WEBMENTION_STRICT_REDIRECTS``; layered
+   ``httpx.Timeout`` for ``WebmentionSender``; consume the auth code
+   on legacy verification success; coerce ``scope=None`` to ``""`` in
+   ``Token`` get-or-create; reject negative ``Content-Length`` early;
+   document the WebSub replay-window semantics and the
+   ``0026``-deploy replay gap; add a regression test pinning
+   ``X-Hub-Signature-256: sha1=…`` rejection; tighten
+   ``NON_RENDERED_LINK_ANCESTORS`` (and Vouch proof location);
+   normalize ``_get_local_profile`` netloc compare; flip
+   ``WebmentionStatusView`` default to public-safe; document a
+   ``WebmentionSourceSnapshot`` retention/compression policy; add
+   ``Vary: Origin`` to the wildcard-branch CORS preflight rejection.
 
 ### Historical fix order (2026-05-09 batch, resolved)
 
@@ -1116,9 +1346,12 @@ resolved:
 
 ## Documentation Impact
 
-Documentation updates have landed alongside every historical fix. As of
-2026-05-09 there is no current residual backlog, so no documentation work
-is outstanding. The 2026-05-09 batch updated ``docs/changelog.rst``,
+Documentation updates have landed alongside every historical fix. The
+2026-05-09 (later, third pass) review introduced 24 new residuals (two
+Mediums and 22 Lows); these are tracked in ``BACKLOG.md`` (2 Priority
+2 + 13 Priority 3 + 9 Priority 4). Each will require corresponding
+``docs/changelog.rst`` notes when fixed. The 2026-05-09 batch updated
+``docs/changelog.rst``,
 ``docs/configuration.rst`` (new sections for
 ``INDIEWEB_WEBMENTION_PAIR_COOLDOWN_SECONDS``, ``INDIEWEB_USER_AGENT``,
 and ``INDIEWEB_LEGACY_PLAINTEXT_KEY_LOOKUP``), ``docs/micropub.rst``
@@ -1128,8 +1361,9 @@ and this analysis. ``AGENTS.md`` did not need a change.
 
 ## Current Backlog Coverage
 
-As of 2026-05-09 (post-batch), ``BACKLOG.md`` is empty across all
-priorities. Every resolved item — including the 2026-05-09 batch — has a
-corresponding entry in ``DONE.md``. New residuals or recommendations
-should be added back to ``BACKLOG.md`` with explicit references to
-affected files, docs, and this analysis.
+As of 2026-05-09 (post-batch and post-third-pass), every previously
+resolved item has a corresponding entry in ``DONE.md``. The 2026-05-09
+(later, third pass) review introduced two Medium residuals and a Low
+hardening backlog (24 residual items total); all 24 are recorded in
+``BACKLOG.md`` (2 Priority 2 + 13 Priority 3 + 9 Priority 4) with
+explicit references to affected files, docs, and this analysis.
