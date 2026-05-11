@@ -7,6 +7,14 @@ Unreleased
 ----------
 * No changes yet.
 
+0.6.1 (2026-05-11)
+------------------
+* Fixed migration ``0020`` on PostgreSQL by delaying the
+  ``Webmention.status_token`` index creation until the final unique field
+  definition. This avoids duplicate varchar pattern-index creation during
+  upgrades from ``0.6.0``. Databases where ``0020`` already applied
+  successfully need no operator action.
+
 0.6.0 (2026-05-10)
 ------------------
 * **Note:** PyPI users upgrading from ``0.5.2`` receive both the

@@ -56,7 +56,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="webmention",
             name="status_token",
-            field=models.CharField(blank=True, db_index=True, default="", max_length=48),
+            field=models.CharField(blank=True, default="", max_length=48),
             preserve_default=False,
         ),
         migrations.RunPython(hash_existing_token_keys, migrations.RunPython.noop),

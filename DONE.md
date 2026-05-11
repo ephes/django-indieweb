@@ -2,6 +2,25 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-05-11
+
+### Fix PostgreSQL migration 0020 status-token index creation
+
+Adjusted migration ``0020`` so the temporary ``Webmention.status_token``
+column is added without ``db_index=True`` before the data backfill. The final
+``unique=True`` field definition still creates the required index, but
+PostgreSQL no longer attempts to create the varchar pattern-ops index twice in
+one migration.
+
+Validation: ``uv run python -m django sqlmigrate indieweb 0020 --settings tests.settings``
+(temporary ``status_token`` add emits no index; final unique field emits the
+index); ``uv run pytest --migrations --no-cov tests/test_models.py -q``
+(9 passed); ``uv run ruff check src/indieweb/migrations/0020_hash_token_keys_and_webmention_status_tokens.py``
+(clean).
+Documentation: ``docs/changelog.rst`` updated.
+Changelog: added an Unreleased bugfix note for PostgreSQL upgrades from
+``0.6.0``.
+
 ## 2026-05-10
 
 ### Close fourth-pass medium security residuals
