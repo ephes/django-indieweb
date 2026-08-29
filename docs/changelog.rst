@@ -5,7 +5,11 @@ Changelog
 
 Unreleased
 ----------
-* No changes yet.
+* Added support for Django 6.1: the dependency cap is now ``Django<6.2`` and
+  the tox matrix covers Django 6.1 on Python 3.12 through 3.14. Django 6.1
+  itself treats a malformed ``Content-Length`` header as ``0`` (empty body),
+  so the WebSub delivery size-limit fallback for malformed headers only
+  applies on older Django versions.
 
 0.6.1 (2026-05-11)
 ------------------

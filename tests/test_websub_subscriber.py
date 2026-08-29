@@ -6,6 +6,7 @@ from datetime import timedelta
 from io import StringIO
 from urllib.parse import parse_qs
 
+import django
 import httpx
 import pytest
 from django.core.management import call_command
@@ -1223,9 +1224,17 @@ def test_callback_post_invalid_content_length_falls_back_to_body_limit(client, s
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 413
-    assert subscription.last_delivery_status_code == 413
-    assert subscription.last_delivery_size == 5
+    if django.VERSION >= (6, 1):
+        # Django 6.1 treats a malformed Content-Length as 0 itself, so the body
+        # reads as empty and the delivery is rejected for the missing topic
+        # Link header instead of tripping the size limit fallback.
+        assert response.status_code == 400
+        assert subscription.last_delivery_status_code == 400
+        assert subscription.last_delivery_size == 0
+    else:
+        assert response.status_code == 413
+        assert subscription.last_delivery_status_code == 413
+        assert subscription.last_delivery_size == 5
 
 
 @pytest.mark.django_db

@@ -112,7 +112,11 @@ def _first_length_error(
 
 
 def _read_request_body_with_invalid_content_length_fallback(request: HttpRequest) -> bytes:
-    """Read a request body even when a malformed Content-Length would make Django raise."""
+    """Read a request body even when a malformed Content-Length would make Django raise.
+
+    Django 6.1+ treats a malformed Content-Length as 0 itself (empty body), so the
+    fallback below is only reachable on older Django versions.
+    """
     try:
         return request.body
     except ValueError:

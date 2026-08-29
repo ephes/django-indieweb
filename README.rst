@@ -147,7 +147,7 @@ Run tests for the supported Python/Django matrix using tox::
     tox
 
 The supported tox matrix covers Django 5.2 LTS on Python 3.10 through 3.14 and
-Django 6.0 on Python 3.12 through 3.14.
+Django 6.0 and 6.1 on Python 3.12 through 3.14.
 
 Run tests once with Django migrations enabled using tox::
 

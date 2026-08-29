@@ -37,10 +37,11 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Framework :: Django :: 5.2",
     "Framework :: Django :: 6.0",
+    "Framework :: Django :: 6.1",
 ]
 
 dependencies = [
-    "Django>=5.2.13,<6.1",
+    "Django>=5.2.13,<6.2",
     "mf2py>=2.0.1",
     "beautifulsoup4>=4.14.2",
     "httpx>=0.28.1",
