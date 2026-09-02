@@ -5,6 +5,8 @@ Changelog
 
 Unreleased
 ----------
+* Fixed Read the Docs builds by installing the project and its runtime
+  dependencies before Sphinx imports the Django application.
 
 0.6.2 (2026-09-02)
 ------------------

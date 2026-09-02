@@ -4,6 +4,22 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-09-02
 
+### Restore Read the Docs builds
+
+- Updated ``.readthedocs.yml`` to install the project itself after the
+  documentation requirements, keeping hosted builds aligned with runtime
+  dependencies declared in ``pyproject.toml``.
+- Added a metadata regression test that requires the Read the Docs project
+  installation step.
+- Documentation: updated ``docs/development.rst`` with the hosted-build
+  dependency behavior.
+- Changelog: added an Unreleased note for the restored documentation builds.
+- Validation: clean Python 3.13 environment following the Read the Docs
+  install order with Sphinx 9.1.0 (build succeeded); ``uv run pytest`` (1,479
+  passed, 91.84% coverage); ``uv run mypy``; ``uv run prek run --all-files``;
+  ``uv run sphinx-build -W -b html docs docs/_build/html``; and
+  ``git diff --check``.
+
 ### Allow explicitly approved remote release actions
 
 - Replaced the blanket agent push/publication prohibition with scoped,

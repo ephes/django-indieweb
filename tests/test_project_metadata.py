@@ -54,6 +54,12 @@ def test_uv_lockfile_is_tracked_for_reproducible_releases() -> None:
     )
 
 
+def test_readthedocs_installs_project_runtime_dependencies() -> None:
+    config = (ROOT_DIR / ".readthedocs.yml").read_text()
+
+    assert "    - method: pip\n      path: .\n" in config
+
+
 def test_test_settings_secret_key_uses_sentinel_default() -> None:
     env = os.environ.copy()
     env.pop("DJANGO_INDIEWEB_TEST_SECRET_KEY", None)

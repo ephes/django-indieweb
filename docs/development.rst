@@ -145,6 +145,11 @@ treated as errors::
 
     uv run sphinx-build -W -b html docs docs/_build/html
 
+Read the Docs installs both ``docs/requirements.txt`` and the project itself
+from ``.readthedocs.yml``. Installing the project keeps the hosted build's
+runtime dependencies aligned with ``pyproject.toml`` when documentation setup
+imports the Django application.
+
 Project Backlog
 ---------------
 
