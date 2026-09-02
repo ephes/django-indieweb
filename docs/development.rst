@@ -43,8 +43,9 @@ Tox is used to test the supported Python and Django version matrix:
 
 - Django 5.2 LTS on Python 3.10, 3.11, 3.12, 3.13, and 3.14
 - Django 6.0 on Python 3.12, 3.13, and 3.14
+- Django 6.1 on Python 3.12, 3.13, and 3.14
 
-The runtime dependency is pinned to Django ``>=5.2.13,<6.1`` so supported
+The runtime dependency is pinned to Django ``>=5.2.13,<6.2`` so supported
 stable Django series are explicit. Django 4.2 is no longer included because its
 extended support has ended.
 
@@ -203,9 +204,18 @@ Building and Publishing Releases
     git tag -a 0.6.0 -m "Release version 0.6.0"
     git push origin 0.6.0
 
-Publishing and pushing are maintainer actions. Agents preparing a release must
-stop after validation and artifact generation, then report the remaining
-``uv publish`` and ``git push`` commands for the maintainer to run.
+9. Create the GitHub release and attach the validated artifacts::
+
+    gh release create 0.6.0 \
+      dist/django_indieweb-0.6.0-py3-none-any.whl \
+      dist/django_indieweb-0.6.0.tar.gz \
+      dist/django-indieweb-sbom.cdx.json \
+      --title "0.6.0" --generate-notes
+
+Publishing packages, pushing refs, and creating GitHub releases require
+explicit, in-conversation maintainer approval for the exact action and target.
+Agents may perform those operations once approved; otherwise they stop after
+validation and artifact generation and report the remaining commands.
 
 Development Commands Summary
 ----------------------------

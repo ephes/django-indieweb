@@ -116,8 +116,8 @@ Before you submit a pull request, check that it meets these guidelines:
    your new functionality into a function with a docstring, and add the
    feature to the list in README.rst.
 3. The pull request should work for Django 5.2 LTS on Python 3.10, 3.11, 3.12,
-   3.13, and 3.14, and Django 6.0 on Python 3.12, 3.13, and 3.14. Run ``tox``
-   locally for the supported matrix when you have the matching Python
+   3.13, and 3.14, and Django 6.0 and 6.1 on Python 3.12, 3.13, and 3.14. Run
+   ``tox`` locally for the supported matrix when you have the matching Python
    interpreters installed.
 4. Add type annotations to new code. Run ``uv run mypy`` to check types.
 5. Follow the existing code style. Run ``uv run ruff format .`` to format code.

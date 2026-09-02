@@ -5,11 +5,19 @@ Changelog
 
 Unreleased
 ----------
-* Added support for Django 6.1: the dependency cap is now ``Django<6.2`` and
-  the tox matrix covers Django 6.1 on Python 3.12 through 3.14. Django 6.1
-  itself treats a malformed ``Content-Length`` header as ``0`` (empty body),
-  so the WebSub delivery size-limit fallback for malformed headers only
-  applies on older Django versions.
+
+0.6.2 (2026-09-02)
+------------------
+* Added support for Django 6.1: the dependency cap is now ``Django<6.2``, and
+  the tox and GitHub Actions matrices cover Django 6.1 on Python 3.12 through
+  3.14. Django 6.1 itself treats a malformed ``Content-Length`` header as ``0``
+  (empty body), so the WebSub delivery size-limit fallback for malformed
+  headers only applies on older Django versions.
+* Raised the minimum ``cryptography`` version to 50.0.0 and refreshed the
+  locked runtime dependency graph to patched releases of ``cryptography``,
+  ``soupsieve``, ``sqlparse``, ``idna``, and ``urllib3``.
+* Added the project README to the package metadata so PyPI renders the full
+  project description for this and future releases.
 
 0.6.1 (2026-05-11)
 ------------------

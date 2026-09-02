@@ -116,8 +116,10 @@ artifact building, SBOM generation, publishing, and tagging.
 
 Quick command reference:
 
-Maintainer-only commands. Agents may run `uv build` and `just sbom` for
-validation, but stop before `uv publish` and `git push`.
+Commands that publish artifacts or refs require explicit, in-conversation
+approval. Agents may run `uv build` and `just sbom` for validation without
+approval; they may run `uv publish`, `git push`, or GitHub publication commands
+only when the user explicitly authorizes the exact action and target.
 
 ```bash
 # Build the package
@@ -215,18 +217,24 @@ When finishing a backlog item:
 
 ## Commit & Pull Request Guidelines
 
-### Pushing Is Manual. Committing Needs Approval.
+### Remote Actions and Commits Need Approval
 
-**Pushing is a manual user action.** The user pushes — not the agent, not a hook, not a script the agent runs. Never run `git push`, `git push --force`, `git push --force-with-lease`, `gh pr create`, `gh pr merge`, or any other command that publishes work to a remote. There are no exceptions — not "the user said push last time", not "the plan says push at the end", not "everything is green and the branch is ready", not "the previous session pushed". If a push seems needed, say so and stop. The user runs it themselves, out of band.
+**Commits and remote actions require explicit, in-conversation approval.** Agents may commit, push branches or tags, publish packages, create pull requests, and create GitHub releases when the user authorizes the exact action and target in the current conversation. One request may authorize several clearly named steps, such as committing the current release changes, pushing `develop`, pushing tag `0.6.2`, and creating the `0.6.2` GitHub release.
+
+- Approval is scoped to the named operation and target; it is not standing authorization for later commits, pushes, tags, releases, or repositories.
+- Approval to commit does not imply approval to push unless both actions are named. Likewise, approval to push a branch does not imply approval to push a tag or create a release.
+- Before a remote action, resolve the exact ref, artifact, and remote with read-only checks. Stop and report unexpected divergence, missing commits, tag collisions, or artifact/version mismatches.
+- Force pushes, remote ref deletion, release deletion, and pull-request merges require separate explicit approval that names the destructive or integrating action. Never infer that approval from an ordinary push or release request.
+- Hooks and scripts must not publish implicitly. The agent that received approval performs the approved operation directly so its target and result remain visible.
 
 **Committing requires explicit, in-conversation approval.** Do not run `git commit` on your own. Even when all quality gates are green and the implementation looks complete, the user reviews the working-tree changes before they become commits.
 
 - After finishing implementation work, stop at the staging boundary: report what changed, summarize validation results, and wait.
-- The user will ask you to commit explicitly. If they do not, do not commit. Approval to commit is *not* approval to push.
+- The user will ask you to commit explicitly. If they do not, do not commit. Approval to commit is *not* approval to push unless the same request explicitly authorizes both.
 - "Approved once" is not "approved forever": each commit needs its own go-ahead.
 - This rule applies even if a previously written plan, prompt, handoff document, or backlog item says "commit and push at the end". Treat those as descriptions of the eventual outcome, not as standing authorization.
-- It is correct and expected to end a session with local commits the user has not yet pushed; that is the user's job.
-- If you commit prematurely, surface it immediately and ask whether to amend, revert, or leave it. Never try to "fix" a premature commit by pushing it.
+- It is correct to end a session with local commits awaiting separate push approval.
+- If you commit or publish prematurely, surface it immediately and ask whether to leave or recover the action. Never conceal it with another remote mutation.
 
 ### Commit Mechanics (once the user has approved)
 
@@ -247,7 +255,7 @@ When finishing a backlog item:
 
 ### Landing the Plane (Session Completion)
 
-**When ending a work session**, complete the steps below and stop at the staging boundary. The agent does not commit or push on its own.
+**When ending a work session**, complete the steps below and stop at the approval boundary. The agent does not commit or publish without explicit, current-conversation approval.
 
 **Workflow:**
 
@@ -255,8 +263,9 @@ When finishing a backlog item:
 2. **Run quality gates** (if code changed) - Tests, linters, builds. Report results.
 3. **Update backlog status** - Move completed items from `BACKLOG.md` to `DONE.md`; update docs and changelog when needed.
 4. **Summarize for the user** - Report what changed, the validation results, and any open questions. Wait.
-5. **Wait for explicit commit approval** - The user reviews the working-tree changes and asks for a commit. Approval is per-commit, not standing.
-6. **Hand off** - Provide context for the next session.
+5. **Wait for explicit approval** - The user reviews the working-tree changes and names any commit or remote actions to perform. Approval is scoped, not standing.
+6. **Execute approved actions** - Recheck exact refs/artifacts, then perform only the authorized commit, push, tag, package, PR, or release operations.
+7. **Hand off** - Report local and remote results and provide context for the next session.
 
 ### Definition of Done
 

@@ -2,6 +2,54 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-09-02
+
+### Allow explicitly approved remote release actions
+
+- Replaced the blanket agent push/publication prohibition with scoped,
+  current-conversation approval for commits, branch and tag pushes, package
+  publication, pull-request creation, and GitHub release creation.
+- Kept force pushes, remote deletion, and pull-request merges behind separate
+  explicit approval, and require read-only ref/artifact checks before remote
+  actions.
+- Documentation: updated ``AGENTS.md`` and the release process in
+  ``docs/development.rst``, including the GitHub release artifact command.
+- Changelog: no package changelog entry was needed because this changes
+  repository agent governance, not installed-package behavior.
+- Validation: ``uv run sphinx-build -W -b html docs docs/_build/html`` and
+  ``uv run prek run --all-files``.
+
+### Prepare the 0.6.2 Django 6.1 compatibility release
+
+- Added Django 6.1 support to the package metadata and tox matrix, including
+  Python 3.12 through 3.14 coverage, and added the matching environments to
+  the GitHub Actions matrix.
+- Updated the Django 6.1 WebSub malformed-``Content-Length`` regression
+  expectation to match Django's new request parsing behavior.
+- Raised the minimum ``cryptography`` version to 50.0.0 and refreshed the
+  locked runtime dependency graph to patched releases for all open dependency
+  advisories.
+- Bumped the package, runtime, and documentation versions to 0.6.2 and prepared
+  the dated release notes; package metadata now includes ``README.rst`` as the
+  rendered PyPI description.
+- Validation: ``uv sync --frozen``; ``uv run pytest`` (1,478 passed, 91.84%
+  coverage); ``uv run mypy``; ``uv run prek run --all-files``;
+  ``uv run sphinx-build -W -b html docs docs/_build/html``; ``tox -p auto``;
+  explicit managed-interpreter tox runs for ``py311-django52`` and all Python
+  3.12 environments; a frozen-runtime ``pip-audit`` (no known
+  vulnerabilities); ``uv build``; ``uvx twine check --strict``; ``just sbom``;
+  Python 3.10 wheel installation/import smoke test; and ``git diff --check``.
+- Documentation: ``README.rst``, ``CONTRIBUTING.rst``,
+  ``docs/development.rst``, ``docs/changelog.rst``, and the supported version
+  metadata describe Django 6.1 support; no additional usage documentation
+  changes were needed.
+- Changelog: added the 0.6.2 Django compatibility and dependency-security
+  notes.
+- Independent review: Pi with ``openai-codex/gpt-5.6-sol`` found two release
+  warnings in the first round (stale support documentation and the old
+  cryptography floor in its regression guard); both were fixed, and the
+  targeted second round returned clean with no remaining findings.
+
 ## 2026-05-11
 
 ### Fix PostgreSQL migration 0020 status-token index creation
