@@ -1,6 +1,6 @@
 <div class="p-repost h-card">
   {% if webmention.author_photo %}
-    <img class="u-photo" src="{{ webmention.author_photo }}" alt="{{ webmention.author_name }}" width="48" height="48" loading="lazy">
+    <img class="u-photo" src="{{ webmention.author_photo }}" alt="{{ webmention.author_name }}" width="48" height="48" loading="lazy" referrerpolicy="no-referrer">
   {% endif %}
   <span class="p-author">
     {% if webmention.author_url %}

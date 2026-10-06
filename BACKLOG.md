@@ -14,14 +14,6 @@ No current Priority 2 items.
 
 ## Priority 3
 
-### Token endpoint and introspection: `Cache-Control: no-store` on success
-
-RFC 6749 §5.1 mandates `Cache-Control: no-store` on token-endpoint responses; RFC 7662 §2.2 strongly recommends it for introspection. The 401 path already sets it (`views.py:1253-1256`); the 200/201 success paths do not. Add to `TokenView.send_token` (`views.py:1644-1655`), `TokenIntrospectionView._active_response` (`views.py:1869-1879`), and `_inactive_response` (`views.py:1829-1830`).
-
-### Consent screen: `Cache-Control: no-store` and `Referrer-Policy: no-referrer`
-
-`AuthView.get` renders `client_id`, `redirect_uri`, `state`, `me`, `scope` into HTML and currently sets only `X-Frame-Options` / `Content-Security-Policy: frame-ancestors 'none'` (`views.py:1473-1476`). Add `Cache-Control: no-store` and `Referrer-Policy: no-referrer` on the consent GET response and on the redirect emitted by `_handle_consent` that carries `code` / `state` / `iss`.
-
 ### `_redact_auth_code` should honor `INDIEWEB_LOG_REDACTION`
 
 `_redact_auth_code` (`views.py:1221-1227`) unconditionally returns `code[:6] + "..."`. With a 32-char `get_random_string` (charset 62), six characters is ~35 bits and is inconsistent with the redaction policy operators opted into. Replace call sites with `log_redaction.redact_token`, or have the helper consult `_resolve_mode` and emit a digest in redact mode.
@@ -33,10 +25,6 @@ Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django user
 ### `notify_websub` management command: redact `result.error`
 
 `commands/notify_websub.py:60-62` writes `result.error` (up to 500 chars of the hub response body) verbatim to stdout, bypassing `INDIEWEB_LOG_REDACTION`. Pass through `redact_url` (or strip URL-shaped substrings) for parity with the redacted topic/hub URLs already routed through the helper.
-
-### CORS preflight: emit `Vary: Origin` on wildcard rejection
-
-`cors.py:142-145` adds `Vary: Origin` only when `not config.allow_all_origins`; the wildcard branch's 405 rejection is therefore cacheable across origins. Always emit `Vary: Origin` on preflight rejections.
 
 ### Per-method rate-limit counter multiplies effective allowance
 
@@ -73,10 +61,6 @@ Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django user
 ### WebSub callback token existence oracle
 
 `WebSubCallbackView.get` returns distinguishable 404 vs 400/200/204 responses for unknown vs known callback tokens (`views.py:2921-2930`), and `post` returns 404 for unknown-or-inactive subscriptions (`views.py:2962-2966`). Token entropy is high, but a partial leak becomes testable. Return uniform 404 for tokens that do not match an active subscription, optionally with a small constant-time delay.
-
-### Webmention templates: no-referrer image loads
-
-Bundled Webmention author-photo `<img class="u-photo">` tags lack `referrerpolicy="no-referrer"` in `templates/indieweb/webmention_types/{like,mention,reply,repost,nested_response}.html`. Add `referrerpolicy="no-referrer"` (and consider `crossorigin="anonymous"`) so visitor browsers do not send the rendering page URL to attacker-chosen photo origins.
 
 ### Enforce nested-response URL validators on ingest
 

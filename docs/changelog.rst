@@ -5,6 +5,22 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** Token endpoint success responses (``201`` and ``200``, form
+  and JSON) and both token introspection responses (active and inactive) now
+  send ``Cache-Control: no-store`` and ``Pragma: no-cache``, as RFC 6749
+  section 5.1 requires, so bearer tokens and token metadata are not cached.
+  The consent screen and its approve and deny redirects now send
+  ``Cache-Control: no-store``, ``Pragma: no-cache`` and
+  ``Referrer-Policy: no-referrer``, so the rendered request parameters are
+  not cached and neither the consent page nor the redirect hop sends a
+  ``Referer``. Clients still need to protect their own callback page, whose
+  URL carries ``code``, ``state`` and ``iss``.
+* **Security:** Bundled Webmention author photos (``like``, ``mention``,
+  ``reply``, ``repost`` and nested responses) now load with
+  ``referrerpolicy="no-referrer"``, so visitors' page URLs are no longer sent
+  to sender-chosen photo hosts.
+* CORS preflight rejections now always include ``Vary: Origin``, including in
+  wildcard mode and when the requested method is not supported.
 * **Security:** Redeeming an authorization code at the authorization endpoint
   (the profile-URL POST without ``action``) now applies the token endpoint's
   binding checks. The ``redirect_uri`` stored with the code is required and

@@ -4,6 +4,32 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-06
 
+### No-store and no-referrer headers on OAuth responses
+
+- `TokenView.send_token` (201 and 200, form and JSON) and both
+  `TokenIntrospectionView` responses (active and inactive) now send
+  ``Cache-Control: no-store`` and ``Pragma: no-cache``. This closes the backlog
+  item "Token endpoint and introspection: `Cache-Control: no-store` on
+  success".
+- The consent GET and the approve and deny redirects from `_handle_consent`
+  now send ``Cache-Control: no-store``, ``Pragma: no-cache`` and
+  ``Referrer-Policy: no-referrer`` (the client callback page remains the
+  client's responsibility). This closes "Consent screen:
+  `Cache-Control: no-store` and `Referrer-Policy: no-referrer`".
+- CORS preflight rejections (disallowed origin and unsupported method) always
+  send ``Vary: Origin``, also in wildcard mode. This closes "CORS preflight:
+  emit `Vary: Origin` on wildcard rejection".
+- The five bundled Webmention author-photo ``<img class="u-photo">`` tags now
+  carry ``referrerpolicy="no-referrer"``. ``crossorigin="anonymous"`` was not
+  added, because it would break photos from hosts that do not send CORS
+  headers. This closes "Webmention templates: no-referrer image loads".
+- Documentation: ``docs/api.rst`` (token, introspection, consent and CORS
+  headers) and ``docs/webmention.rst`` (author-photo referrer policy).
+- Changelog: added Unreleased security notes and a CORS note.
+- Validation: ``uv run pytest``; ``uv run mypy``; ``uv run prek run
+  --all-files``; ``uv run sphinx-build -W -b html docs docs/_build/html``; and
+  ``git diff --check``.
+
 ### Bind and consume codes redeemed at the authorization endpoint
 
 - The authorization-endpoint code redemption (POST without ``action``) now

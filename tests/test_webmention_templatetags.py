@@ -1,5 +1,6 @@
 """Tests for webmention template tags."""
 
+import re
 from datetime import timedelta
 
 import pytest
@@ -315,6 +316,24 @@ def test_show_webmentions_by_type(render_webmentions):
     assert "Bob" not in rendered
     assert "Charlie" not in rendered
     assert "News Site" not in rendered
+
+
+def test_webmention_author_photos_send_no_referrer(webmentions, render_webmentions, create_nested_response):
+    """Every bundled author photo (like, mention, reply, repost, nested) loads with no Referer."""
+    for key in ("reply", "mention"):
+        webmentions[key].author_photo = f"https://{key}.example/photo.jpg"
+        webmentions[key].save(update_fields=["author_photo"])
+    create_nested_response(
+        webmentions["reply"],
+        "https://comments.example/reply/photo",
+        author_photo="https://nested.example/photo.jpg",
+    )
+
+    rendered = render_webmentions()
+
+    photos = re.findall(r'<img class="u-photo"[^>]*>', rendered)
+    assert len(photos) == 5
+    assert all('referrerpolicy="no-referrer"' in photo for photo in photos)
 
 
 def test_verified_nested_response_renders_under_verified_parent_reply(

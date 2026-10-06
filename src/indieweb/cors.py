@@ -140,8 +140,7 @@ class CorsMixin(View):
                 return preflight_response
             if origin and not _origin_allowed(config, origin):
                 rejection_response = HttpResponse(status=405)
-                if not config.allow_all_origins:
-                    patch_vary_headers(rejection_response, ("Origin",))
+                patch_vary_headers(rejection_response, ("Origin",))
                 return rejection_response
 
         response = super().dispatch(request, *args, **kwargs)
@@ -163,7 +162,11 @@ class CorsMixin(View):
 
         allowed_methods = {method.upper() for method in self.cors_allowed_methods}
         if requested_method.upper() not in allowed_methods:
-            return HttpResponse(status=405)
+            # Preflight rejections always vary on Origin, including in wildcard mode,
+            # so a shared cache never replays one origin's rejection to another.
+            rejection_response = HttpResponse(status=405)
+            patch_vary_headers(rejection_response, ("Origin",))
+            return rejection_response
 
         response = HttpResponse(status=204)
         response["Allow"] = ", ".join((*self.cors_allowed_methods, "OPTIONS"))

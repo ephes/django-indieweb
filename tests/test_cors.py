@@ -289,6 +289,20 @@ def test_disallowed_origin_preflight_gets_no_cors_headers(client, settings):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("allowed_origins", ["*", (ALLOWED_ORIGIN,)])
+def test_preflight_method_rejection_varies_on_origin(client, settings, allowed_origins):
+    """Preflight rejections vary on Origin in wildcard and allowlist modes alike."""
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = allowed_origins
+    url = reverse("indieweb:token")
+
+    response = _preflight(client, url, method="DELETE")
+
+    assert response.status_code == 405
+    assert "Access-Control-Allow-Origin" not in response
+    assert response["Vary"] == "Origin"
+
+
+@pytest.mark.django_db
 def test_cors_does_not_overwrite_existing_allow_origin(client, settings, auth):
     settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
     settings.INDIEWEB_CORS_ALLOW_CREDENTIALS = True

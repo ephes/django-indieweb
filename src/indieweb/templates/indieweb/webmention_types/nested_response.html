@@ -4,7 +4,7 @@
     <div class="nested-response-header">
       <div class="p-author h-card">
         {% if nested_response.author_photo %}
-          <img class="u-photo" src="{{ nested_response.author_photo }}" alt="{{ nested_response.author_name }}" width="40" height="40" loading="lazy">
+          <img class="u-photo" src="{{ nested_response.author_photo }}" alt="{{ nested_response.author_name }}" width="40" height="40" loading="lazy" referrerpolicy="no-referrer">
         {% endif %}
         <span class="author-info">
           {% if nested_response.author_url %}

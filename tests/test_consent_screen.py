@@ -190,9 +190,37 @@ class TestConsentScreenDisplay:
         assert response["X-Frame-Options"] == "DENY"
         assert "frame-ancestors 'none'" in response["Content-Security-Policy"]
 
+    def test_consent_screen_is_not_cacheable_and_sends_no_referrer(self, client, user, auth_url):
+        """Consent GET renders request parameters, so it must not be cached or leak via Referer."""
+        client.login(username=user.username, password="testpass")
+
+        response = client.get(auth_url, _authorization_request_data())
+
+        assert response.status_code == 200
+        assert response["Cache-Control"] == "no-store"
+        assert response["Pragma"] == "no-cache"
+        assert response["Referrer-Policy"] == "no-referrer"
+
 
 class TestConsentActions:
     """Test consent approval and denial actions."""
+
+    @pytest.mark.parametrize("action", ["approve", "deny"])
+    def test_consent_redirect_is_not_cacheable_and_sends_no_referrer(self, client, user, auth_url, action):
+        """Consent redirects carry code/state/iss or the error in the URL; keep them out of caches and Referer."""
+        client.login(username=user.username, password="testpass")
+
+        response = client.post(auth_url, _consent_data(action=action))
+
+        assert response.status_code == 302
+        query = parse_qs(urlparse(response["Location"]).query)
+        if action == "approve":
+            assert "code" in query
+        else:
+            assert query["error"] == ["access_denied"]
+        assert response["Cache-Control"] == "no-store"
+        assert response["Pragma"] == "no-cache"
+        assert response["Referrer-Policy"] == "no-referrer"
 
     def test_approve_with_multiple_scopes(self, client, user, auth_url):
         """Test approving with multiple scopes creates proper auth."""

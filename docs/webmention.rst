@@ -1064,7 +1064,9 @@ storing or linking them. Processor-owned Webmention author URLs and author
 photos are restricted to absolute ``http://`` and ``https://`` values; unsafe
 or malformed remote values are stored and rendered as blank. The bundled
 Webmention templates render external author/source links with
-``rel="nofollow noopener ugc"`` and ``referrerpolicy="no-referrer"``. Keep
+``rel="nofollow noopener ugc"`` and ``referrerpolicy="no-referrer"``, and
+load author photos with ``referrerpolicy="no-referrer"`` so visitors' page URLs
+are not sent to the photo host. Keep
 moderation decisions explicit. Webmention.io collection confirms that the
 service collected a
 mention for the domain; it does not mean django-indieweb fetched the source,
@@ -1113,7 +1115,8 @@ Custom templates that render built-in ``Webmention.content_html`` or
 ``show_webmentions`` or apply the same sanitizer before marking HTML safe.
 Custom outbound links to Webmention authors, source pages, and nested response
 URLs should preserve the bundled ``rel="nofollow noopener ugc"`` and
-``referrerpolicy="no-referrer"`` attributes unless the host has a stricter
+``referrerpolicy="no-referrer"`` attributes, and custom author-photo ``<img>``
+tags should keep ``referrerpolicy="no-referrer"``, unless the host has a stricter
 site policy.
 
 Management Commands

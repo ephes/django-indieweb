@@ -1933,3 +1933,57 @@ def test_token_post_rejects_overlong_scope(client, token_endpoint_url):
     )
     assert response.status_code == 400
     assert models.Token.objects.count() == 0
+
+
+def _assert_no_store(response):
+    assert response["Cache-Control"] == "no-store"
+    assert response["Pragma"] == "no-cache"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("accept", ["application/json", "*/*"])
+@pytest.mark.parametrize("reissue", [False, True])
+def test_token_success_responses_are_not_cacheable(
+    client, settings, user, token_endpoint_url, token_payload, accept, reissue
+):
+    """RFC 6749 section 5.1: token responses (201 issue and 200 reissue, JSON and form) carry no-store."""
+    settings.INDIEWEB_TOKEN_EXPIRES_IN = 3600
+    if reissue:
+        models.Token.objects.create(
+            owner=user,
+            client_id=token_payload["client_id"],
+            me=token_payload["me"],
+            scope=token_payload["scope"],
+            expires_at=timezone.now() + timedelta(seconds=5),
+        )
+
+    response = client.post(token_endpoint_url, data=token_payload, HTTP_ACCEPT=accept)
+
+    assert response.status_code == (200 if reissue else 201)
+    expected_type = "application/json" if accept == "application/json" else "application/x-www-form-urlencoded"
+    assert response["Content-Type"] == expected_type
+    _assert_no_store(response)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("target_key", ["nostoreactivesecret", "unknown-target-token"])
+def test_token_introspection_responses_are_not_cacheable(client, user, token_introspection_endpoint_url, target_key):
+    """RFC 7662 section 2.2: active and inactive introspection responses carry no-store."""
+    caller = models.Token.objects.create(
+        owner=user,
+        key="nostoreactivesecret",
+        client_id="https://webapp.example.org",
+        me="https://example.org/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    response = client.post(
+        token_introspection_endpoint_url,
+        data={"token": target_key},
+        HTTP_AUTHORIZATION=f"Bearer {caller.key}",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active"] is (target_key == "nostoreactivesecret")
+    _assert_no_store(response)

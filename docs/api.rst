@@ -303,7 +303,10 @@ the original submitted value is still shown, stored, and returned.
 - If user is not authenticated: Redirects to Django login
 - If user is authenticated: Returns the consent screen with
   ``X-Frame-Options: DENY`` and ``Content-Security-Policy: frame-ancestors
-  'none'`` to prevent framing. When the logged-in user has a configured
+  'none'`` to prevent framing, plus ``Cache-Control: no-store``,
+  ``Pragma: no-cache`` and ``Referrer-Policy: no-referrer`` so the rendered
+  request parameters are not cached and the consent URL is not sent as a
+  ``Referer``. When the logged-in user has a configured
   h-card profile URL, the consent screen also shows that local identity URL
   and warns if it differs from the submitted ``me`` value.
 - If user is authenticated and approves: Redirects to ``redirect_uri`` with
@@ -312,7 +315,14 @@ the original submitted value is still shown, stored, and returned.
   and ``state``. Denial redirects do not include ``iss`` because clients must
   not assume error responses originated from the intended authorization server.
   Consent approve/deny submissions require a valid Django CSRF token and a
-  logged-in user before any client redirect is built.
+  logged-in user before any client redirect is built. Both redirect responses
+  carry ``Cache-Control: no-store``, ``Pragma: no-cache`` and
+  ``Referrer-Policy: no-referrer``, so the redirect response itself is not
+  cached and the redirect hop sends no ``Referer``. These headers do not
+  govern the client's callback page: clients must protect their own callback
+  responses (for example with their own ``Cache-Control`` and
+  ``Referrer-Policy`` headers) because its URL contains ``code``, ``state``
+  and ``iss``.
 
 **Example Response:**
 
@@ -444,7 +454,10 @@ POST Request
 Returns an access token. When the client explicitly prefers
 ``Accept: application/json``, the success response is JSON. Default requests
 and wildcard-only ``Accept: */*`` requests keep the legacy form-encoded body.
-Both formats include ``token_type=Bearer``.
+Both formats include ``token_type=Bearer``. Success responses (``201`` for a
+new token, ``200`` for a reissue) carry ``Cache-Control: no-store`` and
+``Pragma: no-cache`` (RFC 6749 section 5.1) so the bearer token is never
+stored by browsers or intermediaries.
 
 **Example Response:**
 
@@ -452,6 +465,8 @@ Both formats include ``token_type=Bearer``.
 
     HTTP/1.1 201 Created
     Content-Type: application/x-www-form-urlencoded
+    Cache-Control: no-store
+    Pragma: no-cache
 
     access_token=xyz789&token_type=Bearer&expires_in=86400&scope=create&me=https://user.example.com
 
@@ -459,6 +474,8 @@ Both formats include ``token_type=Bearer``.
 
     HTTP/1.1 201 Created
     Content-Type: application/json
+    Cache-Control: no-store
+    Pragma: no-cache
 
     {
         "access_token": "xyz789",
@@ -537,6 +554,8 @@ POST Request
 
     HTTP/1.1 200 OK
     Content-Type: application/json
+    Cache-Control: no-store
+    Pragma: no-cache
 
     {
         "active": true,
@@ -557,6 +576,8 @@ legacy non-expiring rows where ``Token.expires_at`` is ``NULL``.
 
     HTTP/1.1 200 OK
     Content-Type: application/json
+    Cache-Control: no-store
+    Pragma: no-cache
 
     {"active": false}
 
@@ -1833,8 +1854,10 @@ processing, and async enqueue hooks. WebSub subscriber callbacks are excluded
 from built-in CORS because they are server-to-server hub callbacks. A valid
 preflight needs an allowed ``Origin`` plus an
 ``Access-Control-Request-Method`` that is supported by the target endpoint.
-Disallowed-origin responses and preflight rejections include ``Vary: Origin``
-for explicit allowlists and do not receive permissive CORS headers. Existing
+Disallowed-origin responses include ``Vary: Origin`` for explicit allowlists.
+Preflight rejections (disallowed origin or unsupported method) always include
+``Vary: Origin``, also in wildcard mode. Neither receives permissive CORS
+headers. Existing
 ``Access-Control-Allow-Origin`` headers set by downstream middleware are not
 overwritten.
 Successful preflights return:

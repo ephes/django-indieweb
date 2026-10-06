@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import Message
 from pathlib import PurePath
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import parse_qsl, unquote, urlparse, urlunparse
 from urllib.parse import urlencode as urllib_urlencode
 
@@ -67,6 +67,8 @@ if TYPE_CHECKING:
     from .handlers import MicropubEntry, MicropubMediaItem
 
 logger = logging.getLogger(__name__)
+
+_ResponseT = TypeVar("_ResponseT", bound=HttpResponseBase)
 
 
 # Maximum lengths for protocol-facing input fields, derived from the backing
@@ -1292,6 +1294,20 @@ def _parse_bearer_authorization_header(auth_header: str | None) -> str | None:
     return token
 
 
+def _no_store(response: _ResponseT) -> _ResponseT:
+    """Mark a response carrying credentials or grant data as non-cacheable."""
+    response["Cache-Control"] = "no-store"
+    response["Pragma"] = "no-cache"
+    return response
+
+
+def _no_store_no_referrer(response: _ResponseT) -> _ResponseT:
+    """Mark a consent response non-cacheable and keep its URL out of ``Referer``."""
+    _no_store(response)
+    response["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 def _bearer_authentication_error_response() -> HttpResponse:
     """Return the shared response for token-protected resource authentication failures."""
     response = HttpResponse("authentication error", status=401)
@@ -1569,7 +1585,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         response = render(request, "indieweb/consent.html", context)
         response["X-Frame-Options"] = "DENY"
         response["Content-Security-Policy"] = "frame-ancestors 'none'"
-        return response
+        return _no_store_no_referrer(response)
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         logger.info(f"auth view post: {request}, {args}, {kwargs}")
@@ -1631,7 +1647,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             deny_params: dict[str, str] = {"error": "access_denied", "state": state}
             target = _append_redirect_params(redirect_uri, deny_params)
             logger.info("auth view consent denied")
-            return redirect(target)
+            return _no_store_no_referrer(redirect(target))
 
         auth = self._replace_auth_code(
             owner=request.user,
@@ -1653,7 +1669,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         }
         target = _append_redirect_params(redirect_uri, url_params)
         logger.info("auth view consent approved")
-        return redirect(target)
+        return _no_store_no_referrer(redirect(target))
 
     @staticmethod
     def _replace_auth_code(**fields: Any) -> Auth:
@@ -1812,9 +1828,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         }
         status_code = 201 if created else 200
         if _prefers_json_response(request):
-            return JsonResponse(response_values, status=status_code)
+            return _no_store(JsonResponse(response_values, status=status_code))
         response = urlencode(response_values)
-        return HttpResponse(response, status=status_code, content_type="application/x-www-form-urlencoded")
+        return _no_store(HttpResponse(response, status=status_code, content_type="application/x-www-form-urlencoded"))
 
     def _invalid_grant_response(self) -> HttpResponse:
         return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
@@ -1977,7 +1993,7 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     cors_allowed_methods = ("POST",)
 
     def _inactive_response(self) -> JsonResponse:
-        return JsonResponse({"active": False})
+        return _no_store(JsonResponse({"active": False}))
 
     def _submitted_token(self, request: HttpRequest) -> str:
         value = request.POST.get("token")
@@ -2026,7 +2042,7 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         }
         if token.expires_at is not None:
             response_values["exp"] = _token_timestamp(token.expires_at)
-        return JsonResponse(response_values)
+        return _no_store(JsonResponse(response_values))
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         caller_token = self._caller_token(request)
