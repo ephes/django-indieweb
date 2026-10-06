@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-06
 
+### Patch vulnerable locked dependencies
+
+- Upgraded ``uv.lock`` only, to clear Dependabot and ``pip-audit`` findings:
+  ``anyio`` 4.11.0 -> 4.14.2 (critical and medium advisories; ``sniffio`` is
+  no longer needed), ``Django`` 6.1 -> 6.1.2 and 5.2.17 -> 5.2.18,
+  ``urllib3`` 2.7.0 -> 2.8.0, and ``virtualenv`` 21.2.4 -> 21.14.5 (with
+  ``python-discovery`` 1.6.1). No major version bumps.
+- Documentation: no update needed; behavior and usage are unchanged.
+- Changelog: added an Unreleased security note.
+- Validation: ``uvx pip-audit`` on the exported lock (no findings);
+  ``uv run pytest``; ``uv run mypy``; ``uv run prek run --all-files``.
+
 ### Bind and consume codes redeemed at the authorization endpoint
 
 - The authorization-endpoint code redemption (POST without ``action``) now
