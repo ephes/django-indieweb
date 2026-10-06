@@ -42,17 +42,13 @@ Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django user
 
 `rate_limit.py:88-94` keys the counter on `:{method}:`, and `RateLimitMixin.dispatch` (`rate_limit.py:143-148`) increments before `super().dispatch`, so unsupported-method requests still consume cache slots and the effective per-IP limit is `limit × distinct-methods-tried`. Drop `method` from the key (limits are per-endpoint, not per-method), or normalize all non-allowed methods to a single bucket.
 
-### Legacy code-verification POST should consume the auth code on success
-
-`AuthView._verify_auth_code` (`views.py:1568-1599`) returns `{"me": auth.me}` on a successful match without calling `auth.delete()`. The token endpoint's `select_for_update` + delete-count gate (`views.py:1800-1810`) is the single-use pattern; the legacy verification path should match so a stolen 60-second-window code cannot be reused as a `me`-validity oracle.
-
-### `_handle_consent` upsert should be atomic
-
-`views.py:1540-1555` runs `existing = Auth.objects.get(...)` / `existing.delete()` / `Auth.objects.create(...)` outside `transaction.atomic()`. Two concurrent approves for the same `(owner, client_id, scope, me)` race the delete and `create` can hit `IntegrityError` on `unique_together`, surfacing as a 500 to the legitimate user. Wrap in `transaction.atomic()` with `select_for_update`, or use `update_or_create`. Reliability rather than privilege issue.
-
 ### `Token.objects.get_or_create(scope=None)` row proliferation on Postgres/MySQL
 
 `unique_together = ("me", "client_id", "scope", "owner")` does not collapse on NULL on Postgres/MySQL. Each token exchange for a no-scope auth code runs the `create` branch, accumulating rows. Coerce `scope=None` to `""` for the storage key, or add a partial unique index. Affected: `views.py:1623-1629`; `models.py:247, 251`.
+
+### `Auth` uniqueness does not collapse `NULL` scopes on PostgreSQL/MySQL
+
+`Auth.Meta.unique_together = ("me", "client_id", "scope", "owner")` (`models.py`) treats `NULL` scopes as distinct on PostgreSQL and MySQL, so two concurrent no-scope consent approvals (`AuthView._replace_auth_code` in `views.py`) can each leave a pending code. Both are user-approved, single-use, and short-lived, so this is hygiene rather than a privilege issue. Do not fix it with an owner-row `select_for_update` (deadlocks against a concurrent token exchange inserting a `Token` for the same owner); prefer storing no-scope grants as `""` or a null-safe unique constraint, together with the `Token` item above.
 
 ### `_check_redirect_uri`: reject submitted `redirect_uri` when stored value is empty
 

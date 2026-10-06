@@ -324,7 +324,8 @@ the original submitted value is still shown, stored, and returned.
 POST Request
 ~~~~~~~~~~~~
 
-Verifies an authorization code (used for code verification). This legacy
+Redeems an authorization code at the authorization endpoint (the IndieAuth
+profile-URL flow, for clients that only need to identify the user). This
 protocol POST remains CSRF-exempt; browser consent approve/deny POSTs to the
 same endpoint are CSRF-protected.
 
@@ -332,6 +333,20 @@ same endpoint are CSRF-protected.
 
 - ``code`` - The authorization code
 - ``client_id`` - The client application's URL
+- ``redirect_uri`` - The redirect URI used in the authorization request. It
+  must match the value stored with the code, using the same normalization as
+  the token endpoint.
+- ``code_verifier`` - The PKCE verifier, required when the authorization
+  request included a ``code_challenge``. Sending a verifier for a code that
+  was issued without a challenge is rejected.
+
+The code is single-use. A successful redemption consumes it, so it cannot be
+redeemed again here or exchanged at the token endpoint. A missing or
+mismatched ``redirect_uri`` or ``code_verifier`` returns HTTP 400
+``invalid_grant`` and also deletes the code. A malformed ``redirect_uri`` is
+rejected with ``invalid_grant`` before the code is looked up. Unknown,
+expired, or already-consumed codes return HTTP 400
+``Invalid authorization code``.
 
 **Example Request:**
 
@@ -341,7 +356,7 @@ same endpoint are CSRF-protected.
     Host: yoursite.com
     Content-Type: application/x-www-form-urlencoded
 
-    code=abc123&client_id=https://app.example.com
+    code=abc123&client_id=https://app.example.com&redirect_uri=https://app.example.com/callback&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 
 **Response:**
 

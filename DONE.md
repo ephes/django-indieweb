@@ -2,6 +2,38 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-06
+
+### Bind and consume codes redeemed at the authorization endpoint
+
+- The authorization-endpoint code redemption (POST without ``action``) now
+  shares the token endpoint's ``redirect_uri`` and PKCE checks through
+  module-level helpers. A mismatch returns ``invalid_grant`` and deletes the
+  code. A malformed ``redirect_uri`` is rejected before lookup.
+- A successful redemption consumes the code through the same row-lock plus
+  delete-count gate the token endpoint uses, so a code proves identity at most
+  once. This closes the backlog item "Legacy code-verification POST should
+  consume the auth code on success".
+- The consent approval replaces any pending code in a transaction and retries
+  once on ``IntegrityError``, so concurrent approvals no longer return HTTP
+  500. No owner-row lock is taken, because it could deadlock against a
+  concurrent token exchange. Concurrent no-scope approvals on PostgreSQL or
+  MySQL can therefore still leave two short-lived pending codes (tracked in
+  ``BACKLOG.md``).
+- Both the consume gate and the consent upsert issue the ``DELETE`` as the
+  first statement of their transaction, avoiding SQLite lock-upgrade errors
+  under contention. The token endpoint's consume step no longer takes a
+  separate ``select_for_update`` before the delete-count gate. This closes the backlog item "``_handle_consent`` upsert should be
+  atomic".
+- Documentation: ``docs/api.rst`` (authorization endpoint POST parameters and
+  errors) and ``docs/indieauth.rst`` (security considerations, PKCE).
+- Changelog: added Unreleased security and fix notes, including the
+  compatibility note for clients that omit ``redirect_uri`` or
+  ``code_verifier`` at redemption.
+- Validation: ``uv run pytest``; ``uv run mypy``; ``uv run prek run
+  --all-files``; ``uv run sphinx-build -W -b html docs docs/_build/html``; and
+  ``git diff --check``.
+
 ## 2026-09-02
 
 ### Restore Read the Docs builds

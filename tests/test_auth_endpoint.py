@@ -1066,6 +1066,7 @@ def test_post_verify_auth_code(client, user):
     verify_data = {
         "code": auth.key,
         "client_id": "https://webapp.example.org",
+        "redirect_uri": "https://webapp.example.org/auth/callback",
     }
     response = client.post(base_url, data=verify_data)
 
@@ -1108,7 +1109,7 @@ def test_post_verify_auth_code_returns_json_when_requested(client, user):
     )
     response = client.post(
         reverse("indieweb:auth"),
-        data={"code": auth.key, "client_id": auth.client_id},
+        data={"code": auth.key, "client_id": auth.client_id, "redirect_uri": auth.redirect_uri},
         HTTP_ACCEPT="application/json",
     )
     assert response.status_code == 200
@@ -1129,7 +1130,7 @@ def test_post_verify_auth_code_keeps_default_form_response_for_wildcard_accept(c
     )
     response = client.post(
         reverse("indieweb:auth"),
-        data={"code": auth.key, "client_id": auth.client_id},
+        data={"code": auth.key, "client_id": auth.client_id, "redirect_uri": auth.redirect_uri},
         HTTP_ACCEPT="*/*",
     )
     assert response.status_code == 200
@@ -1190,15 +1191,216 @@ def test_post_verify_auth_code_accepts_fresh_code_within_window(client, user):
 
     response = client.post(
         reverse("indieweb:auth"),
-        data={"code": auth.key, "client_id": auth.client_id},
+        data={"code": auth.key, "client_id": auth.client_id, "redirect_uri": auth.redirect_uri},
     )
 
     assert response.status_code == 200
     assert response["Content-Type"] == "application/x-www-form-urlencoded"
     assert "me=http%3A%2F%2Fexample.org" in response.content.decode("utf-8")
-    # Verification is non-destructive on success — the row is consumed only
-    # by token exchange.
+    # A successful redemption consumes the code.
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+
+
+# --- Authorization-endpoint code redemption binding (redirect_uri, PKCE, single use) ---
+
+REDEEM_CLIENT_ID = "https://webapp.example.org"
+REDEEM_REDIRECT_URI = "https://webapp.example.org/auth/callback"
+REDEEM_PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+REDEEM_PKCE_S256_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+
+def _redeemable_auth(user, **overrides):
+    fields = {
+        "owner": user,
+        "client_id": REDEEM_CLIENT_ID,
+        "redirect_uri": REDEEM_REDIRECT_URI,
+        "state": "1234567890",
+        "me": "http://example.org",
+    }
+    fields.update(overrides)
+    return Auth.objects.create(**fields)
+
+
+def _redeem(client, code, **extra):
+    data = {"code": code, "client_id": REDEEM_CLIENT_ID, **extra}
+    return client.post(reverse("indieweb:auth"), data=data)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "verifier",
+    [None, "wrong-verifier-wrong-verifier-wrong-verifier-x", "short"],
+    ids=["missing", "mismatched", "malformed"],
+)
+def test_redeem_pkce_code_rejects_bad_verifier_and_consumes(client, user, verifier):
+    """A PKCE-issued code needs the matching verifier; any failure deletes the code."""
+    auth = _redeemable_auth(user, code_challenge=REDEEM_PKCE_S256_CHALLENGE, code_challenge_method="S256")
+    extra = {"redirect_uri": REDEEM_REDIRECT_URI}
+    if verifier is not None:
+        extra["code_verifier"] = verifier
+
+    response = _redeem(client, auth.key, **extra)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_grant"
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+    # The correct verifier can no longer redeem the consumed code.
+    retry = _redeem(client, auth.key, redirect_uri=REDEEM_REDIRECT_URI, code_verifier=REDEEM_PKCE_VERIFIER)
+    assert retry.status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("method", "challenge"),
+    [("S256", REDEEM_PKCE_S256_CHALLENGE), ("plain", REDEEM_PKCE_VERIFIER)],
+)
+def test_redeem_pkce_code_with_correct_verifier_succeeds_once(client, user, method, challenge):
+    """The right verifier redeems the code exactly once."""
+    auth = _redeemable_auth(user, code_challenge=challenge, code_challenge_method=method)
+    data = {"redirect_uri": REDEEM_REDIRECT_URI, "code_verifier": REDEEM_PKCE_VERIFIER}
+
+    first = _redeem(client, auth.key, **data)
+    assert first.status_code == 200
+    assert parse_qs(first.content.decode("utf-8")) == {"me": ["http://example.org"]}
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+
+    second = _redeem(client, auth.key, **data)
+    assert second.status_code == 400
+    assert second.content == b"Invalid authorization code"
+
+
+@pytest.mark.django_db
+def test_redeem_rejects_verifier_for_code_without_challenge(client, user):
+    """A verifier submitted for a non-PKCE code is rejected, mirroring the token endpoint."""
+    auth = _redeemable_auth(user)
+    response = _redeem(client, auth.key, redirect_uri=REDEEM_REDIRECT_URI, code_verifier=REDEEM_PKCE_VERIFIER)
+    assert response.status_code == 400
+    assert response.content == b"invalid_grant"
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [None, "https://webapp.example.org/other", "https://webapp.example.org/auth/callback?x=1"],
+    ids=["missing", "different-path", "extra-query"],
+)
+def test_redeem_rejects_missing_or_mismatched_redirect_uri_and_consumes(client, user, redirect_uri):
+    """The stored redirect_uri must be presented at redemption; a mismatch deletes the code."""
+    auth = _redeemable_auth(user)
+    extra = {} if redirect_uri is None else {"redirect_uri": redirect_uri}
+
+    response = _redeem(client, auth.key, **extra)
+
+    assert response.status_code == 400
+    assert response.content == b"invalid_grant"
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_redeem_accepts_normalized_equivalent_redirect_uri(client, user):
+    """redirect_uri comparison uses the token endpoint's normalization (host case, default port)."""
+    auth = _redeemable_auth(user)
+    response = _redeem(client, auth.key, redirect_uri="https://WEBAPP.example.org:443/auth/callback")
+    assert response.status_code == 200
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_redeem_rejects_malformed_redirect_uri_before_lookup(client, user):
+    """A structurally invalid redirect_uri is rejected before the code is looked up."""
+    auth = _redeemable_auth(user)
+    response = _redeem(client, auth.key, redirect_uri="javascript:alert(1)")
+    assert response.status_code == 400
+    assert response.content == b"invalid_grant"
     assert Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_redeem_rejects_overlong_redirect_uri(client, user):
+    """Overlong redirect_uri values are rejected before any lookup."""
+    auth = _redeemable_auth(user)
+    response = _redeem(client, auth.key, redirect_uri="https://webapp.example.org/" + "a" * 2000)
+    assert response.status_code == 400
+    assert Auth.objects.filter(pk=auth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_redeem_loses_race_when_code_consumed_concurrently(client, user, monkeypatch):
+    """If another request consumes the code after lookup, the delete-count gate rejects this one."""
+    auth = _redeemable_auth(user)
+    original = Auth.get_for_raw_key
+
+    def lookup_then_concurrent_consume(raw_key, **filters):
+        matched = original(raw_key, **filters)
+        Auth.objects.filter(pk=matched.pk).delete()
+        return matched
+
+    monkeypatch.setattr(Auth, "get_for_raw_key", lookup_then_concurrent_consume)
+
+    response = _redeem(client, auth.key, redirect_uri=REDEEM_REDIRECT_URI)
+
+    assert response.status_code == 400
+    assert response.content == b"Invalid authorization code"
+
+
+@pytest.mark.django_db
+def test_consent_issued_pkce_code_round_trips_through_redemption(client, user):
+    """A code issued by consent with PKCE redeems once with redirect_uri and verifier."""
+    client.login(username=user.username, password="password")
+    approve = client.post(
+        reverse("indieweb:auth"),
+        data={
+            "action": "approve",
+            "client_id": REDEEM_CLIENT_ID,
+            "redirect_uri": REDEEM_REDIRECT_URI,
+            "state": "1234567890",
+            "me": "http://example.org",
+            "code_challenge": REDEEM_PKCE_S256_CHALLENGE,
+            "code_challenge_method": "S256",
+        },
+    )
+    assert approve.status_code == 302
+    code = parse_qs(urlparse(approve["Location"]).query)["code"][0]
+
+    without_verifier = _redeem(client, code, redirect_uri=REDEEM_REDIRECT_URI)
+    assert without_verifier.status_code == 400
+    assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_concurrent_double_approval_leaves_one_auth_row(client, user, monkeypatch):
+    """A concurrent approval that inserts between our delete and create does not surface a 500."""
+    client.login(username=user.username, password="password")
+    original_create = Auth.objects.create
+    calls = {"count": 0}
+
+    def create_after_concurrent_winner(**fields):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            # Simulate a concurrent approval committing its row in the window
+            # between this request's delete and its insert.
+            original_create(**{**fields, "key": None})
+        return original_create(**fields)
+
+    monkeypatch.setattr(Auth.objects, "create", create_after_concurrent_winner)
+
+    response = client.post(
+        reverse("indieweb:auth"),
+        data={
+            "action": "approve",
+            "client_id": REDEEM_CLIENT_ID,
+            "redirect_uri": REDEEM_REDIRECT_URI,
+            "state": "1234567890",
+            "me": "http://example.org",
+            "scope": "create",
+        },
+    )
+
+    assert response.status_code == 302
+    assert Auth.objects.filter(owner=user, client_id=REDEEM_CLIENT_ID).count() == 1
+    issued = parse_qs(urlparse(response["Location"]).query)["code"][0]
+    assert Auth.get_for_raw_key(issued, client_id=REDEEM_CLIENT_ID).scope == "create"
 
 
 @pytest.mark.django_db
@@ -1557,3 +1759,52 @@ def test_auth_consent_post_rejects_overlong_redirect_uri(client, user):
     )
     assert response.status_code == 400
     assert Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_consume_auth_code_issues_delete_as_first_statement(user):
+    """The consume gate must not SELECT before DELETE (SQLite lock-upgrade failures under contention)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from indieweb.views import _consume_auth_code
+
+    auth = _redeemable_auth(user)
+    with CaptureQueriesContext(connection) as queries:
+        assert _consume_auth_code(auth) is True
+    statements = [q["sql"].lstrip().upper() for q in queries.captured_queries]
+    data_statements = [sql for sql in statements if not sql.startswith(("SAVEPOINT", "RELEASE", "BEGIN"))]
+    assert data_statements
+    assert data_statements[0].startswith("DELETE")
+    assert not any(sql.startswith("SELECT") for sql in data_statements)
+    assert _consume_auth_code(auth) is False
+
+
+@pytest.mark.django_db
+def test_replace_auth_code_issues_delete_as_first_statement(client, user):
+    """The consent upsert must not SELECT or lock rows before its DELETE.
+
+    A leading ``SELECT`` breaks SQLite under contention (lock upgrade), and a
+    lock on the owner row can deadlock against a concurrent token exchange.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    client.login(username=user.username, password="password")
+    data = {
+        "action": "approve",
+        "client_id": REDEEM_CLIENT_ID,
+        "redirect_uri": REDEEM_REDIRECT_URI,
+        "state": "1234567890",
+        "me": "http://example.org",
+    }
+    with CaptureQueriesContext(connection) as queries:
+        response = client.post(reverse("indieweb:auth"), data=data)
+    assert response.status_code == 302
+
+    statements = [q["sql"].lstrip().upper() for q in queries.captured_queries]
+    savepoint = next(i for i, sql in enumerate(statements) if sql.startswith("SAVEPOINT"))
+    following = [sql for sql in statements[savepoint + 1 :] if not sql.startswith(("SAVEPOINT", "RELEASE"))]
+    assert following[0].startswith("DELETE")
+    assert not any("FOR UPDATE" in sql for sql in statements)
+    assert Auth.objects.count() == 1

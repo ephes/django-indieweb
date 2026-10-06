@@ -24,7 +24,7 @@ from django.contrib.sites.models import Site
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.shortcuts import get_object_or_404, redirect, render
@@ -1399,6 +1399,58 @@ def _auth_code_is_expired(auth: Auth) -> bool:
     return (timezone.now() - auth.created).total_seconds() > timeout
 
 
+def _auth_code_redirect_uri_error(auth: Auth, redirect_uri: str | None) -> str | None:
+    """Return a failure reason when ``redirect_uri`` does not match the code's stored binding.
+
+    Shared by the token exchange and the authorization-endpoint code
+    redemption so both paths enforce the same binding. Returns ``None`` when
+    the submitted value is acceptable.
+    """
+    if auth.redirect_uri and not redirect_uri:
+        return "Missing redirect_uri"
+    if redirect_uri and auth.redirect_uri:
+        stored = _normalize_redirect_uri(auth.redirect_uri)
+        submitted = _normalize_redirect_uri(redirect_uri)
+        if stored != submitted:
+            return "Redirect URI mismatch"
+    return None
+
+
+def _auth_code_pkce_error(auth: Auth, code_verifier: str | None) -> str | None:
+    """Return a failure reason when ``code_verifier`` does not satisfy the code's PKCE binding.
+
+    Shared by the token exchange and the authorization-endpoint code
+    redemption. A code issued with a challenge requires a matching verifier;
+    a verifier submitted for a code issued without a challenge is rejected.
+    """
+    if auth.code_challenge:
+        if not code_verifier or not _verify_pkce(
+            auth.code_challenge, auth.code_challenge_method or "plain", code_verifier
+        ):
+            return "PKCE verification failed"
+    elif code_verifier:
+        return "PKCE verifier submitted without stored challenge"
+    return None
+
+
+def _consume_auth_code(auth: Auth) -> bool:
+    """Delete ``auth``; return ``False`` if another request already consumed it.
+
+    The delete count is the single-use gate on every backend: a concurrent
+    ``DELETE`` of the same row blocks on the row lock (PostgreSQL/MySQL) or the
+    database write lock (SQLite) and then deletes nothing, so only one caller
+    observes ``deleted > 0``. The ``DELETE`` is deliberately the first
+    statement of the transaction. A preceding ``SELECT`` would open a SQLite
+    read transaction whose later lock upgrade fails with "database is locked"
+    under contention instead of waiting. Callers that issue state from the
+    consumed code keep that work inside their own enclosing
+    ``transaction.atomic()`` block.
+    """
+    with transaction.atomic():
+        deleted, _ = Auth.objects.filter(pk=auth.pk).delete()
+    return deleted > 0
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     """
@@ -1581,13 +1633,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.info("auth view consent denied")
             return redirect(target)
 
-        try:
-            existing = Auth.objects.get(owner=request.user, client_id=client_id, scope=scope, me=me)
-            existing.delete()
-        except Auth.DoesNotExist:
-            pass
-
-        auth = Auth.objects.create(
+        auth = self._replace_auth_code(
             owner=request.user,
             client_id=client_id,
             redirect_uri=redirect_uri,
@@ -1609,12 +1655,50 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         logger.info("auth view consent approved")
         return redirect(target)
 
-    def _verify_auth_code(self, request: HttpRequest) -> HttpResponseBase:
-        auth_code = request.POST.get("code")
-        client_id = request.POST.get("client_id")
+    @staticmethod
+    def _replace_auth_code(**fields: Any) -> Auth:
+        """Replace any pending code for the same grant identity with a fresh one.
 
-        if not auth_code or not client_id:
-            return HttpResponse("Missing code or client_id", status=400)
+        ``Auth`` is unique on ``(me, client_id, scope, owner)``. The delete and
+        create run in one transaction, with the ``DELETE`` as its first
+        statement so SQLite waits for the write lock instead of failing a
+        read-to-write lock upgrade. Two concurrent approvals can both delete
+        nothing and race the insert. Where the unique constraint applies, the
+        loser gets ``IntegrityError`` once the winner commits, and one retry
+        replaces the winner's code (last approval wins) instead of a 500.
+
+        No lock is taken on the owner row: a consent holding it while a token
+        exchange for the same owner inserts a ``Token`` (whose foreign-key
+        check needs that row) can deadlock. The accepted consequence is that
+        on PostgreSQL and MySQL, which do not collapse ``NULL`` scopes in the
+        unique constraint, two concurrent no-scope approvals can each leave a
+        pending code. Both codes came from the user's own approvals, each is
+        single-use and expires with ``INDIWEB_AUTH_CODE_TIMEOUT``, and the next
+        approval for the identity deletes both.
+        """
+        identity = {key: fields[key] for key in ("owner", "client_id", "scope", "me")}
+        for attempt in range(2):
+            try:
+                with transaction.atomic():
+                    Auth.objects.filter(**identity).delete()
+                    return Auth.objects.create(**fields)
+            except IntegrityError:
+                if attempt:
+                    raise
+                logger.info("auth code upsert raced a concurrent approval; retrying")
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    @staticmethod
+    def _code_redemption_request_error(client_id: str, redirect_uri: str | None) -> HttpResponse | None:
+        """Reject malformed or disallowed redemption parameters before any ``Auth`` lookup."""
+        length_error = _first_length_error(
+            (
+                ("client_id", client_id, AUTH_CLIENT_ID_MAX_LENGTH),
+                ("redirect_uri", redirect_uri, AUTH_REDIRECT_URI_MAX_LENGTH),
+            )
+        )
+        if length_error is not None:
+            return length_error
 
         if _validate_client_id(client_id) is None:
             logger.info("rejected invalid client_id on code verification")
@@ -1623,6 +1707,32 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         if not _client_id_allowed(client_id):
             logger.warning(f"rejected disallowed client_id on code verification: {redact_url(client_id)!r}")
             return HttpResponse("invalid_client", status=400)
+
+        if redirect_uri and _validate_redirect_uri(redirect_uri) is None:
+            logger.info("rejected invalid redirect_uri on code verification")
+            return HttpResponse("invalid_grant", status=400)
+        return None
+
+    def _verify_auth_code(self, request: HttpRequest) -> HttpResponseBase:
+        """Redeem an authorization code at the authorization endpoint (profile-URL flow).
+
+        Enforces the same binding checks as the token endpoint: the submitted
+        ``redirect_uri`` must match the stored value, and a code issued with a
+        PKCE challenge requires a matching ``code_verifier``. Any failure after
+        the code is matched deletes it, and a successful redemption consumes it,
+        so each code proves identity at most once.
+        """
+        auth_code = request.POST.get("code")
+        client_id = request.POST.get("client_id")
+        redirect_uri = request.POST.get("redirect_uri")
+        code_verifier = request.POST.get("code_verifier")
+
+        if not auth_code or not client_id:
+            return HttpResponse("Missing code or client_id", status=400)
+
+        request_error = self._code_redemption_request_error(client_id, redirect_uri)
+        if request_error is not None:
+            return request_error
 
         logger.info(f"auth view post verification: {redact_url(client_id)}")
         try:
@@ -1636,6 +1746,14 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             # ``me`` for a long-stale code.
             auth.delete()
             logger.info(f"rejected expired auth code on code verification: {redact_url(client_id)!r}")
+            return HttpResponse("Invalid authorization code", status=400)
+        reason = _auth_code_redirect_uri_error(auth, redirect_uri) or _auth_code_pkce_error(auth, code_verifier)
+        if reason is not None:
+            auth.delete()
+            logger.info(f"rejected auth code on code verification ({reason}): {redact_url(client_id)!r}")
+            return HttpResponse("invalid_grant", status=400)
+        if not _consume_auth_code(auth):
+            logger.info(f"rejected already-consumed auth code on code verification: {redact_url(client_id)!r}")
             return HttpResponse("Invalid authorization code", status=400)
         response_values = {"me": auth.me}
         if _prefers_json_response(request):
@@ -1709,13 +1827,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
     def _check_pkce(self, auth: Auth, code_verifier: str | None) -> HttpResponse | None:
         """Verify PKCE for a token exchange. Deletes ``auth`` on failure to preserve one-time use."""
-        if auth.code_challenge:
-            if not code_verifier or not _verify_pkce(
-                auth.code_challenge, auth.code_challenge_method or "plain", code_verifier
-            ):
-                return self._consume_invalid_grant(auth, "PKCE verification failed on token exchange")
-        elif code_verifier:
-            return self._consume_invalid_grant(auth, "PKCE verifier submitted without stored challenge")
+        reason = _auth_code_pkce_error(auth, code_verifier)
+        if reason is not None:
+            return self._consume_invalid_grant(auth, f"{reason} on token exchange")
         return None
 
     def _get_auth_for_exchange(self, code: str, client_id: str) -> Auth | HttpResponse:
@@ -1735,13 +1849,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
     def _check_redirect_uri(self, auth: Auth, redirect_uri: str | None) -> HttpResponse | None:
         """Verify redirect_uri binding for a matched authorization code."""
-        if auth.redirect_uri and not redirect_uri:
-            return self._consume_invalid_grant(auth, "Missing redirect_uri on token exchange")
-        if redirect_uri and auth.redirect_uri:
-            stored = _normalize_redirect_uri(auth.redirect_uri)
-            submitted = _normalize_redirect_uri(redirect_uri)
-            if stored != submitted:
-                return self._consume_invalid_grant(auth, "Redirect URI mismatch on token exchange")
+        reason = _auth_code_redirect_uri_error(auth, redirect_uri)
+        if reason is not None:
+            return self._consume_invalid_grant(auth, f"{reason} on token exchange")
         return None
 
     def _check_input_lengths(self, request: HttpRequest) -> HttpResponse | None:
@@ -1834,17 +1944,13 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             return self._consume_invalid_grant(auth, f"Auth code expired for client_id={client_id}")
 
         # Serialize the consume-and-issue sequence so two concurrent token
-        # exchanges for the same authorization code cannot both succeed. On
-        # backends with row locks, ``select_for_update`` blocks the second
-        # transaction at the lookup step. On SQLite the row lock is a no-op,
-        # so the authoritative single-use enforcement is the delete-count
-        # gate below: ``deleted == 0`` means another exchange already
-        # consumed the code, and we must return ``invalid_grant`` without
-        # issuing a token.
+        # exchanges for the same authorization code cannot both succeed. The
+        # delete-count gate in ``_consume_auth_code`` is authoritative on
+        # every backend: a ``False`` return means another exchange or
+        # redemption already consumed the code, and we must return
+        # ``invalid_grant`` without issuing a token.
         with transaction.atomic():
-            Auth.objects.select_for_update().filter(pk=auth.pk).first()
-            deleted, _ = Auth.objects.filter(pk=auth.pk).delete()
-            if deleted == 0:
+            if not _consume_auth_code(auth):
                 logger.error(f"Auth code already consumed by concurrent exchange for client_id={client_id}")
                 return self._invalid_grant_response()
 

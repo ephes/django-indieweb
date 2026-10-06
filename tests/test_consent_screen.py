@@ -283,6 +283,7 @@ class TestConsentActions:
             {
                 "code": auth.key,
                 "client_id": "https://app.example.com",
+                "redirect_uri": "https://app.example.com/callback",
             },
         )
 
@@ -480,6 +481,7 @@ class TestConsentSecurity:
             {
                 "code": auth.key,
                 "client_id": "https://app.example.com",
+                "redirect_uri": "https://app.example.com/callback",
             },
         )
 

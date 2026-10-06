@@ -1812,29 +1812,21 @@ def test_token_introspection_does_not_mutate_token_rows(client, user, token_intr
 def test_concurrent_authorization_code_exchange_single_use(client, auth, token_endpoint_url, token_payload):
     """A racing competitor that consumes the auth code mid-exchange must yield invalid_grant.
 
-    The test suite runs on SQLite ``:memory:`` where ``select_for_update`` is a
-    no-op and connections are not shared across threads, so a faithful
-    threading test cannot exercise the lock contention path. Instead, simulate
-    the race deterministically: while the view holds its critical section open
-    (between ``select_for_update().filter(...).first()`` and the gated
-    ``.delete()``), a competing transaction consumes the row. The
-    delete-count gate must observe ``deleted == 0`` and return
+    The test suite runs on SQLite ``:memory:`` where connections are not
+    shared across threads, so a faithful threading test cannot exercise lock
+    contention. Instead, simulate the race deterministically: right after the
+    view has matched the code, a competing request consumes the row. The
+    delete-count gate must observe that nothing was deleted and return
     ``invalid_grant`` without issuing a token.
     """
-    queryset_class = models.Auth.objects.all().__class__
-    real_first = queryset_class.first
-    triggered: list[bool] = []
+    real_lookup = models.Auth.get_for_raw_key
 
-    def race_first(self):
-        result = real_first(self)
-        # Only the first `.first()` call against an Auth queryset simulates
-        # the race; subsequent calls (if any) behave normally.
-        if not triggered and self.model is models.Auth:
-            triggered.append(True)
-            models.Auth.objects.filter(pk=auth.pk).delete()
-        return result
+    def lookup_then_competitor_consumes(raw_key, **filters):
+        matched = real_lookup(raw_key, **filters)
+        models.Auth.objects.filter(pk=matched.pk).delete()
+        return matched
 
-    with patch.object(queryset_class, "first", race_first):
+    with patch.object(models.Auth, "get_for_raw_key", side_effect=lookup_then_competitor_consumes):
         response = client.post(token_endpoint_url, data=token_payload)
 
     assert response.status_code == 400
@@ -1858,20 +1850,23 @@ def test_authorization_code_cannot_be_exchanged_twice(client, auth, token_endpoi
 
 
 @pytest.mark.django_db
-def test_token_exchange_acquires_row_lock_on_matched_auth(client, auth, token_endpoint_url, token_payload):
-    """The consume-and-issue sequence must call ``select_for_update`` on the matched ``Auth`` row."""
-    real_select_for_update = models.Auth.objects.select_for_update
-    locked: list[bool] = []
+def test_token_exchange_consumes_auth_through_delete_count_gate(client, auth, token_endpoint_url, token_payload):
+    """The consume-and-issue sequence must go through the shared single-use gate."""
+    from indieweb import views
 
-    def spy(*args, **kwargs):
-        locked.append(True)
-        return real_select_for_update(*args, **kwargs)
+    real_consume = views._consume_auth_code
+    consumed: list[int] = []
 
-    with patch.object(models.Auth.objects, "select_for_update", side_effect=spy):
+    def spy(matched):
+        consumed.append(matched.pk)
+        return real_consume(matched)
+
+    with patch.object(views, "_consume_auth_code", side_effect=spy):
         response = client.post(token_endpoint_url, data=token_payload)
 
     assert response.status_code == 201
-    assert locked == [True]
+    assert consumed == [auth.pk]
+    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db

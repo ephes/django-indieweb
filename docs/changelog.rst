@@ -5,6 +5,22 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** Redeeming an authorization code at the authorization endpoint
+  (the profile-URL POST without ``action``) now applies the token endpoint's
+  binding checks. The ``redirect_uri`` stored with the code is required and
+  must match, and a code issued with a PKCE ``code_challenge`` requires the
+  matching ``code_verifier``. A verifier sent for a non-PKCE code is
+  rejected. A failed check returns HTTP 400 ``invalid_grant`` and deletes the
+  code. A successful redemption now consumes the code atomically, so a code
+  leaked through the redirect can no longer prove the user's identity to
+  other clients or be replayed. **Compatibility:** clients that redeem codes
+  at the authorization endpoint without ``redirect_uri`` (or without their
+  ``code_verifier``) now fail. The IndieAuth specification requires both
+  parameters there, so update such clients.
+* Fixed a race in consent approval: two concurrent approvals for the same
+  client, ``me``, and scope could hit the ``Auth`` uniqueness constraint and
+  return HTTP 500. The replace-the-pending-code step now runs in a transaction
+  and retries once on a uniqueness conflict, so the last approval wins.
 * Fixed Read the Docs builds by installing the project and its runtime
   dependencies before Sphinx imports the Django application.
 

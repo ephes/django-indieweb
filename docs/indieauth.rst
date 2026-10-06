@@ -419,6 +419,14 @@ Security Considerations
    and the legacy authorization-code verification POST both enforce this
    window: a stale code is rejected with HTTP 400 and the ``Auth`` row is
    deleted on either path so the code cannot be reused.
+
+   **Code binding and single use**: Redeeming a code at the authorization
+   endpoint (the profile-URL flow) applies the same checks as the token
+   endpoint. The client must send the ``redirect_uri`` stored with the code,
+   and the PKCE ``code_verifier`` when the code was issued with a
+   ``code_challenge``. A mismatch returns HTTP 400 ``invalid_grant`` and
+   deletes the code. A successful redemption at either endpoint consumes the
+   code, so it proves identity or yields a token at most once.
 3. **Token Expiration and Revocation**: Access tokens expire after 24 hours by
    default; the Micropub endpoint rejects expired tokens with HTTP 401. Users
    can also revoke their own tokens at ``/indieweb/tokens/``; revocation
@@ -437,7 +445,8 @@ Security Considerations
    method, per RFC 7636 §4.3). Malformed challenges and unsupported methods
    are rejected with HTTP 400 *before* any authorization code is issued.
    When an auth code was issued with a ``code_challenge``, the token
-   endpoint requires a matching ``code_verifier`` and rejects any mismatch,
+   endpoint and the authorization-endpoint code redemption both require a
+   matching ``code_verifier`` and rejects any mismatch,
    any missing verifier, any verifier submitted without a stored challenge,
    and any verifier outside the RFC length and character set with
    ``invalid_grant``. The S256 verification computes
