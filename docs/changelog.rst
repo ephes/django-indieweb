@@ -21,6 +21,11 @@ Unreleased
   to sender-chosen photo hosts.
 * CORS preflight rejections now always include ``Vary: Origin``, including in
   wildcard mode and when the requested method is not supported.
+* **Security:** Refreshed the locked dependency graph to patched releases:
+  ``anyio`` 4.14.2 (critical advisory, pulled in through ``httpx``),
+  ``Django`` 6.1.2 / 5.2.18, and ``urllib3`` 2.8.0, plus the development-only
+  ``virtualenv`` 21.14.5. Only ``uv.lock`` changed; the declared dependency
+  ranges are unchanged.
 * **Security:** Redeeming an authorization code at the authorization endpoint
   (the profile-URL POST without ``action``) now applies the token endpoint's
   binding checks. The ``redirect_uri`` stored with the code is required and
