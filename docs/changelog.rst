@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** ``INDIEWEB_LOG_REDACTION = "redact"`` now also covers
+  authorization codes (a digest instead of the six-character prefix),
+  ``client_id`` URLs on token-exchange and client-validator failure lines, and
+  the username on "token owner is not active" lines, at every log level. The
+  ``notify_websub`` command prints a request error without an HTTP status as
+  ``<redacted:DIGEST>`` in redact mode. Passthrough output is unchanged. The
+  new ``indieweb.log_redaction.redact_text`` helper digests free-form text.
 * **Security:** The ``client.py`` debug helper no longer prints cookies, the
   authorization redirect query, the authorization code or the access token.
   It prints HTTP status codes, parameter names and short SHA-256 fingerprints

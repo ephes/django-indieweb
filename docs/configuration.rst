@@ -2037,8 +2037,23 @@ authorization-code prefixes verbatim or as a stable HMAC-SHA256 digest.
   duplicate-token failure logs) digests the full token so even the
   leading bytes never appear in redacted logs.
 
-ERROR-level logs are not redacted, so operators retain full URLs for
-incident response. Rotate ``SECRET_KEY`` to invalidate previously-emitted
+Three kinds of value are digested in redact mode at every log level,
+including ERROR, because they are credentials or identify a user or client
+rather than a failing resource:
+
+* authorization codes on the token endpoint (passthrough keeps the six
+  character diagnostic prefix; redact mode logs the ``redact_token`` digest
+  and no leading characters);
+* ``client_id`` URLs on token-exchange and client-validator failure lines;
+* the token owner's username on the "token owner is not active" lines of the
+  resource-server and token-introspection checks.
+
+The ``notify_websub`` management command applies the same policy to stdout:
+topic and hub URLs are digested, and a request error without an HTTP status
+(free-form text that can embed a URL) is printed as ``<redacted:DIGEST>``.
+
+Other ERROR-level lines, such as unexpected handler failures, are not
+redacted, so operators retain full URLs for incident response. Rotate ``SECRET_KEY`` to invalidate previously-emitted
 digests; values are scoped to the current key.
 
 Testing Configuration

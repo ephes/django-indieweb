@@ -696,7 +696,9 @@ def _client_id_allowed(client_id: str) -> bool:
     try:
         return bool(validator(normalized_client_id))
     except Exception as exc:
-        logger.error(f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={normalized_client_id!r}: {exc}")
+        logger.error(
+            f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={_log_client_id(normalized_client_id)!r}: {exc}"
+        )
         return False
 
 
@@ -1265,12 +1267,28 @@ def _prefers_json_response(request: HttpRequest) -> bool:
 
 
 def _redact_auth_code(code: str | None) -> str:
-    """Return a log-safe representation of an authorization code."""
+    """Return a log-safe representation of an authorization code.
+
+    Passthrough mode keeps the short diagnostic prefix. Redact mode emits the
+    ``redact_token`` digest, so no leading characters of the code are logged.
+    """
     if not code:
         return "<empty>"
+    if getattr(settings, "INDIEWEB_LOG_REDACTION", "passthrough") == "redact":
+        return redact_token(code)
     if len(code) <= 6:
         return f"<redacted:{len(code)} chars>"
     return f"{code[:6]}..."
+
+
+def _log_client_id(client_id: str | None) -> str:
+    """Return ``client_id`` for a log line, digested in redact mode."""
+    return redact_url(client_id) if client_id else str(client_id)
+
+
+def _log_owner(owner: Any) -> str:
+    """Return a token owner's identity for a log line, digested in redact mode."""
+    return redact_state(str(owner))
 
 
 def _authorization_header(request: HttpRequest) -> str | None:
@@ -1363,7 +1381,7 @@ class TokenAuthMixin(View):
             try:
                 self.token = Token.get_for_raw_key(key)
                 if not self.token.owner.is_active:
-                    logger.warning(f"Token owner is not active: {self.token.owner}")
+                    logger.warning(f"Token owner is not active: {_log_owner(self.token.owner)}")
                     return False
                 if self.token.is_expired():
                     logger.warning(f"Token expired: {redact_token(key)}")
@@ -1853,11 +1871,12 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         try:
             return Auth.get_for_raw_key(code, client_id=client_id)
         except Auth.DoesNotExist:
-            logger.error(f"Auth not found for code={_redact_auth_code(code)}, client_id={client_id}")
+            logger.error(f"Auth not found for code={_redact_auth_code(code)}, client_id={_log_client_id(client_id)}")
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
         except Auth.MultipleObjectsReturned:
             logger.warning(
-                f"Multiple auth codes found for code={_redact_auth_code(code)}, client_id={client_id}; rejecting"
+                f"Multiple auth codes found for code={_redact_auth_code(code)}, "
+                f"client_id={_log_client_id(client_id)}; rejecting"
             )
             hashed = Auth.hash_key(code) if not Auth.is_hashed_key(code) else code
             Auth.objects.filter(key__in=(hashed, code), client_id=client_id).delete()
@@ -1891,7 +1910,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         if me and auth.me and _normalize_redirect_uri(me) != _normalize_redirect_uri(auth.me):
             return self._consume_invalid_grant(
                 auth,
-                f"Rejected token exchange with mismatched me for client_id={client_id}",
+                f"Rejected token exchange with mismatched me for client_id={_log_client_id(client_id)}",
             )
         return None
 
@@ -1909,7 +1928,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
         # Validate required parameters
         if not code or not client_id:
-            logger.error(f"Missing required parameters: code={_redact_auth_code(code)}, client_id={client_id}")
+            logger.error(
+                f"Missing required parameters: code={_redact_auth_code(code)}, client_id={_log_client_id(client_id)}"
+            )
             return HttpResponse("invalid_request", status=400, content_type="application/x-www-form-urlencoded")
 
         parameter_error = (
@@ -1942,7 +1963,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         stored_scope = _normalize_scope(auth.scope)
         normalized_request_scope = _normalize_scope(requested_scope)
         if requested_scope is not None and normalized_request_scope != stored_scope:
-            return self._consume_invalid_grant(auth, f"Scope mismatch on token exchange for client_id={client_id}")
+            return self._consume_invalid_grant(
+                auth, f"Scope mismatch on token exchange for client_id={_log_client_id(client_id)}"
+            )
 
         me_error = self._check_me_binding(auth, me, client_id)
         if me_error is not None:
@@ -1957,7 +1980,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
         # Check if auth code is still valid
         if _auth_code_is_expired(auth):
-            return self._consume_invalid_grant(auth, f"Auth code expired for client_id={client_id}")
+            return self._consume_invalid_grant(auth, f"Auth code expired for client_id={_log_client_id(client_id)}")
 
         # Serialize the consume-and-issue sequence so two concurrent token
         # exchanges for the same authorization code cannot both succeed. The
@@ -1967,7 +1990,9 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         # ``invalid_grant`` without issuing a token.
         with transaction.atomic():
             if not _consume_auth_code(auth):
-                logger.error(f"Auth code already consumed by concurrent exchange for client_id={client_id}")
+                logger.error(
+                    f"Auth code already consumed by concurrent exchange for client_id={_log_client_id(client_id)}"
+                )
                 return self._invalid_grant_response()
 
             # Token issue/reissue stays inside the atomic block so the
@@ -2011,7 +2036,7 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             logger.warning(f"{log_prefix} found multiple tokens for submitted key: {redact_token(key)}")
             return None
         if not token.owner.is_active:
-            logger.info(f"{log_prefix} rejected inactive token owner: {token.owner}")
+            logger.info(f"{log_prefix} rejected inactive token owner: {_log_owner(token.owner)}")
             return None
         if token.is_expired():
             logger.info(f"{log_prefix} rejected expired token: {redact_token(key)}")

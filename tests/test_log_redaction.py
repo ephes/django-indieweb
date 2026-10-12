@@ -211,3 +211,217 @@ def test_webmention_outcome_logs_passthrough_includes_urls(settings, caplog):
         processor.process_webmention(source, target)
 
     assert source in caplog.text
+
+
+# ----------------------------------------------------------------------------
+# Redact mode must also cover authorization codes, client_id URLs and token
+# owner identities, at every log level. Passthrough keeps the earlier output.
+# ----------------------------------------------------------------------------
+
+CODE_MARKER = "codemarkerSECRETvalue0123456789"
+CLIENT_MARKER = "https://client-marker.example/app"
+OWNER_MARKER = "owner-marker-name"
+HEX_DIGITS = set("0123456789abcdef")
+
+
+@pytest.fixture
+def marker_owner(db):
+    return get_user_model().objects.create_user(username=OWNER_MARKER, email="marker@example.org", password="pw")
+
+
+@pytest.fixture
+def marker_auth(marker_owner):
+    from indieweb.models import Auth
+
+    return Auth.objects.create(
+        owner=marker_owner,
+        key=CODE_MARKER,
+        state="state",
+        me="https://me.example/",
+        scope="create",
+        client_id=CLIENT_MARKER,
+        redirect_uri="https://client-marker.example/cb",
+    )
+
+
+@pytest.fixture
+def inactive_owner_token(marker_owner):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from indieweb.models import Token
+
+    marker_owner.is_active = False
+    marker_owner.save()
+    Token.objects.create(
+        owner=marker_owner,
+        key="inactiveownerbearer",
+        client_id=CLIENT_MARKER,
+        me="https://me.example/",
+        scope="create",
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    return "inactiveownerbearer"
+
+
+def test_redact_text_passthrough_returns_input():
+    from indieweb.log_redaction import redact_text
+
+    assert redact_text("failed for https://example.com/x", mode="passthrough") == "failed for https://example.com/x"
+
+
+def test_redact_text_redact_returns_marked_stable_digest():
+    from indieweb.log_redaction import redact_text
+
+    out = redact_text("failed for https://example.com/x", mode="redact")
+
+    assert out == redact_text("failed for https://example.com/x", mode="redact")
+    assert out.startswith("<redacted:") and out.endswith(">")
+    assert "example.com" not in out
+
+
+def test_redact_auth_code_uses_digest_in_redact_mode(settings):
+    from indieweb.views import _redact_auth_code
+
+    settings.INDIEWEB_LOG_REDACTION = "redact"
+
+    out = _redact_auth_code(CODE_MARKER)
+
+    assert out == redact_token(CODE_MARKER, mode="redact")
+    assert len(out) == 12 and set(out) <= HEX_DIGITS
+    assert _redact_auth_code("") == "<empty>"
+    assert _redact_auth_code(None) == "<empty>"
+    assert set(_redact_auth_code("abc")) <= HEX_DIGITS
+
+
+def test_redact_auth_code_keeps_prefix_in_passthrough_mode(settings):
+    from indieweb.views import _redact_auth_code
+
+    settings.INDIEWEB_LOG_REDACTION = "passthrough"
+
+    assert _redact_auth_code(CODE_MARKER) == f"{CODE_MARKER[:6]}..."
+    assert _redact_auth_code("abc") == "<redacted:3 chars>"
+    assert _redact_auth_code(None) == "<empty>"
+
+
+def _exchange_unknown_code(client):
+    return client.post(reverse("indieweb:token"), data={"code": CODE_MARKER, "client_id": CLIENT_MARKER})
+
+
+@pytest.mark.django_db
+def test_token_exchange_unknown_code_log_is_redacted_in_redact_mode(client, settings, caplog):
+    settings.INDIEWEB_LOG_REDACTION = "redact"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        response = _exchange_unknown_code(client)
+
+    assert response.status_code == 400
+    assert "Auth not found" in caplog.text
+    assert CODE_MARKER[:6] not in caplog.text
+    assert "client-marker" not in caplog.text
+    assert f"code={redact_token(CODE_MARKER)}, client_id={redact_url(CLIENT_MARKER)}" in caplog.text
+
+
+@pytest.mark.django_db
+def test_token_exchange_unknown_code_log_keeps_values_in_passthrough_mode(client, settings, caplog):
+    settings.INDIEWEB_LOG_REDACTION = "passthrough"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        _exchange_unknown_code(client)
+
+    assert f"code={CODE_MARKER[:6]}..., client_id={CLIENT_MARKER}" in caplog.text
+    assert CODE_MARKER not in caplog.text
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("mode", ["redact", "passthrough"])
+def test_token_exchange_missing_client_id_log_handles_absent_value(client, settings, caplog, mode):
+    settings.INDIEWEB_LOG_REDACTION = mode
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        response = client.post(reverse("indieweb:token"), data={"code": CODE_MARKER})
+
+    assert response.status_code == 400
+    assert "client_id=None" in caplog.text
+    assert CODE_MARKER not in caplog.text
+    if mode == "redact":
+        assert CODE_MARKER[:6] not in caplog.text
+
+
+@pytest.mark.django_db
+def test_token_exchange_scope_mismatch_log_redacts_client_id_in_redact_mode(client, settings, caplog, marker_auth):
+    settings.INDIEWEB_LOG_REDACTION = "redact"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        response = client.post(
+            reverse("indieweb:token"),
+            data={
+                "code": CODE_MARKER,
+                "client_id": CLIENT_MARKER,
+                "redirect_uri": marker_auth.redirect_uri,
+                "scope": "create delete",
+            },
+        )
+
+    assert response.status_code == 400
+    assert f"Scope mismatch on token exchange for client_id={redact_url(CLIENT_MARKER)}" in caplog.text
+    assert "client-marker" not in caplog.text
+    assert CODE_MARKER[:6] not in caplog.text
+
+
+@pytest.mark.django_db
+def test_token_exchange_scope_mismatch_log_keeps_client_id_in_passthrough_mode(client, settings, caplog, marker_auth):
+    settings.INDIEWEB_LOG_REDACTION = "passthrough"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        client.post(
+            reverse("indieweb:token"),
+            data={
+                "code": CODE_MARKER,
+                "client_id": CLIENT_MARKER,
+                "redirect_uri": marker_auth.redirect_uri,
+                "scope": "create delete",
+            },
+        )
+
+    assert f"Scope mismatch on token exchange for client_id={CLIENT_MARKER}" in caplog.text
+
+
+@pytest.mark.django_db
+def test_resource_server_inactive_owner_log_is_redacted_in_redact_mode(client, settings, caplog, inactive_owner_token):
+    settings.INDIEWEB_LOG_REDACTION = "redact"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        response = client.get(reverse("indieweb:micropub"), HTTP_AUTHORIZATION=f"Bearer {inactive_owner_token}")
+
+    assert response.status_code == 401
+    assert f"Token owner is not active: {redact_state(OWNER_MARKER)}" in caplog.text
+    assert OWNER_MARKER not in caplog.text
+
+
+@pytest.mark.django_db
+def test_resource_server_inactive_owner_log_keeps_name_in_passthrough_mode(
+    client, settings, caplog, inactive_owner_token
+):
+    settings.INDIEWEB_LOG_REDACTION = "passthrough"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        client.get(reverse("indieweb:micropub"), HTTP_AUTHORIZATION=f"Bearer {inactive_owner_token}")
+
+    assert f"Token owner is not active: {OWNER_MARKER}" in caplog.text
+
+
+@pytest.mark.django_db
+def test_introspection_inactive_owner_log_is_redacted_in_redact_mode(client, settings, caplog, inactive_owner_token):
+    settings.INDIEWEB_LOG_REDACTION = "redact"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        client.post(
+            reverse("indieweb:token-introspection"),
+            data={"token": "anything"},
+            HTTP_AUTHORIZATION=f"Bearer {inactive_owner_token}",
+        )
+
+    assert f"rejected inactive token owner: {redact_state(OWNER_MARKER)}" in caplog.text
+    assert OWNER_MARKER not in caplog.text

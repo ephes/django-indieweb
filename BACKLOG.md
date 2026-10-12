@@ -14,18 +14,6 @@ No current Priority 2 items.
 
 ## Priority 3
 
-### `_redact_auth_code` should honor `INDIEWEB_LOG_REDACTION`
-
-`_redact_auth_code` (`views.py:1221-1227`) unconditionally returns `code[:6] + "..."`. With a 32-char `get_random_string` (charset 62), six characters is ~35 bits and is inconsistent with the redaction policy operators opted into. Replace call sites with `log_redaction.redact_token`, or have the helper consult `_resolve_mode` and emit a digest in redact mode.
-
-### Unredacted `client_id` / `token.owner` in logger sites
-
-Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django username) without redaction, defeating the user-correlation primitive `INDIEWEB_LOG_REDACTION` is meant to prevent. Sibling lines on the same view do redact (`views.py:1341, 1399, 1583`). Apply `redact_url` / hashed-id helper at: `views.py:1306, 1682, 1686, 1742, 1804, 1848`.
-
-### `notify_websub` management command: redact `result.error`
-
-`commands/notify_websub.py:60-62` writes `result.error` (up to 500 chars of the hub response body) verbatim to stdout, bypassing `INDIEWEB_LOG_REDACTION`. Pass through `redact_url` (or strip URL-shaped substrings) for parity with the redacted topic/hub URLs already routed through the helper.
-
 ### Per-method rate-limit counter multiplies effective allowance
 
 `rate_limit.py:88-94` keys the counter on `:{method}:`, and `RateLimitMixin.dispatch` (`rate_limit.py:143-148`) increments before `super().dispatch`, so unsupported-method requests still consume cache slots and the effective per-IP limit is `limit × distinct-methods-tried`. Drop `method` from the key (limits are per-endpoint, not per-method), or normalize all non-allowed methods to a single bucket.
