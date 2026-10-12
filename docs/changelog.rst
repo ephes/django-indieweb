@@ -5,6 +5,15 @@ Changelog
 
 Unreleased
 ----------
+* Rate limiting: HTTP methods an endpoint does not implement now share one
+  ``OTHER`` counter per endpoint and client instead of one counter per method
+  name, so invented methods cannot multiply the allowance or create unbounded
+  cache keys. Implemented methods keep their documented per-method budget. An
+  evicted counter is re-created with ``cache.add``/``cache.incr`` (up to three
+  attempts) instead of being reset to ``1``, which could discard concurrent
+  increments. **Behavior change:** if the cache cannot keep a counter at all,
+  the request is now rejected with HTTP ``429`` (previously allowed);
+  ``DummyCache`` still disables rate limiting.
 * Fixed duplicate no-scope grants under concurrency. ``Auth.scope`` and
   ``Token.scope`` now store "no scope" as ``""`` instead of ``NULL``, so the
   ``(me, client_id, scope, owner)`` unique constraint also applies when two
