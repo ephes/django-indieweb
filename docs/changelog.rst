@@ -5,6 +5,11 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** The ``client.py`` debug helper no longer prints cookies, the
+  authorization redirect query, the authorization code or the access token.
+  It prints HTTP status codes, parameter names and short SHA-256 fingerprints
+  instead, so routine debugging no longer copies usable credentials into
+  terminal logs.
 * **Security:** Token endpoint success responses (``201`` and ``200``, form
   and JSON) and both token introspection responses (active and inactive) now
   send ``Cache-Control: no-store`` and ``Pragma: no-cache``, as RFC 6749

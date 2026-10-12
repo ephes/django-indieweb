@@ -232,3 +232,10 @@ The script refuses to start without ``DJANGO_SECRET_KEY`` unless
 binds to ``localhost``/``127.0.0.1`` by default.
 
 You can then test the endpoints at http://localhost:8000/indieweb/
+
+``client.py`` walks the login, authorization, token and Micropub steps against
+that server (set ``USERNAME``, ``PASSWORD`` and ``BASE_URL``). It never prints
+credentials: cookies, the authorization code and the access token stay in
+memory, and the output shows only HTTP status codes, parameter names and short
+SHA-256 fingerprints, so terminal logs and captured output are safe to share.
+There is no switch that prints the raw values.
