@@ -1158,6 +1158,117 @@ over this limit mark the Webmention ``failed`` and are not stored as source
 snapshots. Set this to ``None`` only when an upstream proxy, queue, or worker
 boundary enforces an equivalent limit.
 
+INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Memory limit of the child process that analyses one fetched Webmention source
+or Vouch document.
+
+**Default:** ``536870912`` (512 MiB)
+
+Fetched HTML is never parsed in the process that received the Webmention. Link
+verification and microformats parsing run in a short-lived child process (see
+:ref:`webmention-isolated-parsing`). The child applies this value as its
+address-space limit (``RLIMIT_AS``) and data-segment limit (``RLIMIT_DATA``).
+A document that needs more is rejected: the Webmention is marked ``failed``
+and nothing parsed from it is stored.
+
+On Linux the kernel enforces the limit. macOS refuses both limits; there the
+child checks its own peak resident set size every 20 ms and exits when it is
+over the value. That check is a backstop, not a hard limit: it can overshoot
+by what one long call into C code allocates. Run production receivers on
+Linux.
+
+The limit counts address space, so it has to leave room for the interpreter
+and the parser libraries themselves (around 100 MiB). Invalid or non-positive
+values fall back to the default.
+
+INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+CPU-time limit (``RLIMIT_CPU``, whole seconds) of the child process that
+analyses one fetched document, including interpreter start-up.
+
+**Default:** ``20``
+
+An ordinary article needs well under a second; a 1 MiB page of dense markup
+needs about ten seconds on current hardware. Over the limit the kernel ends
+the child and the Webmention is marked ``failed``. Invalid or non-positive
+values fall back to the default.
+
+INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Wall-clock timeout in seconds (integer or float) for one analysis. The
+receiving process kills the child when it expires.
+
+**Default:** ``30``
+
+Keep it above ``INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS``: this timeout is for a
+child that makes no progress, for example on an overloaded host. Invalid or
+non-positive values fall back to the default.
+
+INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum size of the result (JSON) that the child process may pass back for one
+fetched document.
+
+**Default:** ``2097152`` (2 MiB)
+
+The parsed microformats of a document can be many times larger than the
+document. The child refuses to write a larger result, the kernel enforces the
+same value as its file-size limit (``RLIMIT_FSIZE``), and the receiving
+process checks the size before it reads the result. Over the limit the
+Webmention is marked ``failed``. Invalid or non-positive values fall back to
+the default.
+
+INDIEWEB_WEBMENTION_MAX_STORED_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum size of the parsed data stored for one received Webmention.
+
+**Default:** ``2097152`` (2 MiB)
+
+Counted are the serialized mentioning ``h-entry`` (stored with the source
+snapshot), the serialized ``h-entry`` of every nested response (stored again
+with its own row), and the extracted ``content`` and ``content_html`` values
+of the Webmention and its nested responses. Over the limit the Webmention is
+marked ``failed`` and nothing from the source is stored. The raw source HTML
+of the snapshot is not counted; it is bounded by
+``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES``. Invalid or non-positive values fall
+back to the default.
+
+INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Whether fetched documents may only be analysed when the child process can
+limit its own CPU time and output size.
+
+**Default:** ``True``
+
+Platforms without the POSIX ``resource`` module (Windows) cannot apply these
+limits. With the default, every received Webmention is then marked ``failed``
+and an error is logged, instead of parsing untrusted HTML without limits. Set
+this to exactly ``False`` to accept that risk on such a platform: documents
+are still analysed in a child process with the wall-clock timeout and the
+result size cap, but without memory and CPU limits. Any other value keeps the
+limits required. Do not disable this on a public receiver.
+
+INDIEWEB_WEBMENTION_PARSE_PYTHON
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Python interpreter used to start the child process.
+
+**Default:** ``None`` (``sys.executable``)
+
+Set this to the interpreter of the application's environment when
+``sys.executable`` is not a Python interpreter, for example under an
+application server that embeds Python. The child must be able to import
+``indieweb``, ``mf2py`` and ``bs4``; it is started with the import path of the
+receiving process and without the rest of its environment. If the child cannot
+be started, Webmentions are marked ``failed`` and an error is logged.
+
 INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
