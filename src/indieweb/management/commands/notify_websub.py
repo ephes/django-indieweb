@@ -6,7 +6,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from indieweb.log_redaction import redact_url
+from indieweb.log_redaction import redact_text, redact_url
 from indieweb.websub import notify_hubs
 
 
@@ -36,7 +36,9 @@ class Command(BaseCommand):
 
         Topic and hub URLs are emitted through ``indieweb.log_redaction.redact_url``
         so deployments that opted into ``INDIEWEB_LOG_REDACTION = "redact"`` keep
-        the same privacy guarantees on stdout as in INFO/WARNING logs.
+        the same privacy guarantees on stdout as in INFO/WARNING logs. A request
+        error without an HTTP status is free-form text that can embed URLs, so
+        it goes through ``redact_text``.
         """
         topic_url = options["topic"]
         hubs = options["hubs"]
@@ -58,5 +60,8 @@ class Command(BaseCommand):
             if result.success:
                 self.stdout.write(self.style.SUCCESS(f"✓ {displayed_hub} (HTTP {result.status_code})"))
             else:
-                detail = f"HTTP {result.status_code}" if result.status_code is not None else result.error
+                if result.status_code is not None:
+                    detail = f"HTTP {result.status_code}"
+                else:
+                    detail = redact_text(result.error)
                 self.stdout.write(self.style.ERROR(f"✗ {displayed_hub} ({detail})"))

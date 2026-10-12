@@ -61,6 +61,18 @@ def redact_state(value: str, *, mode: Mode | None = None) -> str:
     return _digest(value)
 
 
+def redact_text(value: str, *, mode: Mode | None = None) -> str:
+    """Return free-form ``value`` unchanged in passthrough mode, or ``<redacted:DIGEST>`` in redact mode.
+
+    Use this for text that is not a single URL or identifier but may embed
+    one, such as an exception message from an outbound request. The digest
+    still lets operators group identical failures.
+    """
+    if _resolve_mode(mode) == "passthrough":
+        return value
+    return f"<redacted:{_digest(value)}>"
+
+
 def redact_token(value: str, *, mode: Mode | None = None) -> str:
     """Return a non-secret display form for a bearer token or auth code.
 

@@ -4,6 +4,31 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### Log redaction policy parity for auth codes, client ids, owners and hub errors
+
+- Closes three backlog items: "`_redact_auth_code` should honor
+  `INDIEWEB_LOG_REDACTION`", "Unredacted `client_id` / `token.owner` in logger
+  sites" and "`notify_websub` management command: redact `result.error`".
+- With `INDIEWEB_LOG_REDACTION = "redact"`, `_redact_auth_code` returns the
+  `redact_token` digest instead of a six-character prefix; the token-exchange
+  and client-validator log lines digest `client_id` (and print a raising
+  validator's exception message as `<redacted:DIGEST>`); the two "token owner
+  is not active" lines digest the username. These apply at every log level.
+  Passthrough output is unchanged.
+- `notify_websub` prints a request error without an HTTP status through the new
+  `log_redaction.redact_text` helper (`<redacted:DIGEST>` in redact mode). The
+  backlog text said the command printed the hub response body; it prints the
+  error only when there is no HTTP status, so the value is an exception
+  message.
+- Tests: `tests/test_log_redaction.py` and
+  `tests/test_notify_websub_command.py` cover redact and passthrough output and
+  absent values.
+- Documentation: `docs/configuration.rst` (`INDIEWEB_LOG_REDACTION`) lists the
+  values digested at every level and the command behavior.
+- Changelog: added an Unreleased security note.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ### Token and cookie debug prints in `client.py`
 
 - The root `client.py` debug helper no longer prints cookie jars, the auth
