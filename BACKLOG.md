@@ -78,10 +78,6 @@ Several lines emit `client_id={client_id}` (a URL) or `token.owner` (Django user
 
 JSON Micropub create/update handling assumes `properties` is a mapping (`views.py:2025-2034, 2285-2297, 2340-2346`). A string value can bypass membership checks and then raise `TypeError` into a 500. Add an `isinstance(properties, dict)` guard in `_parse_json_request`.
 
-### Token and cookie debug prints in `client.py`
-
-`client.py:113-115` prints issued bearer tokens, and `client.py:23-25, 39, 45` print raw cookies. Keep the debug helper useful without normalizing credential leaks: redact by default or require an explicit `INDIEWEB_DEBUG_TOKEN=1` opt-in for full values.
-
 ### `log_redaction.redact_token` prefix and mode parsing
 
 `log_redaction.redact_token` preserves an 8-character token prefix in passthrough mode (`log_redaction.py:77`), and `_resolve_mode` accepts only exact `"redact"` while silently treating `"REDACT"`, `"true"`, or booleans as passthrough. Trim the prefix or default-redact when `DEBUG=False`, and log/document non-canonical `INDIEWEB_LOG_REDACTION` values.

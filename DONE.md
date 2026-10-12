@@ -2,6 +2,23 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-12
+
+### Token and cookie debug prints in `client.py`
+
+- The root `client.py` debug helper no longer prints cookie jars, the auth
+  redirect query, the authorization code or the access token. It prints HTTP
+  status codes, parameter names and 12-character SHA-256 fingerprints instead;
+  the protocol values still flow in memory between the steps. No raw-secret
+  opt-in was added.
+- Tests: `tests/test_debug_client.py` runs the whole flow against a mocked
+  session and asserts that no secret reaches stdout or stderr while each value
+  still reaches the next request.
+- Documentation: `CONTRIBUTING.rst` (Debugging) describes the safe output.
+- Changelog: added an Unreleased security note.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ## 2026-10-06
 
 ### No-store and no-referrer headers on OAuth responses

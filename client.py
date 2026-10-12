@@ -1,11 +1,23 @@
 #!/usr/bin/env python
+"""Debug helper that walks the IndieAuth and Micropub flow against a dev server.
 
+The helper never prints credentials. Cookies, the authorization code and the
+access token stay in memory; diagnostics show HTTP status codes, parameter
+names and short SHA-256 fingerprints only.
+"""
+
+import hashlib
 import os
 import sys
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
 from django.utils.http import urlencode
+
+
+def fingerprint(secret):
+    """Return a short one-way fingerprint that identifies ``secret`` without revealing it."""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:12]
 
 
 class Client:
@@ -20,8 +32,7 @@ class Client:
         if not hasattr(self, "_csrftoken"):
             login_url = urljoin(self.base_url, "accounts/login/")
             r = self.session.get(login_url)
-            print(r.status_code)
-            print(r.cookies)
+            print("login page:", r.status_code)
             self._csrftoken = r.cookies["csrftoken"]
         return self._csrftoken
 
@@ -37,19 +48,19 @@ class Client:
             "csrfmiddlewaretoken": self.csrftoken,
         }
         r = self.session.post(login_url, payload, headers=dict(Referer=login_url))
-        print(r.status_code)
+        print("login:", r.status_code)
         # Login response HTML is intentionally not persisted: writing it to a
         # fixed filesystem path was a debugging hack that would clobber files
         # owned by other users on a shared host. If you need the body for
-        # debugging, capture ``r.content`` from a Python REPL.
-        print(r.cookies)
+        # debugging, capture ``r.content`` from a Python REPL. Cookies are
+        # session credentials and are not printed either.
 
     def logout(self):
         logout_url = urljoin(self.base_url, "accounts/logout/")
         csrftoken = self.get_csrftoken(logout_url)
         payload = {"csrfmiddlewaretoken": csrftoken}
         r = self.session.post(logout_url, payload, headers=dict(Referer=logout_url))
-        print(r.status_code)
+        print("logout:", r.status_code)
 
     def get_auth(self):
         url_params = {
@@ -62,7 +73,8 @@ class Client:
         auth_url = "{}?{}".format(urljoin(self.base_url, "indieweb/auth/"), urlencode(url_params))
         r = self.session.get(auth_url, allow_redirects=True)
         data = parse_qs(urlparse(r.url).query)
-        print(data)
+        # The redirect query carries the authorization code: print names only.
+        print("auth redirect:", r.status_code, "params:", sorted(data))
         return data["code"][0]
 
     def post_auth(self, auth_code):
@@ -87,7 +99,7 @@ class Client:
             "code": auth_code,
         }
         r = self.session.post(token_url, payload)
-        print(r.status_code)
+        print("token:", r.status_code)
         data = parse_qs(unquote(r.content.decode("utf-8")))
         return data["access_token"][0]
 
@@ -99,7 +111,7 @@ class Client:
             "content": "blub bla",
         }
         r = self.session.post(micropub_url, payload)
-        print(r.status_code)
+        print("micropub:", r.status_code)
 
 
 def main(args):
@@ -109,16 +121,16 @@ def main(args):
     client = Client(base_url, username, password)
     client.login()
     auth_code = client.get_auth()
-    print(auth_code)
+    print("auth code fingerprint:", fingerprint(auth_code))
     token = client.get_token(auth_code)
-    print("token: ", token)
+    print("access token fingerprint:", fingerprint(token))
     client.post_entry(token)
     # new client to test auth verification without login
     print("logout..")
     client.logout()
     # client = Client(base_url, username, password)
     data = client.post_auth(auth_code)
-    print(data)
+    print("auth verification params:", sorted(data))
 
 
 if __name__ == "__main__":
