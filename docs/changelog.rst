@@ -8,7 +8,7 @@ Unreleased
 * Bounded the cost of processing a received Webmention source. Microformats
   parsing of fetched HTML now goes through ``indieweb.mf2_parsing``: the
   expected size of the parse result is estimated first and limited by the new
-  ``INDIEWEB_MF2_MAX_EXPANSION_BYTES`` setting (default 4 MiB), element nesting
+  ``INDIEWEB_MF2_MAX_EXPANSION_BYTES`` setting (default 8 MiB), element nesting
   is limited to 200 levels, and the tree is built with Python's linear
   ``html.parser`` instead of ``html5lib``. Previously a source within the 1 MiB
   fetch limit could expand into a parse result, and a stored snapshot, of
@@ -17,8 +17,9 @@ Unreleased
   of walking the ancestors of every link, which was quadratic for deeply
   nested sources. **Behavior change:** a source over these limits is still
   verified when it links to the target, but as a plain ``mention`` without
-  parsed author, content or nested responses; ``parse_h_card`` returns ``{}``
-  for such input. Markup that depends on HTML5 error recovery (omitted end
+  parsed author, content, publication date or nested responses (values from
+  an earlier version of the source are cleared); ``parse_h_card`` returns
+  ``{}`` for such input. Markup that depends on HTML5 error recovery (omitted end
   tags) may parse differently than before.
 * Added the ``prune_websub_delivery_attempts`` management command and the
   ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS`` setting (default

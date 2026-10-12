@@ -1164,19 +1164,30 @@ INDIEWEB_MF2_MAX_EXPANSION_BYTES
 Upper bound for the estimated size of a microformats2 parse result of fetched
 HTML (Webmention sources and ``parse_h_card``).
 
-**Default:** ``4194304`` (4 MiB)
+**Default:** ``8388608`` (8 MiB)
 
 A microformats parser returns the markup and text of every property element,
-so nested property elements repeat their shared content once per level and a
-source within ``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` could otherwise expand
-into a parse result of gigabytes. Before parsing, django-indieweb adds up each
-node's size once per enclosing property copy (``e-*`` counts twice, other
-``h-*``/``p-*``/``u-*``/``dt-*`` classes and link relations once, every class
-inside a classic microformats root twice). A document over the bound, or one
-nested deeper than 200 elements, is treated as having no microformats: a
-Webmention whose source links to the target is still verified, as a plain
-``mention`` without author, content or nested responses. Values that are not
-positive integers fall back to the default.
+parses a nested microformat once per property class it carries, and resolves
+every URL against the document's base URL. A source within
+``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` could therefore expand into a parse
+result of gigabytes. Before parsing, django-indieweb computes an upper bound of
+the result size: every node counts once per copy each enclosing property
+element can make (``e-*`` two copies, ``p-*``/``u-*``/``dt-*`` classes and
+link relations one each, a ``h-*`` root one; classic microformats class names
+according to mf2py's backward-compatibility rules), multiplied over all
+ancestors, plus the base URL length for every URL. The bound is deliberately
+generous towards rejection: text below several nested property elements
+counts many times, so a long article inside ``h-feed`` > ``h-entry`` >
+``e-content`` is accepted up to roughly 500 KiB of markup with the default.
+The actual parse result is measured as well and discarded when it is larger
+than the limit.
+
+A document over the bound, or one nested deeper than 200 elements, is treated
+as having no microformats: a Webmention whose source links to the target is
+still verified, as a plain ``mention`` without author, content, publication
+date or nested responses (values parsed from an earlier version of the source
+are cleared). ``parse_h_card`` returns ``{}``. Values that are not positive
+integers fall back to the default.
 
 Fetched HTML is parsed with Python's ``html.parser`` tree builder, whose cost
 is linear in the input, instead of mf2py's default ``html5lib``. Markup that

@@ -37,7 +37,7 @@ from .http_client import (
     stream_with_safe_redirects,
 )
 from .log_redaction import redact_url
-from .mf2_parsing import parse_microformats
+from .mf2_parsing import empty_parse_result, parse_microformats
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
@@ -915,6 +915,17 @@ class WebmentionProcessor:
         """Parse microformats2 data from HTML content."""
         # Parse microformats
         parsed = parse_microformats(html_content, base_url)
+        if parsed is None:
+            # Over the parsing limits: a plain mention. Fields parsed from an
+            # earlier version of the source must not outlive it.
+            webmention.author_name = ""
+            webmention.author_url = ""
+            webmention.author_photo = ""
+            webmention.content = ""
+            webmention.content_html = ""
+            webmention.published = None
+            webmention.mention_type = "mention"
+            return empty_parse_result(), None
 
         # Find h-entry that mentions the target
         h_entry = self._find_mentioning_entry(parsed, target_url)
