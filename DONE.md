@@ -4,6 +4,42 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### No-scope grant uniqueness under concurrency (`Auth` and `Token`)
+
+- Closes "`Token.objects.get_or_create(scope=None)` row proliferation on
+  Postgres/MySQL" and "`Auth` uniqueness does not collapse `NULL` scopes on
+  PostgreSQL/MySQL". The first title overstated the problem: sequential
+  exchanges never proliferated rows, because Django looks up `scope=None` with
+  `IS NULL` and reuses the row. The real gap was two concurrent first
+  issuances or approvals, where `NULL` scopes do not collide in the unique
+  constraint.
+- `Auth.scope` and `Token.scope` are now `CharField(blank=True, default="")`.
+  `save()` stores `None` as `""`, and `AuthView._replace_auth_code` and
+  `TokenView.send_token` use `""` as the storage key. The unique constraint
+  now covers no-scope grants on every database; the existing
+  `IntegrityError` retry (consent) and `get_or_create` (token) resolve the
+  conflict. No owner-row lock was added.
+- Migration `0029_reconcile_no_scope_grants` keeps the most recently modified
+  no-scope row per `(me, client_id, owner)` unchanged (highest primary key on
+  a tie), deletes the other duplicates (which revokes them; nothing is
+  revived and no key is rotated), logs a warning with the count, and stores
+  `NULL` as `""`. Migration `0030_scope_not_null` then alters the columns. The
+  two are separate so PostgreSQL does not alter a table with pending trigger
+  events.
+- Tests: `tests/test_no_scope_grants.py` covers storage, the constraint,
+  independent identities, the consent retry and token reuse under a simulated
+  insert race, sequential reuse, the reconciliation policy on a legacy-shaped
+  table, and the real `0028 -> latest` migration path in a fresh process.
+  There is no PostgreSQL barrier test because the suite runs on SQLite only;
+  SQLite also treats `NULL` as distinct, so the constraint tests fail without
+  the change.
+- Documentation: `docs/indieauth.rst` (Scope Issuance Semantics).
+- Changelog: added an Unreleased note with the migration and compatibility
+  details.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run python manage.py makemigrations --check --dry-run`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ### WebSub denial and verification state updates should lock rows
 
 - `confirm_websub_verification` and `record_websub_denial` now run in

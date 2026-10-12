@@ -18,14 +18,6 @@ No current Priority 2 items.
 
 `rate_limit.py:88-94` keys the counter on `:{method}:`, and `RateLimitMixin.dispatch` (`rate_limit.py:143-148`) increments before `super().dispatch`, so unsupported-method requests still consume cache slots and the effective per-IP limit is `limit × distinct-methods-tried`. Drop `method` from the key (limits are per-endpoint, not per-method), or normalize all non-allowed methods to a single bucket.
 
-### `Token.objects.get_or_create(scope=None)` row proliferation on Postgres/MySQL
-
-`unique_together = ("me", "client_id", "scope", "owner")` does not collapse on NULL on Postgres/MySQL. Each token exchange for a no-scope auth code runs the `create` branch, accumulating rows. Coerce `scope=None` to `""` for the storage key, or add a partial unique index. Affected: `views.py:1623-1629`; `models.py:247, 251`.
-
-### `Auth` uniqueness does not collapse `NULL` scopes on PostgreSQL/MySQL
-
-`Auth.Meta.unique_together = ("me", "client_id", "scope", "owner")` (`models.py`) treats `NULL` scopes as distinct on PostgreSQL and MySQL, so two concurrent no-scope consent approvals (`AuthView._replace_auth_code` in `views.py`) can each leave a pending code. Both are user-approved, single-use, and short-lived, so this is hygiene rather than a privilege issue. Do not fix it with an owner-row `select_for_update` (deadlocks against a concurrent token exchange inserting a `Token` for the same owner); prefer storing no-scope grants as `""` or a null-safe unique constraint, together with the `Token` item above.
-
 ### `_check_redirect_uri`: reject submitted `redirect_uri` when stored value is empty
 
 `views.py:1692-1701` only rejects when both the submitted and the stored `auth.redirect_uri` are populated. Currently-issued codes always have a stored `redirect_uri` (consent and `required_params` enforce it), so the gap is latent — but defensive code should add a final branch rejecting `auth.redirect_uri` empty + submitted-set as a mismatch.

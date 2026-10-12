@@ -506,6 +506,19 @@ Security Considerations
    auth-code scope. An explicitly empty ``scope=`` parameter normalizes to no
    scope, so it only succeeds when the auth code was issued with no scope.
 
+   A grant without scope is stored with ``scope=""`` on ``Auth`` and
+   ``Token``; the column is no longer nullable, and saving a model instance
+   with ``scope=None`` stores ``""``. Databases treat ``NULL`` values as
+   distinct in a unique constraint, so storing ``""`` is what makes the
+   ``(me, client_id, scope, owner)`` uniqueness apply to no-scope grants: two
+   concurrent first approvals or first token issuances for one identity leave
+   one row, and the request that loses the insert reuses or replaces it. The
+   protocol behavior is unchanged: an absent scope is still shown as no scope
+   on the consent screen, and token and introspection responses still return
+   ``scope`` as an empty string. Host code should test ``not token.scope``
+   instead of ``token.scope is None`` and query ``scope=""`` instead of
+   ``scope__isnull=True``.
+
 10. **Per-Operation Scope Enforcement**: The Micropub resource server enforces
     scopes per operation rather than treating ``create`` as a master scope.
     The W3C Micropub Recommendation (`§5 Scope

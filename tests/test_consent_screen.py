@@ -265,7 +265,7 @@ class TestConsentActions:
 
         # Check auth was created without scope
         auth = Auth.objects.get(client_id="https://app.example.com")
-        assert auth.scope is None or auth.scope == ""
+        assert auth.scope == ""
         assert auth.me == "https://example.com"
 
     def test_deny_does_not_create_auth(self, client, user, auth_url):
