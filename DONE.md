@@ -19,6 +19,8 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   expensive to process"); nothing from the document is stored. The parsed
   data stored per Webmention is capped by `INDIEWEB_WEBMENTION_MAX_STORED_BYTES`.
 - `mf2py` still parses with `html5lib`; parsing semantics are unchanged.
+  Content is sanitized in the child as well; the receiving process only reads
+  the size-capped result.
 - Link verification marks hidden elements in one pass in document order
   instead of walking the ancestors of every link (was quadratic).
 - New settings: `INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES`,

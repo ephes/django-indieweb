@@ -251,8 +251,8 @@ into gigabytes of parse result, and the HTML5 tree construction itself can need
 minutes of CPU time for a small document. django-indieweb therefore does not
 parse fetched HTML in the process that received the Webmention. Target-link
 verification, microformats parsing (``mf2py`` with its ``html5lib`` tree
-builder, unchanged) and Vouch link verification run in a short-lived child
-process, ``python -m indieweb.webmention_parse_worker``, one per fetched
+builder, unchanged), sanitization of the content that is stored, and Vouch
+link verification run in a short-lived child process, ``python -m indieweb.webmention_parse_worker``, one per fetched
 document, with these limits:
 
 * memory: ``INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES`` (``RLIMIT_AS`` and
@@ -298,7 +298,8 @@ This isolation covers documents fetched while *receiving* a Webmention.
 ``indieweb.h_card.parse_h_card()`` and the private helpers
 ``WebmentionProcessor._verify_target_link()`` and
 ``_content_links_to_target()`` parse in the calling process; use them only for
-HTML you trust.
+HTML you trust. Stored ``content_html`` is sanitized again when it is
+displayed; that input is bounded by ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES``.
 
 Source Link Verification
 ------------------------

@@ -63,6 +63,17 @@ class SourceAnalysis:
     parsed: dict[str, Any]
     # Digests (``content_html_digest``) of h-entry content that links to the target.
     linking_content: frozenset[str]
+    # Sanitized h-entry content HTML by the digest of the HTML in ``parsed``.
+    sanitized_content: dict[str, str]
+
+    def sanitized_html(self, html_content: str) -> str:
+        """Return the sanitized form of content HTML taken from ``parsed``."""
+        if not html_content:
+            return ""
+        try:
+            return self.sanitized_content[webmention_parse_worker.content_html_digest(html_content)]
+        except KeyError:
+            raise WebmentionSourceRejected("worker returned no sanitized content") from None
 
 
 @dataclass(frozen=True)
@@ -211,17 +222,25 @@ def analyze_source(html_content: str, base_url: str, target_url: str) -> SourceA
     )
     links_to_target = result.get("links_to_target")
     if links_to_target is False:
-        return SourceAnalysis(links_to_target=False, parsed={}, linking_content=frozenset())
+        return SourceAnalysis(links_to_target=False, parsed={}, linking_content=frozenset(), sanitized_content={})
     parsed = result.get("parsed")
     linking_content = result.get("linking_content")
+    sanitized_content = result.get("sanitized_content")
     if (
         links_to_target is not True
         or not isinstance(parsed, dict)
         or not isinstance(linking_content, list)
         or not all(isinstance(digest, str) for digest in linking_content)
+        or not isinstance(sanitized_content, dict)
+        or not all(isinstance(value, str) for value in sanitized_content.values())
     ):
         raise WebmentionSourceRejected("worker returned an unreadable result")
-    return SourceAnalysis(links_to_target=True, parsed=parsed, linking_content=frozenset(linking_content))
+    return SourceAnalysis(
+        links_to_target=True,
+        parsed=parsed,
+        linking_content=frozenset(linking_content),
+        sanitized_content=sanitized_content,
+    )
 
 
 def vouch_links_to_source_domain(html_content: str, source_url: str) -> bool:

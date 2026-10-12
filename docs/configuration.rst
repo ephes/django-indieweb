@@ -1230,14 +1230,18 @@ Maximum size of the parsed data stored for one received Webmention.
 
 **Default:** ``2097152`` (2 MiB)
 
-Counted are the serialized mentioning ``h-entry`` (stored with the source
-snapshot), the serialized ``h-entry`` of every nested response (stored again
-with its own row), and the extracted ``content`` and ``content_html`` values
-of the Webmention and its nested responses. Over the limit the Webmention is
-marked ``failed`` and nothing from the source is stored. The raw source HTML
-of the snapshot is not counted; it is bounded by
-``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES``. Invalid or non-positive values fall
-back to the default.
+Counted are, in encoded bytes, the serialized mentioning ``h-entry`` (stored
+with the source snapshot) and every text and JSON value of the Webmention row
+and of the nested response rows that would be written: author fields,
+``content``, ``content_html``, and the serialized ``h-entry`` of each nested
+response, which is stored again with its own row. Nested entries that get no
+row (no stable identity, or a repeated one) are not counted twice. Over the
+limit the Webmention is marked ``failed`` and nothing from the source is
+stored. Not counted are the raw source HTML of the snapshot, which is bounded
+by ``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES``, and the snapshot's list of nested
+response identities, which is bounded by
+``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES``. Invalid or
+non-positive values fall back to the default.
 
 INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

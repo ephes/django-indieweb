@@ -9,8 +9,9 @@ Unreleased
   in a short-lived child process with operating-system limits instead of in
   the receiving process. A single small source document could previously make
   the receiver use gigabytes of memory and minutes of CPU time and store
-  hundreds of megabytes of parsed data. Link verification and microformats
-  parsing (``mf2py`` with ``html5lib``, unchanged) now run under a memory limit
+  hundreds of megabytes of parsed data. Link verification, microformats
+  parsing (``mf2py`` with ``html5lib``, unchanged) and content sanitization
+  now run under a memory limit
   (``INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES``, default 512 MiB), a CPU-time
   limit (``INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS``, default 20), a wall-clock
   timeout (``INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS``, default 30) and a result

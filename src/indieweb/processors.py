@@ -37,7 +37,7 @@ from .http_client import (
 )
 from .log_redaction import redact_url
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
-from .parse_isolation import WebmentionSourceRejected, analyze_source, vouch_links_to_source_domain
+from .parse_isolation import SourceAnalysis, WebmentionSourceRejected, analyze_source, vouch_links_to_source_domain
 from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 from .webmention_parse_worker import (
     _canonical_domain_for_vouch,
@@ -45,6 +45,8 @@ from .webmention_parse_worker import (
     _html_links_to_target,
     _urls_match,
     content_html_digest,
+    extract_entry_content,
+    first_property_value,
 )
 
 if TYPE_CHECKING:
@@ -97,6 +99,15 @@ def _webmention_fetch_max_bytes() -> int | None:
 
 def _webmention_max_stored_bytes() -> int:
     return _positive_int_setting("INDIEWEB_WEBMENTION_MAX_STORED_BYTES", DEFAULT_WEBMENTION_MAX_STORED_BYTES)
+
+
+def _stored_value_bytes(value: Any) -> int:
+    """Return the encoded size of one value as it is stored with a Webmention."""
+    if isinstance(value, str):
+        return len(value.encode("utf-8", "surrogatepass"))
+    if isinstance(value, (dict, list)):
+        return len(json.dumps(value, sort_keys=True, default=str))
+    return 0
 
 
 def _webmention_nested_max_depth() -> int:
@@ -420,15 +431,8 @@ class WebmentionProcessor:
             # We capture those mutations into ``parsed_fields`` so the persistence
             # phase can apply them to the freshly locked instance instead of the
             # stale one we loaded before phase 1.
-            h_entry = self._apply_microformats(
-                webmention,
-                analysis.parsed,
-                fetched.final_url,
-                target_url,
-                linking_content=analysis.linking_content,
-            )
+            h_entry = self._apply_microformats(webmention, analysis.parsed, fetched.final_url, target_url, analysis)
             parsed_fields = self._snapshot_parsed_fields(webmention)
-            stored_bytes = self._stored_microformats_bytes(h_entry or {})
 
             vouch_allowed, vouch_verified_at = self._verify_vouch_for_webmention(webmention, source_url)
             if not vouch_allowed:
@@ -460,8 +464,10 @@ class WebmentionProcessor:
                     )
 
             previous_nested_identities = self._previous_nested_response_identities(webmention)
-            nested_response_candidates = self._nested_response_candidates(h_entry or {}, fetched.final_url)
-            self._reject_oversized_content(stored_bytes, parsed_fields, *nested_response_candidates)
+            nested_response_candidates = self._nested_response_candidates(
+                h_entry or {}, fetched.final_url, analysis=analysis
+            )
+            self._reject_oversized_stored_data(h_entry or {}, parsed_fields, *nested_response_candidates)
 
             return _WebmentionOutcome(
                 status="verified",
@@ -801,16 +807,17 @@ class WebmentionProcessor:
         parsed: dict[str, Any],
         base_url: str,
         target_url: str,
-        *,
-        linking_content: frozenset[str] | None = None,
+        analysis: SourceAnalysis | None = None,
     ) -> dict[str, Any] | None:
         """Copy the microformats2 data of a parsed source onto ``webmention``.
 
-        ``parsed`` and ``linking_content`` come from the isolated analysis of
-        the fetched document. Returns the h-entry that mentions the target.
+        ``parsed`` and ``analysis`` come from the isolated analysis of the
+        fetched document. Returns the h-entry that mentions the target.
         """
         # Find h-entry that mentions the target
-        h_entry = self._find_mentioning_entry(parsed, target_url, linking_content=linking_content)
+        h_entry = self._find_mentioning_entry(
+            parsed, target_url, linking_content=None if analysis is None else analysis.linking_content
+        )
         if not h_entry:
             # No microformats found, use defaults
             return None
@@ -836,7 +843,7 @@ class WebmentionProcessor:
         # Extract content
         content_data = self._extract_content(h_entry)
         webmention.content = content_data.get("text", "")
-        webmention.content_html = sanitize_webmention_html(content_data.get("html", ""))
+        webmention.content_html = self._sanitized_content_html(content_data.get("html", ""), analysis)
 
         # Extract published date
         published = self._extract_published(h_entry)
@@ -847,25 +854,33 @@ class WebmentionProcessor:
         webmention.mention_type = self._determine_mention_type(h_entry, target_url)
         return h_entry
 
-    def _stored_microformats_bytes(self, h_entry: dict[str, Any]) -> int:
-        """Return the serialized size of the parsed data that would be stored.
+    def _sanitized_content_html(self, html: str, analysis: SourceAnalysis | None) -> str:
+        """Return the sanitized form of extracted content HTML.
 
-        The mentioning h-entry is stored with the source snapshot and every
-        nested response again with its own row, so the total can be a multiple
-        of the parse result. Stops at ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES``.
+        For a fetched source the isolated analysis has sanitized the content
+        and the result is looked up. Without an analysis the content is
+        sanitized in this process, which is only acceptable for trusted HTML.
+        """
+        if analysis is None:
+            return sanitize_webmention_html(html)
+        return analysis.sanitized_html(html)
+
+    def _reject_oversized_stored_data(self, h_entry: dict[str, Any], *stored_rows: dict[str, Any]) -> None:
+        """Enforce ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES`` on what a source would store.
+
+        Counted are the h-entry of the source snapshot and every text and JSON
+        value of the Webmention row and of the nested response rows that would
+        be written. The same nested h-entry is stored with the snapshot and
+        again with its own row, so the total can be a multiple of the parse
+        result.
         """
         limit = _webmention_max_stored_bytes()
-        total = 0
-        for entry in (h_entry, *self._nested_h_entries(h_entry)):
-            total += len(json.dumps(entry, sort_keys=True, default=str))
+        total = _stored_value_bytes(h_entry)
+        for row in stored_rows:
+            total += sum(_stored_value_bytes(value) for value in row.values())
             if total > limit:
-                raise WebmentionSourceRejected("stored size limit")
-        return total
-
-    def _reject_oversized_content(self, stored_bytes: int, *stored_rows: dict[str, Any]) -> None:
-        """Add the extracted content of all rows to ``stored_bytes`` and enforce the stored-size limit."""
-        stored_bytes += sum(len(str(row[name])) for row in stored_rows for name in ("content", "content_html"))
-        if stored_bytes > _webmention_max_stored_bytes():
+                break
+        if total > limit:
             raise WebmentionSourceRejected("stored size limit")
 
     def _store_source_snapshot(
@@ -931,7 +946,13 @@ class WebmentionProcessor:
             return set()
         return {value for value in values if isinstance(value, str)}
 
-    def _nested_response_candidates(self, h_entry: dict[str, Any], base_url: str) -> list[dict[str, Any]]:
+    def _nested_response_candidates(
+        self,
+        h_entry: dict[str, Any],
+        base_url: str,
+        *,
+        analysis: SourceAnalysis | None = None,
+    ) -> list[dict[str, Any]]:
         """Extract stable nested response rows from a parsed parent h-entry."""
         candidates: list[dict[str, Any]] = []
         seen_identities: set[str] = set()
@@ -952,7 +973,7 @@ class WebmentionProcessor:
                     "author_url": sanitize_remote_webmention_url(author.get("url", "")),
                     "author_photo": sanitize_remote_webmention_url(author.get("photo", "")),
                     "content": content.get("text", ""),
-                    "content_html": sanitize_webmention_html(content.get("html", "")),
+                    "content_html": self._sanitized_content_html(content.get("html", ""), analysis),
                     "published": self._extract_published(nested_entry),
                     "mention_type": self._determine_mention_type(nested_entry, base_url),
                     "parsed_h_entry": normalized_entry,
@@ -1515,27 +1536,7 @@ class WebmentionProcessor:
 
     def _extract_content(self, h_entry: dict[str, Any]) -> dict[str, str]:
         """Extract content from h-entry."""
-        properties = h_entry.get("properties", {})
-        content_data = properties.get("content", [])
-
-        if not content_data:
-            # Try summary as fallback
-            summary = self._get_first_property(properties, "summary")
-            if summary:
-                return {"text": summary, "html": summary}
-            return {"text": "", "html": ""}
-
-        content = content_data[0] if isinstance(content_data, list) else content_data
-
-        if isinstance(content, dict):
-            return {
-                "text": content.get("value", ""),
-                "html": content.get("html") or content.get("value", ""),
-            }
-        elif isinstance(content, str):
-            return {"text": content, "html": content}
-
-        return {"text": "", "html": ""}
+        return extract_entry_content(h_entry)
 
     def _extract_published(self, h_entry: dict[str, Any]) -> datetime | None:
         """Extract published date from h-entry."""
@@ -1577,15 +1578,7 @@ class WebmentionProcessor:
 
     def _get_first_property(self, properties: dict[str, Any], key: str) -> str:
         """Get the first value of a property."""
-        values = properties.get(key, [])
-        if values and isinstance(values, list) and len(values) > 0:
-            value = values[0]
-            if isinstance(value, str):
-                return value
-            elif isinstance(value, dict):
-                # Handle complex microformats objects
-                return value.get("value", "")  # type: ignore[no-any-return]
-        return ""
+        return first_property_value(properties, key)
 
     def _get_local_profile(self, author_url: str, *, source_url: str | None = None) -> Profile | None:
         """Return a local profile only when a local source page claimed it.

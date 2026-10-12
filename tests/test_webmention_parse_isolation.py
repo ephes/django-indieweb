@@ -145,7 +145,63 @@ def test_source_analysis_reports_the_entry_content_that_links_to_the_target():
 def test_source_without_a_link_to_the_target_is_not_parsed():
     analysis = parse_isolation.analyze_source('<div class="h-entry">nothing</div>', SOURCE_URL, TARGET_URL)
 
-    assert analysis == parse_isolation.SourceAnalysis(links_to_target=False, parsed={}, linking_content=frozenset())
+    assert analysis == parse_isolation.SourceAnalysis(
+        links_to_target=False, parsed={}, linking_content=frozenset(), sanitized_content={}
+    )
+
+
+@pytest.mark.django_db
+def test_content_is_sanitized_in_the_child_process(monkeypatch):
+    comment = (
+        '<div class="h-entry"><a class="u-url" href="/c1">c</a>'
+        '<div class="e-content">nested <i onclick="x()">comment</i><script>y()</script></div></div>'
+    )
+    html = (
+        f'<article class="h-entry"><a class="u-in-reply-to" href="{TARGET_URL}">re</a>'
+        f'<div class="e-content">a <b onclick="x()">reply</b><script>y()</script></div>{comment}</article>'
+    )
+    monkeypatch.setattr(
+        "indieweb.processors.sanitize_webmention_html",
+        lambda value: pytest.fail("fetched content must not be sanitized in the receiving process"),
+    )
+
+    webmention = processor_serving(html).process_webmention(SOURCE_URL, TARGET_URL)
+
+    assert webmention.status == "verified"
+    assert webmention.content_html == "a <b>reply</b>"
+    assert [nested.content_html for nested in webmention.nested_responses.all()] == ["nested <i>comment</i>"]
+
+
+@pytest.mark.django_db
+def test_summary_fallback_content_is_sanitized_in_the_child_process(monkeypatch):
+    html = (
+        f'<article class="h-entry"><a class="u-in-reply-to" href="{TARGET_URL}">re</a>'
+        '<p class="p-summary">1 &lt; 2 &amp; so on</p></article>'
+    )
+    monkeypatch.setattr("indieweb.processors.sanitize_webmention_html", lambda value: pytest.fail("in-process"))
+
+    webmention = processor_serving(html).process_webmention(SOURCE_URL, TARGET_URL)
+
+    assert (webmention.content, webmention.content_html) == ("1 < 2 & so on", "1 &lt; 2 &amp; so on")
+
+
+def test_content_missing_from_the_analysis_is_not_sanitized_in_the_receiving_process():
+    analysis = parse_isolation.SourceAnalysis(
+        links_to_target=True, parsed={}, linking_content=frozenset(), sanitized_content={}
+    )
+
+    assert analysis.sanitized_html("") == ""
+    with pytest.raises(WebmentionSourceRejected):
+        analysis.sanitized_html("<b>not analysed</b>")
+
+
+@pytest.mark.parametrize("sanitized_content", [None, [], {"digest": 1}])
+def test_malformed_sanitized_content_is_an_unreadable_result(monkeypatch, sanitized_content):
+    result = {"links_to_target": True, "parsed": {}, "linking_content": [], "sanitized_content": sanitized_content}
+    monkeypatch.setattr(parse_isolation, "run_parse_worker", lambda request: result)
+
+    with pytest.raises(WebmentionSourceRejected):
+        parse_isolation.analyze_source(REPLY, SOURCE_URL, TARGET_URL)
 
 
 def test_vouch_documents_are_checked_in_the_child_process():
@@ -275,42 +331,76 @@ def test_vouch_document_over_the_limits_fails_the_webmention(caplog):
     assert not WebmentionSourceSnapshot.objects.filter(webmention=webmention).exists()
 
 
+def stored_bytes(webmention):
+    """Return the encoded size of the parsed data stored for ``webmention``."""
+
+    def text_bytes(row):
+        return sum(
+            len(getattr(row, name).encode())
+            for name in ("author_name", "author_url", "author_photo", "content", "content_html", "mention_type")
+        )
+
+    total = len(json.dumps(webmention.source_snapshot.parsed_h_entry)) + text_bytes(webmention)
+    for nested in webmention.nested_responses.all():
+        total += len(json.dumps(nested.parsed_h_entry)) + text_bytes(nested)
+        total += len(nested.identity.encode()) + len(nested.response_url.encode()) + len(nested.content_digest)
+    return total
+
+
+def assert_stored_size_limit_is_exact(html):
+    """A source is accepted with a limit of exactly what it stores and rejected one byte below."""
+    accepted = processor_serving(html).process_webmention(SOURCE_URL, TARGET_URL)
+    assert accepted.status == "verified"
+    size = stored_bytes(Webmention.objects.get(pk=accepted.pk))
+
+    with override_settings(INDIEWEB_WEBMENTION_MAX_STORED_BYTES=size):
+        again = processor_serving(html).process_webmention("https://example.com/again", TARGET_URL)
+    with override_settings(INDIEWEB_WEBMENTION_MAX_STORED_BYTES=size - 1):
+        rejected = processor_serving(html).process_webmention("https://example.com/other", TARGET_URL)
+
+    assert again.status == "verified"
+    assert_nothing_stored(rejected)
+    return accepted
+
+
 @pytest.mark.django_db
 def test_stored_size_limit_counts_nested_responses():
     comments = "".join(
-        f'<div class="u-comment h-entry"><a class="u-url" href="/c{n}">c</a>'
-        f'<p class="e-content">{"comment " * 200}</p></div>'
+        f'<div class="h-entry"><a class="u-url" href="/c{n}">c</a><p class="e-content">{"comment " * 200}</p></div>'
         for n in range(20)
     )
     html = f'<article class="h-entry"><a class="u-in-reply-to" href="{TARGET_URL}">re</a>{comments}</article>'
-    html = html.replace("u-comment h-entry", "h-entry")
 
-    accepted = processor_serving(html).process_webmention(SOURCE_URL, TARGET_URL)
-    assert accepted.status == "verified"
+    accepted = assert_stored_size_limit_is_exact(html)
+
     assert accepted.nested_responses.count() == 20
-    stored = len(json.dumps(accepted.source_snapshot.parsed_h_entry)) + sum(
-        len(json.dumps(nested.parsed_h_entry)) for nested in accepted.nested_responses.all()
-    )
-
-    other_source = "https://example.com/other"
-    with override_settings(INDIEWEB_WEBMENTION_MAX_STORED_BYTES=stored // 2):
-        rejected = processor_serving(html).process_webmention(other_source, TARGET_URL)
-
-    assert_nothing_stored(rejected)
+    assert stored_bytes(accepted) > 2 * len(json.dumps(accepted.source_snapshot.parsed_h_entry))
 
 
 @pytest.mark.django_db
-def test_stored_size_limit_counts_extracted_content():
-    html = f'<article class="h-entry"><div class="e-content">{TARGET_LINK} {"word " * 2000}</div></article>'
-    processor = processor_serving(html)
-    snapshot_bytes = len(
-        json.dumps(processor.process_webmention(SOURCE_URL, TARGET_URL).source_snapshot.parsed_h_entry, sort_keys=True)
+def test_stored_size_limit_does_not_count_nested_entries_that_are_not_stored():
+    # Nested entries without a stable identity and repeated identities get no row.
+    comments = '<div class="h-entry"><p class="e-content">anonymous</p></div>' * 10
+    comments += '<div class="h-entry"><a class="u-url" href="/same">c</a><p class="e-content">twice</p></div>' * 5
+    html = f'<article class="h-entry"><a class="u-in-reply-to" href="{TARGET_URL}">re</a>{comments}</article>'
+
+    accepted = assert_stored_size_limit_is_exact(html)
+
+    assert accepted.nested_responses.count() == 1
+
+
+@pytest.mark.django_db
+def test_stored_size_limit_counts_encoded_bytes():
+    emoji = "\N{GRINNING FACE}"
+    html = (
+        f'<article class="h-entry"><a class="u-in-reply-to" href="{TARGET_URL}">re</a>'
+        f'<div class="e-content">{emoji * 500} gr\u00fc\u00dfe</div>'
+        '<a class="p-author h-card" href="https://example.com/">J\u00f6rg \N{SNOWMAN}</a></article>'
     )
 
-    with override_settings(INDIEWEB_WEBMENTION_MAX_STORED_BYTES=snapshot_bytes + 100):
-        rejected = processor.process_webmention("https://example.com/other", TARGET_URL)
+    accepted = assert_stored_size_limit_is_exact(html)
 
-    assert_nothing_stored(rejected)
+    assert len(accepted.content.encode()) > 2000 > len(accepted.content)
 
 
 # --- worker failures --------------------------------------------------------

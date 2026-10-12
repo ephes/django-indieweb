@@ -9,7 +9,7 @@ indieweb.webmention_parse_worker`` with operating-system limits, so an
 expensive document ends its own short-lived process instead of the worker that
 received the Webmention.
 
-The module must not import Django: the child starts without settings.
+The module must not need Django settings: the child starts without them.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ from urllib.parse import ParseResult, parse_qsl, urlencode, urlparse, urlunparse
 
 import mf2py
 from bs4 import BeautifulSoup, Tag
+
+from .sanitizers import sanitize_webmention_html
 
 resource: ModuleType | None
 try:
@@ -192,13 +194,55 @@ def content_html_digest(html_content: str) -> str:
     return hashlib.sha256(html_content.encode("utf-8", "surrogatepass")).hexdigest()
 
 
-def _linking_content_digests(parsed: dict[str, Any], target_url: str) -> list[str]:
-    """Return digests of the h-entry content values that link to ``target_url``.
+def first_property_value(properties: dict[str, Any], key: str) -> str:
+    """Return the first value of a microformats property as text."""
+    values = properties.get(key, [])
+    if values and isinstance(values, list):
+        value = values[0]
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            # Handle complex microformats objects
+            return value.get("value", "")  # type: ignore[no-any-return]
+    return ""
 
-    The parent selects the h-entry that mentions the target. Whether embedded
-    content links to it needs another HTML parse, which belongs here as well.
+
+def extract_entry_content(h_entry: dict[str, Any]) -> dict[str, str]:
+    """Return the text and the (unsanitized) HTML of the content of an h-entry."""
+    properties = h_entry.get("properties", {})
+    content_data = properties.get("content", [])
+
+    if not content_data:
+        # Try summary as fallback
+        summary = first_property_value(properties, "summary")
+        if summary:
+            return {"text": summary, "html": summary}
+        return {"text": "", "html": ""}
+
+    content = content_data[0] if isinstance(content_data, list) else content_data
+
+    if isinstance(content, dict):
+        return {
+            "text": content.get("value", ""),
+            "html": content.get("html") or content.get("value", ""),
+        }
+    elif isinstance(content, str):
+        return {"text": content, "html": content}
+
+    return {"text": "", "html": ""}
+
+
+def _analyze_entry_content(parsed: dict[str, Any], target_url: str) -> tuple[list[str], dict[str, str]]:
+    """Do the HTML work on the content of every h-entry in ``parsed``.
+
+    The parent selects the mentioning h-entry and its nested responses from the
+    parse result. Two things it needs for that take another HTML parse, which
+    belongs here as well: whether embedded content links to the target, and the
+    sanitized form of the content that is stored. Both are returned keyed by
+    :func:`content_html_digest` of the HTML in the parse result.
     """
-    checked: dict[str, bool] = {}
+    links: dict[str, bool] = {}
+    sanitized: dict[str, str] = {}
     items = parsed.get("items", [])
     stack = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
     while stack:
@@ -210,15 +254,22 @@ def _linking_content_digests(parsed: dict[str, Any], target_url: str) -> list[st
         properties = item.get("properties", {})
         if not isinstance(types, list) or "h-entry" not in types or not isinstance(properties, dict):
             continue
+
         contents = properties.get("content", [])
         for content in contents if isinstance(contents, list) else []:
             html_content = content.get("html") if isinstance(content, dict) else None
             if not isinstance(html_content, str):
                 continue
             digest = content_html_digest(html_content)
-            if digest not in checked:
-                checked[digest] = _html_links_to_target(html_content, target_url)
-    return sorted(digest for digest, links in checked.items() if links)
+            if digest not in links:
+                links[digest] = _html_links_to_target(html_content, target_url)
+
+        stored_html = extract_entry_content(item)["html"]
+        if isinstance(stored_html, str) and stored_html:
+            digest = content_html_digest(stored_html)
+            if digest not in sanitized:
+                sanitized[digest] = sanitize_webmention_html(stored_html)
+    return sorted(digest for digest, linking in links.items() if linking), sanitized
 
 
 def analyze_source(html_content: str, base_url: str, target_url: str) -> dict[str, Any]:
@@ -226,10 +277,12 @@ def analyze_source(html_content: str, base_url: str, target_url: str) -> dict[st
     if not _html_links_to_target(html_content, target_url):
         return {"links_to_target": False}
     parsed = mf2py.parse(doc=html_content, url=base_url)
+    linking_content, sanitized_content = _analyze_entry_content(parsed, target_url)
     return {
         "links_to_target": True,
         "parsed": parsed,
-        "linking_content": _linking_content_digests(parsed, target_url),
+        "linking_content": linking_content,
+        "sanitized_content": sanitized_content,
     }
 
 
