@@ -4,6 +4,25 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### Webmention Link header parser should be quote-aware
+
+- `WebmentionSender._parse_link_header` now tokenizes RFC 8288 link-values
+  instead of stopping each parameter section at the first comma. Commas and
+  semicolons inside `<...>` or a quoted parameter value are data. Previously
+  `<https://example.test/mention>; title="hello, world"; rel="webmention"`
+  advertised no endpoint, and a quoted value could pair a `rel` with the wrong
+  target.
+- A bare-token `rel=webmention` is now accepted, and only the first `rel`
+  parameter of a link-value counts (RFC 8288 section 3.3). Relative-URL
+  resolution and endpoint safety validation are unchanged.
+- Tests: `tests/test_webmention_sender.py` covers quoted commas, escaped
+  quotes, commas in URLs, multiple link-values, rel ordering and case,
+  misleading quoted values and malformed headers.
+- Documentation: `docs/webmention.rst` (send-side endpoint discovery).
+- Changelog: added an Unreleased fix note.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ### Micropub JSON properties must be a mapping
 
 - `MicropubView._parse_json_request` now rejects a microformats2 JSON create

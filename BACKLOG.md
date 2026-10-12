@@ -54,10 +54,6 @@ No current Priority 2 items.
 
 `WebmentionNestedResponse` URL fields have model validators, but `_upsert_nested_response` (`processors.py:1239-1271`) writes via `get_or_create` / `save(update_fields=...)` without `full_clean()`. `_first_url_identity` currently filters to HTTP(S), but the invariant is producer-side. Call `full_clean(exclude=...)` before save or add explicit assertions/tests at the ingest boundary.
 
-### Webmention Link header parser should be quote-aware
-
-`WebmentionSender._parse_link_header` (`senders.py:230-238`) splits Link entries on bare commas, so an RFC 8288 quoted parameter containing a comma can mis-pair a `rel="webmention"` token with another URL. Replace with a quote-aware parser and add regression coverage for quoted commas.
-
 ### Micropub action POSTs should reject multipart before parsing action
 
 `MicropubView` / `MicropubMediaView` call `request.POST.get("action")` before per-action authorization (`views.py:2080-2090, 2170-2181, 2745-2755`). For multipart requests this invokes Django upload handlers before dispatch. Reject multipart for action verbs that never accept files before reading `request.POST`.

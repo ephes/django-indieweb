@@ -156,6 +156,62 @@ def _webmention_max_targets_per_host() -> int | None:
     )
 
 
+def _split_outside_quotes(value: str, separator: str, *, angle_brackets: bool = False) -> list[str]:
+    """Split ``value`` on ``separator`` outside quoted strings.
+
+    With ``angle_brackets``, a ``<...>`` section that opens a part is kept
+    intact as well. A backslash escapes the next character inside quotes.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    in_quotes = in_angle = escaped = False
+    for char in value:
+        if in_quotes:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_quotes = False
+        elif in_angle:
+            in_angle = char != ">"
+        elif char == separator:
+            parts.append("".join(current))
+            current = []
+            continue
+        elif char == '"':
+            in_quotes = True
+        elif angle_brackets and char == "<" and not "".join(current).strip():
+            in_angle = True
+        current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def _split_link_value(link_value: str) -> tuple[str | None, list[str]]:
+    """Return the ``<target>`` and raw parameters of one RFC 8288 link-value."""
+    stripped = link_value.strip()
+    closing = stripped.find(">")
+    if not stripped.startswith("<") or closing == -1:
+        return None, []
+    target = stripped[1:closing].strip()
+    params = _split_outside_quotes(stripped[closing + 1 :], ";")
+    return (target or None), params
+
+
+def _first_link_param(params: list[str], name: str) -> str | None:
+    """Return the unquoted value of the first parameter called ``name``, or None."""
+    for param in params:
+        param_name, separator, raw_value = param.partition("=")
+        if not separator or param_name.strip().lower() != name:
+            continue
+        value = raw_value.strip()
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            return re.sub(r"\\(.)", r"\1", value[1:-1])
+        return value
+    return None
+
+
 class WebmentionSender:
     """Sends webmentions to target URLs."""
 
@@ -274,29 +330,20 @@ class WebmentionSender:
         if not link_header:
             return None
 
-        # Per RFC 8288, a Link header is a comma-separated list of entries,
-        # each shaped ``<url>; param1=...; param2=...``. The ``rel``
-        # parameter can appear at any position within an entry. The
-        # previous regex pinned ``rel`` immediately after ``<url>;``,
-        # which silently dropped valid headers like
-        # ``<url>; type="text/html"; rel="webmention"``. The previous
-        # ``\bwebmention\b`` match also accepted substrings such as
-        # ``not-webmention`` and ``webmention-foo`` because ``-`` is a
-        # non-word character.
-        #
-        # Find each ``<url>`` and its trailing parameter section (up to
-        # the next entry or end of header), then look for any
-        # ``rel="..."`` parameter and require an exact ``webmention``
-        # token in its whitespace-separated value (case-insensitive).
-        entry_pattern = re.compile(r"<([^>]+)>([^,]*)")
-        rel_pattern = re.compile(r'rel\s*=\s*"([^"]*)"', re.IGNORECASE)
-        for url_match, params in entry_pattern.findall(link_header):
-            url_str = str(url_match).strip()
-            rel_match = rel_pattern.search(str(params))
-            if rel_match is None:
+        # Per RFC 8288, a Link header is a comma-separated list of link-values,
+        # each shaped ``<url>; param1=...; param2=...``. Commas and semicolons
+        # inside ``<...>`` or inside a quoted parameter value are data, not
+        # separators, so the header is tokenized instead of matched with a
+        # comma-stopping regex. ``rel`` can appear at any position, quoted or
+        # as a bare token; only the first ``rel`` of a link-value counts, and
+        # it must contain the exact ``webmention`` token (case-insensitive).
+        for link_value in _split_outside_quotes(link_header, ",", angle_brackets=True):
+            target, params = _split_link_value(link_value)
+            if target is None:
                 continue
-            if "webmention" in rel_match.group(1).lower().split():
-                return url_str
+            rel = _first_link_param(params, "rel")
+            if rel is not None and "webmention" in rel.lower().split():
+                return target
 
         return None
 

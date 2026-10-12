@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Fixed Webmention endpoint discovery from ``Link`` headers whose parameters
+  contain a quoted comma (for example ``title="hello, world"``): such headers
+  advertised no endpoint, and delivery failed when the HTML had no fallback.
+  The header is now tokenized as RFC 8288 link-values, a bare-token
+  ``rel=webmention`` is accepted, and only the first ``rel`` parameter of a
+  link-value is considered.
 * Fixed an HTTP 500 on authenticated Micropub JSON creates whose
   ``properties`` value is not an object (for example
   ``{"type": ["h-entry"], "properties": "mp-slug"}``). Such requests now
