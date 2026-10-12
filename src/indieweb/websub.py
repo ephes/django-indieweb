@@ -17,7 +17,7 @@ import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, router, transaction
 from django.db.models import QuerySet
 from django.http import HttpResponseBase
 from django.utils import timezone
@@ -777,6 +777,31 @@ def request_websub_subscription(
             http_client.close()
 
 
+def _subscription_write_db(subscription: WebSubSubscription) -> str:
+    """Return the database alias that ``subscription`` is written to."""
+    return router.db_for_write(WebSubSubscription, instance=subscription)
+
+
+def _lock_current_subscription(subscription: WebSubSubscription, *, using: str) -> None:
+    """Reload ``subscription`` from database ``using`` under a row lock.
+
+    Must run inside ``transaction.atomic(using=using)``. A callback transition
+    then branches on the committed row instead of the caller's possibly stale
+    instance, and a concurrent transition for the same row waits for this
+    transaction to finish. Unsaved changes on the instance are discarded.
+    The transaction, the locked reload and the following save all use the
+    same alias, so a subscription stored in a non-default database is never
+    confused with a row of the same primary key in another one.
+    """
+    try:
+        subscription.refresh_from_db(
+            using=using,
+            from_queryset=WebSubSubscription.objects.using(using).select_for_update(),
+        )
+    except WebSubSubscription.DoesNotExist as exc:
+        raise ValueError("WebSub subscription no longer exists") from exc
+
+
 def confirm_websub_verification(
     subscription: WebSubSubscription,
     *,
@@ -785,7 +810,35 @@ def confirm_websub_verification(
     challenge: str,
     lease_seconds: str | int | None,
 ) -> None:
-    """Confirm a WebSub callback verification request or raise ``ValueError``."""
+    """Confirm a WebSub callback verification request or raise ``ValueError``.
+
+    The transition runs in a transaction on the row as currently stored:
+    ``subscription`` is reloaded under ``select_for_update()`` first, so the
+    pending mode, state, lease ratchet and staged secret all come from the
+    locked row. A stale callback (for example one that arrives after a denial
+    or another confirmation already cleared the pending request) raises
+    ``ValueError`` and changes nothing.
+    """
+    using = _subscription_write_db(subscription)
+    with transaction.atomic(using=using):
+        _lock_current_subscription(subscription, using=using)
+        _apply_websub_verification(
+            subscription,
+            mode=mode,
+            topic_url=topic_url,
+            challenge=challenge,
+            lease_seconds=lease_seconds,
+        )
+
+
+def _apply_websub_verification(
+    subscription: WebSubSubscription,
+    *,
+    mode: str,
+    topic_url: str,
+    challenge: str,
+    lease_seconds: str | int | None,
+) -> None:
     validated_mode = _validate_subscription_mode(mode)
     if not challenge:
         raise ValueError("WebSub verification challenge is required")
@@ -858,7 +911,24 @@ def record_websub_denial(
     unsubscribe request, the existing subscription remains ``active`` because
     the hub rejected cancellation. In both cases pending request/secret staging
     is cleared so operators can inspect and retry explicitly.
+
+    Like ``confirm_websub_verification``, the transition runs in a transaction
+    on the row reloaded under ``select_for_update()``. A stale denial that
+    arrives after the pending request was already confirmed or denied raises
+    ``ValueError`` and cannot demote the subscription.
     """
+    using = _subscription_write_db(subscription)
+    with transaction.atomic(using=using):
+        _lock_current_subscription(subscription, using=using)
+        _apply_websub_denial(subscription, topic_url=topic_url, reason=reason)
+
+
+def _apply_websub_denial(
+    subscription: WebSubSubscription,
+    *,
+    topic_url: str,
+    reason: str,
+) -> None:
     if topic_url != subscription.topic_url:
         raise ValueError("WebSub denial topic does not match subscription")
     if subscription.pending_mode not in WEBSUB_SUBSCRIPTION_MODES:

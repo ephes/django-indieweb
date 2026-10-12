@@ -4,6 +4,33 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### WebSub denial and verification state updates should lock rows
+
+- `confirm_websub_verification` and `record_websub_denial` now run in
+  `transaction.atomic()` and first reload the subscription with
+  `refresh_from_db(from_queryset=...select_for_update())`. They branch on the
+  stored row, so a stale denial cannot demote a just-confirmed subscription, a
+  stale confirmation cannot revive a denied one or defeat the renewal lease
+  ratchet, and a duplicate renewal confirmation is rejected. Stale callbacks
+  raise `ValueError` (HTTP 400 from the callback view) and write nothing; a
+  deleted row is rejected the same way.
+- SQLite has no row locks. A two-connection probe (rollback-journal and WAL)
+  showed that the second writer of two overlapping read-then-write
+  transactions gets `database is locked`, so the stale write is refused rather
+  than applied; `transaction_mode = "IMMEDIATE"` serializes without the error.
+  No PostgreSQL concurrency test was added because the suite runs on SQLite
+  only.
+- Tests: `tests/test_websub_callback_state.py` loads two instances before
+  either callback and covers confirm-then-deny, deny-then-confirm,
+  unsubscribe, duplicate renewal, the lease ratchet, deleted rows, the
+  lock-inside-transaction call, the no-write guarantee and a subscription
+  stored in a second database (`tests/settings.py` gained an `other` alias).
+- Documentation: `docs/websub.rst` (Callback Verification) defines the stale
+  callback outcomes and the SQLite behavior.
+- Changelog: added an Unreleased fix note.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ### Webmention Link header parser should be quote-aware
 
 - `WebmentionSender._parse_link_header` now tokenizes RFC 8288 link-values
