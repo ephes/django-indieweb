@@ -1028,22 +1028,26 @@ def prune_websub_delivery_attempts(
     ``batch_size`` until none is left, so one run drains the backlog without
     one unbounded ``DELETE``. ``dry_run`` only counts. Subscriptions, their
     ``last_delivery_*`` summary fields and the ``WebSubAcceptedDelivery``
-    replay-protection rows are never touched. Nothing calls this
-    automatically: run it from the ``prune_websub_delivery_attempts``
+    replay-protection rows are never touched. Every query runs on the
+    database that ``WebSubDeliveryAttempt`` is written to
+    (``router.db_for_write``). Nothing calls this automatically: run it from the ``prune_websub_delivery_attempts``
     management command or a host job.
     """
     days = websub_delivery_attempt_retention_days(retention_days)
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
         raise ValueError("WebSub delivery-attempt prune batch size must be a positive integer")
     cutoff = (now or timezone.now()) - timedelta(days=days)
-    expired = WebSubDeliveryAttempt.objects.filter(received_at__lt=cutoff)
+    # Count, select and delete on the write database. Batches selected from a
+    # lagging read replica would keep returning rows that are already deleted.
+    attempts = WebSubDeliveryAttempt.objects.using(router.db_for_write(WebSubDeliveryAttempt))
+    expired = attempts.filter(received_at__lt=cutoff)
     matched = expired.count()
     deleted = 0
     while not dry_run:
         batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
         if not batch:
             break
-        deleted += WebSubDeliveryAttempt.objects.filter(pk__in=batch).delete()[0]
+        deleted += attempts.filter(pk__in=batch).delete()[0]
     return WebSubDeliveryAttemptPruneResult(
         retention_days=days,
         cutoff=cutoff,

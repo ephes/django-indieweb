@@ -10,6 +10,8 @@ from unittest.mock import patch
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connections
+from django.test.utils import CaptureQueriesContext
 
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
 from indieweb.websub import prune_websub_delivery_attempts, websub_delivery_attempt_retention_days
@@ -198,3 +200,40 @@ def test_command_rejects_an_invalid_setting(attempts, settings):
         _run_command()
 
     assert _remaining(attempts) == set(attempts)
+
+
+class ReplicaRouter:
+    """Send reads to the ``other`` database (a replica) and writes to ``default``."""
+
+    def db_for_read(self, model, **hints):
+        return "other"
+
+    def db_for_write(self, model, **hints):
+        return "default"
+
+    def allow_relation(self, obj1, obj2, **hints):
+        return True
+
+
+@pytest.mark.django_db(databases=["default", "other"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_prune_reads_and_deletes_on_the_write_database(settings, dry_run):
+    """A lagging read replica must not decide what is deleted or keep the batch loop running."""
+    subscription = WebSubSubscription.objects.using("default").create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_ACTIVE,
+    )
+    for day in range(3):
+        WebSubDeliveryAttempt.objects.using("default").create(
+            subscription=subscription, received_at=CUTOFF - timedelta(days=day + 1), status_code=204
+        )
+    settings.DATABASE_ROUTERS = ["tests.test_prune_websub_delivery_attempts.ReplicaRouter"]
+
+    with CaptureQueriesContext(connections["other"]) as replica_queries:
+        result = prune_websub_delivery_attempts(retention_days=30, now=NOW, batch_size=2, dry_run=dry_run)
+
+    assert len(replica_queries) == 0
+    assert result.matched == 3
+    assert result.deleted == (0 if dry_run else 3)
+    assert WebSubDeliveryAttempt.objects.using("default").count() == (3 if dry_run else 0)

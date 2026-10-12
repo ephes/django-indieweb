@@ -9,7 +9,9 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Added `indieweb.websub.prune_websub_delivery_attempts()` and the
   `prune_websub_delivery_attempts` management command. They delete
   `WebSubDeliveryAttempt` rows received before the cutoff in primary-key
-  batches, support `--dry-run`, and report the cutoff and row count.
+  batches, support `--dry-run`, and report the cutoff and row count. All
+  queries run on the model's write database, so a read replica is never
+  consulted.
 - Added `INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS` (default `None`,
   positive integer). Without it and without `--days`, or with an invalid
   value, the command fails and deletes nothing. No scheduler was added and
