@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* Added the ``prune_websub_delivery_attempts`` management command and the
+  ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS`` setting (default
+  ``None``). The command deletes ``WebSubDeliveryAttempt`` diagnostics older
+  than the retention window in batches, supports ``--dry-run``, and reports
+  the cutoff and row count. Nothing is deleted automatically: schedule the
+  command yourself. Replay-protection rows and subscription summary fields are
+  not affected.
 * Rate limiting: HTTP methods an endpoint does not implement now share one
   ``OTHER`` counter per endpoint and client instead of one counter per method
   name, so invented methods cannot multiply the allowance or create unbounded

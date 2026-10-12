@@ -4,6 +4,33 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### WebSub delivery-attempt retention policy
+
+- Added `indieweb.websub.prune_websub_delivery_attempts()` and the
+  `prune_websub_delivery_attempts` management command. They delete
+  `WebSubDeliveryAttempt` rows received before the cutoff in primary-key
+  batches, support `--dry-run`, and report the cutoff and row count. All
+  queries run on the model's write database, so a read replica is never
+  consulted.
+- Added `INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS` (default `None`,
+  positive integer). Without it and without `--days`, or with an invalid
+  value, the command fails and deletes nothing. No scheduler was added and
+  nothing is deleted automatically, so the retention window stays a host
+  decision.
+- `WebSubAcceptedDelivery` replay rows, subscriptions and their
+  `last_delivery_*` summary fields are not touched. The existing
+  `examples/websub_workflows.py` example is unchanged.
+- Tests: `tests/test_prune_websub_delivery_attempts.py` uses a fixed clock
+  around the cutoff and covers deletion, the kept boundary row, dry run,
+  batch draining, untouched replay rows and subscriptions, setting and option
+  validation, and the command output.
+- Documentation: `docs/websub.rst` (Delivery Attempt Retention, with a cron
+  recipe and the distinction from replay protection) and
+  `docs/configuration.rst` (new setting section and model notes).
+- Changelog: added an Unreleased note.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ### Rate-limit method buckets and eviction-safe counter
 
 - Closes "Per-method rate-limit counter multiplies effective allowance" and

@@ -946,6 +946,29 @@ host-owned worker. The examples keep feed parsing, entry persistence, queue
 choice, retry behavior, and delivery body storage policy outside
 django-indieweb.
 
+INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Default:** ``None`` (no retention configured)
+
+Number of days that ``WebSubDeliveryAttempt`` diagnostics are kept when the
+``prune_websub_delivery_attempts`` management command (or the
+``indieweb.websub.prune_websub_delivery_attempts()`` function) runs without an
+explicit value. It must be a positive integer; a numeric string is accepted.
+The setting does nothing on its own: django-indieweb never deletes attempts
+automatically, so schedule the command yourself.
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS = 90
+
+There is deliberately no built-in default. If the setting is unset and the
+command gets no ``--days``, or the value is not a positive integer, the
+command stops with an error and deletes nothing. See
+:ref:`websub-delivery-attempt-retention` for the command and a scheduling
+recipe.
+
 INDIEWEB_WEBSUB_DELIVERY_ENQUEUE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1032,10 +1055,14 @@ retention policy that matches their operational needs, for example:
    cutoff = timezone.now() - timedelta(days=90)
    WebSubDeliveryAttempt.objects.filter(received_at__lt=cutoff).delete()
 
-The tested ``prune_websub_delivery_attempts()`` example in
-``examples/websub_workflows.py`` wraps the same policy with a returned count
-for operator logs. Retention days remain host configuration, not a
-django-indieweb setting.
+The ``prune_websub_delivery_attempts`` management command applies the same
+policy in batches, with a dry-run mode, and reads its window from ``--days``
+or ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS``; see
+:ref:`websub-delivery-attempt-retention`. The tested
+``prune_websub_delivery_attempts()`` example in
+``examples/websub_workflows.py`` remains available for hosts that prefer their
+own job. The retention window stays a host decision: nothing is deleted until
+you run or schedule one of them.
 
 Use the read-only ``websub_subscriptions`` management command to inspect
 active subscriptions whose leases have expired or expire within a configured

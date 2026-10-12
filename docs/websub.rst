@@ -480,24 +480,55 @@ network requests only when your host job explicitly invokes it. The optional
 ``secret_for_subscription`` callable is where your application can keep,
 rotate, or remove delivery secrets according to operator policy.
 
+.. _websub-delivery-attempt-retention:
+
 Delivery Attempt Retention
 --------------------------
 
-``WebSubDeliveryAttempt`` rows are metadata-only diagnostics, but busy
-subscribers should still prune them according to a host retention policy. The
-example ``prune_websub_delivery_attempts()`` deletes attempts older than a
-configured number of days and returns a count suitable for operator logs:
+Every callback ``POST`` writes one ``WebSubDeliveryAttempt`` row, accepted or
+rejected. The rows are metadata-only diagnostics, but nothing removes them, so
+a noisy hub or a leaked callback URL can grow the table without bound. Prune
+them with the ``prune_websub_delivery_attempts`` management command:
 
-.. code-block:: python
+.. code-block:: bash
 
-   from examples.websub_workflows import prune_websub_delivery_attempts
+   # Report the cutoff and the number of matching rows; delete nothing
+   python manage.py prune_websub_delivery_attempts --days 90 --dry-run
 
-   result = prune_websub_delivery_attempts(retention_days=90)
-   logger.info("Pruned %s WebSub delivery attempts", result.deleted_count)
+   # Delete attempts received more than 90 days ago
+   python manage.py prune_websub_delivery_attempts --days 90
 
-Choose the retention window in your application. django-indieweb does not add
-a global retention setting, scheduler, or management command that deletes rows
-automatically.
+``--days`` defaults to ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS``.
+Without either, or with a value that is not a positive integer, the command
+exits with an error and deletes nothing. The cutoff is the current time minus
+the retention days; an attempt received exactly at the cutoff is kept. Rows
+are deleted in primary-key batches (``--batch-size``, default 1000) until none
+is left, so a single run drains a large backlog without one unbounded
+``DELETE``. The command prints the cutoff and the number of rows it deleted or,
+with ``--dry-run``, would delete.
+
+django-indieweb does not schedule the command and never deletes attempts on
+its own. Run it from your scheduler, for example daily from cron:
+
+.. code-block:: text
+
+   15 3 * * * cd /srv/site && python manage.py prune_websub_delivery_attempts
+
+Host code can call ``indieweb.websub.prune_websub_delivery_attempts()``
+directly; it takes ``retention_days``, ``now``, ``batch_size`` and ``dry_run``
+and returns the cutoff with the ``matched`` and ``deleted`` counts. With
+database routers, it counts, selects and deletes on the write database of
+``WebSubDeliveryAttempt``, so a lagging read replica cannot influence a run. The older
+``examples.websub_workflows.prune_websub_delivery_attempts()`` example still
+works for hosts that keep the retention window in their own code.
+
+Pruning is independent of replay protection. ``WebSubAcceptedDelivery`` rows,
+which reject replayed bodies, are bounded separately by
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS`` and
+``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` during delivery handling, and
+this command never touches them. It also leaves subscriptions and their
+``last_delivery_*`` summary fields unchanged, so the latest delivery status
+stays visible after its attempt row is pruned.
 
 Signed Deliveries
 -----------------

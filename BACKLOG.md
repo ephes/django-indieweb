@@ -26,10 +26,6 @@ No current Priority 2 items.
 
 `_signature_headers` (`websub.py:994-1003`) accepts `X-Hub-Signature-256: sha1=<digest>` and trusts the algorithm token rather than the header name. Currently safe because sha1 is off by default. Add a test asserting that `X-Hub-Signature-256: sha1=...` is rejected even when sha1 is otherwise allowed, so a future change conditioning trust on the header name cannot regress.
 
-### WebSub delivery-attempt retention policy
-
-`WebSubDeliveryAttempt` rows are written for every callback POST and never pruned (`websub.py:1216-1225`; `models.py:803-829`). Add `INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS` plus a pruning command or documented operator workflow so a noisy hub or leaked active callback URL cannot grow the diagnostics table indefinitely.
-
 ### WebSub callback token existence oracle
 
 `WebSubCallbackView.get` returns distinguishable 404 vs 400/200/204 responses for unknown vs known callback tokens (`views.py:2921-2930`), and `post` returns 404 for unknown-or-inactive subscriptions (`views.py:2962-2966`). Token entropy is high, but a partial leak becomes testable. Return uniform 404 for tokens that do not match an active subscription, optionally with a small constant-time delay.
