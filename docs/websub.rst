@@ -288,7 +288,9 @@ callback finds no matching pending request, is rejected with HTTP ``400`` and
 changes nothing: a late denial cannot demote a subscription that was just
 confirmed, a late confirmation cannot revive a denied one, and a duplicate
 renewal confirmation cannot replace the lease that the first one stored. A
-callback for a row deleted in the meantime is rejected the same way.
+callback for a row deleted in the meantime is rejected the same way. With
+several databases, the transaction, the locked reload and the save all use the
+database the subscription is written to (``router.db_for_write``).
 
 Row locks need a database that supports them (PostgreSQL, MySQL/MariaDB). On
 SQLite ``select_for_update()`` is a no-op, but the transaction still prevents

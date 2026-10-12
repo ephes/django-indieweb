@@ -6,7 +6,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
-from django.db import connection
+from django.db import connection, connections
 from django.db.models import QuerySet
 from django.utils import timezone
 
@@ -198,3 +198,37 @@ def test_rejected_transition_does_not_write():
         _deny(subscription)
 
     assert WebSubSubscription.objects.values().get(pk=subscription.pk) == before
+
+
+@pytest.mark.django_db(databases=["default", "other"])
+@pytest.mark.parametrize("transition", [_confirm, _deny])
+def test_transition_uses_the_database_of_the_subscription(transition):
+    """A row in another database is locked, reloaded and saved there, not in ``default``."""
+    values = {
+        "hub_url": "https://hub.example/sub",
+        "topic_url": "https://source.example/feed",
+        "state": WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        "pending_mode": WebSubSubscription.MODE_SUBSCRIBE,
+        "requested_lease_seconds": DAY,
+    }
+    in_default = WebSubSubscription.objects.using("default").create(**values)
+    in_other = WebSubSubscription.objects.using("other").create(pk=in_default.pk, **values)
+    locks: list[tuple[str, bool]] = []
+    original = QuerySet.select_for_update
+
+    def recording_select_for_update(queryset, *args, **kwargs):
+        if queryset.model is WebSubSubscription:
+            locks.append((queryset.db, connections[queryset.db].in_atomic_block))
+        return original(queryset, *args, **kwargs)
+
+    with patch.object(QuerySet, "select_for_update", recording_select_for_update):
+        transition(in_other)
+
+    assert locks == [("other", True)]
+    assert in_other._state.db == "other"
+    untouched = WebSubSubscription.objects.using("default").get(pk=in_default.pk)
+    changed = WebSubSubscription.objects.using("other").get(pk=in_other.pk)
+    assert untouched.state == WebSubSubscription.STATE_PENDING_SUBSCRIBE
+    assert untouched.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
+    assert changed.pending_mode == ""
+    assert changed.state != WebSubSubscription.STATE_PENDING_SUBSCRIBE

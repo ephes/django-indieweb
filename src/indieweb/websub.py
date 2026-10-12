@@ -17,7 +17,7 @@ import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, router, transaction
 from django.db.models import QuerySet
 from django.http import HttpResponseBase
 from django.utils import timezone
@@ -777,16 +777,27 @@ def request_websub_subscription(
             http_client.close()
 
 
-def _lock_current_subscription(subscription: WebSubSubscription) -> None:
-    """Reload ``subscription`` from the database under a row lock.
+def _subscription_write_db(subscription: WebSubSubscription) -> str:
+    """Return the database alias that ``subscription`` is written to."""
+    return router.db_for_write(WebSubSubscription, instance=subscription)
 
-    Must run inside ``transaction.atomic()``. A callback transition then
-    branches on the committed row instead of the caller's possibly stale
+
+def _lock_current_subscription(subscription: WebSubSubscription, *, using: str) -> None:
+    """Reload ``subscription`` from database ``using`` under a row lock.
+
+    Must run inside ``transaction.atomic(using=using)``. A callback transition
+    then branches on the committed row instead of the caller's possibly stale
     instance, and a concurrent transition for the same row waits for this
     transaction to finish. Unsaved changes on the instance are discarded.
+    The transaction, the locked reload and the following save all use the
+    same alias, so a subscription stored in a non-default database is never
+    confused with a row of the same primary key in another one.
     """
     try:
-        subscription.refresh_from_db(from_queryset=WebSubSubscription.objects.select_for_update())
+        subscription.refresh_from_db(
+            using=using,
+            from_queryset=WebSubSubscription.objects.using(using).select_for_update(),
+        )
     except WebSubSubscription.DoesNotExist as exc:
         raise ValueError("WebSub subscription no longer exists") from exc
 
@@ -808,8 +819,9 @@ def confirm_websub_verification(
     or another confirmation already cleared the pending request) raises
     ``ValueError`` and changes nothing.
     """
-    with transaction.atomic():
-        _lock_current_subscription(subscription)
+    using = _subscription_write_db(subscription)
+    with transaction.atomic(using=using):
+        _lock_current_subscription(subscription, using=using)
         _apply_websub_verification(
             subscription,
             mode=mode,
@@ -905,8 +917,9 @@ def record_websub_denial(
     arrives after the pending request was already confirmed or denied raises
     ``ValueError`` and cannot demote the subscription.
     """
-    with transaction.atomic():
-        _lock_current_subscription(subscription)
+    using = _subscription_write_db(subscription)
+    with transaction.atomic(using=using):
+        _lock_current_subscription(subscription, using=using)
         _apply_websub_denial(subscription, topic_url=topic_url, reason=reason)
 
 

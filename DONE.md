@@ -23,7 +23,8 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Tests: `tests/test_websub_callback_state.py` loads two instances before
   either callback and covers confirm-then-deny, deny-then-confirm,
   unsubscribe, duplicate renewal, the lease ratchet, deleted rows, the
-  lock-inside-transaction call and the no-write guarantee.
+  lock-inside-transaction call, the no-write guarantee and a subscription
+  stored in a second database (`tests/settings.py` gained an `other` alias).
 - Documentation: `docs/websub.rst` (Callback Verification) defines the stale
   callback outcomes and the SQLite behavior.
 - Changelog: added an Unreleased fix note.
