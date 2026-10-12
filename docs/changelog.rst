@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Fixed an HTTP 500 on authenticated Micropub JSON creates whose
+  ``properties`` value is not an object (for example
+  ``{"type": ["h-entry"], "properties": "mp-slug"}``). Such requests now
+  return ``400 invalid_request`` and never reach the content handler.
 * **Security:** ``INDIEWEB_LOG_REDACTION = "redact"`` now also covers
   authorization codes (a digest instead of the six-character prefix),
   ``client_id`` URLs on token-exchange and client-validator failure lines, and

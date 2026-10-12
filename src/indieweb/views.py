@@ -313,6 +313,10 @@ class _ValidatedMicropubMediaUpload:
     suffix: str
 
 
+class _MicropubInvalidProperties(ValueError):
+    """A microformats2 JSON create whose ``properties`` value is not an object."""
+
+
 class _MicropubMediaUploadError(Exception):
     """Internal exception carrying the HTTP status for upload validation/storage failures."""
 
@@ -2170,14 +2174,21 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         return None
 
     def _parse_json_request(self, request: HttpRequest) -> dict[str, Any]:
-        """Parse JSON formatted Micropub request."""
+        """Parse JSON formatted Micropub request.
+
+        Raises ``_MicropubInvalidProperties`` when a microformats2 JSON body
+        carries a ``properties`` value that is not an object, so a string,
+        list, number or ``null`` never reaches validation or a handler.
+        """
         data = _load_micropub_json_object(request)
         if not isinstance(data, dict):
             return {}
         # Convert JSON format to normalized properties format
         if "type" in data and isinstance(data["type"], list):
             # Already in microformats2 JSON format
-            properties: dict[str, Any] = data.get("properties", {})
+            properties = data.get("properties", {})
+            if not isinstance(properties, dict):
+                raise _MicropubInvalidProperties("Micropub JSON properties must be an object")
             return properties
         # Convert simple JSON to properties format
         properties = {}
@@ -2490,6 +2501,14 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             properties.pop("mp-slug", None)
         return True
 
+    def _create_parse_error_response(
+        self, exc: _MicropubMediaUploadError | _MicropubInvalidProperties
+    ) -> HttpResponse:
+        """Map a create-request parsing failure to its error response."""
+        if isinstance(exc, _MicropubMediaUploadError):
+            return _micropub_media_upload_error_response(exc)
+        return self._invalid_request()
+
     def _create_properties_valid(self, request: HttpRequest, properties: dict[str, Any]) -> bool:
         if self._properties_have_server_managed_property(properties):
             return False
@@ -2797,8 +2816,8 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         # Parse properties from request
         try:
             properties = self.parse_request_data(request)
-        except _MicropubMediaUploadError as exc:
-            return _micropub_media_upload_error_response(exc)
+        except (_MicropubMediaUploadError, _MicropubInvalidProperties) as exc:
+            return self._create_parse_error_response(exc)
         if not self._create_properties_valid(request, properties):
             return self._invalid_request()
 

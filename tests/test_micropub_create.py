@@ -672,6 +672,60 @@ class TestMicropubCreate:
 
     @pytest.mark.django_db
     @pytest.mark.parametrize(
+        "properties",
+        ["mp-slug", "photo audio", "", None, ["content"], [], 42, 0, True, 1.5],
+    )
+    def test_json_create_rejects_non_object_properties_before_handler(
+        self, client, token, micropub_url, monkeypatch, properties
+    ):
+        """A microformats2 ``properties`` value that is not an object is a 400, never a 500."""
+        create_called = False
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal create_called
+                create_called = True
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+        payload = {"type": ["h-entry"], "properties": properties}
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 400
+        assert response.content == b"invalid_request"
+        assert create_called is False
+
+    @pytest.mark.django_db
+    def test_json_create_without_properties_key_still_reaches_handler(self, client, token, micropub_url, monkeypatch):
+        """An absent ``properties`` key keeps its earlier meaning: an empty property map."""
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data=json.dumps({"type": ["h-entry"]}),
+            content_type="application/json",
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties == {}
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
         "property_name",
         ["photo", "audio", "video", "in-reply-to", "like-of", "repost-of", "bookmark-of", "syndication"],
     )
