@@ -5,6 +5,19 @@ Changelog
 
 Unreleased
 ----------
+* Fixed duplicate no-scope grants under concurrency. ``Auth.scope`` and
+  ``Token.scope`` now store "no scope" as ``""`` instead of ``NULL``, so the
+  ``(me, client_id, scope, owner)`` unique constraint also applies when two
+  first approvals or first token issuances for the same identity run at the
+  same time (``NULL`` values never collide in a unique constraint).
+  **Migrations:** ``0029_reconcile_no_scope_grants`` and
+  ``0030_scope_not_null`` must be applied. If an identity already holds
+  several no-scope rows, ``0029`` keeps the most recently modified one
+  unchanged and deletes the others, which revokes those duplicate tokens or
+  pending codes, and logs a warning with the count. Stop the application while
+  migrating, as with any schema change. **Compatibility:** protocol responses
+  are unchanged, but host code that tests ``token.scope is None`` or filters
+  ``scope__isnull=True`` should use ``not token.scope`` or ``scope=""``.
 * Fixed a race between WebSub verification and denial callbacks.
   ``confirm_websub_verification`` and ``record_websub_denial`` now reload the
   subscription under ``select_for_update()`` inside a transaction and decide

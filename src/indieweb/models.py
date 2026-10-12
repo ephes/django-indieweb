@@ -131,7 +131,9 @@ class Auth(models.Model):
     state = models.CharField(max_length=32)
     client_id = models.CharField(max_length=512)
     redirect_uri = models.CharField(max_length=1024)
-    scope = models.CharField(max_length=256, null=True, blank=True)  # noqa
+    # No scope is stored as "" (never NULL) so the unique grant identity below
+    # also holds for no-scope grants: databases treat NULLs as distinct.
+    scope = models.CharField(max_length=256, blank=True, default="")
     me = models.CharField(max_length=512)
     code_challenge = models.CharField(max_length=128, null=True, blank=True)  # noqa: DJ001
     code_challenge_method = models.CharField(max_length=8, null=True, blank=True)  # noqa: DJ001
@@ -143,6 +145,8 @@ class Auth(models.Model):
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.scope is None:
+            self.scope = ""
         key_changed = False
         raw_key = self.raw_key
         if not self.key:
@@ -244,7 +248,9 @@ class Token(GenKeyMixin):
     )
     client_id = models.CharField(max_length=512)
     me = models.CharField(max_length=512)
-    scope = models.CharField(max_length=256, null=True, blank=True)  # noqa
+    # No scope is stored as "" (never NULL) so the unique grant identity below
+    # also holds for no-scope grants: databases treat NULLs as distinct.
+    scope = models.CharField(max_length=256, blank=True, default="")
     expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
@@ -254,6 +260,8 @@ class Token(GenKeyMixin):
         return f"{self.client_id} {self.me} {self.scope} {self.owner.username}"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.scope is None:
+            self.scope = ""
         key_changed = False
         raw_key = self.raw_key
         if not self.key:

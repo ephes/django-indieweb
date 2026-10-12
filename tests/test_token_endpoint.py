@@ -256,7 +256,7 @@ def test_token_exchange_without_scope_allows_no_scope_auth_code(client, auth, to
     data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
     assert data["scope"] == [""]
     token = models.Token.get_for_raw_key(data["access_token"][0])
-    assert token.scope is None
+    assert token.scope == ""
 
 
 @pytest.mark.django_db
@@ -393,7 +393,7 @@ def test_token_exchange_accepts_empty_scope_parameter_for_no_scope_auth_code(cli
     data = parse_qs(response.content.decode("utf-8"), keep_blank_values=True)
     assert data["scope"] == [""]
     token = models.Token.get_for_raw_key(data["access_token"][0])
-    assert token.scope is None
+    assert token.scope == ""
 
 
 @pytest.mark.django_db

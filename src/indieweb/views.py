@@ -1702,19 +1702,17 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         create run in one transaction, with the ``DELETE`` as its first
         statement so SQLite waits for the write lock instead of failing a
         read-to-write lock upgrade. Two concurrent approvals can both delete
-        nothing and race the insert. Where the unique constraint applies, the
-        loser gets ``IntegrityError`` once the winner commits, and one retry
-        replaces the winner's code (last approval wins) instead of a 500.
+        nothing and race the insert. The loser gets ``IntegrityError`` once the
+        winner commits, and one retry replaces the winner's code (last approval
+        wins) instead of a 500.
 
-        No lock is taken on the owner row: a consent holding it while a token
-        exchange for the same owner inserts a ``Token`` (whose foreign-key
-        check needs that row) can deadlock. The accepted consequence is that
-        on PostgreSQL and MySQL, which do not collapse ``NULL`` scopes in the
-        unique constraint, two concurrent no-scope approvals can each leave a
-        pending code. Both codes came from the user's own approvals, each is
-        single-use and expires with ``INDIWEB_AUTH_CODE_TIMEOUT``, and the next
-        approval for the identity deletes both.
+        A grant without scope is stored with ``scope=""``, never ``NULL``, so
+        the unique constraint also covers concurrent no-scope approvals on
+        every database. No lock is taken on the owner row: a consent holding
+        it while a token exchange for the same owner inserts a ``Token`` (whose
+        foreign-key check needs that row) can deadlock.
         """
+        fields["scope"] = fields["scope"] or ""
         identity = {key: fields[key] for key in ("owner", "client_id", "scope", "me")}
         for attempt in range(2):
             try:
@@ -1821,10 +1819,13 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     ) -> HttpResponse:
         lifetime = int(getattr(settings, "INDIEWEB_TOKEN_EXPIRES_IN", DEFAULT_TOKEN_EXPIRES_IN))
         expires_at = timezone.now() + timedelta(seconds=lifetime)
+        # No scope is stored as "" so the unique grant identity applies and a
+        # concurrent first issuance cannot create a second no-scope token:
+        # ``get_or_create`` then returns the row the other request created.
         token, created = Token.objects.get_or_create(
             me=me,
             client_id=client_id,
-            scope=scope,
+            scope=scope or "",
             owner_id=owner.pk,
             defaults={"expires_at": expires_at},
         )
