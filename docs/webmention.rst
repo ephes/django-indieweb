@@ -871,6 +871,14 @@ in ``Link`` headers or HTML ``<link rel="webmention">`` / ``<a
 rel="webmention">`` elements are resolved against the final target page URL
 after redirects, not the originally requested URL.
 
+``Link`` headers are tokenized as RFC 8288 link-values. A comma or semicolon
+inside the ``<...>`` target or inside a quoted parameter value (for example
+``title="hello, world"``) does not end the link-value, so the endpoint is
+always taken from the link-value that carries the ``rel``. ``rel`` may be
+quoted or a bare token (``rel=webmention``), may appear at any position, and
+must contain the exact ``webmention`` token; only the first ``rel`` parameter
+of a link-value is considered.
+
 When sending outgoing Webmentions, source-content fetches also follow the same
 bounded redirect policy. Endpoint delivery ``POST`` requests follow redirects
 with the original ``POST`` method and ``source``/``target`` form payload

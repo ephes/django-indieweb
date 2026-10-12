@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs
 
 import httpx
@@ -1358,6 +1358,86 @@ def test_parse_link_header_rejects_substring_rel_values(sender, link_value):
 )
 def test_parse_link_header_accepts_exact_webmention_token(sender, link_value, expected):
     assert sender._parse_link_header(link_value) == expected
+
+
+# ----------------------------------------------------------------------------
+# RFC 8288 link-values are tokenized: commas and semicolons inside ``<...>`` or
+# inside a quoted parameter value do not end the link-value or the parameter.
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "link_value, expected",
+    [
+        # The exact reproduction: a quoted comma before ``rel``.
+        ('<https://example.test/mention>; title="hello, world"; rel="webmention"', "https://example.test/mention"),
+        ('<https://example.test/wm>; title="a; b, c"; rel="webmention"', "https://example.test/wm"),
+        # Escaped quotes do not end the quoted string.
+        (r'<https://example.test/wm>; title="say \"hi, there\""; rel="webmention"', "https://example.test/wm"),
+        (r'<https://example.test/wm>; title="trailing backslash \\"; rel="webmention"', "https://example.test/wm"),
+        # A comma inside the URL belongs to the URL.
+        ('<https://example.test/wm?a=1,2>; rel="webmention"', "https://example.test/wm?a=1,2"),
+        ('<https://example.test/wm;v=1,2>; rel="webmention"', "https://example.test/wm;v=1,2"),
+        # Multiple link-values: the endpoint comes from the right one.
+        (
+            '<https://example.test/other>; rel="next"; title="x, y", <https://example.test/wm>; rel="webmention"',
+            "https://example.test/wm",
+        ),
+        (
+            '<https://example.test/wm>; rel="webmention", <https://example.test/other>; rel="next"',
+            "https://example.test/wm",
+        ),
+        ('<https://example.test/a>;rel="next",<https://example.test/wm>;rel="webmention"', "https://example.test/wm"),
+        # rel ordering, case, bare-token form and relative targets.
+        ('<https://example.test/wm>; title="t, u"; REL="Webmention"; type="text/html"', "https://example.test/wm"),
+        ("<https://example.test/wm>; rel=webmention", "https://example.test/wm"),
+        ("</wm>; rel=webmention", "/wm"),
+        ('  <https://example.test/wm> ; rel = "webmention"  ', "https://example.test/wm"),
+    ],
+)
+def test_parse_link_header_handles_quoted_and_bracketed_separators(sender, link_value, expected):
+    assert sender._parse_link_header(link_value) == expected
+
+
+@pytest.mark.parametrize(
+    "link_value",
+    [
+        # A quoted value that merely looks like another link-value or a rel parameter.
+        '<https://example.test/other>; title="x, <https://evil.test/wm>; rel=\\"webmention\\""',
+        '<https://example.test/other>; title="a; rel=webmention"',
+        '<https://example.test/other>; title="rel=\\"webmention\\""; rel="next"',
+        # The rel of one link-value must not pair with another link-value's target.
+        '<https://example.test/other>; rel="next"; title="x, y", <https://example.test/wm>; rel="not-webmention"',
+        # Only the first rel parameter of a link-value counts (RFC 8288 section 3.3).
+        '<https://example.test/other>; rel="next"; rel="webmention"',
+        "<https://example.test/other>; rel=not-webmention",
+        # Malformed link-values advertise nothing.
+        'https://example.test/wm; rel="webmention"',
+        '<https://example.test/wm; rel="webmention"',
+        '<>; rel="webmention"',
+        '<https://example.test/wm>; rel="webmention',
+        "",
+        ",,",
+    ],
+)
+def test_parse_link_header_ignores_misleading_or_malformed_values(sender, link_value):
+    assert sender._parse_link_header(link_value) is None
+
+
+def test_discover_endpoint_uses_link_header_with_quoted_comma(sender):
+    """HEAD discovery finds the endpoint and resolves it against the final URL."""
+    response = Mock()
+    response.headers = {"Link": '</webmention>; title="hello, world"; rel="webmention"'}
+    discovered = Mock(response=response, final_url="https://93.184.216.34/post")
+
+    with (
+        patch("indieweb.senders.request_with_webmention_redirects", return_value=discovered),
+        patch("indieweb.senders.stream_with_safe_redirects") as mock_get,
+    ):
+        endpoint = sender.discover_endpoint("https://93.184.216.34/post")
+
+    assert endpoint == "https://93.184.216.34/webmention"
+    mock_get.assert_not_called()
 
 
 @pytest.mark.parametrize(
