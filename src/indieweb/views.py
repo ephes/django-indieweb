@@ -39,7 +39,7 @@ from django.views.generic import View
 
 from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
-from .log_redaction import redact_state, redact_token, redact_url, redact_url_origin
+from .log_redaction import redact_state, redact_text, redact_token, redact_url, redact_url_origin
 from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
 from .processors import WebmentionProcessor, canonicalize_webmention_storage_url
 from .rate_limit import RateLimitMixin
@@ -697,7 +697,8 @@ def _client_id_allowed(client_id: str) -> bool:
         return bool(validator(normalized_client_id))
     except Exception as exc:
         logger.error(
-            f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={_log_client_id(normalized_client_id)!r}: {exc}"
+            f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={_log_client_id(normalized_client_id)!r}: "
+            f"{redact_text(str(exc))}"
         )
         return False
 

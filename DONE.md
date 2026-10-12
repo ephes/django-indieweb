@@ -11,8 +11,9 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   sites" and "`notify_websub` management command: redact `result.error`".
 - With `INDIEWEB_LOG_REDACTION = "redact"`, `_redact_auth_code` returns the
   `redact_token` digest instead of a six-character prefix; the token-exchange
-  and client-validator log lines digest `client_id`; the two "token owner is
-  not active" lines digest the username. These apply at every log level.
+  and client-validator log lines digest `client_id` (and print a raising
+  validator's exception message as `<redacted:DIGEST>`); the two "token owner
+  is not active" lines digest the username. These apply at every log level.
   Passthrough output is unchanged.
 - `notify_websub` prints a request error without an HTTP status through the new
   `log_redaction.redact_text` helper (`<redacted:DIGEST>` in redact mode). The

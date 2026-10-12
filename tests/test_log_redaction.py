@@ -425,3 +425,37 @@ def test_introspection_inactive_owner_log_is_redacted_in_redact_mode(client, set
 
     assert f"rejected inactive token owner: {redact_state(OWNER_MARKER)}" in caplog.text
     assert OWNER_MARKER not in caplog.text
+
+
+def raising_client_id_validator(client_id):
+    raise ValueError(f"Policy lookup failed for {client_id}")
+
+
+@pytest.mark.django_db
+def test_client_id_validator_failure_log_is_redacted_in_redact_mode(client, settings, caplog):
+    """Neither the client_id nor a validator message that embeds it may reach the log."""
+    from indieweb.log_redaction import redact_text
+
+    settings.INDIEWEB_LOG_REDACTION = "redact"
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.test_log_redaction.raising_client_id_validator"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        _exchange_unknown_code(client)
+
+    assert "INDIEWEB_CLIENT_ID_VALIDATOR raised" in caplog.text
+    assert "client-marker" not in caplog.text
+    assert redact_text(f"Policy lookup failed for {CLIENT_MARKER}") in caplog.text
+
+
+@pytest.mark.django_db
+def test_client_id_validator_failure_log_keeps_values_in_passthrough_mode(client, settings, caplog):
+    settings.INDIEWEB_LOG_REDACTION = "passthrough"
+    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.test_log_redaction.raising_client_id_validator"
+
+    with caplog.at_level(logging.INFO, logger="indieweb.views"):
+        _exchange_unknown_code(client)
+
+    assert (
+        f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={CLIENT_MARKER!r}: "
+        f"Policy lookup failed for {CLIENT_MARKER}"
+    ) in caplog.text

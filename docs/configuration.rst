@@ -2044,7 +2044,10 @@ rather than a failing resource:
 * authorization codes on the token endpoint (passthrough keeps the six
   character diagnostic prefix; redact mode logs the ``redact_token`` digest
   and no leading characters);
-* ``client_id`` URLs on token-exchange and client-validator failure lines;
+* ``client_id`` URLs on token-exchange and client-validator failure lines,
+  together with the exception message of a raising
+  ``INDIEWEB_CLIENT_ID_VALIDATOR`` (printed as ``<redacted:DIGEST>``, because
+  the message can embed the URL);
 * the token owner's username on the "token owner is not active" lines of the
   resource-server and token-introspection checks.
 
