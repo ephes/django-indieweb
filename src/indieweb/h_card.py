@@ -2,7 +2,7 @@
 
 from typing import Any
 
-import mf2py
+from .mf2_parsing import parse_microformats
 
 
 def normalize_property_names(data: dict[str, Any]) -> dict[str, Any]:
@@ -32,7 +32,7 @@ def normalize_property_names(data: dict[str, Any]) -> dict[str, Any]:
 
 def parse_h_card(html: str, url: str = "") -> dict[str, Any]:
     """Parse h-card from HTML content."""
-    parsed = mf2py.parse(doc=html, url=url)
+    parsed = parse_microformats(html, url)
 
     # Find first h-card
     for item in parsed.get("items", []):

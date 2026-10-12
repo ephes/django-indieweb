@@ -1158,6 +1158,31 @@ over this limit mark the Webmention ``failed`` and are not stored as source
 snapshots. Set this to ``None`` only when an upstream proxy, queue, or worker
 boundary enforces an equivalent limit.
 
+INDIEWEB_MF2_MAX_EXPANSION_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Upper bound for the estimated size of a microformats2 parse result of fetched
+HTML (Webmention sources and ``parse_h_card``).
+
+**Default:** ``4194304`` (4 MiB)
+
+A microformats parser returns the markup and text of every property element,
+so nested property elements repeat their shared content once per level and a
+source within ``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` could otherwise expand
+into a parse result of gigabytes. Before parsing, django-indieweb adds up each
+node's size once per enclosing property copy (``e-*`` counts twice, other
+``h-*``/``p-*``/``u-*``/``dt-*`` classes and link relations once, every class
+inside a classic microformats root twice). A document over the bound, or one
+nested deeper than 200 elements, is treated as having no microformats: a
+Webmention whose source links to the target is still verified, as a plain
+``mention`` without author, content or nested responses. Values that are not
+positive integers fall back to the default.
+
+Fetched HTML is parsed with Python's ``html.parser`` tree builder, whose cost
+is linear in the input, instead of mf2py's default ``html5lib``. Markup that
+relies on HTML5 error recovery, such as omitted ``</p>`` or ``</li>`` end
+tags, can therefore nest differently than in a browser.
+
 INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

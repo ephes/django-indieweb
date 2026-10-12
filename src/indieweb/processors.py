@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
-import mf2py
 from bs4 import BeautifulSoup, Tag
 from django.conf import settings
 from django.contrib.sites.models import Site
@@ -38,6 +37,7 @@ from .http_client import (
     stream_with_safe_redirects,
 )
 from .log_redaction import redact_url
+from .mf2_parsing import parse_microformats
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 
@@ -241,25 +241,27 @@ def _urls_match(left: str, right: str) -> bool:
     return _canonicalize_url_for_match(left) == _canonicalize_url_for_match(right)
 
 
+def _rendered_link_tags(html_content: str) -> list[Tag]:
+    """Return the ``<a href>`` elements of ``html_content`` that a browser renders.
+
+    Links inside non-rendered containers do not count. Those containers are
+    removed once up front, so the scan stays linear in the document size
+    whatever the nesting.
+    """
+    soup = BeautifulSoup(html_content, "html.parser")
+    for container in soup.find_all(list(NON_RENDERED_LINK_ANCESTORS)):
+        if not container.decomposed:
+            container.decompose()
+    return [tag for tag in soup.find_all("a", href=True) if isinstance(tag, Tag)]
+
+
 def _html_links_to_target(html_content: str, target_url: str) -> bool:
     """Return whether ``html_content`` contains an href value matching ``target_url``."""
-    soup = BeautifulSoup(html_content, "html.parser")
-    for tag in soup.find_all("a", href=True):
-        if isinstance(tag, Tag):
-            if _has_non_rendered_ancestor(tag):
-                continue
-            href = tag.get("href")
-            if isinstance(href, str) and _urls_match(href, target_url):
-                return True
+    for tag in _rendered_link_tags(html_content):
+        href = tag.get("href")
+        if isinstance(href, str) and _urls_match(href, target_url):
+            return True
     return False
-
-
-def _has_non_rendered_ancestor(tag: Tag) -> bool:
-    """Return whether a candidate link is inside HTML that is not rendered."""
-    return any(
-        isinstance(parent, Tag) and parent.name and parent.name.lower() in NON_RENDERED_LINK_ANCESTORS
-        for parent in tag.parents
-    )
 
 
 def _canonical_domain_for_vouch(value: str) -> str | None:
@@ -298,14 +300,10 @@ def _html_links_to_source_domain(html_content: str, source_url: str) -> bool:
     if source_domain is None:
         return False
 
-    soup = BeautifulSoup(html_content, "html.parser")
-    for tag in soup.find_all("a", href=True):
-        if isinstance(tag, Tag):
-            if _has_non_rendered_ancestor(tag):
-                continue
-            href = tag.get("href")
-            if isinstance(href, str) and _href_links_to_domain(href, source_domain):
-                return True
+    for tag in _rendered_link_tags(html_content):
+        href = tag.get("href")
+        if isinstance(href, str) and _href_links_to_domain(href, source_domain):
+            return True
     return False
 
 
@@ -916,7 +914,7 @@ class WebmentionProcessor:
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Parse microformats2 data from HTML content."""
         # Parse microformats
-        parsed = mf2py.parse(doc=html_content, url=base_url)
+        parsed = parse_microformats(html_content, base_url)
 
         # Find h-entry that mentions the target
         h_entry = self._find_mentioning_entry(parsed, target_url)

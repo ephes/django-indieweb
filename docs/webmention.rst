@@ -235,7 +235,10 @@ Oversized responses mark the Webmention ``failed`` and are not stored as
 source snapshots. Nested response extraction is bounded by
 ``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH`` and
 ``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES``; mentioning-entry
-search is bounded by ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS``. Pair these
+search is bounded by ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS``. Microformats
+parsing itself is bounded by ``INDIEWEB_MF2_MAX_EXPANSION_BYTES`` and a
+nesting limit; a source over those limits is verified as a plain ``mention``
+without parsed author, content or nested responses. Pair these
 application limits with endpoint rate limits, worker time limits, and
 deployment-level request/body limits.
 
