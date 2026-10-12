@@ -277,6 +277,27 @@ preserving the current lease metadata so deliveries can continue. Denials
 without a matching pending request return a client error and do not mutate the
 row.
 
+Verification and denial callbacks are serialized per subscription.
+``confirm_websub_verification`` and ``record_websub_denial`` open a
+transaction, reload the row with ``select_for_update()`` and decide on that
+stored row, never on the instance the caller loaded earlier. The pending mode,
+the state, the renewal lease ratchet and the staged secret therefore always
+come from the committed row, and unsaved changes on the passed instance are
+discarded. The first callback for a pending request wins. A later, stale
+callback finds no matching pending request, is rejected with HTTP ``400`` and
+changes nothing: a late denial cannot demote a subscription that was just
+confirmed, a late confirmation cannot revive a denied one, and a duplicate
+renewal confirmation cannot replace the lease that the first one stored. A
+callback for a row deleted in the meantime is rejected the same way.
+
+Row locks need a database that supports them (PostgreSQL, MySQL/MariaDB). On
+SQLite ``select_for_update()`` is a no-op, but the transaction still prevents
+a stale overwrite: when two callbacks overlap, SQLite refuses the second
+writer with ``database is locked``, so that request fails with HTTP ``500``
+instead of overwriting, and the hub can retry. To serialize overlapping
+callbacks on SQLite without that error, set
+``"OPTIONS": {"transaction_mode": "IMMEDIATE"}`` on the database.
+
 Content Distribution
 --------------------
 

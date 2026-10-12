@@ -5,6 +5,14 @@ Changelog
 
 Unreleased
 ----------
+* Fixed a race between WebSub verification and denial callbacks.
+  ``confirm_websub_verification`` and ``record_websub_denial`` now reload the
+  subscription under ``select_for_update()`` inside a transaction and decide
+  on the stored row. A stale denial can no longer demote a just-confirmed
+  subscription, and a stale confirmation can no longer revive a denied one or
+  bypass the renewal lease ratchet; stale callbacks get HTTP ``400`` and change
+  nothing. Callers that passed an instance with unsaved changes should save
+  first, because the instance is reloaded.
 * Fixed Webmention endpoint discovery from ``Link`` headers whose parameters
   contain a quoted comma (for example ``title="hello, world"``): such headers
   advertised no endpoint, and delivery failed when the HTML had no fallback.

@@ -42,10 +42,6 @@ No current Priority 2 items.
 
 `WebSubDeliveryAttempt` rows are written for every callback POST and never pruned (`websub.py:1216-1225`; `models.py:803-829`). Add `INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS` plus a pruning command or documented operator workflow so a noisy hub or leaked active callback URL cannot grow the diagnostics table indefinitely.
 
-### WebSub denial and verification state updates should lock rows
-
-`record_websub_denial` (`websub.py:847-909`) and `confirm_websub_verification` (`websub.py:780-844`) branch from in-memory subscription state and then save. Wrap the read/branch/save paths in `transaction.atomic()` with `select_for_update()` so concurrent denial/confirmation callbacks cannot demote a just-confirmed row or defeat the renewal lease ratchet.
-
 ### WebSub callback token existence oracle
 
 `WebSubCallbackView.get` returns distinguishable 404 vs 400/200/204 responses for unknown vs known callback tokens (`views.py:2921-2930`), and `post` returns 404 for unknown-or-inactive subscriptions (`views.py:2962-2966`). Token entropy is high, but a partial leak becomes testable. Return uniform 404 for tokens that do not match an active subscription, optionally with a small constant-time delay.
