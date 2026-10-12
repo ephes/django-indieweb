@@ -4,6 +4,31 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### Rate-limit method buckets and eviction-safe counter
+
+- Closes "Per-method rate-limit counter multiplies effective allowance" and
+  "Rate-limit cache increment fallback can lose increments".
+- `RateLimitMixin` now gives a counter of its own only to methods the view
+  implements. All other methods share one `OTHER` bucket per endpoint and
+  client, so invented methods no longer multiply the allowance or create a
+  cache key each. This is the backlog item's second option ("normalize all
+  non-allowed methods to a single bucket"). The method was deliberately not
+  dropped from the key: `docs/configuration.rst` documents the limit as a
+  per-method budget, and merging `GET`, `POST` and CORS preflight `OPTIONS`
+  into one counter would tighten existing deployments' limits.
+- `check_rate_limit` no longer resets an evicted counter with an
+  unconditional `cache.set(..., 1)`. It repeats `cache.add` / `cache.incr` up
+  to three times, the request that creates the counter writes the reset
+  time, and when the cache cannot keep a counter the request is rejected with
+  HTTP 429 (fail closed) and a warning. `DummyCache` still disables limiting.
+- Tests: `tests/test_rate_limiting.py` covers the shared bucket, unchanged
+  per-method budgets, a scripted eviction interleaving, reset-time coherence,
+  the fail-closed path and `DummyCache`.
+- Documentation: `docs/configuration.rst` (`INDIEWEB_RATE_LIMITS`).
+- Changelog: added an Unreleased note.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ### No-scope grant uniqueness under concurrency (`Auth` and `Token`)
 
 - Closes "`Token.objects.get_or_create(scope=None)` row proliferation on

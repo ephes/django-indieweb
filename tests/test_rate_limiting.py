@@ -11,7 +11,13 @@ from django.core.cache import cache
 from django.urls import reverse
 
 from indieweb import models
-from indieweb.rate_limit import _cache_key, _retry_after, get_rate_limit_config
+from indieweb.rate_limit import (
+    UNSUPPORTED_METHOD_BUCKET,
+    _cache_key,
+    _retry_after,
+    check_rate_limit,
+    get_rate_limit_config,
+)
 from indieweb.views import TokenAuthMixin
 
 
@@ -296,3 +302,211 @@ def test_websub_callback_endpoint_key_is_limited(client, settings):
 
     assert client.post(url, data=b"<feed/>", content_type="application/atom+xml", **headers).status_code == 204
     assert client.post(url, data=b"<feed/>", content_type="application/atom+xml", **headers).status_code == 429
+
+
+# ----------------------------------------------------------------------------
+# Method buckets: implemented methods keep their documented per-method budget;
+# every other method shares one bucket and one cache key.
+# ----------------------------------------------------------------------------
+
+
+def _counter(endpoint_key: str, bucket: str, identity: str = "127.0.0.1") -> int | None:
+    return cache.get(_cache_key(endpoint_key, bucket, identity))
+
+
+@pytest.mark.django_db
+def test_unsupported_methods_share_one_bucket(client, settings):
+    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 2, "window": 60}}
+    url = reverse("indieweb:token")
+
+    statuses = [client.generic(method, url).status_code for method in ("PROPFIND", "MKCOL", "INVENTED", "PUT")]
+
+    assert statuses == [405, 405, 429, 429]
+    assert _counter("token", UNSUPPORTED_METHOD_BUCKET) == 4
+    for method in ("PROPFIND", "MKCOL", "INVENTED", "PUT"):
+        assert _counter("token", method) is None
+
+
+@pytest.mark.django_db
+def test_unsupported_methods_do_not_multiply_the_allowance(client, settings):
+    """Invented methods cannot each obtain a fresh allowance of rejected requests."""
+    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 1, "window": 60}}
+    url = reverse("indieweb:token")
+
+    statuses = [client.generic(f"METHOD{index}", url).status_code for index in range(5)]
+
+    assert statuses == [405, 429, 429, 429, 429]
+
+
+@pytest.mark.django_db
+def test_unsupported_method_bucket_is_separate_from_implemented_methods(client, settings):
+    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 1, "window": 60}}
+    url = reverse("indieweb:token")
+    payload = {"code": "wrong", "client_id": "https://client.example.org"}
+
+    assert client.generic("PROPFIND", url).status_code == 405
+    assert client.generic("PROPFIND", url).status_code == 429
+    assert client.post(url, data=payload).status_code == 400
+    assert client.post(url, data=payload).status_code == 429
+    assert _counter("token", "POST") == 2
+
+
+@pytest.mark.django_db
+def test_implemented_methods_keep_independent_budgets(client, settings):
+    """The documented per-method budget is unchanged for methods the view implements."""
+    settings.INDIEWEB_RATE_LIMITS = {"micropub": {"limit": 1, "window": 60}}
+    url = reverse("indieweb:micropub")
+
+    assert client.get(url).status_code == 401
+    assert client.post(url).status_code == 401
+    assert client.get(url).status_code == 429
+    assert client.post(url).status_code == 429
+    assert (_counter("micropub", "GET"), _counter("micropub", "POST")) == (2, 2)
+    assert _counter("micropub", UNSUPPORTED_METHOD_BUCKET) is None
+
+
+@pytest.mark.django_db
+def test_method_buckets_are_case_insensitive(client, settings):
+    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 5, "window": 60}}
+    url = reverse("indieweb:token")
+
+    client.generic("post", url)
+    client.generic("propfind", url)
+
+    assert _counter("token", "POST") == 1
+    assert _counter("token", UNSUPPORTED_METHOD_BUCKET) == 1
+
+
+# ----------------------------------------------------------------------------
+# Counter eviction: a vanished counter is re-created with add/incr, never reset
+# with an unconditional set that would discard other requests' increments.
+# ----------------------------------------------------------------------------
+
+
+class ScriptedCache:
+    """In-memory cache whose ``incr`` can run a hook first, to script an interleaving."""
+
+    def __init__(self):
+        self.values: dict[str, object] = {}
+        self.before_incr: list = []
+        self.set_calls: list[str] = []
+
+    def add(self, key, value, timeout=None):
+        if key in self.values:
+            return False
+        self.values[key] = value
+        return True
+
+    def set(self, key, value, timeout=None):
+        self.set_calls.append(key)
+        self.values[key] = value
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+    def incr(self, key, delta=1):
+        if self.before_incr:
+            self.before_incr.pop(0)()
+        if key not in self.values:
+            raise ValueError(f"Key {key!r} not found")
+        self.values[key] += delta
+        return self.values[key]
+
+
+@pytest.fixture
+def scripted_cache(settings):
+    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 5, "window": 60}}
+    scripted = ScriptedCache()
+    with patch("indieweb.rate_limit.cache", scripted):
+        yield scripted
+
+
+def _request(method: str = "POST", remote_addr: str = "203.0.113.9") -> MagicMock:
+    request = MagicMock()
+    request.method = method
+    request.META = {"REMOTE_ADDR": remote_addr}
+    return request
+
+
+def test_evicted_counter_retry_keeps_a_concurrent_increment(scripted_cache):
+    """Eviction between add and incr, then another request counts first: both are counted."""
+    counter_key = _cache_key("token", "POST", "203.0.113.9")
+
+    def evict():
+        del scripted_cache.values[counter_key]
+
+    def other_request_recreates_and_counts():
+        scripted_cache.values.pop(counter_key, None)
+        scripted_cache.add(counter_key, 0, 60)
+        scripted_cache.values[counter_key] += 1
+
+    scripted_cache.before_incr.extend([evict, other_request_recreates_and_counts])
+
+    result = check_rate_limit(_request(), "token")
+
+    # Attempt 1: the counter is evicted before incr. Attempt 2: another request has
+    # re-created it with one increment before ours. Neither increment is lost.
+    assert result.allowed is True
+    assert scripted_cache.values[counter_key] == 2
+    assert counter_key not in scripted_cache.set_calls
+
+
+def test_evicted_counter_is_recreated_with_a_matching_reset_time(scripted_cache):
+    counter_key = _cache_key("token", "POST", "203.0.113.9")
+    reset_key = f"{counter_key}:reset"
+    scripted_cache.values[reset_key] = 1.0  # stale reset time left over from an evicted counter
+
+    before = time.time()
+    result = check_rate_limit(_request(), "token")
+
+    assert result.allowed is True
+    assert scripted_cache.values[counter_key] == 1
+    assert before + 60 <= scripted_cache.values[reset_key] <= time.time() + 60
+
+
+def test_existing_counter_keeps_its_reset_time(scripted_cache):
+    counter_key = _cache_key("token", "POST", "203.0.113.9")
+    check_rate_limit(_request(), "token")
+    first_reset = scripted_cache.values[f"{counter_key}:reset"]
+
+    check_rate_limit(_request(), "token")
+
+    assert scripted_cache.values[counter_key] == 2
+    assert scripted_cache.values[f"{counter_key}:reset"] == first_reset
+
+
+def test_counter_that_cannot_be_stored_fails_closed(scripted_cache, caplog):
+    counter_key = _cache_key("token", "POST", "203.0.113.9")
+    scripted_cache.before_incr.extend([lambda: scripted_cache.values.pop(counter_key)] * 10)
+
+    with caplog.at_level("WARNING", logger="indieweb.rate_limit"):
+        result = check_rate_limit(_request(), "token")
+
+    assert result.allowed is False
+    assert result.retry_after == 60
+    assert "could not be stored" in caplog.text
+    assert counter_key not in scripted_cache.set_calls
+    assert len(scripted_cache.before_incr) == 7  # exactly three bounded attempts
+
+
+@pytest.mark.django_db
+def test_endpoint_returns_429_when_the_counter_cannot_be_stored(client, settings):
+    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 5, "window": 60}}
+
+    with patch("indieweb.rate_limit.cache.incr", side_effect=ValueError("evicted")):
+        response = client.post(reverse("indieweb:token"), data={"code": "wrong"})
+
+    assert response.status_code == 429
+    assert response["Retry-After"] == "60"
+
+
+@pytest.mark.django_db
+def test_dummy_cache_disables_rate_limiting_instead_of_rejecting(client, settings):
+    settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}
+    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 1, "window": 60}}
+    url = reverse("indieweb:token")
+    payload = {"code": "wrong", "client_id": "https://client.example.org"}
+
+    statuses = [client.post(url, data=payload).status_code for _ in range(3)]
+
+    assert statuses == [400, 400, 400]

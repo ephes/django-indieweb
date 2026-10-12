@@ -418,7 +418,14 @@ Supported endpoint keys:
 
 Counters are isolated by endpoint key, HTTP method, and client identity, so
 ``GET`` and ``POST`` requests to the same endpoint use independent counters.
-Set each endpoint limit as a per-method budget. The client identity is
+Set each endpoint limit as a per-method budget. Only methods the endpoint
+implements have a counter of their own. Every other method (``PROPFIND``, an
+invented name, a method the view answers with ``405``) shares one ``OTHER``
+counter per endpoint and client, so unsupported methods cannot each obtain a
+fresh allowance or create an unbounded number of cache keys. The effective
+ceiling per client and window is therefore ``limit`` times the number of
+implemented methods, plus one ``limit`` for all other methods together. The
+client identity is
 ``request.META["REMOTE_ADDR"]`` by default, and the value is HMAC-digested with
 Django's ``SECRET_KEY`` before it is used in cache keys. django-indieweb does
 not read or trust ``X-Forwarded-For`` directly. If your site runs behind a
@@ -433,7 +440,14 @@ backend such as Redis or Memcached when you need deployment-wide counters.
 ``DummyCache`` does not persist counters and effectively disables built-in
 rate limiting. The built-in limiter uses Django's portable cache primitives,
 so its ``add``/``incr`` sequence is best-effort rather than a hard atomic
-primitive on every backend. For adversarial environments that need strict
+primitive on every backend. If a counter disappears between ``add`` and
+``incr`` (cache eviction or expiry), the limiter repeats the pair up to three
+times instead of resetting the counter, so increments made by concurrent
+requests are kept, and the request that re-creates a counter also writes the
+matching reset time used for ``Retry-After``. If the cache still cannot keep
+the counter, the limiter fails closed: the request gets HTTP ``429`` with
+``Retry-After`` set to the window and a warning is logged. ``DummyCache`` is
+the only exception. For adversarial environments that need strict
 single-counter semantics, put a purpose-built limiter in front of Django, such
 as a reverse proxy rule or a Redis Lua-script-based limiter.
 

@@ -14,10 +14,6 @@ No current Priority 2 items.
 
 ## Priority 3
 
-### Per-method rate-limit counter multiplies effective allowance
-
-`rate_limit.py:88-94` keys the counter on `:{method}:`, and `RateLimitMixin.dispatch` (`rate_limit.py:143-148`) increments before `super().dispatch`, so unsupported-method requests still consume cache slots and the effective per-IP limit is `limit × distinct-methods-tried`. Drop `method` from the key (limits are per-endpoint, not per-method), or normalize all non-allowed methods to a single bucket.
-
 ### `_check_redirect_uri`: reject submitted `redirect_uri` when stored value is empty
 
 `views.py:1692-1701` only rejects when both the submitted and the stored `auth.redirect_uri` are populated. Currently-issued codes always have a stored `redirect_uri` (consent and `required_params` enforce it), so the gap is latent — but defensive code should add a final branch rejecting `auth.redirect_uri` empty + submitted-set as a mismatch.
@@ -49,10 +45,6 @@ No current Priority 2 items.
 ### `log_redaction.redact_token` prefix and mode parsing
 
 `log_redaction.redact_token` preserves an 8-character token prefix in passthrough mode (`log_redaction.py:77`), and `_resolve_mode` accepts only exact `"redact"` while silently treating `"REDACT"`, `"true"`, or booleans as passthrough. Trim the prefix or default-redact when `DEBUG=False`, and log/document non-canonical `INDIEWEB_LOG_REDACTION` values.
-
-### Rate-limit cache increment fallback can lose increments
-
-`rate_limit.py:118-122` handles `cache.incr` `ValueError` by unconditionally setting the counter to `1`. Under cache eviction pressure, concurrent requests can both fall into the fallback and lose one increment. Retry `cache.add` / `cache.incr` once or document the accepted burst behavior.
 
 ## Priority 4
 
