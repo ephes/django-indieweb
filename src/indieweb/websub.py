@@ -979,6 +979,80 @@ def _apply_websub_denial(
     subscription.save(update_fields=update_fields)
 
 
+@dataclass(frozen=True)
+class WebSubDeliveryAttemptPruneResult:
+    """Outcome of one ``prune_websub_delivery_attempts`` run."""
+
+    retention_days: int
+    cutoff: datetime
+    matched: int
+    deleted: int
+    dry_run: bool
+
+
+def websub_delivery_attempt_retention_days(retention_days: int | str | None = None) -> int:
+    """Return the validated delivery-attempt retention in days.
+
+    An explicit ``retention_days`` wins over
+    ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS``. There is no default:
+    pruning deletes rows, so a missing or invalid value raises ``ValueError``
+    instead of falling back to a guessed policy.
+    """
+    label = "WebSub delivery-attempt retention days"
+    value: Any = retention_days
+    if value is None:
+        value = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS", None)
+        label = "INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS"
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        value = None if value is None else "invalid"
+    parsed = _positive_int(value, label=label)
+    if parsed is None:
+        raise ValueError(
+            "WebSub delivery-attempt retention is not configured; set "
+            "INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS or pass the number of days"
+        )
+    return parsed
+
+
+def prune_websub_delivery_attempts(
+    *,
+    retention_days: int | str | None = None,
+    now: datetime | None = None,
+    batch_size: int = 1000,
+    dry_run: bool = False,
+) -> WebSubDeliveryAttemptPruneResult:
+    """Delete ``WebSubDeliveryAttempt`` rows received before the retention cutoff.
+
+    The cutoff is ``now`` minus the retention days; attempts received exactly
+    at the cutoff are kept. Rows are deleted in primary-key batches of
+    ``batch_size`` until none is left, so one run drains the backlog without
+    one unbounded ``DELETE``. ``dry_run`` only counts. Subscriptions, their
+    ``last_delivery_*`` summary fields and the ``WebSubAcceptedDelivery``
+    replay-protection rows are never touched. Nothing calls this
+    automatically: run it from the ``prune_websub_delivery_attempts``
+    management command or a host job.
+    """
+    days = websub_delivery_attempt_retention_days(retention_days)
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("WebSub delivery-attempt prune batch size must be a positive integer")
+    cutoff = (now or timezone.now()) - timedelta(days=days)
+    expired = WebSubDeliveryAttempt.objects.filter(received_at__lt=cutoff)
+    matched = expired.count()
+    deleted = 0
+    while not dry_run:
+        batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
+        if not batch:
+            break
+        deleted += WebSubDeliveryAttempt.objects.filter(pk__in=batch).delete()[0]
+    return WebSubDeliveryAttemptPruneResult(
+        retention_days=days,
+        cutoff=cutoff,
+        matched=matched,
+        deleted=deleted,
+        dry_run=dry_run,
+    )
+
+
 def get_websub_expired_subscriptions(*, now: datetime | None = None) -> QuerySet[WebSubSubscription]:
     """Return active subscriptions whose confirmed lease has expired."""
     reference_time = now or timezone.now()
