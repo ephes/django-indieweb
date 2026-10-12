@@ -134,6 +134,18 @@ ESTIMATE_CASES = {
         + ('<img class="u-photo" srcset="' + ",".join(f"a{n} {n + 1}x" for n in range(50)) + '">') * 20
         + "</div>"
     ),
+    "srcset candidates separated by whitespace only": (
+        LONG_BASE
+        + '<div class="h-entry"><img class="u-photo" src="s" srcset="'
+        + " ".join(f"a {n + 1}x" for n in range(1000))
+        + '"></div>'
+    ),
+    "srcset candidates with src": (
+        LONG_BASE
+        + '<div class="h-entry"><div class="e-content"><img src="s" srcset="'
+        + ", ".join(f"a{n} {n + 1}x" for n in range(300))
+        + '"></div></div>'
+    ),
     "many relations on one link": (
         ('<a rel="' + " ".join(f"r{n}" for n in range(300)) + '" href="/' + "u" * 2000 + '">t</a>') * 5
     ),

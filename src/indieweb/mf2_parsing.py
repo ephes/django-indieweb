@@ -149,7 +149,11 @@ def _own_size(node: PageElement, base_length: int) -> int:
         value_size = sum(len(str(part)) + 1 for part in value) if isinstance(value, list) else len(str(value))
         size += len(name) + value_size + 4
         if name in URL_ATTRIBUTES:
-            size += base_length * (1 + str(value).count(","))
+            # srcset holds several candidates, separated by commas or just
+            # whitespace; each one is resolved. No value has more candidates
+            # than separators plus one.
+            text = str(value)
+            size += base_length * (1 + text.count(",") + len(text.split()))
     return size
 
 
