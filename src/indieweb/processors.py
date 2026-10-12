@@ -14,11 +14,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
-import mf2py
-from bs4 import BeautifulSoup, Tag
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.db import transaction
@@ -39,7 +37,17 @@ from .http_client import (
 )
 from .log_redaction import redact_url
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
+from .parse_isolation import SourceAnalysis, WebmentionSourceRejected, analyze_source, vouch_links_to_source_domain
 from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
+from .webmention_parse_worker import (
+    _canonical_domain_for_vouch,
+    _html_links_to_source_domain,  # noqa: F401 - kept importable from this module
+    _html_links_to_target,
+    _urls_match,
+    content_html_digest,
+    extract_entry_content,
+    first_property_value,
+)
 
 if TYPE_CHECKING:
     from .interfaces import SpamChecker
@@ -50,6 +58,7 @@ logger = logging.getLogger(__name__)
 webmention_received = Signal()
 MAX_NESTED_RESPONSE_IDENTITY_LENGTH = 500
 DEFAULT_WEBMENTION_FETCH_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBMENTION_MAX_STORED_BYTES = 2 * 1024 * 1024
 DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH = 8
 DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES = 100
 DEFAULT_WEBMENTION_SEARCH_MAX_ITEMS = 1000
@@ -61,7 +70,6 @@ WRAPPING_TEXT_URL_PUNCTUATION = {
     "}": "{",
     ">": "<",
 }
-NON_RENDERED_LINK_ANCESTORS = {"noscript", "template"}
 ISO8601_OFFSET_WITHOUT_COLON_RE = re.compile(r"([+-]\d{2})(\d{2})$")
 
 
@@ -89,6 +97,19 @@ def _webmention_fetch_max_bytes() -> int | None:
     return _optional_positive_int_setting("INDIEWEB_WEBMENTION_FETCH_MAX_BYTES", DEFAULT_WEBMENTION_FETCH_MAX_BYTES)
 
 
+def _webmention_max_stored_bytes() -> int:
+    return _positive_int_setting("INDIEWEB_WEBMENTION_MAX_STORED_BYTES", DEFAULT_WEBMENTION_MAX_STORED_BYTES)
+
+
+def _stored_value_bytes(value: Any) -> int:
+    """Return the encoded size of one value as it is stored with a Webmention."""
+    if isinstance(value, str):
+        return len(value.encode("utf-8", "surrogatepass"))
+    if isinstance(value, (dict, list)):
+        return len(json.dumps(value, sort_keys=True, default=str))
+    return 0
+
+
 def _webmention_nested_max_depth() -> int:
     return _positive_int_setting(
         "INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH",
@@ -110,33 +131,6 @@ def _webmention_search_max_items() -> int:
 def _reject_vouch_policy(**kwargs: Any) -> bool:
     """Reject all vouchers when a configured trust policy cannot be used."""
     return False
-
-
-def _canonical_netloc_for_match(parsed: ParseResult) -> str | None:
-    """Return a canonical netloc for URL target matching, or ``None`` if malformed."""
-    try:
-        host = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        return None
-
-    if not host:
-        return None
-
-    normalized_host = host.lower()
-    if normalized_host.startswith("www."):
-        normalized_host = normalized_host[4:]
-    if ":" in normalized_host and not normalized_host.startswith("["):
-        normalized_host = f"[{normalized_host}]"
-
-    userinfo = ""
-    if "@" in parsed.netloc:
-        userinfo = parsed.netloc.rsplit("@", 1)[0] + "@"
-
-    netloc = f"{userinfo}{normalized_host}"
-    if port is not None:
-        netloc = f"{netloc}:{port}"
-    return netloc
 
 
 class WebmentionCanonicalizationError(ValueError):
@@ -196,117 +190,6 @@ def canonicalize_webmention_storage_url(value: str) -> str:
     params = lower_percent(parsed.params)
     fragment = lower_percent(parsed.fragment)
     return urlunparse((scheme, netloc, path, params, query, fragment))
-
-
-def _canonicalize_url_for_match(value: str) -> str:
-    """Return a conservative canonical URL string for Webmention target matching."""
-    try:
-        parsed = urlparse(value)
-    except ValueError:
-        return value
-
-    if not parsed.scheme or not parsed.netloc:
-        return value
-
-    scheme = parsed.scheme.lower()
-    netloc = _canonical_netloc_for_match(parsed)
-    if netloc is None:
-        return value
-
-    path = parsed.path
-    if path not in ("", "/") and path.endswith("/"):
-        path = path[:-1]
-
-    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    query = urlencode(sorted(query_pairs))
-
-    return urlunparse((scheme, netloc, path, parsed.params, query, ""))
-
-
-def _is_absolute_url_for_match(value: str) -> bool:
-    """Return whether ``value`` is eligible for URL canonicalization matching."""
-    try:
-        parsed = urlparse(value)
-        return bool(parsed.scheme and parsed.netloc)
-    except ValueError:
-        return False
-
-
-def _urls_match(left: str, right: str) -> bool:
-    """Compare two URLs using the conservative Webmention target matching policy."""
-    if left == right:
-        return True
-    if not _is_absolute_url_for_match(left) or not _is_absolute_url_for_match(right):
-        return False
-    return _canonicalize_url_for_match(left) == _canonicalize_url_for_match(right)
-
-
-def _html_links_to_target(html_content: str, target_url: str) -> bool:
-    """Return whether ``html_content`` contains an href value matching ``target_url``."""
-    soup = BeautifulSoup(html_content, "html.parser")
-    for tag in soup.find_all("a", href=True):
-        if isinstance(tag, Tag):
-            if _has_non_rendered_ancestor(tag):
-                continue
-            href = tag.get("href")
-            if isinstance(href, str) and _urls_match(href, target_url):
-                return True
-    return False
-
-
-def _has_non_rendered_ancestor(tag: Tag) -> bool:
-    """Return whether a candidate link is inside HTML that is not rendered."""
-    return any(
-        isinstance(parent, Tag) and parent.name and parent.name.lower() in NON_RENDERED_LINK_ANCESTORS
-        for parent in tag.parents
-    )
-
-
-def _canonical_domain_for_vouch(value: str) -> str | None:
-    """Return a conservative domain string for Vouch matching."""
-    try:
-        parsed = urlparse(value)
-    except ValueError:
-        return None
-    if parsed.scheme.lower() not in ("http", "https"):
-        return None
-    try:
-        host = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        return None
-    if not host:
-        return None
-    normalized = host.lower()
-    if normalized.startswith("www."):
-        normalized = normalized[4:]
-    if ":" in normalized and not normalized.startswith("["):
-        normalized = f"[{normalized}]"
-    if port is not None:
-        normalized = f"{normalized}:{port}"
-    return normalized
-
-
-def _href_links_to_domain(href: str, source_domain: str) -> bool:
-    """Return whether an href points at the source domain for Vouch verification."""
-    return _canonical_domain_for_vouch(href) == source_domain
-
-
-def _html_links_to_source_domain(html_content: str, source_url: str) -> bool:
-    """Return whether ``html_content`` contains an HTTP(S) hyperlink to the source URL's domain."""
-    source_domain = _canonical_domain_for_vouch(source_url)
-    if source_domain is None:
-        return False
-
-    soup = BeautifulSoup(html_content, "html.parser")
-    for tag in soup.find_all("a", href=True):
-        if isinstance(tag, Tag):
-            if _has_non_rendered_ancestor(tag):
-                continue
-            href = tag.get("href")
-            if isinstance(href, str) and _href_links_to_domain(href, source_domain):
-                return True
-    return False
 
 
 def _strip_plain_text_url_punctuation(value: str) -> str:
@@ -526,7 +409,10 @@ class WebmentionProcessor:
 
             source_html = response_text_with_limit(response, max_bytes=_webmention_fetch_max_bytes())
 
-            if not self._verify_target_link(source_html, target_url):
+            # All work on the fetched document happens in a limited child
+            # process; see ``indieweb.parse_isolation``.
+            analysis = analyze_source(source_html, fetched.final_url, target_url)
+            if not analysis.links_to_target:
                 return _WebmentionOutcome(
                     status="failed",
                     received_at=received_at,
@@ -540,12 +426,12 @@ class WebmentionProcessor:
             # source was read, not when this receive arrived.
             fetched_at = timezone.now()
 
-            # ``_parse_microformats`` mutates the in-memory ``webmention`` so that
+            # ``_apply_microformats`` mutates the in-memory ``webmention`` so that
             # downstream vouch and spam checks can read parsed fields off it.
             # We capture those mutations into ``parsed_fields`` so the persistence
             # phase can apply them to the freshly locked instance instead of the
             # stale one we loaded before phase 1.
-            _parsed, h_entry = self._parse_microformats(webmention, source_html, fetched.final_url, target_url)
+            h_entry = self._apply_microformats(webmention, analysis.parsed, fetched.final_url, target_url, analysis)
             parsed_fields = self._snapshot_parsed_fields(webmention)
 
             vouch_allowed, vouch_verified_at = self._verify_vouch_for_webmention(webmention, source_url)
@@ -578,7 +464,10 @@ class WebmentionProcessor:
                     )
 
             previous_nested_identities = self._previous_nested_response_identities(webmention)
-            nested_response_candidates = self._nested_response_candidates(h_entry or {}, fetched.final_url)
+            nested_response_candidates = self._nested_response_candidates(
+                h_entry or {}, fetched.final_url, analysis=analysis
+            )
+            self._reject_oversized_stored_data(h_entry or {}, parsed_fields, *nested_response_candidates)
 
             return _WebmentionOutcome(
                 status="verified",
@@ -596,21 +485,22 @@ class WebmentionProcessor:
                 log=("info", f"Successfully processed webmention from {redact_url(source_url)}"),
             )
 
-        except HTTPResponseTooLarge as e:
-            return _WebmentionOutcome(
-                status="failed",
-                received_at=received_at,
-                log=(
-                    "warning",
-                    f"Fetched Webmention source exceeded size limit for {redact_url(source_url)}: {e}",
-                ),
-            )
+        except (HTTPResponseTooLarge, WebmentionSourceRejected) as e:
+            return self._over_limit_outcome(e, source_url, received_at)
         except Exception as e:
             return _WebmentionOutcome(
                 status="failed",
                 received_at=received_at,
                 log=("error", f"Error processing webmention from {source_url}: {e}"),
             )
+
+    def _over_limit_outcome(self, error: Exception, source_url: str, received_at: datetime) -> _WebmentionOutcome:
+        """Return the failed outcome for a source that exceeded a fetch or processing limit."""
+        if isinstance(error, HTTPResponseTooLarge):
+            message = f"Fetched Webmention source exceeded size limit for {redact_url(source_url)}: {error}"
+        else:
+            message = f"Rejected Webmention from {redact_url(source_url)}: {error}"
+        return _WebmentionOutcome(status="failed", received_at=received_at, log=("warning", message))
 
     def _apply_webmention_outcome(
         self,
@@ -762,7 +652,11 @@ class WebmentionProcessor:
                 client.close()
 
     def _verify_target_link(self, html_content: str, target_url: str) -> bool:
-        """Verify that the target URL is linked in the source content."""
+        """Verify in this process that the target URL is linked in ``html_content``.
+
+        Only for HTML from a trusted origin: fetched sources are verified in
+        the limited child process instead (``indieweb.parse_isolation``).
+        """
         return _html_links_to_target(html_content, target_url)
 
     def _verify_vouch_for_webmention(self, webmention: Webmention, source_url: str) -> tuple[bool, datetime | None]:
@@ -801,7 +695,7 @@ class WebmentionProcessor:
             vouch_html = response_text_with_limit(response, max_bytes=_webmention_fetch_max_bytes())
         except HTTPResponseTooLarge:
             return False, None
-        if not _html_links_to_source_domain(vouch_html, source_url):
+        if not vouch_links_to_source_domain(vouch_html, source_url):
             return False, None
 
         return True, timezone.now()
@@ -896,7 +790,7 @@ class WebmentionProcessor:
         return domain in trusted_domains
 
     def _snapshot_parsed_fields(self, webmention: Webmention) -> dict[str, Any]:
-        """Capture fields ``_parse_microformats`` writes for later application under lock."""
+        """Capture fields ``_apply_microformats`` writes for later application under lock."""
         return {
             "author_name": webmention.author_name,
             "author_url": webmention.author_url,
@@ -907,22 +801,26 @@ class WebmentionProcessor:
             "mention_type": webmention.mention_type,
         }
 
-    def _parse_microformats(
+    def _apply_microformats(
         self,
         webmention: Webmention,
-        html_content: str,
+        parsed: dict[str, Any],
         base_url: str,
         target_url: str,
-    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """Parse microformats2 data from HTML content."""
-        # Parse microformats
-        parsed = mf2py.parse(doc=html_content, url=base_url)
+        analysis: SourceAnalysis | None = None,
+    ) -> dict[str, Any] | None:
+        """Copy the microformats2 data of a parsed source onto ``webmention``.
 
+        ``parsed`` and ``analysis`` come from the isolated analysis of the
+        fetched document. Returns the h-entry that mentions the target.
+        """
         # Find h-entry that mentions the target
-        h_entry = self._find_mentioning_entry(parsed, target_url)
+        h_entry = self._find_mentioning_entry(
+            parsed, target_url, linking_content=None if analysis is None else analysis.linking_content
+        )
         if not h_entry:
             # No microformats found, use defaults
-            return parsed, None
+            return None
 
         # Extract author information
         author = self._extract_author(h_entry, parsed, base_url)
@@ -945,7 +843,7 @@ class WebmentionProcessor:
         # Extract content
         content_data = self._extract_content(h_entry)
         webmention.content = content_data.get("text", "")
-        webmention.content_html = sanitize_webmention_html(content_data.get("html", ""))
+        webmention.content_html = self._sanitized_content_html(content_data.get("html", ""), analysis)
 
         # Extract published date
         published = self._extract_published(h_entry)
@@ -954,7 +852,36 @@ class WebmentionProcessor:
 
         # Determine mention type
         webmention.mention_type = self._determine_mention_type(h_entry, target_url)
-        return parsed, h_entry
+        return h_entry
+
+    def _sanitized_content_html(self, html: str, analysis: SourceAnalysis | None) -> str:
+        """Return the sanitized form of extracted content HTML.
+
+        For a fetched source the isolated analysis has sanitized the content
+        and the result is looked up. Without an analysis the content is
+        sanitized in this process, which is only acceptable for trusted HTML.
+        """
+        if analysis is None:
+            return sanitize_webmention_html(html)
+        return analysis.sanitized_html(html)
+
+    def _reject_oversized_stored_data(self, h_entry: dict[str, Any], *stored_rows: dict[str, Any]) -> None:
+        """Enforce ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES`` on what a source would store.
+
+        Counted are the h-entry of the source snapshot and every text and JSON
+        value of the Webmention row and of the nested response rows that would
+        be written. The same nested h-entry is stored with the snapshot and
+        again with its own row, so the total can be a multiple of the parse
+        result.
+        """
+        limit = _webmention_max_stored_bytes()
+        total = _stored_value_bytes(h_entry)
+        for row in stored_rows:
+            total += sum(_stored_value_bytes(value) for value in row.values())
+            if total > limit:
+                break
+        if total > limit:
+            raise WebmentionSourceRejected("stored size limit")
 
     def _store_source_snapshot(
         self,
@@ -1019,7 +946,13 @@ class WebmentionProcessor:
             return set()
         return {value for value in values if isinstance(value, str)}
 
-    def _nested_response_candidates(self, h_entry: dict[str, Any], base_url: str) -> list[dict[str, Any]]:
+    def _nested_response_candidates(
+        self,
+        h_entry: dict[str, Any],
+        base_url: str,
+        *,
+        analysis: SourceAnalysis | None = None,
+    ) -> list[dict[str, Any]]:
         """Extract stable nested response rows from a parsed parent h-entry."""
         candidates: list[dict[str, Any]] = []
         seen_identities: set[str] = set()
@@ -1040,7 +973,7 @@ class WebmentionProcessor:
                     "author_url": sanitize_remote_webmention_url(author.get("url", "")),
                     "author_photo": sanitize_remote_webmention_url(author.get("photo", "")),
                     "content": content.get("text", ""),
-                    "content_html": sanitize_webmention_html(content.get("html", "")),
+                    "content_html": self._sanitized_content_html(content.get("html", ""), analysis),
                     "published": self._extract_published(nested_entry),
                     "mention_type": self._determine_mention_type(nested_entry, base_url),
                     "parsed_h_entry": normalized_entry,
@@ -1270,7 +1203,13 @@ class WebmentionProcessor:
                 return resolved
         return None
 
-    def _find_mentioning_entry(self, parsed: dict[str, Any], target_url: str) -> dict[str, Any] | None:
+    def _find_mentioning_entry(
+        self,
+        parsed: dict[str, Any],
+        target_url: str,
+        *,
+        linking_content: frozenset[str] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Find the h-entry that mentions the target URL.
 
@@ -1278,14 +1217,20 @@ class WebmentionProcessor:
         """
         items = parsed.get("items", [])
         # First pass: look for h-entry that explicitly mentions the target
-        result = self._search_for_mentioning_entry(items, target_url)
+        result = self._search_for_mentioning_entry(items, target_url, linking_content=linking_content)
         if result:
             return result
 
         # Second pass: return the first h-entry found (fallback)
         return self._search_for_any_h_entry(items)
 
-    def _search_for_mentioning_entry(self, items: list[dict[str, Any]], target_url: str) -> dict[str, Any] | None:
+    def _search_for_mentioning_entry(
+        self,
+        items: list[dict[str, Any]],
+        target_url: str,
+        *,
+        linking_content: frozenset[str] | None = None,
+    ) -> dict[str, Any] | None:
         """Recursively search for an h-entry that mentions the target URL."""
         max_depth = _webmention_nested_max_depth()
         max_items = _webmention_search_max_items()
@@ -1307,7 +1252,9 @@ class WebmentionProcessor:
                 # Check content for the URL
                 content = properties.get("content", [])
                 for c in content:
-                    if isinstance(c, dict) and self._content_links_to_target(c, target_url):
+                    if isinstance(c, dict) and self._content_links_to_target(
+                        c, target_url, linking_content=linking_content
+                    ):
                         return item
 
             if depth >= max_depth:
@@ -1331,12 +1278,25 @@ class WebmentionProcessor:
                     return True
         return False
 
-    def _content_links_to_target(self, content: dict[str, Any], target_url: str) -> bool:
-        """Return whether parsed microformats content links to the target."""
+    def _content_links_to_target(
+        self,
+        content: dict[str, Any],
+        target_url: str,
+        *,
+        linking_content: frozenset[str] | None = None,
+    ) -> bool:
+        """Return whether parsed microformats content links to the target.
+
+        For a fetched source the answer was computed by the isolated analysis
+        and is looked up in ``linking_content``. Without it the content is
+        parsed in this process, which is only acceptable for trusted HTML.
+        """
         html = content.get("html")
-        if isinstance(html, str) and _html_links_to_target(html, target_url):
-            return True
-        return False
+        if not isinstance(html, str):
+            return False
+        if linking_content is not None:
+            return content_html_digest(html) in linking_content
+        return _html_links_to_target(html, target_url)
 
     def _text_links_to_target(self, value: str, target_url: str) -> bool:
         """Return whether a plain-text URL token matches the target.
@@ -1576,27 +1536,7 @@ class WebmentionProcessor:
 
     def _extract_content(self, h_entry: dict[str, Any]) -> dict[str, str]:
         """Extract content from h-entry."""
-        properties = h_entry.get("properties", {})
-        content_data = properties.get("content", [])
-
-        if not content_data:
-            # Try summary as fallback
-            summary = self._get_first_property(properties, "summary")
-            if summary:
-                return {"text": summary, "html": summary}
-            return {"text": "", "html": ""}
-
-        content = content_data[0] if isinstance(content_data, list) else content_data
-
-        if isinstance(content, dict):
-            return {
-                "text": content.get("value", ""),
-                "html": content.get("html") or content.get("value", ""),
-            }
-        elif isinstance(content, str):
-            return {"text": content, "html": content}
-
-        return {"text": "", "html": ""}
+        return extract_entry_content(h_entry)
 
     def _extract_published(self, h_entry: dict[str, Any]) -> datetime | None:
         """Extract published date from h-entry."""
@@ -1638,15 +1578,7 @@ class WebmentionProcessor:
 
     def _get_first_property(self, properties: dict[str, Any], key: str) -> str:
         """Get the first value of a property."""
-        values = properties.get(key, [])
-        if values and isinstance(values, list) and len(values) > 0:
-            value = values[0]
-            if isinstance(value, str):
-                return value
-            elif isinstance(value, dict):
-                # Handle complex microformats objects
-                return value.get("value", "")  # type: ignore[no-any-return]
-        return ""
+        return first_property_value(properties, key)
 
     def _get_local_profile(self, author_url: str, *, source_url: str | None = None) -> Profile | None:
         """Return a local profile only when a local source page claimed it.

@@ -4,6 +4,44 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### Isolated parsing of fetched Webmention documents
+
+- Fetched source and Vouch documents are no longer parsed in the receiving
+  process. `indieweb.parse_isolation` starts
+  `python -m indieweb.webmention_parse_worker` (Django-free) per document. The
+  child limits itself with `RLIMIT_AS`/`RLIMIT_DATA`, `RLIMIT_CPU` and
+  `RLIMIT_FSIZE`; the parent enforces a wall-clock timeout and the result size
+  cap. Where the kernel refuses the memory limits (macOS) the child watches
+  its peak resident set size instead. Without the `resource` module the
+  receiver fails closed unless `INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS`
+  is `False`.
+- Any limit or worker failure marks the Webmention `failed` ("source too
+  expensive to process"); nothing from the document is stored. The parsed
+  data stored per Webmention is capped by `INDIEWEB_WEBMENTION_MAX_STORED_BYTES`.
+- `mf2py` still parses with `html5lib`; parsing semantics are unchanged.
+  Content is sanitized in the child as well; the receiving process only reads
+  the size-capped result.
+- Link verification marks hidden elements in one pass in document order
+  instead of walking the ancestors of every link (was quadratic).
+- New settings: `INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES`,
+  `INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS`,
+  `INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS`,
+  `INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES`,
+  `INDIEWEB_WEBMENTION_MAX_STORED_BYTES`,
+  `INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS`,
+  `INDIEWEB_WEBMENTION_PARSE_PYTHON`.
+- Tests: `tests/test_webmention_parse_isolation.py` runs the real child with
+  small limits (expensive documents are rejected within the limits and store
+  nothing, ordinary Webmentions work, worker failures are handled, fail-closed
+  platform handling). `tests/conftest.py` analyses in-process for the rest of
+  the suite.
+- Validation: `just check`, `uv run prek run --all-files`, `uv lock --check`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`; the isolation tests
+  also on Linux (Python 3.10 and 3.14) in a container.
+- Documentation: `docs/webmention.rst` (Isolated Parsing of Fetched
+  Documents, platform notes) and `docs/configuration.rst` (new settings).
+- Changelog: added Unreleased notes.
+
 ### WebSub delivery-attempt retention policy
 
 - Added `indieweb.websub.prune_websub_delivery_attempts()` and the

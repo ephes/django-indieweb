@@ -5,6 +5,32 @@ Changelog
 
 Unreleased
 ----------
+* **Security:** fetched Webmention source and Vouch documents are now analysed
+  in a short-lived child process with operating-system limits instead of in
+  the receiving process. A single small source document could previously make
+  the receiver use gigabytes of memory and minutes of CPU time and store
+  hundreds of megabytes of parsed data. Link verification, microformats
+  parsing (``mf2py`` with ``html5lib``, unchanged) and content sanitization
+  now run under a memory limit
+  (``INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES``, default 512 MiB), a CPU-time
+  limit (``INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS``, default 20), a wall-clock
+  timeout (``INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS``, default 30) and a result
+  size cap (``INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES``, default 2 MiB). The
+  parsed data stored per Webmention is capped by
+  ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES`` (default 2 MiB). **Behavior
+  change:** a source over any limit is marked ``failed`` (log: ``source too
+  expensive to process``) and nothing from it is stored. On platforms without
+  POSIX resource limits (Windows) received Webmentions are rejected unless
+  ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS = False`` is set; on macOS the
+  memory limit is a best-effort check inside the child. Each received
+  Webmention now starts one child process (two with Vouch verification);
+  ``INDIEWEB_WEBMENTION_PARSE_PYTHON`` selects the interpreter when
+  ``sys.executable`` is not one. See "Isolated Parsing of Fetched Documents"
+  in the Webmention documentation.
+* **Security:** source-link and Vouch-link verification no longer walk the
+  ancestors of every link, which was quadratic in the nesting depth of the
+  fetched document. Links inside ``<template>`` and ``<noscript>`` are still
+  ignored.
 * Added the ``prune_websub_delivery_attempts`` management command and the
   ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS`` setting (default
   ``None``). The command deletes ``WebSubDeliveryAttempt`` diagnostics older

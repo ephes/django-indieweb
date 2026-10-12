@@ -237,7 +237,69 @@ source snapshots. Nested response extraction is bounded by
 ``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES``; mentioning-entry
 search is bounded by ``INDIEWEB_WEBMENTION_SEARCH_MAX_ITEMS``. Pair these
 application limits with endpoint rate limits, worker time limits, and
-deployment-level request/body limits.
+deployment-level request/body limits. Parsing of the fetched documents is
+bounded separately; see :ref:`webmention-isolated-parsing`.
+
+.. _webmention-isolated-parsing:
+
+Isolated Parsing of Fetched Documents
+-------------------------------------
+
+A fetched source or Vouch document is untrusted, and what it costs to parse is
+not bounded by its size: a few hundred bytes of nested microformats can expand
+into gigabytes of parse result, and the HTML5 tree construction itself can need
+minutes of CPU time for a small document. django-indieweb therefore does not
+parse fetched HTML in the process that received the Webmention. Target-link
+verification, microformats parsing (``mf2py`` with its ``html5lib`` tree
+builder, unchanged), sanitization of the content that is stored, and Vouch
+link verification run in a short-lived child process, ``python -m indieweb.webmention_parse_worker``, one per fetched
+document, with these limits:
+
+* memory: ``INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES`` (``RLIMIT_AS`` and
+  ``RLIMIT_DATA``; see the platform note below);
+* CPU time: ``INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS`` (``RLIMIT_CPU``);
+* wall-clock time: ``INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS``, enforced by the
+  receiving process, which kills the child on expiry;
+* result size: ``INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES`` (checked by the
+  child, by the kernel as ``RLIMIT_FSIZE``, and by the receiving process);
+* stored size: ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES`` for the parsed data
+  that would be written to the database.
+
+When any limit is hit, or the child fails in any other way, the Webmention is
+marked ``failed`` and the log has a warning ``source too expensive to process
+(<reason>)``. Nothing parsed from that document is stored, and an earlier
+verified snapshot of the same source is left as it was. The receive endpoint
+answers as for any other processed Webmention; it never returns details of the
+failure.
+
+The limits are per document. They do not limit how many documents are analysed
+at the same time: each concurrent receive may start one child that uses up to
+the configured memory and CPU time. Bound concurrency with a queue
+(``INDIEWEB_WEBMENTION_ENQUEUE``) and ``INDIEWEB_RATE_LIMITS``. Starting the
+child costs a few hundred milliseconds per document.
+
+Platform notes:
+
+* **Linux:** all limits are enforced by the kernel.
+* **macOS:** the kernel refuses the memory limits. The child then watches its
+  own peak resident set size and exits when it is over the limit. This is a
+  backstop that can overshoot; CPU, wall-clock and size limits are enforced as
+  on Linux. Use macOS for development, not for a public receiver.
+* **Windows** and other platforms without the ``resource`` module: Webmentions
+  are rejected unless ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS`` is set to
+  ``False``.
+
+The child is started with ``subprocess``, so it also works inside daemonic
+worker processes that cannot use ``multiprocessing``. Set
+``INDIEWEB_WEBMENTION_PARSE_PYTHON`` if ``sys.executable`` is not a Python
+interpreter in your deployment.
+
+This isolation covers documents fetched while *receiving* a Webmention.
+``indieweb.h_card.parse_h_card()`` and the private helpers
+``WebmentionProcessor._verify_target_link()`` and
+``_content_links_to_target()`` parse in the calling process; use them only for
+HTML you trust. Stored ``content_html`` is sanitized again when it is
+displayed; that input is bounded by ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES``.
 
 Source Link Verification
 ------------------------
