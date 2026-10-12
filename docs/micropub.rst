@@ -384,7 +384,11 @@ list-shaped command properties shown above: ``mp-channel``,
 
 Microformats2 JSON creates pass the submitted ``properties`` object to the
 handler unchanged, including command properties and ``post-status``, except
-for server-managed properties described below:
+for server-managed properties described below. ``properties`` must be a JSON
+object: a string, array, number, boolean or ``null`` returns
+``400 invalid_request`` before any handler is called. An absent ``properties``
+key is treated as an empty object. The ``replace``, ``add`` and ``delete``
+operations of an update are shape-checked in the same way. A create example:
 
 .. code:: json
 

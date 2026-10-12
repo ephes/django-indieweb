@@ -4,6 +4,23 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-12
 
+### Micropub JSON properties must be a mapping
+
+- `MicropubView._parse_json_request` now rejects a microformats2 JSON create
+  whose `properties` value is not an object. `post()` answers
+  `400 invalid_request` before validation or the content handler runs.
+  Previously `{"type": ["h-entry"], "properties": "mp-slug"}` raised
+  `TypeError` and returned HTTP 500. An absent `properties` key still means an
+  empty property map.
+- Update operations (`replace`, `add`, `delete`) were already validated as
+  mappings by `_validate_update_operations`; no change was needed there.
+- Tests: `tests/test_micropub_create.py` covers string, `null`, list, number
+  and boolean values, including the exact `mp-slug` reproduction.
+- Documentation: `docs/micropub.rst` states the object requirement.
+- Changelog: added an Unreleased fix note.
+- Validation: `just check`; `uv run prek run --all-files`; `uv lock --check`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+
 ### Log redaction policy parity for auth codes, client ids, owners and hub errors
 
 - Closes three backlog items: "`_redact_auth_code` should honor
