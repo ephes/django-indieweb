@@ -1,3 +1,4 @@
+import gzip
 import re
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pytest
 
 from indieweb.http_client import (
     HTTPResponseTooLarge,
+    HTTPTotalTimeoutExceeded,
     UnsafeHTTPUrlError,
     WebmentionRedirectError,
     _blocked_ip_address,
@@ -643,3 +645,135 @@ def test_safe_redirect_allows_same_origin_when_strict():
         )
         assert result.response.status_code == 200
         assert result.final_url == "https://a.example/next"
+
+
+class _Clock:
+    """A monotonic clock that only advances when a fake transport says so."""
+
+    def __init__(self, monkeypatch):
+        from indieweb import http_client
+
+        self.now = 0.0
+        monkeypatch.setattr(http_client.time, "monotonic", lambda: self.now)
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_total_timeout_spans_redirects_and_dripping_body(monkeypatch, redirect):
+    clock = _Clock(monkeypatch)
+    requests = []
+
+    class Drip(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            for _ in range(20):
+                clock.now += 1
+                yield b"x"
+
+        def close(self):
+            self.closed = True
+
+    body = Drip()
+
+    def handler(request):
+        requests.append(request)
+        clock.now += 1
+        if redirect and len(requests) == 1:
+            return httpx.Response(302, headers={"location": "/final"})
+        return httpx.Response(200, stream=body)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(HTTPTotalTimeoutExceeded):
+            stream_with_safe_redirects(
+                client, "GET", "https://example.com/start", max_bytes=100, resolver=None, total_timeout=4, timeout=30
+            )
+    assert clock.now == 4
+    assert body.closed
+    assert len(requests) == (2 if redirect else 1)
+    # The per-operation timeout of the caller is passed on unchanged.
+    assert requests[-1].extensions["timeout"]["read"] == 30
+
+
+def test_total_timeout_checks_raw_chunks_that_decode_to_nothing(monkeypatch):
+    """A compressed body can drip input for which the decoder yields no output."""
+    clock = _Clock(monkeypatch)
+
+    class GzipDrip(httpx.SyncByteStream):
+        def __iter__(self):
+            for byte in gzip.compress(b"hello"):
+                clock.now += 1
+                yield bytes([byte])
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=GzipDrip())
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(HTTPTotalTimeoutExceeded):
+            stream_with_safe_redirects(
+                client, "GET", "https://example.com/", max_bytes=100, resolver=None, total_timeout=4
+            )
+    assert clock.now == 4
+
+
+def test_total_timeout_checks_the_read_that_finds_the_end_of_the_body(monkeypatch):
+    clock = _Clock(monkeypatch)
+
+    class SlowEnd(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"complete body"
+            clock.now += 5
+
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=SlowEnd()))) as client:
+        with pytest.raises(HTTPTotalTimeoutExceeded):
+            stream_with_safe_redirects(
+                client, "GET", "https://example.com/", max_bytes=100, resolver=None, total_timeout=4
+            )
+
+
+def test_total_timeout_used_up_by_a_redirect_does_not_start_another_hop(monkeypatch):
+    clock = _Clock(monkeypatch)
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        clock.now += 4
+        return httpx.Response(302, headers={"location": "/next"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(HTTPTotalTimeoutExceeded):
+            stream_with_safe_redirects(
+                client, "GET", "https://example.com/", max_bytes=100, resolver=None, total_timeout=4
+            )
+    assert len(calls) == 1
+
+
+def test_total_timeout_is_a_timeout_and_leaves_fast_responses_alone(monkeypatch):
+    clock = _Clock(monkeypatch)
+
+    def handler(request):
+        clock.now += 1
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "/final"})
+        return httpx.Response(200, headers={"content-encoding": "gzip"}, content=gzip.compress(b"ok"))
+
+    assert issubclass(HTTPTotalTimeoutExceeded, httpx.TimeoutException)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = stream_with_safe_redirects(
+            client, "GET", "https://example.com/start", max_bytes=100, resolver=None, total_timeout=4
+        )
+    assert result.response.content == b"ok"
+    assert result.final_url == "https://example.com/final"
+
+
+def test_without_total_timeout_a_slow_body_is_not_cut_off(monkeypatch):
+    clock = _Clock(monkeypatch)
+
+    class Drip(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(20):
+                clock.now += 100
+                yield b"x"
+
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=Drip()))) as client:
+        result = stream_with_safe_redirects(client, "GET", "https://example.com/", max_bytes=100, resolver=None)
+    assert result.response.content == b"x" * 20

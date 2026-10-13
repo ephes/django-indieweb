@@ -37,6 +37,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Documentation: updated isolated parsing and target matching in `docs/webmention.rst`.
 - Changelog: added both behavior changes under Unreleased; no matching backlog item.
 
+### Total time budget for received Webmention fetches
+
+- Add a monotonic budget across redirects and raw body chunks for receive-side
+  source and Vouch fetches (`INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS`),
+  checked between operations; per-operation timeouts are unchanged.
+- Validation: pytest, mypy, Ruff, prek and Sphinx; fake clocks exercise dripping
+  bodies, compressed chunks without decoded output and redirect exhaustion.
+- Documentation: setting and its limits (waits inside the HTTP client for
+  headers, chunk framing and trailers; DNS; sender side) in
+  `docs/configuration.rst`, summary in `docs/webmention.rst`.
+- Changelog: Unreleased entry; no matching backlog item.
+
 ## 2026-10-12
 
 ### Isolated parsing of fetched Webmention documents

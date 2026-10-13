@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -19,6 +20,33 @@ SAFE_HTTP_ALLOWED_SCHEMES = ("http", "https")
 SAFE_HTTP_DEFAULT_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=5.0, pool=2.0)
 SAFE_HTTP_DEFAULT_LIMITS = httpx.Limits(max_connections=10, max_keepalive_connections=5)
 DEFAULT_OUTBOUND_USER_AGENT = "django-indieweb/1.0"
+
+
+class HTTPTotalTimeoutExceeded(httpx.TimeoutException):
+    """The total time budget of one redirect chain was used up."""
+
+
+def _check_deadline(deadline: float | None) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise HTTPTotalTimeoutExceeded("HTTP total deadline exceeded")
+
+
+class _DeadlineStream(httpx.SyncByteStream):
+    """Check the deadline per raw chunk: a decoder can consume input without yielding output."""
+
+    def __init__(self, stream: httpx.SyncByteStream, deadline: float) -> None:
+        self._stream = stream
+        self._deadline = deadline
+
+    def __iter__(self) -> Iterator[bytes]:
+        for chunk in self._stream:
+            _check_deadline(self._deadline)
+            yield chunk
+        # The read that finds the end of the body can block as well.
+        _check_deadline(self._deadline)
+
+    def close(self) -> None:
+        self._stream.close()
 
 
 def outbound_user_agent() -> str:
@@ -443,8 +471,14 @@ def _prepare_pinned_request(
     return pinned_url, pinned_kwargs
 
 
-def _decoded_response_content_with_limit(response: httpx.Response, *, max_bytes: int | None) -> bytes:
-    """Read decoded response bytes while enforcing ``max_bytes``."""
+def _decoded_response_content_with_limit(
+    response: httpx.Response, *, max_bytes: int | None, deadline: float | None = None
+) -> bytes:
+    """Read decoded response bytes while enforcing ``max_bytes`` and ``deadline``."""
+    if deadline is not None:
+        if not isinstance(response.stream, httpx.SyncByteStream):
+            raise TypeError("a total timeout needs a synchronous response stream")
+        response.stream = _DeadlineStream(response.stream, deadline)
     chunks: list[bytes] = []
     total = 0
     for chunk in response.iter_bytes():
@@ -479,6 +513,7 @@ def stream_with_safe_redirects(
     url: str,
     *,
     max_bytes: int | None,
+    total_timeout: float | None = None,
     resolver: AddressResolver | None = default_address_resolver,
     pin_to_resolved_ip: bool = True,
     cross_origin_strip: bool = False,
@@ -493,10 +528,21 @@ def stream_with_safe_redirects(
     See :func:`request_with_safe_redirects` for the ``pin_to_resolved_ip`` and
     ``cross_origin_strip`` semantics. The same logic applies for streamed
     requests.
+
+    ``total_timeout`` is a budget in seconds for the whole redirect chain. It
+    is only checked when the HTTP client hands something over: before each
+    hop, when a hop's response headers have arrived, after every raw body
+    chunk and at the end of the body. It never interrupts the client, which
+    may do any number of socket reads, each inside the per-operation
+    ``timeout``, before it hands over headers, the next chunk (chunk framing)
+    or the end of the body (trailers). Such a wait is noticed only afterwards.
+    :class:`HTTPTotalTimeoutExceeded` is raised when the budget is used up.
     """
+    deadline = time.monotonic() + total_timeout if total_timeout is not None else None
     current_url = url
 
     for redirects_followed in range(WEBMENTION_MAX_REDIRECTS + 1):
+        _check_deadline(deadline)
         try:
             connect_url, connect_kwargs = _prepare_pinned_request(
                 current_url,
@@ -509,8 +555,9 @@ def stream_with_safe_redirects(
                 raise
             raise WebmentionRedirectError(f"unsupported Webmention redirect target: {current_url}") from exc
         with client.stream(method, connect_url, **connect_kwargs) as response:
+            _check_deadline(deadline)
             if response.status_code not in WEBMENTION_REDIRECT_STATUS_CODES:
-                content = _decoded_response_content_with_limit(response, max_bytes=max_bytes)
+                content = _decoded_response_content_with_limit(response, max_bytes=max_bytes, deadline=deadline)
                 return RedirectedResponse(
                     response=_copy_response_with_content(response, content),
                     final_url=current_url,

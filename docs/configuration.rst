@@ -1176,6 +1176,46 @@ over this limit mark the Webmention ``failed`` and are not stored as source
 snapshots. Set this to ``None`` only when an upstream proxy, queue, or worker
 boundary enforces an equivalent limit.
 
+.. _webmention-fetch-total-timeout:
+
+INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Time budget in seconds for one receive-side Webmention source or Vouch fetch,
+counted across all of its redirects and body reads.
+
+**Default:** ``15``
+
+The per-operation timeouts (3 seconds to connect, 5 seconds per read) only
+limit how long a single operation may take. A source that sends one byte of
+its body every few seconds stays inside them indefinitely. The budget is
+checked whenever the HTTP client hands something over: before each redirect
+hop, when a hop's response headers have arrived, after every raw body chunk
+(including compressed chunks that decode to nothing) and at the end of the
+body. A fetch found to be over the budget is treated like any other failed
+fetch: the Webmention is marked ``failed`` and nothing from the source is
+stored, even if the response arrived completely.
+
+Limits of the budget:
+
+* It is a check, not an interrupt. It cannot stop the HTTP client while the
+  client waits for data, and the client may do many socket reads, each inside
+  the read timeout, before it hands anything over. A server can therefore
+  still hold the worker beyond the budget by dripping the response headers,
+  the framing between chunks of a chunked body, or the trailers after it.
+  The fetch then fails as soon as the client returns, but the worker was
+  occupied in the meantime. The budget stops a slowly sent body, not every
+  slow response. Bound the remaining cases with the worker timeout of your
+  WSGI server or by processing received Webmentions in a queue
+  (``INDIEWEB_WEBMENTION_ENQUEUE``).
+* A blocking DNS lookup is not interrupted.
+* It applies to receive-side source and Vouch fetches only. Sender-side
+  endpoint discovery and delivery keep their per-operation timeouts.
+
+The value must be a positive, finite ``int`` or ``float``. Anything else,
+including numeric strings and booleans, logs a warning and falls back to the
+default. The budget cannot be switched off.
+
 INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

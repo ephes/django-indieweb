@@ -21,6 +21,13 @@ Unreleased
   URL during target verification, so posts on one site can mention each other
   with relative links. Documents containing ``<base`` are still matched on
   absolute links only.
+* Add a total time budget for receive-side Webmention source and Vouch
+  fetches, ``INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS`` (default 15
+  seconds), checked across redirects, after every body chunk and at the end
+  of the body. A source that drips its body is now cut off. The budget is a
+  check, not an interrupt: slowly sent response headers, chunk framing or
+  trailers and sender-side requests are not bounded by it; see the setting's
+  documentation.
 * **Security:** fetched Webmention source and Vouch documents are now analysed
   in a short-lived child process with operating-system limits instead of in
   the receiving process. A single small source document could previously make

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -64,6 +65,7 @@ logger = logging.getLogger(__name__)
 webmention_received = Signal()
 MAX_NESTED_RESPONSE_IDENTITY_LENGTH = 500
 DEFAULT_WEBMENTION_FETCH_MAX_BYTES = 1024 * 1024
+DEFAULT_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS = 15.0
 DEFAULT_WEBMENTION_MAX_STORED_BYTES = 2 * 1024 * 1024
 DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH = 8
 DEFAULT_WEBMENTION_NESTED_RESPONSE_MAX_CANDIDATES = 100
@@ -101,6 +103,21 @@ def _optional_positive_int_setting(name: str, default: int) -> int | None:
 
 def _webmention_fetch_max_bytes() -> int | None:
     return _optional_positive_int_setting("INDIEWEB_WEBMENTION_FETCH_MAX_BYTES", DEFAULT_WEBMENTION_FETCH_MAX_BYTES)
+
+
+def _webmention_fetch_total_timeout() -> float:
+    """Return the time budget in seconds for one source or Vouch fetch."""
+    configured = getattr(
+        settings, "INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS", DEFAULT_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS
+    )
+    if isinstance(configured, (int, float)) and not isinstance(configured, bool):
+        if math.isfinite(configured) and configured > 0:
+            return float(configured)
+    logger.warning(
+        "Invalid INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS; using "
+        f"{DEFAULT_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS} seconds"
+    )
+    return DEFAULT_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS
 
 
 def _webmention_max_stored_bytes() -> int:
@@ -630,6 +647,7 @@ class WebmentionProcessor:
                 max_bytes=_webmention_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                total_timeout=_webmention_fetch_total_timeout(),
             )
         finally:
             if close_client:
@@ -655,6 +673,7 @@ class WebmentionProcessor:
                 max_bytes=_webmention_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                total_timeout=_webmention_fetch_total_timeout(),
             )
         finally:
             if close_client:
