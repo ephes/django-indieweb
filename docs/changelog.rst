@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* Fix endpoint rate-limit windows on file-based caches: store the count and
+  deadline together and write with the remaining timeout. Continued requests
+  no longer extend a window, and ``Retry-After`` follows its deadline. Counters
+  are best-effort and can undercount concurrent requests; exact counts require
+  atomic operations on a shared cache. A separate cache namespace
+  starts a fresh allowance after upgrading and keeps older workers compatible
+  during rolling deployments.
 * Encode the full ``next`` path on IndieAuth and token-management login
   redirects so authorization parameters survive login, preserving login URL queries.
 * Add opt-in ``INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS`` for proxy-aware
@@ -65,11 +72,9 @@ Unreleased
   ``OTHER`` counter per endpoint and client instead of one counter per method
   name, so invented methods cannot multiply the allowance or create unbounded
   cache keys. Implemented methods keep their documented per-method budget. An
-  evicted counter is re-created with ``cache.add``/``cache.incr`` (up to three
-  attempts) instead of being reset to ``1``, which could discard concurrent
-  increments. **Behavior change:** if the cache cannot keep a counter at all,
-  the request is now rejected with HTTP ``429`` (previously allowed);
-  ``DummyCache`` still disables rate limiting.
+  evicted counter starts a fresh allowance. If the cache cannot keep a counter,
+  **Behavior change:** the request is rejected with HTTP ``429`` (previously
+  allowed); ``DummyCache`` disables rate limiting.
 * Fixed duplicate no-scope grants under concurrency. ``Auth.scope`` and
   ``Token.scope`` now store "no scope" as ``""`` instead of ``NULL``, so the
   ``(me, client_id, scope, owner)`` unique constraint also applies when two

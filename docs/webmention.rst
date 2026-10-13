@@ -192,6 +192,20 @@ If the callable itself raises, the ``Webmention`` row has already been created
 or reused and remains ``pending``; operators should rely on their queue retry
 path or manual cleanup to reconcile those rows.
 
+Receive Endpoint Rate Limits
+----------------------------
+
+Configure the ``webmention`` key in ``INDIEWEB_RATE_LIMITS`` to bound requests
+per client and HTTP method (see :doc:`configuration`). A rule of 60 requests
+per 300 seconds uses a fixed window starting at the client's first request.
+Continued requests do not extend it, including with Django's file-based cache;
+a sender is admitted again when the deadline passes. HTTP 429 responses carry
+``Retry-After`` for the remaining window, rounded up and at least 1 second.
+Counts are best-effort: simultaneous requests can undercount because cache
+reads and writes are non-atomic. Exact counts require an atomic shared-cache
+limiter. Proxy-aware client selection remains opt-in through
+``INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS``.
+
 Receive-Side Network and Resource Limits
 ----------------------------------------
 

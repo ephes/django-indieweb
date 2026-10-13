@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import time
+import math
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,11 +11,10 @@ from django.contrib.sites.models import Site
 from django.core.cache import cache
 from django.urls import reverse
 
-from indieweb import models
+from indieweb import models, rate_limit
 from indieweb.rate_limit import (
     UNSUPPORTED_METHOD_BUCKET,
     _cache_key,
-    _retry_after,
     check_rate_limit,
     get_rate_limit_config,
 )
@@ -90,13 +90,6 @@ def test_configured_token_limit_returns_429_with_retry_after(client, settings):
     assert 1 <= int(limited["Retry-After"]) <= 60
 
 
-def test_rate_limit_retry_after_falls_back_to_window_when_reset_key_is_missing():
-    counter_key = "indieweb:rate-limit:test:missing-reset"
-    cache.delete(f"{counter_key}:reset")
-
-    assert _retry_after(counter_key, time.time(), fallback_window=60) == 60
-
-
 def test_rate_limit_cache_key_uses_secret_keyed_hmac(settings):
     settings.SECRET_KEY = "first-secret"
     key = _cache_key("token", "POST", "203.0.113.7")
@@ -106,7 +99,7 @@ def test_rate_limit_cache_key_uses_secret_keyed_hmac(settings):
     changed_secret_key = _cache_key("token", "POST", "203.0.113.7")
 
     assert bare_digest not in key
-    assert ":v2:" in key
+    assert ":v3:" in key
     assert key != changed_secret_key
 
 
@@ -311,7 +304,8 @@ def test_websub_callback_endpoint_key_is_limited(client, settings):
 
 
 def _counter(endpoint_key: str, bucket: str, identity: str = "127.0.0.1") -> int | None:
-    return cache.get(_cache_key(endpoint_key, bucket, identity))
+    value = cache.get(_cache_key(endpoint_key, bucket, identity))
+    return value["count"] if value is not None else None
 
 
 @pytest.mark.django_db
@@ -377,127 +371,66 @@ def test_method_buckets_are_case_insensitive(client, settings):
     assert _counter("token", UNSUPPORTED_METHOD_BUCKET) == 1
 
 
-# ----------------------------------------------------------------------------
-# Counter eviction: a vanished counter is re-created with add/incr, never reset
-# with an unconditional set that would discard other requests' increments.
-# ----------------------------------------------------------------------------
-
-
-class ScriptedCache:
-    """In-memory cache whose ``incr`` can run a hook first, to script an interleaving."""
-
-    def __init__(self):
-        self.values: dict[str, object] = {}
-        self.before_incr: list = []
-        self.set_calls: list[str] = []
-
-    def add(self, key, value, timeout=None):
-        if key in self.values:
-            return False
-        self.values[key] = value
-        return True
-
-    def set(self, key, value, timeout=None):
-        self.set_calls.append(key)
-        self.values[key] = value
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
-
-    def incr(self, key, delta=1):
-        if self.before_incr:
-            self.before_incr.pop(0)()
-        if key not in self.values:
-            raise ValueError(f"Key {key!r} not found")
-        self.values[key] += delta
-        return self.values[key]
+@pytest.fixture(params=["locmem.LocMemCache", "filebased.FileBasedCache"])
+def fixed_window_cache(request, settings, tmp_path):
+    settings.CACHES = {
+        "default": {
+            "BACKEND": f"django.core.cache.backends.{request.param}",
+            "LOCATION": str(tmp_path / "rate-limit"),
+            "TIMEOUT": 600,
+        }
+    }
+    settings.INDIEWEB_RATE_LIMITS = {"webmention": {"limit": 2, "window": 300}}
+    yield cache
+    cache.clear()
 
 
 @pytest.fixture
-def scripted_cache(settings):
-    settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 5, "window": 60}}
-    scripted = ScriptedCache()
-    with patch("indieweb.rate_limit.cache", scripted):
-        yield scripted
+def clock(monkeypatch):
+    clock = SimpleNamespace(now=1000.0)
+    # Replace only the limiter's source: real cache TTLs must not hide a stale deadline.
+    monkeypatch.setattr(rate_limit, "time", SimpleNamespace(time=lambda: clock.now))
+    return clock
 
 
-def _request(method: str = "POST", remote_addr: str = "203.0.113.9") -> MagicMock:
-    request = MagicMock()
-    request.method = method
-    request.META = {"REMOTE_ADDR": remote_addr}
-    return request
+def test_fixed_window_admits_client_again(fixed_window_cache, clock, rf):
+    request = rf.post("/", REMOTE_ADDR="203.0.113.1")
+    assert check_rate_limit(request, "webmention").allowed
+    clock.now += 120
+    assert check_rate_limit(request, "webmention").allowed
+    for now in (1240, 1290, 1299.9):
+        clock.now = now
+        result = check_rate_limit(request, "webmention")
+        assert not result.allowed
+        assert 1 <= result.retry_after <= math.ceil(1300 - now)
+    clock.now = 1300
+    assert check_rate_limit(request, "webmention").allowed
+    assert check_rate_limit(request, "webmention").allowed
+    assert not check_rate_limit(request, "webmention").allowed
 
 
-def test_evicted_counter_retry_keeps_a_concurrent_increment(scripted_cache):
-    """Eviction between add and incr, then another request counts first: both are counted."""
-    counter_key = _cache_key("token", "POST", "203.0.113.9")
-
-    def evict():
-        del scripted_cache.values[counter_key]
-
-    def other_request_recreates_and_counts():
-        scripted_cache.values.pop(counter_key, None)
-        scripted_cache.add(counter_key, 0, 60)
-        scripted_cache.values[counter_key] += 1
-
-    scripted_cache.before_incr.extend([evict, other_request_recreates_and_counts])
-
-    result = check_rate_limit(_request(), "token")
-
-    # Attempt 1: the counter is evicted before incr. Attempt 2: another request has
-    # re-created it with one increment before ours. Neither increment is lost.
-    assert result.allowed is True
-    assert scripted_cache.values[counter_key] == 2
-    assert counter_key not in scripted_cache.set_calls
-
-
-def test_evicted_counter_is_recreated_with_a_matching_reset_time(scripted_cache):
-    counter_key = _cache_key("token", "POST", "203.0.113.9")
-    reset_key = f"{counter_key}:reset"
-    scripted_cache.values[reset_key] = 1.0  # stale reset time left over from an evicted counter
-
-    before = time.time()
-    result = check_rate_limit(_request(), "token")
-
-    assert result.allowed is True
-    assert scripted_cache.values[counter_key] == 1
-    assert before + 60 <= scripted_cache.values[reset_key] <= time.time() + 60
-
-
-def test_existing_counter_keeps_its_reset_time(scripted_cache):
-    counter_key = _cache_key("token", "POST", "203.0.113.9")
-    check_rate_limit(_request(), "token")
-    first_reset = scripted_cache.values[f"{counter_key}:reset"]
-
-    check_rate_limit(_request(), "token")
-
-    assert scripted_cache.values[counter_key] == 2
-    assert scripted_cache.values[f"{counter_key}:reset"] == first_reset
-
-
-def test_counter_that_cannot_be_stored_fails_closed(scripted_cache, caplog):
-    counter_key = _cache_key("token", "POST", "203.0.113.9")
-    scripted_cache.before_incr.extend([lambda: scripted_cache.values.pop(counter_key)] * 10)
-
-    with caplog.at_level("WARNING", logger="indieweb.rate_limit"):
-        result = check_rate_limit(_request(), "token")
-
-    assert result.allowed is False
-    assert result.retry_after == 60
-    assert "could not be stored" in caplog.text
-    assert counter_key not in scripted_cache.set_calls
-    assert len(scripted_cache.before_incr) == 7  # exactly three bounded attempts
+def test_fixed_window_clients_are_independent(fixed_window_cache, clock, rf):
+    first = rf.post("/", REMOTE_ADDR="203.0.113.1")
+    other = rf.post("/", REMOTE_ADDR="203.0.113.2")
+    assert check_rate_limit(first, "webmention").allowed
+    assert check_rate_limit(first, "webmention").allowed
+    clock.now += 100
+    assert check_rate_limit(other, "webmention").allowed
+    assert not check_rate_limit(first, "webmention").allowed
+    clock.now += 200
+    assert check_rate_limit(first, "webmention").allowed
+    assert check_rate_limit(other, "webmention").allowed
+    assert check_rate_limit(other, "webmention").retry_after == 100
 
 
 @pytest.mark.django_db
-def test_endpoint_returns_429_when_the_counter_cannot_be_stored(client, settings):
+def test_endpoint_returns_429_when_the_counter_cannot_be_stored(client, settings, caplog):
     settings.INDIEWEB_RATE_LIMITS = {"token": {"limit": 5, "window": 60}}
-
-    with patch("indieweb.rate_limit.cache.incr", side_effect=ValueError("evicted")):
+    with patch("indieweb.rate_limit.cache.set"):
         response = client.post(reverse("indieweb:token"), data={"code": "wrong"})
-
     assert response.status_code == 429
     assert response["Retry-After"] == "60"
+    assert "could not be stored" in caplog.text
 
 
 @pytest.mark.django_db
@@ -551,3 +484,37 @@ def test_forwarded_ipv6_notation_uses_same_bucket(settings, rf):
     settings.INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS = 1
     assert check_rate_limit(rf.get("/", HTTP_X_FORWARDED_FOR="2001:DB8::1"), "auth").allowed
     assert not check_rate_limit(rf.get("/", HTTP_X_FORWARDED_FOR="2001:db8:0:0:0:0:0:1"), "auth").allowed
+
+
+def test_fixed_window_uses_remaining_timeout(fixed_window_cache, clock, rf):
+    request = rf.post("/", REMOTE_ADDR="203.0.113.1")
+    with patch.object(cache, "set", wraps=cache.set) as store:
+        check_rate_limit(request, "webmention")
+        clock.now += 120
+        check_rate_limit(request, "webmention")
+    assert [call.kwargs["timeout"] for call in store.call_args_list] == [300, 180]
+    assert store.call_args_list[-1].args[1] == {"count": 2, "reset_at": 1300}
+
+
+def test_previous_counter_namespace_is_unchanged(fixed_window_cache, clock, rf):
+    key = _cache_key("webmention", "POST", "203.0.113.1")
+    old_key = key.replace(":v3:", ":v2:")
+    cache.set(old_key, 60, timeout=600)
+    result = check_rate_limit(rf.post("/", REMOTE_ADDR="203.0.113.1"), "webmention")
+    assert result.allowed
+    assert cache.get(key) == {"count": 1, "reset_at": 1300}
+    assert cache.get(old_key) == 60
+
+
+def test_fractional_remaining_window_survives_integer_timeout_backend(fixed_window_cache, clock, rf):
+    request = rf.post("/", REMOTE_ADDR="203.0.113.1")
+    original_set = cache.set
+
+    def integer_timeout_set(key, value, timeout):
+        return original_set(key, value, timeout=int(timeout))
+
+    with patch.object(cache, "set", side_effect=integer_timeout_set):
+        assert check_rate_limit(request, "webmention").allowed
+        clock.now = 1299.9
+        assert check_rate_limit(request, "webmention").allowed
+        assert check_rate_limit(request, "webmention").retry_after == 1
