@@ -563,6 +563,12 @@ Configure IndieAuth behavior in your Django settings::
     # Login URL for redirecting unauthenticated users
     LOGIN_URL = "/accounts/login/"
 
+Unauthenticated authorization and browser token-management requests redirect
+to ``LOGIN_URL`` with the complete original path and query encoded in ``next``.
+The login view should return the user to that path after successful login;
+parameters such as ``state``, ``scope`` and ``redirect_uri`` survive intact.
+Existing query parameters on ``LOGIN_URL`` are preserved.
+
 Testing IndieAuth
 -----------------
 

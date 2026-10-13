@@ -2,6 +2,16 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-13
+
+### Preserve query parameters across login
+
+- Use Django redirect_to_login for IndieAuth and browser token-management views.
+- Validation: pytest, mypy, Ruff, prek and Sphinx; multi-parameter next URLs
+  and existing login query parameters are preserved for both views.
+- Documentation: login continuation contract in `docs/indieauth.rst`.
+- Changelog: Unreleased redirect correction; no matching backlog item.
+
 ## 2026-10-12
 
 ### Isolated parsing of fetched Webmention documents
