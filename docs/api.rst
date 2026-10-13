@@ -1795,13 +1795,13 @@ Endpoint keys:
   ``/indieweb/webmention/<status-token>/``
 
 Counters are scoped by endpoint key, HTTP method, and the client identity from
-``REMOTE_ADDR``. ``GET`` and ``POST`` requests to the same endpoint use
+``REMOTE_ADDR`` by default. ``GET`` and ``POST`` requests to the same endpoint use
 independent counters, so set each endpoint limit as a per-method budget.
 The client identity is HMAC-digested with Django's ``SECRET_KEY`` before it is
-used in cache keys. django-indieweb does not trust ``X-Forwarded-For``
-directly. Deployments behind a proxy should configure trusted upstream
-middleware or infrastructure so Django receives the intended client address in
-``REMOTE_ADDR``.
+used in cache keys. By default, forwarded headers are ignored. The optional
+``INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS`` selects a validated address from the
+right end of ``X-Forwarded-For`` behind a fixed trusted proxy chain. See
+:ref:`trusted-proxy-hops` for deployment requirements and fallback behavior.
 
 When a configured limit is exceeded, the endpoint returns:
 

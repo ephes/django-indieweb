@@ -883,7 +883,7 @@ The codebase already has several good security choices:
 - WebSub re-verification while `STATE_ACTIVE` checks `pending_mode == subscribe` before honouring (`websub.py:449`); the state machine is not silently rotated by replayed verification.
 - Endpoint-scoped CORS support is configurable and disabled by default.
 - A rate-limit framework exists (although it is disabled unless configured).
-- `_client_identity` reads only `REMOTE_ADDR` and explicitly ignores `X-Forwarded-For` (verified by `tests/test_rate_limiting.py`).
+- `_client_identity` reads only `REMOTE_ADDR` and ignores `X-Forwarded-For` by default; trusted proxy hops are now opt-in (verified by `tests/test_rate_limiting.py`).
 - The token revocation endpoint correctly filters by owner and is CSRF-protected.
 - The token-management view intentionally never displays `Token.key`.
 - No raw SQL, `pickle`, `yaml.load`, `eval`, or `exec` anywhere in `src/` or `tests/`. No `RunPython`/`RunSQL` data migrations leak secrets.
@@ -1441,7 +1441,7 @@ starting points and proxy-aware `REMOTE_ADDR` guidance.
 
 `INDIEWEB_RATE_LIMITS` defaults to disabled across auth, token, introspection, Micropub, media, Webmention, Webmention status, and WebSub callback endpoints.
 
-**Recommendation:** Document hardened production limits per endpoint. Consider shipping conservative defaults or a helper settings snippet. Cover proxy-aware client IP guidance (the limiter intentionally ignores `X-Forwarded-For`).
+**Recommendation:** Document hardened production limits per endpoint. Consider shipping conservative defaults or a helper settings snippet. Cover proxy-aware client IP guidance (the limiter ignores `X-Forwarded-For` by default; trusted proxy hops are opt-in).
 
 ### Test Settings Hardcode `SECRET_KEY` and `DEBUG=True`
 

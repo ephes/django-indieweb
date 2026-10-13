@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import logging
 import math
 import time
@@ -86,9 +87,23 @@ def get_rate_limit_config(endpoint_key: str) -> RateLimitConfig | None:
 def _client_identity(request: HttpRequest) -> str:
     """Return the client identity used for rate-limit counters."""
     value = request.META.get("REMOTE_ADDR", "")
-    if value is None:
-        return ""
-    return str(value)
+    fallback = "" if value is None else str(value)
+    hops = getattr(settings, "INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS", 0)
+    if isinstance(hops, bool) or not isinstance(hops, int) or hops < 0:
+        logger.warning("Invalid INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS; using REMOTE_ADDR")
+        return fallback
+    if hops == 0:
+        return fallback
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if not isinstance(forwarded, str):
+        return fallback
+    addresses = forwarded.split(",")
+    if len(addresses) < hops:
+        return fallback
+    try:
+        return str(ipaddress.ip_address(addresses[-hops].strip()))
+    except ValueError:
+        return fallback
 
 
 def _cache_key(endpoint_key: str, method: str, identity: str) -> str:

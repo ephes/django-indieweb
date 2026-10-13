@@ -2,6 +2,19 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-13
+
+### Proxy-aware rate-limit client identity
+
+- Select a validated IP from the right end of X-Forwarded-For with an opt-in
+  trusted-hop count; retain REMOTE_ADDR for disabled or malformed input.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`; bucket separation, left-side
+  spoofing and invalid/missing/short-chain fallback regressions.
+- Documentation: trusted proxy deployment requirements in `docs/configuration.rst`.
+- Changelog: Unreleased setting entry; no matching backlog item.
+
 ## 2026-10-12
 
 ### Isolated parsing of fetched Webmention documents
