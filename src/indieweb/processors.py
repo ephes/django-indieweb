@@ -31,6 +31,7 @@ from .http_client import (
     RedirectedResponse,
     default_address_resolver,
     disable_client_cookies,
+    http_total_timeout,
     outbound_user_agent,
     response_text_with_limit,
     stream_with_safe_redirects,
@@ -621,6 +622,7 @@ class WebmentionProcessor:
                 max_bytes=_webmention_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                total_timeout=http_total_timeout(),
             )
         finally:
             if close_client:
@@ -646,6 +648,7 @@ class WebmentionProcessor:
                 max_bytes=_webmention_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                total_timeout=http_total_timeout(),
             )
         finally:
             if close_client:

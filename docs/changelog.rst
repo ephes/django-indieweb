@@ -5,6 +5,8 @@ Changelog
 
 Unreleased
 ----------
+* Bound Webmention HTTP redirect chains and body reads with
+  ``INDIEWEB_HTTP_TOTAL_TIMEOUT_SECONDS`` (default 15 seconds).
 * **Security:** fetched Webmention source and Vouch documents are now analysed
   in a short-lived child process with operating-system limits instead of in
   the receiving process. A single small source document could previously make

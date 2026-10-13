@@ -2,6 +2,17 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-13
+
+### Total Webmention HTTP deadline
+
+- Add a monotonic budget across redirects and raw/decoded chunks for receive
+  and send HTTP calls, with operation timeouts capped by the remaining budget.
+- Validation: pytest, mypy, Ruff, prek and Sphinx; fake clocks exercise dripping
+  bodies, compressed chunks and redirect exhaustion.
+- Documentation: network budget and blocking-operation limits in `docs/webmention.rst`.
+- Changelog: Unreleased deadline entry; no matching backlog item.
+
 ## 2026-10-12
 
 ### Isolated parsing of fetched Webmention documents

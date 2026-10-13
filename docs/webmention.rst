@@ -205,6 +205,16 @@ preserving the original ``Host`` header and TLS SNI, so a DNS rebinding host
 that resolves to a public address during validation and to a private address
 during the connect cannot bypass the safety check.
 
+Webmention source and Vouch fetches, endpoint discovery, source-content fetches
+and endpoint delivery share a total budget across each request's redirects and
+body reads: ``INDIEWEB_HTTP_TOTAL_TIMEOUT_SECONDS`` (default 15 seconds).
+Use a positive finite number; invalid values fall back to 15. The monotonic
+deadline is checked at each hop and raw/decoded chunk, and each hop's HTTP
+operation timeouts are capped by the remaining budget. A blocking DNS lookup
+cannot be interrupted, and an in-progress read can finish after the deadline
+by up to its operation timeout. Timeout failures use the existing fetch or
+send failure path.
+
 .. _webmention-injected-client-warning:
 
 .. warning::

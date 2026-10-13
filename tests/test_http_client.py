@@ -643,3 +643,94 @@ def test_safe_redirect_allows_same_origin_when_strict():
         )
         assert result.response.status_code == 200
         assert result.final_url == "https://a.example/next"
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_total_deadline_spans_redirects_and_dripping_body(monkeypatch, redirect):
+    from indieweb import http_client
+
+    clock = [0.0]
+    monkeypatch.setattr(http_client.time, "monotonic", lambda: clock[0])
+    requests = []
+
+    class Drip(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            for _ in range(20):
+                clock[0] += 1
+                yield b"x"
+
+        def close(self):
+            self.closed = True
+
+    body = Drip()
+
+    def handler(request):
+        requests.append(request)
+        clock[0] += 1
+        if redirect and len(requests) == 1:
+            return httpx.Response(302, headers={"location": "/final"})
+        return httpx.Response(200, stream=body)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.TimeoutException, match="total deadline"):
+            stream_with_safe_redirects(
+                client,
+                "GET",
+                "https://example.com/start",
+                max_bytes=100,
+                resolver=None,
+                total_timeout=4,
+                timeout=30,
+            )
+    assert clock[0] == 4
+    assert body.closed
+    assert len(requests) == (2 if redirect else 1)
+    assert requests[-1].extensions["timeout"]["read"] == (3 if redirect else 4)
+
+
+def test_deadline_checks_raw_compressed_chunks(monkeypatch):
+    import gzip
+
+    from indieweb import http_client
+
+    clock = [0.0]
+    monkeypatch.setattr(http_client.time, "monotonic", lambda: clock[0])
+
+    class GzipDrip(httpx.SyncByteStream):
+        def __iter__(self):
+            for byte in gzip.compress(b"hello"):
+                clock[0] += 1
+                yield bytes([byte])
+
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, headers={"content-encoding": "gzip"}, stream=GzipDrip())
+        )
+    ) as client:
+        with pytest.raises(httpx.TimeoutException, match="total deadline"):
+            stream_with_safe_redirects(
+                client, "GET", "https://example.com/", max_bytes=100, resolver=None, total_timeout=4
+            )
+    assert clock[0] == 4
+
+
+def test_deadline_expired_in_redirect_does_not_start_another_hop(monkeypatch):
+    from indieweb import http_client
+
+    clock = [0.0]
+    calls = []
+    monkeypatch.setattr(http_client.time, "monotonic", lambda: clock[0])
+
+    def handler(request):
+        calls.append(request)
+        clock[0] += 4
+        return httpx.Response(302, headers={"location": "/next"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.TimeoutException):
+            stream_with_safe_redirects(
+                client, "GET", "https://example.com/", max_bytes=100, resolver=None, total_timeout=4
+            )
+    assert len(calls) == 1

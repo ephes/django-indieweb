@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
+import math
 import socket
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -19,6 +22,51 @@ SAFE_HTTP_ALLOWED_SCHEMES = ("http", "https")
 SAFE_HTTP_DEFAULT_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=5.0, pool=2.0)
 SAFE_HTTP_DEFAULT_LIMITS = httpx.Limits(max_connections=10, max_keepalive_connections=5)
 DEFAULT_OUTBOUND_USER_AGENT = "django-indieweb/1.0"
+
+
+logger = logging.getLogger(__name__)
+
+
+def http_total_timeout() -> float:
+    """Return the finite total budget for one Webmention HTTP redirect chain."""
+    configured = getattr(settings, "INDIEWEB_HTTP_TOTAL_TIMEOUT_SECONDS", 15)
+    try:
+        if isinstance(configured, bool):
+            raise ValueError
+        value = float(configured)
+        if value <= 0 or not math.isfinite(value):
+            raise ValueError
+        return value
+    except (TypeError, ValueError, OverflowError):
+        logger.warning("Invalid INDIEWEB_HTTP_TOTAL_TIMEOUT_SECONDS; using 15 seconds")
+        return 15.0
+
+
+def _remaining_time(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise httpx.TimeoutException("HTTP total deadline exceeded")
+    return remaining
+
+
+class _DeadlineStream(httpx.SyncByteStream):
+    """Check raw chunks too: a decoder can consume input without yielding output."""
+
+    def __init__(self, stream: httpx.SyncByteStream, deadline: float) -> None:
+        self.stream = stream
+        self.deadline = deadline
+
+    def __iter__(self) -> Iterator[bytes]:
+        _remaining_time(self.deadline)
+        for chunk in self.stream:
+            _remaining_time(self.deadline)
+            yield chunk
+        _remaining_time(self.deadline)
+
+    def close(self) -> None:
+        self.stream.close()
 
 
 def outbound_user_agent() -> str:
@@ -332,6 +380,7 @@ def request_with_safe_redirects(
     *,
     resolver: AddressResolver | None = default_address_resolver,
     max_bytes: int | None = None,
+    total_timeout: float | None = None,
     pin_to_resolved_ip: bool = True,
     cross_origin_strip: bool = False,
     **request_kwargs: Any,
@@ -357,12 +406,13 @@ def request_with_safe_redirects(
     publish) where method/body/header replay across origins is unsafe; the
     Webmention sender path keeps the default permissive behavior.
     """
-    if max_bytes is not None:
+    if max_bytes is not None or total_timeout is not None:
         return stream_with_safe_redirects(
             client,
             method,
             url,
             max_bytes=max_bytes,
+            total_timeout=total_timeout,
             resolver=resolver,
             pin_to_resolved_ip=pin_to_resolved_ip,
             cross_origin_strip=cross_origin_strip,
@@ -443,15 +493,23 @@ def _prepare_pinned_request(
     return pinned_url, pinned_kwargs
 
 
-def _decoded_response_content_with_limit(response: httpx.Response, *, max_bytes: int | None) -> bytes:
+def _decoded_response_content_with_limit(
+    response: httpx.Response, *, max_bytes: int | None, deadline: float | None = None
+) -> bytes:
     """Read decoded response bytes while enforcing ``max_bytes``."""
+    if deadline is not None:
+        _remaining_time(deadline)
+        if isinstance(response.stream, httpx.SyncByteStream):
+            response.stream = _DeadlineStream(response.stream, deadline)
     chunks: list[bytes] = []
     total = 0
     for chunk in response.iter_bytes():
+        _remaining_time(deadline)
         total += len(chunk)
         if max_bytes is not None and total > max_bytes:
             raise HTTPResponseTooLarge(f"response exceeded {max_bytes} decoded bytes")
         chunks.append(chunk)
+    _remaining_time(deadline)
     return b"".join(chunks)
 
 
@@ -479,6 +537,7 @@ def stream_with_safe_redirects(
     url: str,
     *,
     max_bytes: int | None,
+    total_timeout: float | None = None,
     resolver: AddressResolver | None = default_address_resolver,
     pin_to_resolved_ip: bool = True,
     cross_origin_strip: bool = False,
@@ -494,9 +553,11 @@ def stream_with_safe_redirects(
     ``cross_origin_strip`` semantics. The same logic applies for streamed
     requests.
     """
+    deadline = time.monotonic() + total_timeout if total_timeout is not None else None
     current_url = url
 
     for redirects_followed in range(WEBMENTION_MAX_REDIRECTS + 1):
+        _remaining_time(deadline)
         try:
             connect_url, connect_kwargs = _prepare_pinned_request(
                 current_url,
@@ -508,9 +569,20 @@ def stream_with_safe_redirects(
             if redirects_followed == 0:
                 raise
             raise WebmentionRedirectError(f"unsupported Webmention redirect target: {current_url}") from exc
+        remaining = _remaining_time(deadline)
+        if remaining is not None:
+            timeout = httpx.Timeout(connect_kwargs.get("timeout", client.timeout))
+            connect_kwargs = dict(connect_kwargs)
+            connect_kwargs["timeout"] = httpx.Timeout(
+                **{
+                    phase: min(value, remaining) if value is not None else remaining
+                    for phase, value in timeout.as_dict().items()
+                }
+            )
         with client.stream(method, connect_url, **connect_kwargs) as response:
+            _remaining_time(deadline)
             if response.status_code not in WEBMENTION_REDIRECT_STATUS_CODES:
-                content = _decoded_response_content_with_limit(response, max_bytes=max_bytes)
+                content = _decoded_response_content_with_limit(response, max_bytes=max_bytes, deadline=deadline)
                 return RedirectedResponse(
                     response=_copy_response_with_content(response, content),
                     final_url=current_url,

@@ -15,6 +15,7 @@ from .http_client import (
     HTTPResponseTooLarge,
     default_address_resolver,
     disable_client_cookies,
+    http_total_timeout,
     is_safe_http_url,
     outbound_user_agent,
     request_with_webmention_redirects,
@@ -281,6 +282,7 @@ class WebmentionSender:
                 target_url,
                 resolver=resolver,
                 timeout=self.timeout,
+                total_timeout=http_total_timeout(),
                 max_bytes=_sender_head_max_bytes(),
             )
             response = discovered.response
@@ -302,6 +304,7 @@ class WebmentionSender:
                 max_bytes=_sender_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                total_timeout=http_total_timeout(),
             )
             response = discovered.response
             response.raise_for_status()
@@ -442,6 +445,7 @@ class WebmentionSender:
                 data=payload,
                 resolver=resolver,
                 timeout=self.post_timeout,
+                total_timeout=http_total_timeout(),
                 max_bytes=_sender_response_max_bytes(),
             )
             response = delivered.response
@@ -506,6 +510,7 @@ class WebmentionSender:
                 max_bytes=_sender_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                total_timeout=http_total_timeout(),
             )
             response = fetched.response
             response.raise_for_status()
