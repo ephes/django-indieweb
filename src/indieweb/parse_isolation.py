@@ -18,10 +18,14 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
+from django.utils.crypto import salted_hmac
 
 from . import webmention_parse_worker
 
@@ -53,6 +57,10 @@ class WebmentionSourceRejected(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(f"source too expensive to process ({reason})")
         self.reason = reason
+
+
+class WebmentionParseCapacityError(WebmentionSourceRejected):
+    """Temporary parse capacity exhaustion; callers should retry without changing stored state."""
 
 
 @dataclass(frozen=True)
@@ -161,6 +169,62 @@ def _exit_reason(returncode: int) -> str:
     return f"worker failed with status {returncode}"
 
 
+def _claim_parse_slot(directory_fd: int, maximum: int, locks: Any) -> int | None:
+    for index in range(maximum):
+        candidate = os.open(f"{index}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        try:
+            locks.flock(candidate, locks.LOCK_EX | locks.LOCK_NB)
+        except BlockingIOError:
+            os.close(candidate)
+        except BaseException:
+            os.close(candidate)
+            raise
+        else:
+            return candidate
+    return None
+
+
+@contextmanager
+def _parse_slot() -> Iterator[int]:
+    """Hold a host-local slot across threads and processes until the child is reaped."""
+    try:
+        import fcntl
+    except ImportError:
+        raise WebmentionSourceRejected("parse capacity unavailable") from None
+    maximum = _positive_number_setting("INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT", 2)
+    wait = _positive_number_setting("INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS", 1, integer=False)
+    deployment = salted_hmac("indieweb.parse-slots", "deployment", algorithm="sha256").hexdigest()[:16]
+    directory = getattr(settings, "INDIEWEB_WEBMENTION_PARSE_LOCK_DIR", None) or os.path.join(
+        tempfile.gettempdir(), f"indieweb-parse-{os.getuid()}-{deployment}"
+    )
+    slot = None
+    directory_fd = None
+    try:
+        try:
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            info = os.fstat(directory_fd)
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise OSError("parse lock directory must be private and owned by this user")
+            deadline = time.monotonic() + wait
+            while slot is None:
+                slot = _claim_parse_slot(directory_fd, maximum, fcntl)
+                if slot is None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise WebmentionParseCapacityError("parse capacity")
+                    time.sleep(min(0.02, remaining))
+        except OSError as exc:
+            logger.error("Webmention parse capacity unavailable: %s", exc)
+            raise WebmentionSourceRejected("parse capacity unavailable") from None
+        yield slot
+    finally:
+        if slot is not None:
+            os.close(slot)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
 def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
     """Run one analysis request in a limited child process and return its result.
 
@@ -175,7 +239,7 @@ def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
         )
         raise WebmentionSourceRejected("resource limits unavailable")
 
-    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+    with _parse_slot() as slot, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         try:
             completed = subprocess.run(  # noqa: S603 - fixed command, no shell
                 _worker_command(limits),
@@ -185,6 +249,7 @@ def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
                 timeout=limits.wall_seconds,
                 env=_worker_environment(),
                 check=False,
+                pass_fds=(slot,),
             )
         except subprocess.TimeoutExpired:
             # ``subprocess.run`` has killed and reaped the child.
