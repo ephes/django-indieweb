@@ -510,3 +510,44 @@ def test_dummy_cache_disables_rate_limiting_instead_of_rejecting(client, setting
     statuses = [client.post(url, data=payload).status_code for _ in range(3)]
 
     assert statuses == [400, 400, 400]
+
+
+@pytest.mark.parametrize("hops", [0, 1, 2])
+def test_proxy_hops_select_client_bucket(settings, rf, hops):
+    settings.INDIEWEB_RATE_LIMITS = {"auth": {"limit": 1, "window": 60}}
+    settings.INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS = hops
+
+    def request(address, spoof="192.0.2.99"):
+        chain = f"{spoof}, {address}" + (", 192.0.2.10" if hops == 2 else "")
+        return rf.get("/", REMOTE_ADDR="192.0.2.1", HTTP_X_FORWARDED_FOR=chain)
+
+    assert check_rate_limit(request("198.51.100.1"), "auth").allowed
+    assert check_rate_limit(request("198.51.100.2"), "auth").allowed is (hops > 0)
+    assert not check_rate_limit(request("198.51.100.1", spoof="192.0.2.98"), "auth").allowed
+
+
+@pytest.mark.parametrize(
+    "hops,header",
+    [(1, "bad"), (2, "198.51.100.1"), (1, ""), (-1, "198.51.100.1"), (True, "198.51.100.1"), ("1", "198.51.100.1")],
+)
+def test_invalid_forwarded_identity_falls_back(settings, rf, hops, header):
+    settings.INDIEWEB_RATE_LIMITS = {"auth": {"limit": 1, "window": 60}}
+    settings.INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS = hops
+    request = rf.get("/", REMOTE_ADDR="192.0.2.1", HTTP_X_FORWARDED_FOR=header)
+    assert check_rate_limit(request, "auth").allowed
+    assert not check_rate_limit(rf.get("/", REMOTE_ADDR="192.0.2.1"), "auth").allowed
+
+
+@pytest.mark.parametrize("value", [True, -1, "1"])
+def test_invalid_proxy_hops_logs_warning(settings, rf, caplog, value):
+    settings.INDIEWEB_RATE_LIMITS = {"auth": {"limit": 1, "window": 60}}
+    settings.INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS = value
+    assert check_rate_limit(rf.get("/"), "auth").allowed
+    assert "Invalid INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS" in caplog.text
+
+
+def test_forwarded_ipv6_notation_uses_same_bucket(settings, rf):
+    settings.INDIEWEB_RATE_LIMITS = {"auth": {"limit": 1, "window": 60}}
+    settings.INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS = 1
+    assert check_rate_limit(rf.get("/", HTTP_X_FORWARDED_FOR="2001:DB8::1"), "auth").allowed
+    assert not check_rate_limit(rf.get("/", HTTP_X_FORWARDED_FOR="2001:db8:0:0:0:0:0:1"), "auth").allowed
