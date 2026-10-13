@@ -1817,11 +1817,12 @@ When a configured limit is exceeded, the endpoint returns:
 
     rate limit exceeded
 
-``Retry-After`` uses the cache-backed window reset time, or the configured
-window when the reset marker has been evicted. The built-in limiter uses
-Django's portable cache primitives and is best-effort rather than a hard atomic
-limit on every backend; use a deployment-level limiter when strict adversarial
-rate limiting is required. Requests below the limit keep the same response
+``Retry-After`` uses the fixed window's stored deadline, rounded up to whole
+seconds and at least 1. Continued requests do not extend the window, regardless
+of the cache backend's default timeout. The portable ``get``/``set`` counter
+is best-effort: simultaneous requests can undercount on any backend, including
+file-based caches. Exact counts require atomic operations on a shared cache
+or a deployment-level limiter. Requests below the limit keep the same response
 bodies, status codes, authentication behavior, scope checks, and processing
 flow as before. The browser token-management pages are not covered by these
 protocol endpoint rate-limit keys.

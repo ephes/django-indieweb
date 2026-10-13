@@ -4320,3 +4320,15 @@ cross-origin redirect mode and the ``hub.secret`` HTTPS gate.
 - Documentation: updated `docs/development.rst` and `docs/index.rst`.
 - Changelog: updated `docs/changelog.rst`.
 - Validation: `uv run ruff check .`, `uv run mypy`, `uv run sphinx-build -W -b html docs docs/_build/html`, `uv run pytest`, `uv build`, `git diff --check`, and `uv run --python 3.13 pre-commit run --all-files` all passed.
+
+## 2026-10-13
+
+### Fixed rate-limit windows on file-based caches
+
+- Store count and deadline together, reset at the deadline and use the remaining
+  timeout; preserve client identity and method/endpoint buckets.
+- Validation: pytest (including LocMemCache/FileBasedCache clock regressions),
+  mypy, Ruff lint/format, prek hooks and Sphinx with warnings as errors.
+- Documentation: fixed-window semantics and non-atomic counts in configuration,
+  API and Webmention docs; exact counts need atomic shared-cache operations.
+- Changelog: Unreleased bugfix and upgrade note; no matching backlog item.

@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 # Counter bucket shared by every HTTP method the endpoint does not implement.
 UNSUPPORTED_METHOD_BUCKET = "OTHER"
-# How often the add/incr sequence runs before the counter counts as unusable.
-_COUNTER_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -112,34 +110,7 @@ def _cache_key(endpoint_key: str, method: str, identity: str) -> str:
         identity.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-    return f"indieweb:rate-limit:v2:{endpoint_key}:{method}:{identity_digest}"
-
-
-def _retry_after(counter_key: str, now: float, fallback_window: int) -> int:
-    reset_at = cache.get(f"{counter_key}:reset")
-    if not isinstance(reset_at, int | float):
-        return fallback_window
-    return max(1, math.ceil(reset_at - now))
-
-
-def _increment_counter(counter_key: str, reset_at: float, window: int) -> int | None:
-    """Count one request and return the new total, or ``None`` if the cache cannot count.
-
-    ``cache.add`` creates the counter only when it is missing and never
-    overwrites it, so a request that finds the counter evicted between ``add``
-    and ``incr`` retries the pair instead of resetting the counter to ``1``
-    and discarding increments that other requests made in the meantime. The
-    reset time is written by the request that creates the counter, so both
-    keys always describe the same window.
-    """
-    for _ in range(_COUNTER_ATTEMPTS):
-        if cache.add(counter_key, 0, window):
-            cache.set(f"{counter_key}:reset", reset_at, window)
-        try:
-            return cache.incr(counter_key)
-        except ValueError:
-            continue
-    return None
+    return f"indieweb:rate-limit:v3:{endpoint_key}:{method}:{identity_digest}"
 
 
 def check_rate_limit(request: HttpRequest, endpoint_key: str, *, method_bucket: str | None = None) -> RateLimitResult:
@@ -150,8 +121,10 @@ def check_rate_limit(request: HttpRequest, endpoint_key: str, *, method_bucket: 
     ``RateLimitMixin`` passes ``UNSUPPORTED_METHOD_BUCKET`` for methods the
     view does not implement.
 
-    If the cache cannot keep a counter after a bounded number of attempts the
-    request is rejected (fail closed) with ``Retry-After`` set to the window.
+    Counts are best-effort: portable get/set operations can lose concurrent
+    increments. The stored deadline, rather than the backend TTL, fixes the
+    window. If the cache cannot keep a counter the
+    request is rejected (fail closed) with ``Retry-After`` set to the remaining window.
     ``DummyCache`` is the documented exception: it never stores anything, so
     it disables rate limiting instead of rejecting every request.
     """
@@ -165,13 +138,19 @@ def check_rate_limit(request: HttpRequest, endpoint_key: str, *, method_bucket: 
     bucket = method_bucket if method_bucket is not None else (request.method or "").upper()
     counter_key = _cache_key(endpoint_key, bucket, _client_identity(request))
 
-    count = _increment_counter(counter_key, now + config.window, config.window)
-    if count is None:
+    counter = cache.get(counter_key)
+    if counter is None or now >= counter["reset_at"]:
+        counter = {"count": 0, "reset_at": now + config.window}
+    count = counter["count"] + 1
+    reset_at = counter["reset_at"]
+    remaining = reset_at - now
+    cache.set(counter_key, {"count": count, "reset_at": reset_at}, timeout=max(1, math.ceil(remaining)))
+    if cache.get(counter_key) is None:
         logger.warning(f"Rate-limit counter for {endpoint_key!r} could not be stored in the cache; rejecting request")
-        return RateLimitResult(allowed=False, retry_after=config.window)
+        return RateLimitResult(allowed=False, retry_after=max(1, math.ceil(remaining)))
     if count <= config.limit:
         return RateLimitResult(allowed=True)
-    return RateLimitResult(allowed=False, retry_after=_retry_after(counter_key, now, config.window))
+    return RateLimitResult(allowed=False, retry_after=max(1, math.ceil(remaining)))
 
 
 def rate_limit_response(result: RateLimitResult) -> HttpResponse:

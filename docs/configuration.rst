@@ -430,28 +430,32 @@ client identity is
 Django's ``SECRET_KEY`` before it is used in cache keys. Forwarded headers
 are ignored unless :ref:`trusted-proxy-hops` is configured.
 
+Each counter stores its count and window deadline together. The fixed window
+starts with the first request; later requests, including rejected requests,
+do not move its deadline. The configured ``window`` applies even when the
+cache's default ``TIMEOUT`` is longer or shorter. At the deadline the next
+request starts a fresh allowance. The new counter format uses a separate cache namespace, so upgrading starts
+a fresh allowance and older workers can continue using their integer counters
+during a rolling deployment.
+
 Cache backend choice affects the strength of the limit. Django's default
 ``LocMemCache`` is local to one process, so multi-worker deployments can allow
 roughly ``limit`` requests per worker during each window. Use a shared cache
 backend such as Redis or Memcached when you need deployment-wide counters.
 ``DummyCache`` does not persist counters and effectively disables built-in
-rate limiting. The built-in limiter uses Django's portable cache primitives,
-so its ``add``/``incr`` sequence is best-effort rather than a hard atomic
-primitive on every backend. If a counter disappears between ``add`` and
-``incr`` (cache eviction or expiry), the limiter repeats the pair up to three
-times instead of resetting the counter, so increments made by concurrent
-requests are kept, and the request that re-creates a counter also writes the
-matching reset time used for ``Retry-After``. If the cache still cannot keep
-the counter, the limiter fails closed: the request gets HTTP ``429`` with
-``Retry-After`` set to the window and a warning is logged. ``DummyCache`` is
-the only exception. For adversarial environments that need strict
-single-counter semantics, put a purpose-built limiter in front of Django, such
-as a reverse proxy rule or a Redis Lua-script-based limiter.
+rate limiting. Counts are best-effort: the portable ``get``/``set`` sequence
+is non-atomic, including on file-based caches, and simultaneous requests can
+undercount. A shared backend alone does not make this sequence atomic. Exact
+counts require atomic operations on a shared cache, for example a Redis
+Lua-script-based limiter or a purpose-built reverse proxy limiter. Eviction
+can also start a fresh allowance early. If the cache cannot keep the counter,
+the limiter fails closed with HTTP ``429`` and logs a warning;
+``DummyCache`` is the exception.
 
 When a limit is exceeded, the endpoint returns HTTP ``429`` with a plain-text
-``rate limit exceeded`` body. A ``Retry-After`` header is included using the
-cache-backed window reset time, or the configured ``window`` when the reset
-marker has been evicted. Requests under the limit continue through the existing
+``rate limit exceeded`` body. ``Retry-After`` is the remaining time to the stored
+deadline, rounded up to whole seconds and at least 1.
+Requests under the limit continue through the existing
 view code unchanged, including authentication, authorization, Micropub handler
 calls, media storage, Webmention processing, and async Webmention enqueueing.
 
