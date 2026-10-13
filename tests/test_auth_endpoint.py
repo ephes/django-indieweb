@@ -1808,3 +1808,23 @@ def test_replace_auth_code_issues_delete_as_first_statement(client, user):
     assert following[0].startswith("DELETE")
     assert not any("FOR UPDATE" in sql for sql in statements)
     assert Auth.objects.count() == 1
+
+
+@pytest.mark.parametrize("endpoint", ["auth", "tokens"])
+@pytest.mark.parametrize("login_url", ["/accounts/login/", "/accounts/login/?theme=dark"])
+def test_login_redirect_preserves_complete_next(client, settings, endpoint, login_url):
+    settings.LOGIN_URL = login_url
+    query = {
+        "me": "https://example.org/",
+        "client_id": "https://client.example/",
+        "redirect_uri": "https://client.example/callback?a=1&b=2",
+        "state": "a+b &c",
+        "scope": "create update",
+    }
+    path = reverse(f"indieweb:{endpoint}") + "?" + urlencode(query)
+    response = client.get(path)
+    assert response.status_code == 302
+    login_query = parse_qs(urlparse(response.url).query)
+    assert login_query["next"] == [path]
+    if "theme=" in login_url:
+        assert login_query["theme"] == ["dark"]

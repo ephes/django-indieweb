@@ -5,6 +5,8 @@ Changelog
 
 Unreleased
 ----------
+* Encode the full ``next`` path on IndieAuth and token-management login
+  redirects so authorization parameters survive login, preserving login URL queries.
 * **Security:** fetched Webmention source and Vouch documents are now analysed
   in a short-lived child process with operating-system limits instead of in
   the receiving process. A single small source document could previously make

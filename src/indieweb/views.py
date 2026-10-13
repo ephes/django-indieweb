@@ -20,6 +20,7 @@ from urllib.parse import urlencode as urllib_urlencode
 
 import filetype
 from django.conf import settings
+from django.contrib.auth.views import redirect_to_login
 from django.contrib.sites.models import Site
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
@@ -1525,7 +1526,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
             login_url = getattr(settings, "LOGIN_URL", "/accounts/login/")
-            return redirect(f"{login_url}?next={request.get_full_path()}")
+            return redirect_to_login(request.get_full_path(), login_url)
         client_id = request.GET.get("client_id")
         redirect_uri = request.GET.get("redirect_uri")
         state = request.GET.get("state")
@@ -2099,7 +2100,7 @@ class UserLoginRequiredMixin(View):
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
             login_url = getattr(settings, "LOGIN_URL", "/accounts/login/")
-            return redirect(f"{login_url}?next={request.get_full_path()}")
+            return redirect_to_login(request.get_full_path(), login_url)
         return super().dispatch(request, *args, **kwargs)
 
 
