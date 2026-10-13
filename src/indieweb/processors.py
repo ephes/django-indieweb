@@ -37,7 +37,13 @@ from .http_client import (
 )
 from .log_redaction import redact_url
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
-from .parse_isolation import SourceAnalysis, WebmentionSourceRejected, analyze_source, vouch_links_to_source_domain
+from .parse_isolation import (
+    SourceAnalysis,
+    WebmentionParseCapacityError,
+    WebmentionSourceRejected,
+    analyze_source,
+    vouch_links_to_source_domain,
+)
 from .sanitizers import sanitize_remote_webmention_url, sanitize_webmention_html
 from .webmention_parse_worker import (
     _canonical_domain_for_vouch,
@@ -364,7 +370,7 @@ class WebmentionProcessor:
 
         return locked
 
-    def _collect_webmention_outcome(
+    def _collect_webmention_outcome(  # noqa: C901
         self,
         webmention: Webmention,
         source_url: str,
@@ -485,6 +491,9 @@ class WebmentionProcessor:
                 log=("info", f"Successfully processed webmention from {redact_url(source_url)}"),
             )
 
+        except WebmentionParseCapacityError:
+            # A busy host says nothing about the source; preserve any verified row.
+            raise
         except (HTTPResponseTooLarge, WebmentionSourceRejected) as e:
             return self._over_limit_outcome(e, source_url, received_at)
         except Exception as e:

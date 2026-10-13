@@ -1272,10 +1272,50 @@ limit its own CPU time and output size.
 Platforms without the POSIX ``resource`` module (Windows) cannot apply these
 limits. With the default, every received Webmention is then marked ``failed``
 and an error is logged, instead of parsing untrusted HTML without limits. Set
-this to exactly ``False`` to accept that risk on such a platform: documents
-are still analysed in a child process with the wall-clock timeout and the
-result size cap, but without memory and CPU limits. Any other value keeps the
-limits required. Do not disable this on a public receiver.
+this to exactly ``False`` to omit memory and CPU limits while retaining the
+wall-clock timeout and result size cap. POSIX ``fcntl`` locks are still
+required for concurrency control, so this does not enable Windows parsing.
+Any other value keeps the resource limits required. Do not disable this on
+a public receiver.
+
+INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Default:** ``2``
+
+Positive integer cap on parse children sharing the same host-local POSIX lock
+directory. Invalid or zero values fall back to the default.
+
+INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Default:** ``1``
+
+Positive seconds to wait for a parse slot. Invalid or zero values fall back
+to the default. Capacity exhaustion preserves stored Webmention state and
+raises ``WebmentionParseCapacityError``. Synchronous receives return HTTP 503
+with ``Retry-After: 1``; queued hosts should retry this exception according to
+their task backend's policy.
+
+INDIEWEB_WEBMENTION_PARSE_LOCK_DIR
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Default:** ``None`` (private directory in the system temporary directory,
+scoped by user ID and a deployment digest)
+
+The directory must be owned by the application user with no group/other
+permissions, and its final component must not be a symlink. Keep lock files
+in place while workers run. Set a common directory when workers have different
+``TMPDIR`` values or private temporary-directory namespaces. All workers
+must share the directory and cap. Platforms without POSIX ``fcntl`` locks
+reject parsing even with ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS=False``.
+
+Everything that runs as the same user with the same ``SECRET_KEY`` on one host
+shares the default directory, including test suites. Give test runs that
+execute in parallel (for example ``tox -p`` or several CI jobs on one machine)
+a directory of their own, as this project's ``tests/conftest.py`` does;
+otherwise they compete for the same slots and fail with
+``WebmentionParseCapacityError``.
 
 INDIEWEB_WEBMENTION_PARSE_PYTHON
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
