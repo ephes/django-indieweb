@@ -205,6 +205,13 @@ preserving the original ``Host`` header and TLS SNI, so a DNS rebinding host
 that resolves to a public address during validation and to a private address
 during the connect cannot bypass the safety check.
 
+Receive-side source and Vouch fetches also have a total time budget,
+``INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS`` (default 15 seconds), so a
+source that sends its body a few bytes at a time is cut off. The budget is a
+check between the steps of a fetch, not a hard limit on how long a worker can
+be held: see :ref:`webmention-fetch-total-timeout` for what it covers and what
+it does not.
+
 .. _webmention-injected-client-warning:
 
 .. warning::

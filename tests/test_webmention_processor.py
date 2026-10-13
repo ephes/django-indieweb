@@ -1155,6 +1155,49 @@ class TestWebmentionProcessor:
             assert webmention.source_url == source_url
             assert webmention.target_url == target_url
 
+    @override_settings(INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS=4)
+    @pytest.mark.parametrize("vouch", [False, True])
+    def test_processor_fails_source_and_vouch_fetches_over_the_total_timeout(self, processor, monkeypatch, vouch):
+        """A source or Vouch body that drips past the fetch budget fails the Webmention."""
+        from indieweb import http_client
+
+        now = [0.0]
+        monkeypatch.setattr(http_client.time, "monotonic", lambda: now[0])
+        target_url = "https://mysite.com/article"
+        chunks_read = []
+
+        class Drip(httpx.SyncByteStream):
+            def __iter__(self):
+                for _ in range(20):
+                    now[0] += 1
+                    chunks_read.append(now[0])
+                    yield b"x"
+
+        response = httpx.Response(200, headers={"content-type": "text/html"}, stream=Drip())
+        with _processor_client(processor, return_value=response):
+            if vouch:
+                with pytest.raises(http_client.HTTPTotalTimeoutExceeded):
+                    processor._fetch_vouch("https://vouch.example/page")
+            else:
+                webmention = processor.process_webmention("https://example.com/post", target_url)
+                assert webmention.status == "failed"
+        assert chunks_read == [1.0, 2.0, 3.0, 4.0]
+
+    @pytest.mark.parametrize("value", [0, -1, True, "5", float("inf"), float("nan"), None])
+    def test_invalid_fetch_total_timeout_setting_falls_back_to_the_default(self, settings, caplog, value):
+        from indieweb.processors import _webmention_fetch_total_timeout
+
+        settings.INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS = value
+        assert _webmention_fetch_total_timeout() == 15.0
+        assert "Invalid INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS" in caplog.text
+
+    @pytest.mark.parametrize("value,expected", [(3, 3.0), (0.5, 0.5)])
+    def test_fetch_total_timeout_setting_accepts_positive_numbers(self, settings, value, expected):
+        from indieweb.processors import _webmention_fetch_total_timeout
+
+        settings.INDIEWEB_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS = value
+        assert _webmention_fetch_total_timeout() == expected
+
     def test_processor_handles_fetch_errors(self, processor):
         """Test that processor handles fetch errors gracefully."""
         source_url = "https://example.com/post"
