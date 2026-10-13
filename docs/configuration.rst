@@ -427,11 +427,8 @@ ceiling per client and window is therefore ``limit`` times the number of
 implemented methods, plus one ``limit`` for all other methods together. The
 client identity is
 ``request.META["REMOTE_ADDR"]`` by default, and the value is HMAC-digested with
-Django's ``SECRET_KEY`` before it is used in cache keys. django-indieweb does
-not read or trust ``X-Forwarded-For`` directly. If your site runs behind a
-reverse proxy, load balancer, CDN, or platform router, configure that trusted
-infrastructure so Django receives the correct client address in
-``REMOTE_ADDR`` before enabling IP-based limits.
+Django's ``SECRET_KEY`` before it is used in cache keys. Forwarded headers
+are ignored unless :ref:`trusted-proxy-hops` is configured.
 
 Cache backend choice affects the strength of the limit. Django's default
 ``LocMemCache`` is local to one process, so multi-worker deployments can allow
@@ -468,6 +465,27 @@ The browser token-management pages at ``/indieweb/tokens/`` and
 ``/indieweb/tokens/<pk>/revoke/`` are not covered by this setting because they
 are authenticated Django UI views rather than public IndieWeb protocol
 endpoints.
+
+.. _trusted-proxy-hops:
+
+INDIEWEB_RATE_LIMIT_TRUSTED_PROXY_HOPS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Default:** ``0`` (ignore forwarded headers)
+
+The value must be a Python ``int``; numeric strings and booleans are rejected.
+Convert environment variables with ``int(...)``. Use a positive integer to
+select that address from the right end of
+``X-Forwarded-For`` (1 selects the rightmost address, 2 the next). For example,
+``client -> CDN -> nginx -> Django`` requires ``2`` when both proxies append
+addresses. Invalid settings log a warning and fall back to ``REMOTE_ADDR``;
+missing or short chains and invalid selected IPs also fall back. Only bare
+IPv4/IPv6 addresses are supported, without ports; IPv6 notation is normalized.
+
+Enable this only behind a fixed trusted proxy chain that appends or replaces
+the header and prevents direct access to Django. Entries to the left of the
+selected address are ignored. Setting the count higher than the real proxy
+count may select a client-supplied address and allow spoofing.
 
 INDIEWEB_MICROPUB_HANDLER
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2130,6 +2148,8 @@ Notes:
 * ``INDIEWEB_ALLOWED_CLIENT_IDS`` is a coarse allowlist; if you need more
   flexible policy (per-environment lists, host suffix matching, etc.) use
   ``INDIEWEB_CLIENT_ID_VALIDATOR`` instead.
+* Behind a fixed trusted proxy chain, configure
+  :ref:`trusted-proxy-hops` before enabling per-client rate limits.
 * ``INDIEWEB_RATE_LIMITS`` numbers above are conservative starting points;
   tune from operational data. The keys correspond to the bundled
   ``auth``, ``token``, ``token_introspection``, ``micropub``, ``media``,
