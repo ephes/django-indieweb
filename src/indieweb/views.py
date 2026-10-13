@@ -41,6 +41,7 @@ from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
 from .log_redaction import redact_state, redact_text, redact_token, redact_url, redact_url_origin
 from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
+from .parse_isolation import WebmentionParseCapacityError
 from .processors import WebmentionProcessor, canonicalize_webmention_storage_url
 from .rate_limit import RateLimitMixin
 from .websub import (
@@ -3384,6 +3385,10 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             response["Location"] = request.build_absolute_uri(
                 reverse("indieweb:webmention-status", args=[webmention.status_token])
             )
+            return response
+        except WebmentionParseCapacityError:
+            response = HttpResponse("parse capacity; retry later", status=503, content_type="text/plain")
+            response["Retry-After"] = "1"
             return response
         except Exception as e:
             logger.error(f"Failed to process webmention: {e}")

@@ -5,6 +5,17 @@ Changelog
 
 Unreleased
 ----------
+* Bound concurrent Webmention parse children across host-local workers with
+  ``INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT`` (default 2), a bounded slot wait
+  (``INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS``, default 1), and POSIX file
+  locks in a private ``INDIEWEB_WEBMENTION_PARSE_LOCK_DIR``. Exhausted capacity
+  returns a retryable HTTP 503 on synchronous receives and preserves stored
+  state; queued hosts can retry ``WebmentionParseCapacityError``. **Behavior
+  change:** platforms without POSIX file locks cannot parse received documents,
+  even when OS resource limits are disabled.
+* Resolve Webmention relative source links against the final fetched URL and
+  honor same-origin bases for HTML, microformats URL properties and content.
+  Foreign bases are ignored.
 * **Security:** fetched Webmention source and Vouch documents are now analysed
   in a short-lived child process with operating-system limits instead of in
   the receiving process. A single small source document could previously make
@@ -20,7 +31,7 @@ Unreleased
   ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES`` (default 2 MiB). **Behavior
   change:** a source over any limit is marked ``failed`` (log: ``source too
   expensive to process``) and nothing from it is stored. On platforms without
-  POSIX resource limits (Windows) received Webmentions are rejected unless
+  POSIX file locks (Windows) received Webmentions are rejected even when
   ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS = False`` is set; on macOS the
   memory limit is a best-effort check inside the child. Each received
   Webmention now starts one child process (two with Vouch verification);

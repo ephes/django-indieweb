@@ -760,3 +760,138 @@ def test_quadratic_link_document_is_answered_quickly():
 
     assert time.monotonic() - started < 20
     assert_nothing_stored(webmention)
+
+
+def test_parse_capacity_is_shared_with_other_processes(settings, tmp_path, monkeypatch):
+    settings.INDIEWEB_WEBMENTION_PARSE_LOCK_DIR = str(tmp_path)
+    settings.INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT = 1
+    settings.INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS = 0.05
+    code = (
+        "import fcntl, sys; "
+        "f = open(sys.argv[1], 'w'); fcntl.flock(f, fcntl.LOCK_EX); "
+        "print('locked', flush=True); sys.stdin.read()"
+    )
+    holder = subprocess.Popen(
+        [sys.executable, "-c", code, str(tmp_path / "0.lock")], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+    )
+    try:
+        assert holder.stdout.readline().strip() == b"locked"
+        monkeypatch.setattr(parse_isolation, "_worker_command", worker_command_running("print('{}')"))
+        started = time.monotonic()
+        with pytest.raises(WebmentionSourceRejected, match="parse capacity"):
+            parse_isolation.run_parse_worker({})
+        assert time.monotonic() - started < 1
+    finally:
+        holder.communicate(timeout=2)
+    assert parse_isolation.run_parse_worker({}) == {}
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "error", "kill"])
+def test_parse_capacity_released_after_worker_failure(settings, tmp_path, monkeypatch, outcome):
+    settings.INDIEWEB_WEBMENTION_PARSE_LOCK_DIR = str(tmp_path)
+    settings.INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT = 1
+    settings.INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS = 0.05 if outcome == "timeout" else 2
+    code = {
+        "timeout": "import time; time.sleep(10)",
+        "error": "raise RuntimeError('failed')",
+        "kill": "import os, signal; os.kill(os.getpid(), signal.SIGKILL)",
+    }[outcome]
+    monkeypatch.setattr(parse_isolation, "_worker_command", worker_command_running(code))
+    with pytest.raises(WebmentionSourceRejected) as rejected:
+        parse_isolation.run_parse_worker({})
+    assert (
+        rejected.value.reason
+        == {
+            "timeout": "wall-clock limit",
+            "error": "worker failed with status 1",
+            "kill": "killed, CPU time or memory limit",
+        }[outcome]
+    )
+    settings.INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS = 2
+    monkeypatch.setattr(parse_isolation, "_worker_command", worker_command_running("print('{}')"))
+    assert parse_isolation.run_parse_worker({}) == {}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("href", ["article", "/posts/article", "//example.com/posts/article"])
+def test_relative_source_links_verify_and_classify_reply(href):
+    html = f'<article class="h-entry"><a class="u-in-reply-to" href="{href}">reply</a></article>'
+    mention = processor_serving(html).process_webmention(
+        "https://example.com/posts/source", "https://example.com/posts/article"
+    )
+    assert mention.status == "verified"
+    assert mention.mention_type == "reply"
+
+
+@pytest.mark.parametrize("base", ["/posts/", "https://example.com/posts/"])
+def test_same_origin_base_applies_to_content_and_properties(base):
+    html = (
+        f'<base href="{base}"><article class="h-entry"><a class="u-in-reply-to" href="article">reply</a>'
+        '<div class="e-content"><a href="article">content</a></div></article>'
+    )
+    result = webmention_parse_worker.analyze_source(
+        html, "https://example.com/source", "https://example.com/posts/article"
+    )
+    assert result["links_to_target"] is True
+    assert result["parsed"]["items"][0]["properties"]["in-reply-to"] == ["https://example.com/posts/article"]
+    assert len(result["linking_content"]) == 1
+
+
+def test_foreign_base_cannot_manufacture_target_link():
+    html = '<base href="https://target.example/"><a href="article">link</a>'
+    result = webmention_parse_worker.analyze_source(html, SOURCE_URL, "https://target.example/article")
+    assert result["links_to_target"] is False
+
+
+def test_foreign_base_is_ignored_for_microformat_properties():
+    html = (
+        '<base href="https://foreign.example/"><article class="h-entry">'
+        '<a class="u-in-reply-to" href="/article">reply</a></article>'
+    )
+    result = webmention_parse_worker.analyze_source(html, SOURCE_URL, "https://example.com/article")
+    assert result["links_to_target"] is True
+    assert result["parsed"]["items"][0]["properties"]["in-reply-to"] == ["https://example.com/article"]
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<head><noscript><a href="https://mysite.com/article">hidden</a>',
+        '<table><template><tr><td><a href="https://mysite.com/article">hidden</a>',
+    ],
+)
+def test_source_analysis_preserves_hidden_link_rejection(html):
+    assert not webmention_parse_worker.analyze_source(html, SOURCE_URL, TARGET_URL)["links_to_target"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("verified", [False, True])
+def test_capacity_rejection_preserves_row_and_returns_retryable_response(settings, client, monkeypatch, verified):
+    from django.utils import timezone
+
+    from indieweb import views
+
+    Site.objects.update(domain="mysite.com")
+    Site.objects.clear_cache()
+    webmention = Webmention.objects.create(
+        source_url=SOURCE_URL,
+        target_url=TARGET_URL,
+        status="verified" if verified else "pending",
+        verified_at=timezone.now() if verified else None,
+        content="previous",
+    )
+    previous_time = webmention.verified_at
+
+    def busy(*args, **kwargs):
+        raise parse_isolation.WebmentionParseCapacityError("parse capacity")
+
+    monkeypatch.setattr("indieweb.processors.analyze_source", busy)
+    processor = processor_serving(REPLY)
+    monkeypatch.setattr(views, "WebmentionProcessor", lambda: processor)
+    response = client.post(reverse("indieweb:webmention"), {"source": SOURCE_URL, "target": TARGET_URL})
+    assert response.status_code == 503
+    assert response["Retry-After"] == "1"
+    webmention.refresh_from_db()
+    assert webmention.status == ("verified" if verified else "pending")
+    assert webmention.verified_at == previous_time
+    assert webmention.content == "previous"

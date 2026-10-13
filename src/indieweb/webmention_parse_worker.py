@@ -24,7 +24,7 @@ import time
 from collections.abc import Sequence
 from types import ModuleType
 from typing import Any
-from urllib.parse import ParseResult, parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import mf2py
 from bs4 import BeautifulSoup, Tag
@@ -117,14 +117,14 @@ def _urls_match(left: str, right: str) -> bool:
     return _canonicalize_url_for_match(left) == _canonicalize_url_for_match(right)
 
 
-def _rendered_link_tags(html_content: str) -> list[Tag]:
+def _rendered_link_tags(html_content: str | BeautifulSoup) -> list[Tag]:
     """Return the ``<a href>`` elements of ``html_content`` that a browser renders.
 
     Links inside non-rendered containers do not count. Elements arrive in
     document order, so whether an element is hidden follows from its parent
     alone and the scan stays linear in the document size whatever the nesting.
     """
-    soup = BeautifulSoup(html_content, "html.parser")
+    soup = html_content if isinstance(html_content, BeautifulSoup) else BeautifulSoup(html_content, "html.parser")
     hidden: set[int] = set()
     links: list[Tag] = []
     for tag in soup.find_all(True):
@@ -137,11 +137,41 @@ def _rendered_link_tags(html_content: str) -> list[Tag]:
     return links
 
 
-def _html_links_to_target(html_content: str, target_url: str) -> bool:
+def _resolve_link(base_url: str, href: str) -> str:
+    try:
+        return urljoin(base_url, href)
+    except ValueError:
+        return href
+
+
+def _link_origin(url: str) -> tuple[str, str | None, int | None] | None:
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname or parsed.username is not None:
+            return None
+        return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return None
+
+
+def _source_matching_base(document: BeautifulSoup, source_url: str) -> str:
+    """Honor only the first href-bearing base, and only on the fetched origin."""
+    first = document.find("base", href=True)
+    href = first.get("href") if isinstance(first, Tag) else None
+    candidate = _resolve_link(source_url, href) if isinstance(href, str) else source_url
+    origin = _link_origin(source_url)
+    base = candidate if origin is not None and _link_origin(candidate) == origin else source_url
+    # mf2py otherwise independently honors foreign bases, changing URL properties.
+    for tag in document.find_all("base"):
+        tag.decompose()
+    return base
+
+
+def _html_links_to_target(html_content: str | BeautifulSoup, target_url: str, base_url: str = "") -> bool:
     """Return whether ``html_content`` contains an href value matching ``target_url``."""
     for tag in _rendered_link_tags(html_content):
         href = tag.get("href")
-        if isinstance(href, str) and _urls_match(href, target_url):
+        if isinstance(href, str) and _urls_match(_resolve_link(base_url, href), target_url):
             return True
     return False
 
@@ -232,7 +262,9 @@ def extract_entry_content(h_entry: dict[str, Any]) -> dict[str, str]:
     return {"text": "", "html": ""}
 
 
-def _analyze_entry_content(parsed: dict[str, Any], target_url: str) -> tuple[list[str], dict[str, str]]:
+def _analyze_entry_content(
+    parsed: dict[str, Any], target_url: str, base_url: str = ""
+) -> tuple[list[str], dict[str, str]]:
     """Do the HTML work on the content of every h-entry in ``parsed``.
 
     The parent selects the mentioning h-entry and its nested responses from the
@@ -262,7 +294,7 @@ def _analyze_entry_content(parsed: dict[str, Any], target_url: str) -> tuple[lis
                 continue
             digest = content_html_digest(html_content)
             if digest not in links:
-                links[digest] = _html_links_to_target(html_content, target_url)
+                links[digest] = _html_links_to_target(html_content, target_url, base_url)
 
         stored_html = extract_entry_content(item)["html"]
         if isinstance(stored_html, str) and stored_html:
@@ -274,10 +306,15 @@ def _analyze_entry_content(parsed: dict[str, Any], target_url: str) -> tuple[lis
 
 def analyze_source(html_content: str, base_url: str, target_url: str) -> dict[str, Any]:
     """Verify the link to the target and parse the microformats of a fetched source."""
-    if not _html_links_to_target(html_content, target_url):
+    document = BeautifulSoup(html_content, "html.parser")
+    matching_base = _source_matching_base(document, base_url)
+    if not _html_links_to_target(document, target_url, matching_base):
         return {"links_to_target": False}
-    parsed = mf2py.parse(doc=html_content, url=base_url)
-    linking_content, sanitized_content = _analyze_entry_content(parsed, target_url)
+    document = BeautifulSoup(html_content, "html5lib")
+    for base in document.find_all("base"):
+        base.decompose()
+    parsed = mf2py.parse(doc=document, url=matching_base)
+    linking_content, sanitized_content = _analyze_entry_content(parsed, target_url, matching_base)
     return {
         "links_to_target": True,
         "parsed": parsed,

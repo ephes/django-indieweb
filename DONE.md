@@ -2,6 +2,21 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-13
+
+### Webmention parse capacity and relative target links
+
+- Limit host-local parse children with private POSIX file locks and bounded waiting;
+  resolve source links against the final URL and same-origin base consistently.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`; regressions
+  cover cross-process contention, timeout/error/kill release, relative replies,
+  content and foreign bases. Capacity exhaustion preserves existing verified
+  data, returns synchronous HTTP 503 and propagates to queued callers.
+- Documentation: updated isolated parsing and target matching in `docs/webmention.rst`.
+- Changelog: added both behavior changes under Unreleased; no matching backlog item.
+
 ## 2026-10-12
 
 ### Isolated parsing of fetched Webmention documents

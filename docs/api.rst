@@ -1507,6 +1507,10 @@ processor and update the row status.
 - ``400 Bad Request`` when ``source`` or ``target`` is missing, ``source`` or
   ``target`` is not a valid URL, submitted ``vouch`` is not a valid ``http`` or
   ``https`` URL, or ``target`` is outside the configured ``Site`` domain
+- ``503 Service Unavailable`` with ``Retry-After: 1`` in synchronous mode
+  when parse capacity is exhausted; stored verification state is preserved.
+  Queued workers should retry ``WebmentionParseCapacityError`` using their
+  task backend's policy.
 - ``500 Internal Server Error`` in queued mode when the configured
   ``INDIEWEB_WEBMENTION_ENQUEUE`` path cannot be imported, is not callable, or
   raises while enqueueing

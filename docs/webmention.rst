@@ -272,11 +272,27 @@ verified snapshot of the same source is left as it was. The receive endpoint
 answers as for any other processed Webmention; it never returns details of the
 failure.
 
-The limits are per document. They do not limit how many documents are analysed
-at the same time: each concurrent receive may start one child that uses up to
-the configured memory and CPU time. Bound concurrency with a queue
-(``INDIEWEB_WEBMENTION_ENQUEUE``) and ``INDIEWEB_RATE_LIMITS``. Starting the
-child costs a few hundred milliseconds per document.
+At most ``INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT`` children (default 2)
+run concurrently across threads and processes on one host. A receive waits up
+to ``INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS`` (default 1 second)
+for a slot, then raises ``WebmentionParseCapacityError`` with reason
+``parse capacity`` without changing stored state. Synchronous receives return
+HTTP 503 with ``Retry-After: 1``. Queued hosts should retry the exception using
+their task backend's policy. Slots use POSIX advisory file locks and are released on
+worker success, failure or timeout. The child inherits its slot lock, so a
+receiver crash keeps that slot occupied until the child exits. Capacity is unavailable on
+platforms without POSIX file locks, even if OS resource limits are disabled.
+
+``INDIEWEB_WEBMENTION_PARSE_LOCK_DIR`` optionally selects a private directory
+owned by the application user (mode 0700). The default is a directory in the
+system temporary directory, scoped by user ID and a digest of ``SECRET_KEY``.
+All workers must share that directory and the same concurrency setting;
+set an explicit shared directory for different ``TMPDIR`` or private temporary
+namespaces. Keep
+lock files in place while workers run; deleting them defeats coordination.
+Separate containers or hosts need queue-level limits as well. A queue
+(``INDIEWEB_WEBMENTION_ENQUEUE``) and ``INDIEWEB_RATE_LIMITS`` remain useful to
+bound incoming work. Starting a child costs a few hundred milliseconds.
 
 Platform notes:
 
@@ -285,9 +301,8 @@ Platform notes:
   own peak resident set size and exits when it is over the limit. This is a
   backstop that can overshoot; CPU, wall-clock and size limits are enforced as
   on Linux. Use macOS for development, not for a public receiver.
-* **Windows** and other platforms without the ``resource`` module: Webmentions
-  are rejected unless ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS`` is set to
-  ``False``.
+* **Windows** and other platforms without POSIX ``fcntl`` locks: parsing is
+  rejected even when ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS=False``.
 
 The child is started with ``subprocess``, so it also works inside daemonic
 worker processes that cannot use ``multiprocessing``. Set
@@ -897,9 +912,12 @@ Supported matching variants:
 * Query parameters are compared independent of order. Duplicate query
   key/value pairs are preserved and must still match.
 
-The receiver does not resolve relative source links during target verification,
-does not follow redirects as part of this matching step, and does not broaden
-endpoint domain validation. The submitted ``target`` must still pass the
+Relative, root-relative and protocol-relative source links resolve against the
+final fetched source URL. The first href-bearing ``<base>`` is honored only
+when it resolves to that same origin (scheme, host and effective port);
+foreign or malformed bases are ignored. This base also applies to microformats
+URL properties and embedded content link matching. Matching does not follow
+redirects or broaden endpoint domain validation. The submitted ``target`` must still pass the
 Webmention endpoint's domain check before processing begins. Userinfo and
 explicit ports, if present, must match exactly; default ports are not
 normalized away.
