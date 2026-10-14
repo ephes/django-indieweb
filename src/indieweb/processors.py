@@ -20,6 +20,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import httpx
 from django.conf import settings
 from django.contrib.sites.models import Site
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.dispatch import Signal
 from django.utils import timezone
@@ -64,6 +65,7 @@ logger = logging.getLogger(__name__)
 # Signal sent when a webmention is received and processed
 webmention_received = Signal()
 MAX_NESTED_RESPONSE_IDENTITY_LENGTH = 500
+_NESTED_RESPONSE_URL_FIELDS = ("identity", "response_url", "author_url", "author_photo")
 DEFAULT_WEBMENTION_FETCH_MAX_BYTES = 1024 * 1024
 DEFAULT_WEBMENTION_FETCH_TOTAL_TIMEOUT_SECONDS = 15.0
 DEFAULT_WEBMENTION_MAX_STORED_BYTES = 2 * 1024 * 1024
@@ -1084,6 +1086,11 @@ class WebmentionProcessor:
         seen_at: datetime,
     ) -> None:
         """Create, update, and retire child responses for the latest verified parent source."""
+        candidates = [
+            validated
+            for candidate in candidates
+            if (validated := self._validated_nested_candidate(webmention, candidate)) is not None
+        ]
         current_identities = {candidate["identity"] for candidate in candidates}
         newly_discovered_identities = current_identities - previous_identities
         # The current slice upserts all stable current children; the previous snapshot comparison is kept explicit
@@ -1102,6 +1109,31 @@ class WebmentionProcessor:
         WebmentionNestedResponse.objects.filter(webmention=webmention).exclude(
             identity__in=current_identities
         ).exclude(status="missing").update(status="missing", verified_at=None, modified=timezone.now())
+
+    def _validated_nested_candidate(self, webmention: Webmention, candidate: dict[str, Any]) -> dict[str, Any] | None:
+        """Apply the model's URL validators at the ingest boundary.
+
+        ``get_or_create`` and ``save`` do not run model validation. A candidate
+        whose ``identity`` fails is dropped; an invalid optional URL is blanked.
+        """
+        instance = WebmentionNestedResponse(**{field: candidate[field] for field in _NESTED_RESPONSE_URL_FIELDS})
+        exclude = [
+            field.name
+            for field in WebmentionNestedResponse._meta.fields
+            if field.name not in _NESTED_RESPONSE_URL_FIELDS
+        ]
+        try:
+            instance.full_clean(exclude=exclude, validate_unique=False, validate_constraints=False)
+        except ValidationError as exc:
+            invalid_fields = sorted(exc.message_dict)
+            if "identity" in invalid_fields:
+                logger.warning(f"Dropped nested response with invalid identity for webmention {webmention.pk}")
+                return None
+            logger.warning(
+                f"Blanked invalid nested response fields {', '.join(invalid_fields)} for webmention {webmention.pk}"
+            )
+            return {**candidate, **dict.fromkeys(invalid_fields, "")}
+        return candidate
 
     def _upsert_nested_response(
         self,

@@ -36,6 +36,7 @@ def auth(user):
         me="http://example.org",
         scope="post",
         client_id="https://webapp.example.org",
+        redirect_uri="https://webapp.example.org/auth/callback",
     )
 
 
@@ -169,6 +170,7 @@ def test_token_exchange_without_scope_uses_stored_auth_scope(client, auth, token
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
         },
     )
@@ -189,6 +191,7 @@ def test_token_exchange_returns_json_when_requested(client, auth, token_endpoint
         data={
             "grant_type": "authorization_code",
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
         },
         HTTP_ACCEPT="application/json",
@@ -210,6 +213,7 @@ def test_token_exchange_keeps_default_form_response_for_wildcard_accept(client, 
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
         },
         HTTP_ACCEPT="*/*",
@@ -249,6 +253,7 @@ def test_token_exchange_without_scope_allows_no_scope_auth_code(client, auth, to
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
         },
     )
@@ -268,6 +273,7 @@ def test_token_exchange_with_matching_scope_succeeds(client, auth, token_endpoin
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": "create update",
         },
@@ -286,6 +292,7 @@ def test_token_exchange_with_equivalent_normalized_scope_succeeds(client, auth, 
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": " create  update create ",
         },
@@ -304,6 +311,7 @@ def test_token_exchange_rejects_different_scope_without_token(client, auth, toke
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": "create delete",
         },
@@ -318,6 +326,7 @@ def test_token_exchange_rejects_different_scope_without_token(client, auth, toke
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": "create",
         },
@@ -345,6 +354,7 @@ def test_token_exchange_rejects_different_scope_without_reissue(client, settings
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": "delete",
         },
@@ -365,6 +375,7 @@ def test_token_exchange_rejects_empty_scope_parameter_for_scoped_auth_code(clien
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": "",
         },
@@ -385,6 +396,7 @@ def test_token_exchange_accepts_empty_scope_parameter_for_no_scope_auth_code(cli
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": "",
         },
@@ -405,6 +417,7 @@ def test_token_exchange_cannot_override_no_scope_auth_code(client, auth, token_e
         token_endpoint_url,
         data={
             "code": auth.key,
+            "redirect_uri": auth.redirect_uri,
             "client_id": auth.client_id,
             "scope": "create",
         },
@@ -435,6 +448,7 @@ def test_token_exchange_without_me_parameter(client, auth, token_endpoint_url):
     # IndieAuth spec says 'me' is optional in token exchange
     token_payload = {
         "code": auth.key,
+        "redirect_uri": auth.redirect_uri,
         "client_id": auth.client_id,
         # 'me' parameter intentionally omitted
     }
@@ -450,6 +464,7 @@ def test_token_exchange_rejects_me_substitution_attack(client, auth, token_endpo
     """A request-supplied ``me`` that doesn't match the auth-bound ``me`` must be rejected."""
     token_payload = {
         "code": auth.key,
+        "redirect_uri": auth.redirect_uri,
         "client_id": auth.client_id,
         "me": "https://attacker.example/",
     }
@@ -468,6 +483,7 @@ def test_token_exchange_accepts_normalized_equal_me(client, auth, token_endpoint
     # trailing slash and uppercase host normalises to the same canonical value.
     token_payload = {
         "code": auth.key,
+        "redirect_uri": auth.redirect_uri,
         "client_id": auth.client_id,
         "me": "http://EXAMPLE.org/",
     }
@@ -484,7 +500,7 @@ def test_token_exchange_issues_consent_bound_me_when_request_me_omitted(client, 
     """The issued token's ``me`` must come from ``auth.me`` verbatim."""
     response = client.post(
         token_endpoint_url,
-        data={"code": auth.key, "client_id": auth.client_id},
+        data={"code": auth.key, "redirect_uri": auth.redirect_uri, "client_id": auth.client_id},
     )
     assert response.status_code == 201
     data = parse_qs(unquote(response.content.decode("utf-8")))
@@ -500,7 +516,7 @@ def test_token_exchange_introspection_echoes_consent_me_not_substituted(
     """Introspection on a token issued via /token must echo ``auth.me``, not any attacker value."""
     response = client.post(
         token_endpoint_url,
-        data={"code": auth.key, "client_id": auth.client_id},
+        data={"code": auth.key, "redirect_uri": auth.redirect_uri, "client_id": auth.client_id},
     )
     assert response.status_code == 201
     raw_token = parse_qs(unquote(response.content.decode("utf-8")))["access_token"][0]
@@ -917,6 +933,7 @@ def test_token_exchange_success_logs_redact_full_authorization_code(client, auth
             token_endpoint_url,
             data={
                 "code": auth.key,
+                "redirect_uri": auth.redirect_uri,
                 "client_id": auth.client_id,
             },
         )
@@ -1987,3 +2004,30 @@ def test_token_introspection_responses_are_not_cacheable(client, user, token_int
     assert response.status_code == 200
     assert response.json()["active"] is (target_key == "nostoreactivesecret")
     _assert_no_store(response)
+
+
+@pytest.mark.django_db
+def test_token_exchange_rejects_redirect_uri_when_code_has_no_stored_binding(client, user, token_endpoint_url):
+    """A code without a stored ``redirect_uri`` cannot be redeemed with a submitted one."""
+    auth = models.Auth.objects.create(
+        owner=user,
+        key="unbound-code",
+        state="state",
+        me="http://example.org",
+        scope="create",
+        client_id="https://webapp.example.org",
+        redirect_uri="",
+    )
+
+    response = client.post(
+        token_endpoint_url,
+        data={
+            "code": auth.key,
+            "client_id": auth.client_id,
+            "redirect_uri": "https://attacker.example/callback",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "invalid_grant" in response.content.decode("utf-8")
+    assert not models.Token.objects.exists()

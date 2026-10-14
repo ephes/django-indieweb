@@ -5,6 +5,29 @@ Changelog
 
 Unreleased
 ----------
+* **Security hardening** (backlog priority 3):
+
+  * The token exchange and authorization-code redemption reject a submitted
+    ``redirect_uri`` for a code that has no stored ``redirect_uri``.
+  * The WebSub callback rejects a negative ``Content-Length`` before reading
+    the body, and ``X-Hub-Signature-256`` only accepts ``sha256=`` labels, so
+    a ``sha1`` signature there is ignored even when sha1 is enabled.
+  * **Behavior change:** every rejected WebSub verification or denial
+    callback ``GET`` now returns ``404`` instead of ``400``, the same answer
+    as an unknown callback token, so the response no longer reveals whether a
+    token exists.
+  * Nested Webmention responses run the model URL validators before they are
+    saved: an invalid identity drops the response, an invalid optional URL is
+    stored blank.
+  * **Behavior change:** a ``multipart/form-data`` POST to the Micropub
+    endpoint requires the ``create`` (or ``post``) scope and is refused with
+    ``403`` before the body is parsed. Tokens limited to ``update``,
+    ``delete`` or ``undelete`` send actions form-encoded or as JSON.
+  * **Behavior change:** ``INDIEWEB_LOG_REDACTION`` is matched
+    case-insensitively; any value other than ``"passthrough"`` or
+    ``"redact"`` now fails closed to ``"redact"`` with a one-time warning
+    instead of passing values through. ``redact_token`` keeps 4 instead of 8
+    leading characters in passthrough mode.
 * Fix outbound Webmention endpoint discovery: a target that answers ``HEAD``
   with an error status now gets a ``GET`` attempt, whose ``Link`` header is
   checked before the HTML. In HTML the first ``<link>`` or ``<a>`` with

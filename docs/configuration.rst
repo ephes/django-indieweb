@@ -790,8 +790,8 @@ server, proxy, or worker queue enforces an equivalent limit.
 Malformed values, including an empty environment variable that resolves to
 ``""``, are ignored and logged; the callback falls back to the default 1 MiB
 limit rather than disabling the cap.
-The callback rejects an oversized ``Content-Length`` before reading the body
-when the header is present. Also configure a tight Django
+The callback rejects an oversized or negative ``Content-Length`` before
+reading the body when the header is present. Also configure a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching reverse-proxy request-body limit
 so oversized or malformed requests are stopped before they reach application
 workers.
@@ -2286,8 +2286,12 @@ Webmention outcome URLs (410 Gone, fetch failures, vouch verification
 failures, spam, success, size-limit warnings), and bearer-token /
 authorization-code prefixes verbatim or as a stable HMAC-SHA256 digest.
 
+Values are matched case-insensitively after trimming whitespace. Any other
+value, such as a typo, ``True`` or ``"yes"``, is treated as ``"redact"`` and
+logged once as a warning, so a misspelled opt-in never leaks values.
+
 * ``"passthrough"`` (default): URL/state/me values appear verbatim, and
-  bearer tokens are rendered in the existing ``{value[:8]}...``
+  bearer tokens are rendered in the ``{value[:4]}...``
   diagnostic form (``redact_token`` truncates even in passthrough so the
   full credential is never written to logs). Backwards-compatible with
   existing log pipelines.

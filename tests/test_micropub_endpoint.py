@@ -9,7 +9,7 @@ Tests for `django-indieweb` micropub endpoint.
 
 import json
 from datetime import timedelta
-from urllib.parse import unquote
+from urllib.parse import unquote, urlencode
 
 import pytest
 from django.contrib.auth.models import User
@@ -17,6 +17,13 @@ from django.urls import reverse
 from django.utils import timezone
 
 from indieweb import models
+
+
+def _post_form_encoded(client, url, payload, auth_header):
+    """POST ``payload`` as ``application/x-www-form-urlencoded`` (the Micropub action encoding)."""
+    return client.post(
+        url, data=urlencode(payload), content_type="application/x-www-form-urlencoded", Authorization=auth_header
+    )
 
 
 @pytest.fixture
@@ -388,7 +395,7 @@ def test_post_action_update_accepts_update_scope(client, user, micropub_endpoint
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     payload = {"action": "update", "url": "https://example.org/post/1"}
-    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    response = _post_form_encoded(client, micropub_endpoint_url, payload, auth_header)
     assert response.status_code == 400
     assert response.content.decode("utf-8") == "invalid_request"
 
@@ -417,7 +424,7 @@ def test_post_action_delete_accepts_delete_scope(client, user, micropub_endpoint
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     payload = {"action": "delete", "url": "https://example.org/post/1"}
-    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    response = _post_form_encoded(client, micropub_endpoint_url, payload, auth_header)
     assert response.status_code == 400
     assert response.content.decode("utf-8") == "invalid_request"
 
@@ -446,7 +453,7 @@ def test_post_action_undelete_accepts_undelete_scope(client, user, micropub_endp
     token = _make_token(user, scope)
     auth_header = f"Bearer {token.key}"
     payload = {"action": "undelete", "url": "https://example.org/post/1"}
-    response = client.post(micropub_endpoint_url, data=payload, Authorization=auth_header)
+    response = _post_form_encoded(client, micropub_endpoint_url, payload, auth_header)
     assert response.status_code == 400
     assert response.content.decode("utf-8") == "invalid_request"
 
@@ -563,3 +570,29 @@ def test_get_source_query_rejects_non_update_scope(client, user, micropub_endpoi
     response = client.get(f"{micropub_endpoint_url}?q=source", Authorization=auth_header)
     assert response.status_code == 403
     assert "authorization error" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("scope", ["update", "delete", "undelete", "update delete undelete"])
+def test_multipart_post_requires_create_scope_before_parsing(client, user, micropub_endpoint_url, scope):
+    """Only create requests carry files, so multipart from a token that cannot create is refused unparsed."""
+    token = _make_token(user, scope)
+    payload = {"action": "delete", "url": "https://example.org/post/1"}
+
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 403
+    assert response.content.decode("utf-8") == "authorization error"
+    assert not hasattr(response.wsgi_request, "_post")
+
+
+@pytest.mark.django_db
+def test_multipart_action_still_allowed_for_token_with_create_scope(client, user, micropub_endpoint_url):
+    """A token that may create (and so may upload) keeps sending actions as multipart."""
+    token = _make_token(user, "create delete")
+    payload = {"action": "delete", "url": "https://example.org/post/1"}
+
+    response = client.post(micropub_endpoint_url, data=payload, Authorization=f"Bearer {token.key}")
+
+    assert response.status_code == 400
+    assert response.content.decode("utf-8") == "invalid_request"

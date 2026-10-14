@@ -4,6 +4,8 @@ INDIEWEB_LOG_REDACTION = "passthrough" | "redact"
 - "passthrough" (default): values pass through unchanged.
 - "redact": helpers return a stable HMAC-SHA256 digest (truncated to 12 hex
   chars) keyed with SECRET_KEY for correlation without disclosure.
+- Values are matched case-insensitively; any other value fails closed to
+  "redact" and is logged once as a warning.
 
 The digest is one-way and stable per input: log consumers can correlate
 events by digest without seeing the URL/state/me values themselves.
@@ -12,20 +14,50 @@ events by digest without seeing the URL/state/me values themselves.
 from __future__ import annotations
 
 import hmac
+import logging
 from hashlib import sha256
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlparse
 
 from django.conf import settings
 
+logger = logging.getLogger(__name__)
+
 Mode = Literal["passthrough", "redact"]
+
+# Leading token characters kept by ``redact_token`` in passthrough mode.
+TOKEN_PREFIX_LENGTH = 4
+
+
+_warned_settings: set[str] = set()
+
+
+def configured_mode() -> Mode:
+    """Return the ``INDIEWEB_LOG_REDACTION`` mode, failing closed to ``"redact"``.
+
+    Values are compared case-insensitively after trimming whitespace. Any
+    other value (a typo, ``True``, ``"yes"``) is treated as ``"redact"`` and
+    logged once as a warning, so a misspelled opt-in never leaks values.
+    """
+    configured = getattr(settings, "INDIEWEB_LOG_REDACTION", "passthrough")
+    if isinstance(configured, str):
+        normalized = configured.strip().lower()
+        if normalized in ("passthrough", "redact"):
+            return cast(Mode, normalized)
+    marker = repr(configured)
+    if marker not in _warned_settings:
+        _warned_settings.add(marker)
+        logger.warning(
+            'INDIEWEB_LOG_REDACTION=%s is not "passthrough" or "redact"; using "redact"',
+            marker[:64],
+        )
+    return "redact"
 
 
 def _resolve_mode(mode: Mode | None) -> Mode:
     if mode in ("passthrough", "redact"):
         return mode
-    configured = getattr(settings, "INDIEWEB_LOG_REDACTION", "passthrough")
-    return "redact" if configured == "redact" else "passthrough"
+    return configured_mode()
 
 
 def _digest(value: str) -> str:
@@ -78,13 +110,13 @@ def redact_token(value: str, *, mode: Mode | None = None) -> str:
 
     Bearer tokens and authorization codes must never be logged in full,
     so even in passthrough mode this helper truncates the input to its
-    first 8 characters with a trailing ellipsis — matching the existing
-    diagnostic shape already used by ``TokenAuthMixin`` and
-    ``TokenIntrospectionView``. In redact mode the token is replaced
+    first 4 characters with a trailing ellipsis, enough to tell tokens
+    apart in diagnostics without disclosing a useful share of the secret.
+    In redact mode the token is replaced
     with a stable 12-hex HMAC digest so events for the same token can
     still be correlated without exposing any leading bytes of the
     secret.
     """
     if _resolve_mode(mode) == "passthrough":
-        return f"{value[:8]}..." if value else ""
+        return f"{value[:TOKEN_PREFIX_LENGTH]}..." if value else ""
     return _digest(value)

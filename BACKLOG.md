@@ -14,33 +14,9 @@ No current Priority 2 items.
 
 ## Priority 3
 
-### `_check_redirect_uri`: reject submitted `redirect_uri` when stored value is empty
+### IndieAuth endpoints parse multipart bodies before authentication
 
-`views.py:1692-1701` only rejects when both the submitted and the stored `auth.redirect_uri` are populated. Currently-issued codes always have a stored `redirect_uri` (consent and `required_params` enforce it), so the gap is latent — but defensive code should add a final branch rejecting `auth.redirect_uri` empty + submitted-set as a mismatch.
-
-### WebSub: reject negative `Content-Length`
-
-`websub.delivery_content_length_too_large` (`websub.py:977-986`) parses negative values via `int("-1")` and the `parsed > max_bytes` comparison is False, so the early reject is skipped. The post-read length check still bounds the body, but treat `parsed < 0` as malformed and reject early.
-
-### WebSub: pin algorithm-name vs header-name suffix invariant with a regression test
-
-`_signature_headers` (`websub.py:994-1003`) accepts `X-Hub-Signature-256: sha1=<digest>` and trusts the algorithm token rather than the header name. Currently safe because sha1 is off by default. Add a test asserting that `X-Hub-Signature-256: sha1=...` is rejected even when sha1 is otherwise allowed, so a future change conditioning trust on the header name cannot regress.
-
-### WebSub callback token existence oracle
-
-`WebSubCallbackView.get` returns distinguishable 404 vs 400/200/204 responses for unknown vs known callback tokens (`views.py:2921-2930`), and `post` returns 404 for unknown-or-inactive subscriptions (`views.py:2962-2966`). Token entropy is high, but a partial leak becomes testable. Return uniform 404 for tokens that do not match an active subscription, optionally with a small constant-time delay.
-
-### Enforce nested-response URL validators on ingest
-
-`WebmentionNestedResponse` URL fields have model validators, but `_upsert_nested_response` (`processors.py:1239-1271`) writes via `get_or_create` / `save(update_fields=...)` without `full_clean()`. `_first_url_identity` currently filters to HTTP(S), but the invariant is producer-side. Call `full_clean(exclude=...)` before save or add explicit assertions/tests at the ingest boundary.
-
-### Micropub action POSTs should reject multipart before parsing action
-
-`MicropubView` / `MicropubMediaView` call `request.POST.get("action")` before per-action authorization (`views.py:2080-2090, 2170-2181, 2745-2755`). For multipart requests this invokes Django upload handlers before dispatch. Reject multipart for action verbs that never accept files before reading `request.POST`.
-
-### `log_redaction.redact_token` prefix and mode parsing
-
-`log_redaction.redact_token` preserves an 8-character token prefix in passthrough mode (`log_redaction.py:77`), and `_resolve_mode` accepts only exact `"redact"` while silently treating `"REDACT"`, `"true"`, or booleans as passthrough. Trim the prefix or default-redact when `DEBUG=False`, and log/document non-canonical `INDIEWEB_LOG_REDACTION` values.
+`AuthView` (`_csrf_failure_response` and `post` read `request.POST.get("action")`) and `TokenView` read `request.POST` for unauthenticated clients, so a `multipart/form-data` body runs Django's upload handlers before any check. IndieAuth requests are form-encoded, but Django's test client and some HTML forms default to multipart, so rejecting it (415) is a compatibility change: decide whether to reject multipart outright or to cap it with tight `DATA_UPLOAD_MAX_*`/`FILE_UPLOAD_*` guidance, then update the many tests that post multipart today. References: `src/indieweb/views.py` (`AuthView`, `TokenView`).
 
 ## Priority 4
 
