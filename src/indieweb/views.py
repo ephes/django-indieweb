@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import ipaddress
 import json
 import logging
@@ -143,6 +144,106 @@ def _read_request_body_with_invalid_content_length_fallback(request: HttpRequest
                 request._body = body
                 return body
         raise
+
+
+DEFAULT_INDIEAUTH_MAX_BODY_BYTES = 64 * 1024
+
+
+def indieauth_max_body_bytes() -> int | None:
+    """Return the IndieAuth request-body cap, or ``None`` when it is disabled.
+
+    ``None`` is the explicit "disable cap" sentinel. Any other malformed value,
+    including an empty string from an unset environment variable, falls back to
+    the default so a configuration mistake does not silently remove the cap.
+    """
+    configured = getattr(settings, "INDIEWEB_INDIEAUTH_MAX_BODY_BYTES", DEFAULT_INDIEAUTH_MAX_BODY_BYTES)
+    if configured is None:
+        return None
+    try:
+        parsed = int(configured)
+    except (TypeError, ValueError):
+        parsed = 0
+    if isinstance(configured, bool) or parsed <= 0:
+        logger.warning("Ignoring invalid INDIEWEB_INDIEAUTH_MAX_BODY_BYTES value; using the default limit")
+        return DEFAULT_INDIEAUTH_MAX_BODY_BYTES
+    return parsed
+
+
+def _buffered_body_size(request: HttpRequest) -> int | None:
+    """Return the size of an already buffered request body without consuming it.
+
+    WSGI request streams are not seekable, so this returns ``None`` there until
+    the body has been read. ASGI servers buffer the whole body before the view
+    runs; its real size can exceed or replace an understated or missing
+    ``Content-Length``.
+    """
+    stream = getattr(request, "_stream", None)
+    if stream is None:
+        return None
+    # Python 3.10's SpooledTemporaryFile (the ASGI body buffer) has no
+    # ``seekable()``; only trust an explicit ``False`` and otherwise try to seek.
+    seekable = getattr(stream, "seekable", None)
+    try:
+        if callable(seekable) and not seekable():
+            return None
+        position = stream.tell()
+        size = stream.seek(0, io.SEEK_END)
+        stream.seek(position)
+    except (AttributeError, OSError, ValueError):
+        return None
+    return int(size)
+
+
+def _declared_length_rejection(raw_length: object, max_bytes: int) -> str | None:
+    """Return why a declared ``Content-Length`` is rejected, or ``None`` if it is acceptable.
+
+    An empty value counts as absent: PEP 3333 allows WSGI servers to set an
+    empty ``CONTENT_LENGTH`` for requests without a body. Anything else must be
+    ASCII decimal digits (no sign, underscores or comma-joined duplicates).
+    """
+    if raw_length is None:
+        return None
+    value = str(raw_length).strip(" \t")
+    if value == "":
+        return None
+    if not (value.isascii() and value.isdigit()):
+        return "malformed content-length"
+    # Compare the digit count first: a value longer than the limit's own digit
+    # count (even zero-padded) is rejected without reaching ``int()``, which
+    # refuses very long digit strings here and in Django's body parsing.
+    if len(value) > len(str(max_bytes)) or int(value) > max_bytes:
+        return f"content-length above {max_bytes}"
+    return None
+
+
+def indieauth_body_limit_response(request: HttpRequest) -> HttpResponse | None:
+    """Return a 413 response when a request body exceeds the IndieAuth body cap.
+
+    Only headers and the size of an already buffered stream are inspected; the
+    body is never read or parsed here. Requests are rejected when they declare
+    ``Transfer-Encoding`` (chunked bodies have no declared length), carry a
+    malformed or negative ``Content-Length``, or declare or buffer more bytes
+    than the configured limit. A request without ``Content-Length`` and without
+    ``Transfer-Encoding`` has no body under HTTP/1.1, and Django parses it as
+    empty.
+    """
+    max_bytes = indieauth_max_body_bytes()
+    if max_bytes is None:
+        return None
+    if "transfer-encoding" in request.headers:
+        reason: str | None = "transfer-encoding without a declared length"
+    else:
+        reason = _declared_length_rejection(request.headers.get("content-length"), max_bytes)
+    if reason is None:
+        buffered = _buffered_body_size(request)
+        if buffered is not None and buffered > max_bytes:
+            reason = f"buffered body {buffered} > {max_bytes}"
+    if reason is None:
+        return None
+    logger.info(f"rejected IndieAuth request body: {reason}")
+    response = HttpResponse("request body too large", status=413, content_type="text/plain")
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 DEFAULT_TOKEN_EXPIRES_IN = 86400
@@ -1356,6 +1457,21 @@ class CSRFExemptMixin(View):
         return super().dispatch(request, *args, **kwargs)
 
 
+class IndieAuthBodyLimitMixin(View):
+    """Reject oversized IndieAuth request bodies before anything parses them.
+
+    Place this after ``CorsMixin`` and ``RateLimitMixin`` so the 413 response
+    keeps CORS headers and counts toward the endpoint rate limit; neither of
+    those mixins reads the body.
+    """
+
+    def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
+        body_limit_response = indieauth_body_limit_response(request)
+        if body_limit_response is not None:
+            return body_limit_response
+        return super().dispatch(request, *args, **kwargs)
+
+
 class IndieAuthMetadataView(CorsMixin, View):
     """Public IndieAuth authorization server metadata endpoint."""
 
@@ -1503,7 +1619,7 @@ def _consume_auth_code(auth: Auth) -> bool:
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
+class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMixin, View):
     """
     IndieAuth authorization endpoint.
 
@@ -1517,22 +1633,17 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
     cors_allowed_methods = ("GET", "POST")
 
     def _csrf_failure_response(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase | None:
-        """Run Django's CSRF check for browser consent POSTs only."""
-        action = request.POST.get("action")
-        if request.method == "POST" and action in {"approve", "deny"}:
-            return CsrfViewMiddleware(lambda csrf_request: HttpResponse()).process_view(
-                request,
-                self.post,
-                args,
-                kwargs,
-            )
-        return None
+        """Run Django's CSRF check for browser consent POSTs.
 
-    def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
-        csrf_failure = self._csrf_failure_response(request, *args, **kwargs)
-        if csrf_failure is not None:
-            return csrf_failure
-        return super().dispatch(request, *args, **kwargs)
+        The view is CSRF-exempt so IndieAuth clients can redeem codes; the
+        browser consent form is checked here instead, after the body limit.
+        """
+        return CsrfViewMiddleware(lambda csrf_request: HttpResponse()).process_view(
+            request,
+            self.post,
+            args,
+            kwargs,
+        )
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
@@ -1627,6 +1738,9 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
 
         action = request.POST.get("action")
         if action in ["approve", "deny"]:
+            csrf_failure = self._csrf_failure_response(request, *args, **kwargs)
+            if csrf_failure is not None:
+                return csrf_failure
             return self._handle_consent(request, action)
         return self._verify_auth_code(request)
 
@@ -1810,7 +1924,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
         return HttpResponse(urlencode(response_values), status=200, content_type="application/x-www-form-urlencoded")
 
 
-class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
+class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMixin, View):
     """
     IndieAuth token endpoint.
 

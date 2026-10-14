@@ -340,6 +340,11 @@ profile-URL flow, for clients that only need to identify the user). This
 protocol POST remains CSRF-exempt; browser consent approve/deny POSTs to the
 same endpoint are CSRF-protected.
 
+POST bodies to the authorization and token endpoints are limited to
+``INDIEWEB_INDIEAUTH_MAX_BODY_BYTES`` (64 KiB by default); larger, chunked or
+malformed-length requests receive HTTP ``413`` before the body is parsed. See
+:doc:`configuration`.
+
 **Required Parameters:**
 
 - ``code`` - The authorization code

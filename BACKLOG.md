@@ -14,9 +14,7 @@ No current Priority 2 items.
 
 ## Priority 3
 
-### IndieAuth endpoints parse multipart bodies before authentication
-
-`AuthView` (`_csrf_failure_response` and `post` read `request.POST.get("action")`) and `TokenView` read `request.POST` for unauthenticated clients, so a `multipart/form-data` body runs Django's upload handlers before any check. IndieAuth requests are form-encoded, but Django's test client and some HTML forms default to multipart, so rejecting it (415) is a compatibility change: decide whether to reject multipart outright or to cap it with tight `DATA_UPLOAD_MAX_*`/`FILE_UPLOAD_*` guidance, then update the many tests that post multipart today. References: `src/indieweb/views.py` (`AuthView`, `TokenView`).
+No current Priority 3 items.
 
 ## Priority 4
 
