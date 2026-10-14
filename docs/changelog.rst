@@ -7,6 +7,17 @@ Unreleased
 ----------
 * **Security hardening** (backlog priority 3):
 
+  * **Behavior change:** the IndieAuth authorization and token endpoints
+    enforce a request-body limit before parsing the body, configured with the
+    new ``INDIEWEB_INDIEAUTH_MAX_BODY_BYTES`` setting (default 64 KiB,
+    ``None`` disables it). Larger bodies, a ``Content-Length`` that is not a
+    plain decimal number or has more digits than the limit (leading zeros
+    count), and any ``Transfer-Encoding`` (chunked) request get ``413``.
+    Form-encoded and ``multipart/form-data`` requests under the limit with a
+    well-formed ``Content-Length`` work as before. The consent form's CSRF check now runs inside ``POST``
+    handling, after CORS, rate limiting and the body limit. Sites must not run
+    middleware that reads ``request.POST``/``request.body`` on these URLs.
+
   * The token exchange and authorization-code redemption reject a submitted
     ``redirect_uri`` for a code that has no stored ``redirect_uri``.
   * The WebSub callback rejects a negative ``Content-Length`` before reading

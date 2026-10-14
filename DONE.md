@@ -4,6 +4,30 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-10-14
 
+### IndieAuth endpoints parse multipart bodies before authentication
+
+- Decision: keep accepting `multipart/form-data` (HTML forms and Django's test
+  client send it) and cap the body instead of rejecting multipart.
+- `AuthView` and `TokenView` gain `IndieAuthBodyLimitMixin` (after CORS and
+  rate limiting, before any body access): `413` for a `Content-Length` above
+  `INDIEWEB_INDIEAUTH_MAX_BODY_BYTES` (default 64 KiB, `None` disables,
+  malformed values fall back to the default), a `Content-Length`
+  that is not plain ASCII digits or has more digits than the limit (leading
+  zeros count; empty counts as absent per PEP 3333), any `Transfer-Encoding` (chunked bodies are rejected, not
+  read up to the cap), or an already buffered (ASGI) body above the limit.
+- The consent form's CSRF check moved from `AuthView.dispatch` into `post`, so
+  no body is parsed before the limit. Django's `CsrfViewMiddleware` skips these
+  CSRF-exempt views; sites must keep other body-reading middleware off them.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`; new
+  `tests/test_indieauth_body_limit.py` (over/under limit, malformed and missing
+  length, chunked, buffered ASGI body, multipart and urlencoded under the limit,
+  setting override/disable/fallback, oversized consent POST before CSRF).
+- Documentation: `docs/configuration.rst` (`INDIEWEB_INDIEAUTH_MAX_BODY_BYTES`,
+  middleware and ASGI note), `docs/api.rst`.
+- Changelog: Unreleased security-hardening entry (behavior change).
+
 ### Priority-3 hardening bundle
 
 - `_check_redirect_uri`: a submitted `redirect_uri` for a code without a stored

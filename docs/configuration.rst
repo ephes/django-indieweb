@@ -135,6 +135,57 @@ invalidates the bearer credential.
    that want to retire those tokens should delete them or trigger a reissue
    through the IndieAuth flow.
 
+INDIEWEB_INDIEAUTH_MAX_BODY_BYTES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Maximum request-body size, in bytes, accepted by the IndieAuth authorization
+endpoint (``/indieweb/auth/``) and token endpoint (``/indieweb/token/``).
+
+**Default:** ``65536`` (64 KiB)
+
+**Example:**
+
+.. code-block:: python
+
+   # settings.py
+   INDIEWEB_INDIEAUTH_MAX_BODY_BYTES = 16 * 1024  # 16 KiB
+
+Both endpoints accept ``application/x-www-form-urlencoded`` and
+``multipart/form-data`` bodies (HTML forms and Django's test client may send
+multipart), and both read the body before the caller is authenticated. The
+limit is checked from the request headers before Django parses the body, and
+the request is answered with HTTP ``413`` (``Cache-Control: no-store``) when:
+
+* ``Content-Length`` is larger than the limit;
+* ``Content-Length`` is not a plain decimal number (for example negative,
+  signed or comma-joined duplicates), or has more digits than the limit itself
+  (leading zeros count, so ``000006`` is rejected with the default limit);
+* a ``Transfer-Encoding`` header is present, whatever its value (chunked
+  bodies declare no length and are rejected rather than read up to the cap);
+* the server already buffered more body bytes than the limit (ASGI servers
+  buffer the whole body before the view runs, so an understated or missing
+  ``Content-Length`` cannot hide it).
+
+A request without ``Content-Length`` (or with an empty one, which WSGI servers
+may send) and without ``Transfer-Encoding`` has no body and is processed normally. The 413 response keeps configured CORS headers
+and counts toward the ``auth``/``token`` rate-limit keys. The browser consent
+form's CSRF check runs after this limit.
+
+Set the value to ``None`` to disable the check only when your server or proxy
+enforces an equivalent limit. Malformed values (including ``""``, ``0`` and
+negative numbers) are ignored with a logged warning and the default applies.
+
+.. note::
+   The limit only protects the body if nothing parses it earlier. Django's
+   ``CsrfViewMiddleware`` does not read ``request.POST`` for these views because
+   they are CSRF-exempt, but any site middleware that touches ``request.POST``,
+   ``request.body`` or ``request.FILES`` before the view runs (request loggers,
+   debugging or auditing middleware) would parse the body first. Exclude the
+   IndieAuth URLs from such middleware. On ASGI the server has buffered the body
+   before Django sees it, so also configure a request-body limit in the
+   reverse proxy or ASGI server, and keep Django's ``DATA_UPLOAD_MAX_MEMORY_SIZE``
+   tight.
+
 INDIEWEB_CLIENT_ID_VALIDATOR
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
