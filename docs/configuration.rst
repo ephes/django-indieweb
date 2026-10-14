@@ -1399,7 +1399,12 @@ Maximum decoded response size accepted while probing a target URL with
 **Default:** ``65536`` (64 KiB)
 
 The sender checks ``Link`` headers with a ``HEAD`` request before falling back
-to ``GET`` and HTML discovery. Some hostile servers still attach large or
+to ``GET``. The ``GET`` fallback also runs when the target answers ``HEAD``
+with an error status (for example ``405``); it checks the ``GET`` response's
+``Link`` header first, then the first ``<link>`` or ``<a>`` element with
+``rel="webmention"`` in document order. An empty ``href`` names the target page
+itself. Unsafe URLs, redirect failures and oversized responses during ``HEAD``
+end discovery without a ``GET`` retry. Some hostile servers still attach large or
 compressed bodies to ``HEAD`` responses; this cap routes the request through
 the same streaming redirect helper used by body-fetching calls so decoded
 content is bounded before buffering. Set this to ``None`` only when an

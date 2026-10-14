@@ -1457,3 +1457,98 @@ def test_parse_html_for_endpoint_rejects_substring_rel_values(sender, html):
 def test_parse_html_for_endpoint_accepts_exact_token_in_rel_list(sender):
     html = '<link rel="next webmention" href="https://target.com/wm">'
     assert sender._parse_html_for_endpoint(html, "https://target.com/their-post") == "https://target.com/wm"
+
+
+@pytest.mark.parametrize("head_status", [400, 403, 404, 405, 500, 501])
+def test_discover_endpoint_falls_back_to_get_when_head_fails(sender, target_url, head_status):
+    """A target that rejects HEAD still gets a GET discovery attempt."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.method == "HEAD":
+            # A Link header on an error response is not trusted.
+            return httpx.Response(head_status, headers={"Link": '<https://target.com/head-wm>; rel="webmention"'})
+        return httpx.Response(200, text='<html><head><link rel="webmention" href="/wm"></head></html>')
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
+
+    assert endpoint == "https://target.com/wm"
+    assert [request.method for request in captured] == ["HEAD", "GET"]
+
+
+def test_discover_endpoint_reads_get_link_header_after_head_failure(sender, target_url):
+    """The GET response's Link header takes precedence over HTML when HEAD failed."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(405)
+        return httpx.Response(
+            200,
+            headers={"Link": '</header-wm>; rel="webmention"'},
+            text='<html><head><link rel="webmention" href="/html-wm"></head></html>',
+        )
+
+    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
+
+    assert endpoint == "https://target.com/header-wm"
+
+
+def test_discover_endpoint_get_error_after_head_failure_returns_none(sender, target_url):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(405)
+        return httpx.Response(404, text='<link rel="webmention" href="/wm">')
+
+    assert sender.discover_endpoint(target_url, client=_make_test_client(handler)) is None
+
+
+@override_settings(INDIEWEB_WEBMENTION_HEAD_MAX_BYTES=16)
+def test_discover_endpoint_does_not_fall_back_to_get_when_head_response_too_large(sender, target_url):
+    """Response-size failures on HEAD stay fail-closed instead of retrying with GET."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, content=b"x" * 1024)
+
+    assert sender.discover_endpoint(target_url, client=_make_test_client(handler)) is None
+    assert [request.method for request in captured] == ["HEAD"]
+
+
+def test_discover_endpoint_does_not_fall_back_to_get_when_head_redirects_to_unsafe_url(sender, target_url):
+    """An unsafe HEAD redirect stays fail-closed instead of retrying with GET."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1/internal"})
+
+    assert sender.discover_endpoint(target_url, client=_make_test_client(handler)) is None
+    assert [request.method for request in captured] == ["HEAD"]
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        # An <a> that appears before a <link> wins: document order, not element type.
+        (
+            '<body><a rel="webmention" href="/a-wm">x</a></body><link rel="webmention" href="/link-wm">',
+            "https://target.com/a-wm",
+        ),
+        (
+            '<head><link rel="webmention" href="/link-wm"></head><body><a rel="webmention" href="/a-wm">x</a></body>',
+            "https://target.com/link-wm",
+        ),
+        # An empty href is a relative reference to the page itself.
+        ('<link rel="webmention" href="">', "https://target.com/their-post?x=1"),
+        (
+            '<a rel="webmention" href="">x</a><link rel="webmention" href="/later">',
+            "https://target.com/their-post?x=1",
+        ),
+        # Elements without an href attribute are skipped.
+        ('<link rel="webmention"><a rel="webmention" href="/a-wm">x</a>', "https://target.com/a-wm"),
+    ],
+)
+def test_parse_html_for_endpoint_uses_document_order_and_empty_href(sender, html, expected):
+    assert sender._parse_html_for_endpoint(html, "https://target.com/their-post?x=1") == expected

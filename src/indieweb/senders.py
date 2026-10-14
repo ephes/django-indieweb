@@ -12,7 +12,9 @@ from django.utils import timezone
 from .http_client import (
     SAFE_HTTP_DEFAULT_LIMITS,
     SAFE_HTTP_DEFAULT_TIMEOUT,
+    AddressResolver,
     HTTPResponseTooLarge,
+    RedirectedResponse,
     default_address_resolver,
     disable_client_cookies,
     is_safe_http_url,
@@ -245,7 +247,11 @@ class WebmentionSender:
     def discover_endpoint(self, target_url: str, *, client: httpx.Client | None = None) -> str | None:
         """Discover the webmention endpoint for a target URL.
 
-        First checks HTTP Link headers, then falls back to parsing HTML.
+        Tries a HEAD request for an HTTP ``Link`` header first. When HEAD does
+        not yield an endpoint (including when the target answers HEAD with an
+        error status), falls back to GET and checks that response's ``Link``
+        header before parsing HTML. SSRF, redirect and response-size failures
+        stay fail-closed and are never retried with GET.
 
         Args:
             target_url: The URL to discover the endpoint for
@@ -283,18 +289,14 @@ class WebmentionSender:
                 timeout=self.timeout,
                 max_bytes=_sender_head_max_bytes(),
             )
-            response = discovered.response
-            response.raise_for_status()
+            # Targets that reject HEAD (e.g. 405) still get a GET attempt; only
+            # a successful HEAD response's Link header is trusted.
+            if discovered.response.is_success:
+                endpoint = self._endpoint_from_link_header(discovered, resolver=resolver)
+                if endpoint:
+                    return endpoint
 
-            # Check Link header
-            link_header = response.headers.get("Link", "")
-            endpoint = self._parse_link_header(link_header)
-            if endpoint:
-                resolved_endpoint = urljoin(discovered.final_url, endpoint)
-                validate_safe_http_url(resolved_endpoint, resolver=resolver)
-                return resolved_endpoint
-
-            # Fall back to GET request to parse HTML
+            # Fall back to GET: Link header first, then HTML
             discovered = stream_with_safe_redirects(
                 http_client,
                 "GET",
@@ -305,6 +307,10 @@ class WebmentionSender:
             )
             response = discovered.response
             response.raise_for_status()
+
+            endpoint = self._endpoint_from_link_header(discovered, resolver=resolver)
+            if endpoint:
+                return endpoint
 
             endpoint = self._parse_html_for_endpoint(response.text, discovered.final_url)
             if endpoint:
@@ -317,6 +323,17 @@ class WebmentionSender:
         finally:
             if close_client:
                 http_client.close()
+
+    def _endpoint_from_link_header(
+        self, discovered: RedirectedResponse, *, resolver: AddressResolver | None
+    ) -> str | None:
+        """Return the validated absolute endpoint from a discovery response's ``Link`` header."""
+        endpoint = self._parse_link_header(discovered.response.headers.get("Link", ""))
+        if not endpoint:
+            return None
+        resolved_endpoint = urljoin(discovered.final_url, endpoint)
+        validate_safe_http_url(resolved_endpoint, resolver=resolver)
+        return resolved_endpoint
 
     def _parse_link_header(self, link_header: str) -> str | None:
         """Parse Link header for webmention endpoint.
@@ -374,20 +391,12 @@ class WebmentionSender:
         """
         soup = BeautifulSoup(html_content, "html.parser")
 
-        rel_filter = self._rel_attribute_includes_webmention
-
-        # Check <link> tags
-        link = soup.find("link", rel=rel_filter)
-        if link and isinstance(link, Tag):
-            href = link.get("href")
-            if href and isinstance(href, str):
-                return urljoin(base_url, href)
-
-        # Check <a> tags
-        a = soup.find("a", rel=rel_filter)
-        if a and isinstance(a, Tag):
-            href = a.get("href")
-            if href and isinstance(href, str):
+        # The first <link> or <a> in document order wins (Webmention spec 3.1.2).
+        # An empty href is a valid relative reference to the page itself.
+        element = soup.find(["link", "a"], rel=self._rel_attribute_includes_webmention, href=True)
+        if isinstance(element, Tag):
+            href = element.get("href")
+            if isinstance(href, str):
                 return urljoin(base_url, href)
 
         return None

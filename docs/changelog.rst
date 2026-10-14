@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Fix outbound Webmention endpoint discovery: a target that answers ``HEAD``
+  with an error status now gets a ``GET`` attempt, whose ``Link`` header is
+  checked before the HTML. In HTML the first ``<link>`` or ``<a>`` with
+  ``rel="webmention"`` in document order wins, and an empty ``href`` resolves
+  to the target page itself. Unsafe URLs, redirect failures and oversized
+  ``HEAD`` responses still end discovery without a ``GET`` retry.
 * Fix endpoint rate-limit windows on file-based caches: store the count and
   deadline together and write with the remaining timeout. Continued requests
   no longer extend a window, and ``Retry-After`` follows its deadline. Counters

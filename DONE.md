@@ -2,6 +2,23 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-14
+
+### Webmention discovery HEAD fallback and document order
+
+- Fall back to `GET` when `HEAD` returns an error status, read the `GET`
+  `Link` header before HTML, pick the first `<link>`/`<a>` in document order,
+  and resolve an empty `href` to the target page. SSRF, redirect and size
+  failures on `HEAD` stay fail-closed.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`; MockTransport
+  regressions for HEAD 4xx/5xx, GET Link precedence, document order, empty
+  href and no GET retry after unsafe redirect or oversized HEAD.
+- Documentation: discovery order in `docs/configuration.rst`
+  (`INDIEWEB_WEBMENTION_HEAD_MAX_BYTES`).
+- Changelog: Unreleased fix entry; no matching backlog item.
+
 ## 2026-10-13
 
 ### Preserve query parameters across login
