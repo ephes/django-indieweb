@@ -40,7 +40,14 @@ from django.views.generic import View
 
 from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
-from .log_redaction import redact_state, redact_text, redact_token, redact_url, redact_url_origin
+from .log_redaction import (
+    configured_mode,
+    redact_state,
+    redact_text,
+    redact_token,
+    redact_url,
+    redact_url_origin,
+)
 from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
 from .parse_isolation import WebmentionParseCapacityError
 from .processors import WebmentionProcessor, canonicalize_webmention_storage_url
@@ -1281,7 +1288,7 @@ def _redact_auth_code(code: str | None) -> str:
     """
     if not code:
         return "<empty>"
-    if getattr(settings, "INDIEWEB_LOG_REDACTION", "passthrough") == "redact":
+    if configured_mode() == "redact":
         return redact_token(code)
     if len(code) <= 6:
         return f"<redacted:{len(code)} chars>"
@@ -1454,6 +1461,9 @@ def _auth_code_redirect_uri_error(auth: Auth, redirect_uri: str | None) -> str |
         submitted = _normalize_redirect_uri(redirect_uri)
         if stored != submitted:
             return "Redirect URI mismatch"
+    elif redirect_uri:
+        # A code without a stored binding cannot match any submitted value.
+        return "Redirect URI mismatch"
     return None
 
 
@@ -2288,16 +2298,31 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return "update"
         return None
 
+    def _create_scope_authorized(self) -> bool:
+        """Return whether the token may create posts (``create`` or its legacy alias ``post``)."""
+        return self.authorized(self.token.client_id, self.token.scope, "create") or self.authorized(
+            self.token.client_id, self.token.scope, "post"
+        )
+
     def _scope_authorized(self, request: HttpRequest) -> bool:
-        """Apply the per-operation scope gate, accepting ``post`` as a ``create`` alias."""
+        """Apply the per-operation scope gate, accepting ``post`` as a ``create`` alias.
+
+        A multipart POST is refused up front unless the token may create, because
+        only create requests carry files and reading the action from a multipart
+        body runs Django's upload handlers.
+        """
+        if (
+            request.method == "POST"
+            and _request_content_type(request) == "multipart/form-data"
+            and not self._create_scope_authorized()
+        ):
+            return False
         required = self._required_scope(request)
         if required is None:
             return True
-        if self.authorized(self.token.client_id, self.token.scope, required):
-            return True
-        if required == "create" and self.authorized(self.token.client_id, self.token.scope, "post"):
-            return True
-        return False
+        if required == "create":
+            return self._create_scope_authorized()
+        return self.authorized(self.token.client_id, self.token.scope, required)
 
     def _reject_invalid_json(self, request: HttpRequest) -> HttpResponse | None:
         """Reject a request with ``Content-Type: application/json`` whose body fails to parse.
@@ -3094,7 +3119,12 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             return None
 
     def get(self, request: HttpRequest, token: str, *args: object, **kwargs: object) -> HttpResponse:
-        """Handle WebSub subscribe/unsubscribe verification or denial callbacks."""
+        """Handle WebSub subscribe/unsubscribe verification or denial callbacks.
+
+        Every rejection is a 404, the WebSub answer for "not confirmed", so an
+        unknown token cannot be told apart from a known token with a
+        malformed or mismatched request.
+        """
         subscription = self._get_subscription(token)
         if subscription is None:
             return HttpResponse(status=404)
@@ -3102,7 +3132,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
         mode = request.GET.get("hub.mode")
         topic = request.GET.get("hub.topic")
         if not mode or not topic:
-            return HttpResponse(status=400)
+            return HttpResponse(status=404)
 
         if mode == "denied":
             try:
@@ -3113,12 +3143,12 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
                 )
             except ValueError as exc:
                 logger.warning(f"Rejected WebSub denial for subscription {subscription.pk}: {exc}")
-                return HttpResponse(status=400)
+                return HttpResponse(status=404)
             return HttpResponse(status=204)
 
         challenge = request.GET.get("hub.challenge")
         if not challenge:
-            return HttpResponse(status=400)
+            return HttpResponse(status=404)
 
         try:
             confirm_websub_verification(
@@ -3130,7 +3160,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             )
         except ValueError as exc:
             logger.warning(f"Rejected WebSub verification for subscription {subscription.pk}: {exc}")
-            return HttpResponse(status=400)
+            return HttpResponse(status=404)
 
         return HttpResponse(challenge, status=200, content_type="text/plain")
 

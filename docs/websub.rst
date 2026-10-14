@@ -262,7 +262,9 @@ the configured pair would invert after parsing, the helper falls back to
 the defaults.
 For ``unsubscribe`` verification, it marks the row ``unsubscribed`` and clears
 active lease fields. Missing, mismatched, or out-of-state verification
-requests are rejected and do not mutate the row.
+requests are rejected with HTTP ``404`` (the WebSub "not confirmed" answer)
+and do not mutate the row. An unknown callback token gets the same ``404``, so
+the response does not reveal whether a token exists.
 
 The callback also accepts WebSub denial callbacks with ``hub.mode=denied``
 and a matching ``hub.topic``. ``hub.challenge`` is not required for denial.
@@ -274,7 +276,7 @@ keeps the row ``active``, preserves the current lease and secret, and clears
 only the staged renewal state. A denied pending unsubscribe request restores
 the row to ``active`` and clears only the pending unsubscribe state,
 preserving the current lease metadata so deliveries can continue. Denials
-without a matching pending request return a client error and do not mutate the
+without a matching pending request return HTTP ``404`` and do not mutate the
 row.
 
 Verification and denial callbacks are serialized per subscription.
@@ -284,7 +286,7 @@ stored row, never on the instance the caller loaded earlier. The pending mode,
 the state, the renewal lease ratchet and the staged secret therefore always
 come from the committed row, and unsaved changes on the passed instance are
 discarded. The first callback for a pending request wins. A later, stale
-callback finds no matching pending request, is rejected with HTTP ``400`` and
+callback finds no matching pending request, is rejected with HTTP ``404`` and
 changes nothing: a late denial cannot demote a subscription that was just
 confirmed, a late confirmation cannot revive a denied one, and a duplicate
 renewal confirmation cannot replace the lease that the first one stored. A
@@ -536,7 +538,9 @@ Signed Deliveries
 If a subscription was initiated with ``hub.secret``, the callback requires a
 valid HMAC signature before accepting delivery. It supports
 ``X-Hub-Signature-256`` and ``X-Hub-Signature`` headers with SHA-256 or
-stronger digest labels by default. ``sha1`` is accepted only when
+stronger digest labels by default. ``X-Hub-Signature-256`` only carries
+``sha256=``; any other label in that header is ignored. ``sha1`` is accepted
+only in ``X-Hub-Signature`` and only when
 ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES`` is enabled. When multiple supported
 signatures are present, the strongest supplied algorithm must validate.
 Missing, malformed, unsupported, or mismatched signatures return HTTP ``403``
@@ -575,8 +579,8 @@ not need cross-origin access to this callback. The optional
 ``websub_callback`` rate-limit key can be configured with
 ``INDIEWEB_RATE_LIMITS``.
 
-The callback checks an oversized ``Content-Length`` before reading the request
-body when that header is present, then applies
+The callback checks an oversized or negative ``Content-Length`` before reading
+the request body when that header is present, then applies
 ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` to the body that is actually read.
 Production deployments should also set a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching proxy/CDN body-size limit. Keep

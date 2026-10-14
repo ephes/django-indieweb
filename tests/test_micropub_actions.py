@@ -1,6 +1,7 @@
 """Tests for the Micropub update/delete/undelete actions on the resource server."""
 
 import json
+from urllib.parse import urlencode
 
 import pytest
 from django.contrib.auth.models import User
@@ -188,7 +189,8 @@ class TestMicropubUpdate:
         token = _make_token(user, "update")
         response = client.post(
             micropub_url,
-            data={"action": "update", "url": entry.url, "replace": "content"},
+            data=urlencode({"action": "update", "url": entry.url, "replace": "content"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -402,7 +404,8 @@ class TestMicropubDelete:
         token = _make_token(user, "delete")
         response = client.post(
             micropub_url,
-            data={"action": "delete", "url": entry.url},
+            data=urlencode({"action": "delete", "url": entry.url}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -444,7 +447,8 @@ class TestMicropubDelete:
         token = _make_token(user, "delete")
         response = client.post(
             micropub_url,
-            data={"action": "delete", "url": "/entries/missing/"},
+            data=urlencode({"action": "delete", "url": "/entries/missing/"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -455,7 +459,8 @@ class TestMicropubDelete:
         token = _make_token(user, "delete")
         response = client.post(
             micropub_url,
-            data={"action": "delete"},
+            data=urlencode({"action": "delete"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -476,7 +481,8 @@ class TestMicropubDelete:
         token = _make_token(user, "delete")
         response = client.post(
             micropub_url,
-            data={"action": "delete", "url": "https://remote.example/entries/1/"},
+            data=urlencode({"action": "delete", "url": "https://remote.example/entries/1/"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -496,7 +502,8 @@ class TestMicropubDelete:
         token = _make_token(user, "delete")
         response = client.post(
             micropub_url,
-            data={"action": "delete", "url": "http://testserver/entries/1/"},
+            data=urlencode({"action": "delete", "url": "http://testserver/entries/1/"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -513,7 +520,8 @@ class TestMicropubUndelete:
         token = _make_token(user, "undelete")
         response = client.post(
             micropub_url,
-            data={"action": "undelete", "url": entry.url},
+            data=urlencode({"action": "undelete", "url": entry.url}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -565,7 +573,8 @@ class TestMicropubUndelete:
         token = _make_token(user, "undelete")
         response = client.post(
             micropub_url,
-            data={"action": "undelete", "url": entry.url},
+            data=urlencode({"action": "undelete", "url": entry.url}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -576,7 +585,8 @@ class TestMicropubUndelete:
         token = _make_token(user, "undelete")
         response = client.post(
             micropub_url,
-            data={"action": "undelete"},
+            data=urlencode({"action": "undelete"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -597,7 +607,8 @@ class TestMicropubUndelete:
         token = _make_token(user, "undelete")
         response = client.post(
             micropub_url,
-            data={"action": "undelete", "url": "https://remote.example/entries/1/"},
+            data=urlencode({"action": "undelete", "url": "https://remote.example/entries/1/"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -615,7 +626,8 @@ class TestMicropubUndelete:
         token = _make_token(user, "undelete")
         response = client.post(
             micropub_url,
-            data={"action": "undelete", "url": "http://testserver/entries/1/"},
+            data=urlencode({"action": "undelete", "url": "http://testserver/entries/1/"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -911,7 +923,8 @@ class TestMicropubActionUnexpectedHandlerExceptions:
         token = _make_token(user, "delete")
         response = client.post(
             micropub_url,
-            data={"action": "delete", "url": "/entries/1/"},
+            data=urlencode({"action": "delete", "url": "/entries/1/"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 
@@ -930,7 +943,8 @@ class TestMicropubActionUnexpectedHandlerExceptions:
         token = _make_token(user, "undelete")
         response = client.post(
             micropub_url,
-            data={"action": "undelete", "url": "/entries/1/"},
+            data=urlencode({"action": "undelete", "url": "/entries/1/"}),
+            content_type="application/x-www-form-urlencoded",
             Authorization=f"Bearer {token.key}",
         )
 

@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils.http import urlencode
 
+from indieweb import log_redaction
 from indieweb.log_redaction import redact_state, redact_token, redact_url, redact_url_origin
 
 
@@ -43,10 +44,31 @@ def test_resolve_mode_uses_setting_when_mode_not_passed(settings):
     assert out != "https://example.com/x"
 
 
-def test_resolve_mode_unknown_setting_value_falls_back_to_passthrough(settings):
-    settings.INDIEWEB_LOG_REDACTION = "garbage"
+@pytest.mark.parametrize("value", ["garbage", "true", True, 1, None])
+def test_resolve_mode_unknown_setting_value_fails_closed_to_redact(settings, caplog, value):
+    settings.INDIEWEB_LOG_REDACTION = value
+    log_redaction._warned_settings.clear()
+    with caplog.at_level(logging.WARNING, logger="indieweb.log_redaction"):
+        out = redact_url("https://example.com/x")
+        redact_url("https://example.com/y")
+    assert out != "https://example.com/x"
+    assert len(out) == 12
+    # The misconfiguration is reported once, not on every log line.
+    assert caplog.text.count("INDIEWEB_LOG_REDACTION=") == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_redacted"), [(" REDACT ", True), ("Redact", True), ("PassThrough", False)]
+)
+def test_resolve_mode_accepts_case_and_whitespace_variants(settings, value, expected_redacted):
+    settings.INDIEWEB_LOG_REDACTION = value
     out = redact_url("https://example.com/x")
-    assert out == "https://example.com/x"
+    assert (out != "https://example.com/x") is expected_redacted
+
+
+def test_resolve_mode_defaults_to_passthrough_when_unset(settings):
+    del settings.INDIEWEB_LOG_REDACTION
+    assert redact_url("https://example.com/x") == "https://example.com/x"
 
 
 @pytest.mark.django_db
@@ -97,14 +119,14 @@ def test_auth_get_logs_passthrough_includes_values_by_default(client, settings, 
 
 # ----------------------------------------------------------------------------
 # redact_token: bearer / authorization-code values must never appear in full,
-# even in passthrough mode. The helper returns ``{value[:8]}...`` for
+# even in passthrough mode. The helper returns ``{value[:4]}...`` for
 # diagnostics in passthrough and a stable HMAC digest in redact mode.
 # ----------------------------------------------------------------------------
 
 
 def test_redact_token_passthrough_truncates_value():
     out = redact_token("longbearersecretvalue", mode="passthrough")
-    assert out == "longbear..."
+    assert out == "long..."
     assert "longbearersecretvalue" not in out
 
 

@@ -684,7 +684,7 @@ def test_callback_verification_rejects_mismatched_topic_without_state_change(cli
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert subscription.state == WebSubSubscription.STATE_PENDING_SUBSCRIBE
     assert subscription.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
     assert subscription.last_verified_at is None
@@ -745,7 +745,7 @@ def test_callback_denial_rejects_mismatched_topic_without_state_change(client):
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert subscription.state == WebSubSubscription.STATE_PENDING_SUBSCRIBE
     assert subscription.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
     assert subscription.last_denied_at is None
@@ -826,7 +826,7 @@ def test_callback_denial_requires_pending_request(client, subscription):
     )
 
     subscription.refresh_from_db()
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert subscription.state == WebSubSubscription.STATE_ACTIVE
     assert subscription.last_denied_at is None
 
@@ -1899,3 +1899,44 @@ def test_save_under_primary_is_idempotent_for_already_migrated_rows(settings):
 
     subscription.save()
     assert subscription.secret == first_ciphertext
+
+
+@pytest.mark.django_db
+def test_validate_websub_delivery_signature_ignores_sha1_in_256_header_when_sha1_allowed(settings, subscription):
+    """``X-Hub-Signature-256`` only carries sha256; a sha1 token there is not trusted even with sha1 enabled."""
+    settings.INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True
+    subscription.secret = SHARED_SECRET
+    body = b"<feed/>"
+    digest = hmac.new(SHARED_SECRET.encode("utf-8"), body, hashlib.sha1).hexdigest()
+
+    with pytest.raises(ValueError, match="supported algorithm"):
+        validate_websub_delivery_signature(subscription, body, {"X-Hub-Signature-256": f"sha1={digest}"})
+
+
+@pytest.mark.parametrize(("content_length", "expected"), [("-1", True), ("-0", False), ("0", False), ("abc", False)])
+@pytest.mark.parametrize("max_bytes", [1024, None])
+def test_delivery_content_length_too_large_rejects_negative_values(settings, content_length, expected, max_bytes):
+    from indieweb.websub import delivery_content_length_too_large
+
+    settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = max_bytes
+    assert delivery_content_length_too_large(content_length) is expected
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "params",
+    [
+        {},
+        {"hub.mode": "subscribe"},
+        {"hub.mode": "subscribe", "hub.topic": "https://source.example/feed"},
+        {"hub.mode": "subscribe", "hub.topic": "https://other.example/feed", "hub.challenge": "abc"},
+        {"hub.mode": "denied", "hub.topic": "https://other.example/feed"},
+    ],
+)
+def test_callback_get_rejections_do_not_reveal_whether_token_exists(client, subscription, params):
+    """Unknown tokens and rejected requests for a known token get the same 404."""
+    known = client.get(_callback_url(subscription), data=params)
+    unknown = client.get(reverse("indieweb:websub-callback", args=["unknown-token"]), data=params)
+
+    assert known.status_code == unknown.status_code == 404
+    assert known.content == unknown.content

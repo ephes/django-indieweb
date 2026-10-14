@@ -2,6 +2,48 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-10-14
+
+### Priority-3 hardening bundle
+
+- `_check_redirect_uri`: a submitted `redirect_uri` for a code without a stored
+  one is a mismatch (shared helper, so authorization-code redemption too).
+- WebSub: negative `Content-Length` is rejected early; `X-Hub-Signature-256`
+  only accepts `sha256=` (regression test for `sha1=` there with sha1 enabled).
+- WebSub callback token oracle: every rejected `GET` returns `404`, matching
+  unknown tokens. `POST` already answered `404` for unknown or inactive
+  tokens; signature failures stay `403` per the existing delivery contract.
+- Nested responses: `full_clean` on the URL fields before save; an invalid
+  identity drops the candidate, invalid optional URLs are blanked.
+- Micropub: multipart POSTs need `create`/`post` scope before the body is
+  parsed (the action is in the body, so this is the pre-parse gate). The media
+  endpoint already checks the `media` scope before parsing and is unchanged.
+  The IndieAuth endpoints' multipart parsing is a new Priority-3 item.
+- `log_redaction`: case-insensitive mode, non-canonical values fail closed to
+  `redact` with a one-time warning; passthrough token prefix trimmed to 4.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`; new regression tests
+  per item; token tests now post the `redirect_uri` real codes always store,
+  and Micropub action tests use form encoding.
+- Documentation: `docs/api.rst`, `docs/websub.rst`, `docs/configuration.rst`.
+- Changelog: Unreleased security-hardening entry with behavior changes.
+
+### Webmention discovery HEAD fallback and document order
+
+- Fall back to `GET` when `HEAD` returns an error status, read the `GET`
+  `Link` header before HTML, pick the first `<link>`/`<a>` in document order,
+  and resolve an empty `href` to the target page. SSRF, redirect and size
+  failures on `HEAD` stay fail-closed.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`; MockTransport
+  regressions for HEAD 4xx/5xx, GET Link precedence, document order, empty
+  href and no GET retry after unsafe redirect or oversized HEAD.
+- Documentation: discovery order in `docs/configuration.rst`
+  (`INDIEWEB_WEBMENTION_HEAD_MAX_BYTES`).
+- Changelog: Unreleased fix entry; no matching backlog item.
+
 ## 2026-10-13
 
 ### Preserve query parameters across login

@@ -130,8 +130,9 @@ Accepted ``denied`` callbacks record bounded denial diagnostics, clear pending
 state, return HTTP ``204``, and either mark pending subscribes denied or
 keep the current active subscription in place when a renewal or unsubscribe
 request is denied.
-Missing, mismatched, or out-of-state verification requests return a client
-error and do not mutate the row.
+Missing, mismatched, or out-of-state verification requests return HTTP
+``404`` and do not mutate the row. Unknown callback tokens get the same
+``404``, so a rejection does not reveal whether a token exists.
 
 Delivery POST
 ~~~~~~~~~~~~~
@@ -421,7 +422,8 @@ POST Request
   lowercases percent-encoded triplets, and treats an empty root path as
   equivalent to ``/``. Non-default ports, non-root paths, and query strings
   remain significant. Malformed, omitted-required, and mismatched values are
-  rejected with ``invalid_grant``.
+  rejected with ``invalid_grant``. A ``redirect_uri`` sent for a code that has
+  no stored value is a mismatch.
 - ``me`` - The user's profile URL; falls back to the value stored with the auth code
 - ``scope`` - Optional scope confirmation. If omitted, the token is issued
   with the normalized scope stored with the auth code. If sent, the submitted
@@ -1258,6 +1260,10 @@ django-indieweb enforces built-in Micropub scopes by operation:
 - ``action=delete`` requires ``delete``
 - ``action=undelete`` requires ``undelete``
 - direct media uploads to ``/indieweb/media/`` require ``media``
+- any ``multipart/form-data`` POST to the Micropub endpoint requires ``create``
+  or ``post``, checked before the body is parsed: only creates carry files,
+  so a token limited to ``update``, ``delete`` or ``undelete`` sends actions
+  form-encoded or as JSON
 - configuration queries such as ``q=config``, ``q=category``, ``q=channel``,
   ``q=media-endpoint``, ``q=post-types``, and ``q=syndicate-to`` are
   token-required only and have no operation-scope gate

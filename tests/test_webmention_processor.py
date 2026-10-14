@@ -3226,3 +3226,58 @@ def test_canonicalize_storage_url_collapses_cosmetic_variants():
     a = canonicalize_webmention_storage_url("HTTPS://Example.com:443/post")
     b = canonicalize_webmention_storage_url("https://example.com/post")
     assert a == b
+
+
+def _nested_candidate(identity: str, **overrides: str) -> dict:
+    candidate = {
+        "identity": identity,
+        "response_url": identity,
+        "author_name": "Alice",
+        "author_url": "https://alice.example/",
+        "author_photo": "https://alice.example/photo.jpg",
+        "content": "Nice",
+        "content_html": "<p>Nice</p>",
+        "published": None,
+        "mention_type": "reply",
+        "parsed_h_entry": {},
+        "content_digest": "digest",
+    }
+    candidate.update(overrides)
+    return candidate
+
+
+@pytest.mark.django_db
+def test_sync_nested_responses_enforces_url_validators_at_ingest():
+    """Nested-response URLs pass the model validators before save, not only producer-side filters."""
+    webmention = Webmention.objects.create(
+        source_url="https://source.example/post", target_url="https://mysite.com/article", status="verified"
+    )
+    stale = WebmentionNestedResponse.objects.create(
+        webmention=webmention,
+        identity="javascript:alert(1)",
+        first_seen_at=django_timezone.now(),
+        last_seen_at=django_timezone.now(),
+    )
+    candidates = [
+        _nested_candidate("https://reply.example/ok"),
+        _nested_candidate(
+            "https://reply.example/bad-optional-urls",
+            response_url="javascript:alert(1)",
+            author_url="ftp://alice.example/",
+            author_photo="https://" + "a" * 250 + ".example/p.jpg",
+        ),
+        _nested_candidate("javascript:alert(1)"),
+    ]
+
+    WebmentionProcessor()._sync_nested_responses(
+        webmention=webmention, candidates=candidates, previous_identities=set(), seen_at=django_timezone.now()
+    )
+
+    rows = {row.identity: row for row in WebmentionNestedResponse.objects.filter(webmention=webmention)}
+    assert rows["https://reply.example/ok"].author_url == "https://alice.example/"
+    blanked = rows["https://reply.example/bad-optional-urls"]
+    assert (blanked.response_url, blanked.author_url, blanked.author_photo) == ("", "", "")
+    assert blanked.author_name == "Alice"
+    # The invalid identity is dropped, so its existing row is retired instead of refreshed.
+    stale.refresh_from_db()
+    assert stale.status == "missing"

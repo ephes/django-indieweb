@@ -1123,15 +1123,20 @@ def delivery_max_bytes() -> int | None:
 
 
 def delivery_content_length_too_large(content_length: str | None) -> bool:
-    """Return whether a WebSub delivery ``Content-Length`` exceeds the configured limit."""
-    max_bytes = _delivery_max_bytes()
-    if max_bytes is None or not content_length:
+    """Return whether a WebSub delivery ``Content-Length`` exceeds the configured limit.
+
+    A negative value is malformed and rejected early like an oversized one.
+    """
+    if not content_length:
         return False
     try:
         parsed = int(content_length)
     except (TypeError, ValueError):
         return False
-    return parsed > max_bytes
+    if parsed < 0:
+        return True
+    max_bytes = _delivery_max_bytes()
+    return max_bytes is not None and parsed > max_bytes
 
 
 def delivery_content_type_allowed(content_type: str) -> bool:
@@ -1231,8 +1236,13 @@ def _signature_headers(headers: Mapping[str, str]) -> list[tuple[str, str]]:
         if value:
             for part in (part.strip() for part in value.split(",") if part.strip()):
                 algorithm, separator, received_digest = part.partition("=")
+                algorithm = algorithm.lower()
+                # The ``-256`` header name promises sha256; any other algorithm
+                # token in it is ignored rather than trusted.
+                if header_name == "X-Hub-Signature-256" and algorithm != "sha256":
+                    continue
                 if separator == "=" and received_digest:
-                    values.append((algorithm.lower(), received_digest))
+                    values.append((algorithm, received_digest))
     return values
 
 
