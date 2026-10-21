@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Update the development lock's certifi CA bundle to 2026.10.19 for the
+  eMudhra/emSign CA compromise
+  (`GHSA-6q48-6c7w-9gw2 <https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2>`_).
+  The package's own dependencies are unchanged.
 * **Security hardening** (backlog priority 3):
 
   * **Behavior change:** the IndieAuth authorization and token endpoints
