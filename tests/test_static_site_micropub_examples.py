@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from examples.static_site_micropub import (
@@ -21,7 +21,7 @@ def test_static_site_mapper_uses_mp_slug_for_path_url_and_front_matter():
     mapper = StaticSitePostMapper(
         public_base_url="https://example.org/",
         content_dir="_posts",
-        now=datetime(2026, 5, 6, 8, 30, tzinfo=timezone.utc),
+        now=datetime(2026, 5, 6, 8, 30, tzinfo=UTC),
     )
 
     document = mapper.build_document(
@@ -52,7 +52,7 @@ def test_static_site_mapper_uses_mp_slug_for_path_url_and_front_matter():
 def test_static_site_mapper_falls_back_to_note_slug_and_current_date():
     mapper = StaticSitePostMapper(
         public_base_url="https://example.org/blog",
-        now=datetime(2026, 5, 6, 8, 30, tzinfo=timezone.utc),
+        now=datetime(2026, 5, 6, 8, 30, tzinfo=UTC),
     )
 
     document = mapper.build_document({"content": ["Hello, small note."]})
@@ -65,7 +65,7 @@ def test_static_site_mapper_falls_back_to_note_slug_and_current_date():
 def test_static_site_mapper_marks_photo_posts_without_claiming_full_type_support():
     mapper = StaticSitePostMapper(
         public_base_url="https://example.org/",
-        now=datetime(2026, 5, 6, 8, 30, tzinfo=timezone.utc),
+        now=datetime(2026, 5, 6, 8, 30, tzinfo=UTC),
     )
 
     document = mapper.build_document(
@@ -82,7 +82,7 @@ def test_static_site_mapper_marks_photo_posts_without_claiming_full_type_support
 def test_static_site_mapper_extracts_text_from_dict_property_values():
     mapper = StaticSitePostMapper(
         public_base_url="https://example.org/",
-        now=datetime(2026, 5, 6, 8, 30, tzinfo=timezone.utc),
+        now=datetime(2026, 5, 6, 8, 30, tzinfo=UTC),
     )
 
     document = mapper.build_document(

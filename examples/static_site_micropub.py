@@ -12,7 +12,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urljoin
@@ -142,7 +142,7 @@ class StaticSitePostMapper:
         self.now = now
 
     def build_document(self, properties: dict[str, list[Any]]) -> StaticPostDocument:
-        published = _published_datetime(properties, self.now or datetime.now(timezone.utc))
+        published = _published_datetime(properties, self.now or datetime.now(UTC))
         slug = slugify_micropub_properties(properties)
         values = {
             "year": f"{published.year:04d}",

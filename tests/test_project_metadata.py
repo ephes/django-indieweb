@@ -1,17 +1,13 @@
 import os
 import subprocess
 import sys
+import tomllib
 from configparser import ConfigParser
 from pathlib import Path
 
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 MINIMUM_RUNTIME_FLOORS = {

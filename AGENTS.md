@@ -27,7 +27,7 @@ This is a Django application that implements IndieWeb protocols including IndieA
 ## Development Setup
 
 This project uses:
-- Python 3.10+ (supports 3.10, 3.11, 3.12, 3.13, 3.14)
+- Python 3.11+ (supports 3.11, 3.12, 3.13, 3.14)
 - Django
 - uv for packaging and dependency management
 - Ruff for linting and formatting (line length: 119)
@@ -190,7 +190,7 @@ When finishing a backlog item:
 
 ## Coding Style & Naming Conventions
 
-- **Python version**: 3.10+ with 4-space indentation
+- **Python version**: 3.11+ with 4-space indentation
 - **Type annotations**: Prefer explicit typing—public functions and classes should be type-annotated
   - Use `list`, `dict`, `set`, `tuple` instead of `List`, `Dict`, `Set`, `Tuple`
   - Use pipe notation `|` instead of `Optional[]` (e.g., `str | None` instead of `Optional[str]`)
@@ -210,7 +210,7 @@ When finishing a backlog item:
   - Trailing whitespace
   - End of file fixing
   - YAML/TOML validation
-  - Python upgrades (3.10+)
+  - Python upgrades (3.11+)
   - Django upgrades (4.1+)
   - Ruff linting and formatting
   - djhtml for template formatting

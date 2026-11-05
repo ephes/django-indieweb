@@ -5,13 +5,18 @@ Changelog
 
 Unreleased
 ----------
+* **BREAKING:** Dropped Python 3.10 support (minimum is now 3.11). Python 3.10
+  reached end of life in October 2026, and no filelock release with the
+  security fixes below supports it. The tox and CI matrix, classifiers, Ruff
+  target and pyupgrade target now start at Python 3.11, the development lock
+  no longer carries a Python 3.10 resolution, and tests and examples use
+  ``datetime.UTC``.
 * Update the development lock's tox tooling dependencies for security
   advisories: virtualenv 21.14.5 -> 21.15.5 (fixed in 21.14.7/21.14.9) and
-  filelock 3.29.0 -> 4.2.9 on Python 3.11+ (fixed in 4.2.1), with distlib and
-  packaging raised to the versions virtualenv now requires. ``[tool.uv]
-  constraint-dependencies`` keeps these floors in future lock updates. No
-  filelock fix supports Python 3.10, so the 3.10 lock uses filelock 4.1.0,
-  which still has the advisories. The package's own dependencies are unchanged.
+  filelock 3.29.0 -> 4.2.9 (fixed in 4.2.1), with distlib and packaging raised
+  to the versions virtualenv now requires. ``[tool.uv]
+  constraint-dependencies`` keeps these floors in future lock updates. The
+  package's own dependencies are unchanged.
 * **Received Webmention verification hardening** (backlog priority 4):
 
   * **Behavior change:** links inside ``<svg>``, ``<math>``, ``<iframe>``,
