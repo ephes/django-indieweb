@@ -72,6 +72,15 @@ dev = [
 Documentation = "https://django-indieweb.readthedocs.io/en/latest/"
 Source = "https://github.com/ephes/django-indieweb"
 
+[tool.uv]
+# Floors for transitive dev tooling with security fixes (Dependabot alerts).
+# No filelock fix supports Python 3.10; that fork resolves to the newest
+# 3.10-compatible release (4.1.0), which is still affected.
+constraint-dependencies = [
+    "filelock>=4.2.1; python_version >= '3.11'",
+    "virtualenv>=21.14.9",
+]
+
 [tool.uv.build-backend]
 module-name = "indieweb"
 
