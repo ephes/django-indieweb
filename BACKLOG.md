@@ -32,14 +32,6 @@ No current Priority 3 items.
 
 `models.py:437` is `models.TextField()`; `processors._webmention_fetch_max_bytes()` defaults to 1 MiB. Each verified webmention persists up to ~1 MiB of attacker-controlled HTML. Document a snapshot retention policy (gzip the column, retain only the last N snapshots, or cap snapshot size lower than fetch size).
 
-#### `_get_local_profile` profile URL canonical lookup
-
-The 2026-05-10 Medium fix restricted local-profile author rewrites to source pages on the current Django `Site` domain and normalized the source/author domains before trusting them. The remaining low-priority gap is exact `Profile.objects.get(url=author_url)` matching (`processors.py`) for same-site source pages: case, default-port, IDNA, or trailing-slash variants may fail to match the intended local profile. Consider canonical matching against stored profile URLs or a normalized indexed field.
-
-#### Tighten `NON_RENDERED_LINK_ANCESTORS` (and Vouch proof location)
-
-`processors.py:64` excludes only `noscript` and `template`; an `<a href>` inside `<head>`, foreign content (SVG/MathML), or CSS-hidden ancestors still satisfies the rendered-anchor invariant. Self-attestation by the source author bounds practical impact, but tightening the ancestor list (or, for Vouch proof, requiring the link inside an h-card or visible body region) closes the silent-vouch concern.
-
 #### Sanity-check HEAD-discovered Webmention endpoints against GET
 
 `WebmentionSender.discover_endpoint` accepts a HEAD-discovered endpoint without checking whether a following GET would advertise the same endpoint (`senders.py:165-178`). Each hop remains SSRF-screened, so this is delivery accuracy rather than a direct network bypass. Document the accepted behavior or add a cheap GET sniff before sending.

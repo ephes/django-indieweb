@@ -37,7 +37,26 @@ try:
 except ImportError:  # pragma: no cover - platforms without POSIX resource limits
     resource = None
 
-NON_RENDERED_LINK_ANCESTORS = {"noscript", "template"}
+# Elements whose descendant links do not count as rendered mentions. The list
+# is kept conservative on purpose (see "Source Link Verification" in
+# docs/webmention.rst): ``noscript`` and ``template`` content is not shown,
+# links in ``svg`` and ``math`` foreign content are not accepted as visible
+# mentions, and ``iframe``, ``textarea``, ``title``, ``script`` and ``style``
+# take raw text in a browser, so markup inside them is never a link.
+# CSS-hidden content and the ``hidden`` attribute are not checked.
+NON_RENDERED_LINK_ANCESTORS = frozenset(
+    {"noscript", "template", "svg", "math", "iframe", "textarea", "title", "script", "style"}
+)
+
+# ``<head>`` is handled apart from that list. ``html.parser`` builds no
+# implied elements, so when a page omits ``</head>`` the rest of the document
+# ends up inside ``<head>``, while a browser closes the head at the first
+# element that is not head metadata. A child of ``<head>`` is therefore hidden
+# while it is metadata (this set) or an ``<a>`` written among the metadata;
+# the first other child, such as ``<body>``, ``<p>`` or ``<div>``, ends the
+# head, and it and every later child are treated as rendered.
+HEAD_METADATA_ELEMENTS = frozenset({"base", "link", "meta", "noscript", "script", "style", "template", "title"})
+
 
 EXIT_FAILED = 1
 EXIT_MEMORY_LIMIT = 3
@@ -120,18 +139,30 @@ def _urls_match(left: str, right: str) -> bool:
 def _rendered_link_tags(html_content: str) -> list[Tag]:
     """Return the ``<a href>`` elements of ``html_content`` that a browser renders.
 
-    Links inside non-rendered containers do not count. Elements arrive in
-    document order, so whether an element is hidden follows from its parent
-    alone and the scan stays linear in the document size whatever the nesting.
+    Links inside non-rendered containers (:data:`NON_RENDERED_LINK_ANCESTORS`)
+    and in the metadata part of ``<head>`` (see
+    :data:`HEAD_METADATA_ELEMENTS`) do not count. Elements arrive in document
+    order, so whether an element is hidden follows from its parent, and for a
+    child of ``<head>`` from whether an earlier child already ended the head.
+    The scan stays linear in the document size whatever the nesting.
     """
     soup = BeautifulSoup(html_content, "html.parser")
     hidden: set[int] = set()
+    open_heads: set[int] = set()
     links: list[Tag] = []
     for tag in soup.find_all(True):
         if not isinstance(tag, Tag):
             continue
-        if tag.name in NON_RENDERED_LINK_ANCESTORS or id(tag.parent) in hidden:
+        parent_id = id(tag.parent)
+        if parent_id in open_heads:
+            if tag.name in HEAD_METADATA_ELEMENTS or tag.name == "a":
+                hidden.add(id(tag))
+                continue
+            open_heads.discard(parent_id)
+        if parent_id in hidden or tag.name in NON_RENDERED_LINK_ANCESTORS:
             hidden.add(id(tag))
+        elif tag.name == "head":
+            open_heads.add(id(tag))
         elif tag.name == "a" and tag.get("href") is not None:
             links.append(tag)
     return links
