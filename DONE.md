@@ -4,6 +4,29 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-05
 
+### Received Webmention verification hardening (priority-4 bundle)
+
+Completes the backlog items "Tighten `NON_RENDERED_LINK_ANCESTORS` (and Vouch
+proof location)" and "`_get_local_profile` profile URL canonical lookup".
+
+- `NON_RENDERED_LINK_ANCESTORS` adds `head`, `svg`, `math`, `iframe`,
+  `textarea`, `title`, `script` and `style`. Source links and Vouch proof
+  links share `_rendered_link_tags`, so both are covered. A `body` element
+  ends `head` hiding, because `html.parser` nests `<body>` in an unclosed
+  `<head>`. CSS-hidden content and the `hidden` attribute stay out of scope.
+- `_get_local_profile` uses `_canonical_profile_url` (scheme/host case, IDNA,
+  default port, trailing slash; path case, query and fragment kept, `www.`
+  significant) in Python, no migration. A unique exact match wins; more than
+  one canonical match returns no profile and logs a warning. The author-host
+  same-site gate uses the same host normalisation.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`, `git diff --check`.
+- Documentation: `docs/webmention.rst` (Source Link Verification ancestor
+  list, Vouch link rule, local-profile matching).
+- Changelog: Unreleased "Received Webmention verification hardening" entry in
+  `docs/changelog.rst`.
+
 ### Outbound Webmention sender hardening (priority-4 bundle)
 
 Completes the backlog items "Layered `httpx.Timeout` for `WebmentionSender`",

@@ -342,9 +342,24 @@ Source Link Verification
 
 Receive-side verification requires the fetched source HTML to contain a
 rendered ``href`` that matches the submitted target URL under django-indieweb's
-conservative canonical URL matching policy. Links inside non-rendered
-ancestors such as ``<template>`` and ``<noscript>`` do not verify a source
-link, and HTML comments do not count as source links.
+conservative canonical URL matching policy. HTML comments do not count as
+source links, and neither do links inside these non-rendered ancestors:
+
+* ``<template>`` and ``<noscript>``;
+* ``<head>``, which holds document metadata, not visible content;
+* ``<svg>`` and ``<math>`` foreign content, including ``<foreignObject>``;
+* ``<iframe>``, ``<textarea>``, ``<title>``, ``<script>`` and ``<style>``,
+  whose content a browser treats as text, not markup.
+
+The source is parsed with Python's ``html.parser``, which does not build the
+implied elements a browser does. When a page omits ``</head>``, its
+``<body>`` ends up inside ``<head>``, so a ``<body>`` element always counts as
+rendered, even under ``<head>``; only links that sit in ``<head>`` without a
+``<body>`` in between are rejected. A page that writes an explicit ``<head>``
+but no ``<body>`` start tag, and puts its links after the head content, does
+not verify. The list is kept short on purpose: CSS-hidden content and the
+``hidden`` attribute are not checked, because deciding what CSS hides needs a
+browser, and the narrower list rejects fewer legitimate mentions.
 
 Microformats URL properties such as ``in-reply-to``, ``like-of``,
 ``repost-of``, ``bookmark-of``, and ``mention-of`` can still identify the
@@ -358,7 +373,10 @@ Vouch Support
 Vouch is a backwards-compatible Webmention extension for spam and moderation
 signals. A sender may include an optional third form parameter, ``vouch``,
 whose value is an ``http`` or ``https`` URL on a site the receiver trusts. The
-voucher page should link to the source page's domain.
+voucher page should link to the source page's domain. That link must be a
+rendered ``<a href>`` under the same rules as a source link (see
+`Source Link Verification`_): a link in ``<head>``, ``<svg>``, ``<math>``,
+``<template>``, ``<noscript>`` and the other listed ancestors does not count.
 
 django-indieweb accepts ``vouch`` on incoming Webmention POSTs, validates it as
 a URL when present, and stores it on ``Webmention.vouch_url`` for processor and
@@ -1061,7 +1079,17 @@ Relative author URLs and photo URLs resolve against the final fetched source
 URL, not the originally submitted source URL when redirects occurred. If the
 resulting author URL matches a local ``Profile`` URL on the configured Django
 ``Site`` domain, the local profile's name, URL, and photo override the parsed
-source-page author fields.
+source-page author fields. Only source pages on the ``Site`` domain get this
+override.
+
+The match ignores the case of the scheme and host, IDNA versus Unicode host
+spelling, a default port (``:443`` for ``https``, ``:80`` for ``http``) and a
+trailing slash, so ``https://Example.COM:443/me/`` matches a profile stored as
+``https://example.com/me``. Path case, query and fragment must match, and
+``www.`` is significant. A unique exact match on ``Profile.url`` wins; otherwise
+the normalised URLs are compared in Python (no extra database field). If more
+than one profile matches, no profile is used, a warning is logged, and the
+parsed author fields are kept.
 
 django-indieweb does not fetch remote author pages during Webmention receiving.
 ``rel=author`` support is limited to author ``h-card`` data already available in

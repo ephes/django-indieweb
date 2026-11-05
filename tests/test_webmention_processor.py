@@ -3281,3 +3281,99 @@ def test_sync_nested_responses_enforces_url_validators_at_ingest():
     # The invalid identity is dropped, so its existing row is retired instead of refreshed.
     stale.refresh_from_db()
     assert stale.status == "missing"
+
+
+def _local_profile(username: str, url: str) -> Profile:
+    user = get_user_model().objects.create_user(username=username, email=f"{username}@example.com")
+    return Profile.objects.create(user=user, h_card={"name": [username], "url": [url]})
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "author_url",
+    [
+        "https://example.com/authors/me",
+        "https://Example.COM/authors/me",
+        "HTTPS://example.com:443/authors/me",
+        "https://example.com/authors/me/",
+        "https://EXAMPLE.com:443/authors/me/",
+    ],
+)
+def test_get_local_profile_matches_canonical_url_variants(author_url):
+    profile = _local_profile("me", "https://example.com/authors/me")
+
+    found = WebmentionProcessor()._get_local_profile(author_url, source_url="https://example.com/posts/1")
+
+    assert found == profile
+
+
+@pytest.mark.django_db
+def test_get_local_profile_matches_stored_variant_and_idna():
+    from django.contrib.sites.models import Site
+
+    Site.objects.update(domain="bücher.example")
+    Site.objects.clear_cache()
+    profile = _local_profile("idn", "https://BÜCHER.example:443/me/")
+
+    processor = WebmentionProcessor()
+    assert processor._get_local_profile("https://xn--bcher-kva.example/me", source_url="https://bücher.example/p") == (
+        profile
+    )
+    assert processor._get_local_profile("https://bücher.example/me", source_url="https://bücher.example/p") == profile
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "author_url",
+    [
+        "https://example.com/Authors/me",  # path case is significant
+        "https://example.com/authors/me?x=1",
+        "https://www.example.com/authors/me",
+        "http://example.com:8443/authors/me",
+        "ftp://example.com/authors/me",
+        "https://user@example.com/authors/me",
+    ],
+)
+def test_get_local_profile_does_not_match_different_urls(author_url):
+    _local_profile("me", "https://example.com/authors/me")
+
+    assert WebmentionProcessor()._get_local_profile(author_url, source_url="https://example.com/posts/1") is None
+
+
+@pytest.mark.django_db
+def test_get_local_profile_still_requires_local_source():
+    _local_profile("me", "https://example.com/authors/me")
+
+    processor = WebmentionProcessor()
+    assert (
+        processor._get_local_profile("https://EXAMPLE.com/authors/me/", source_url="https://remote.example/p") is None
+    )
+
+
+@pytest.mark.django_db
+def test_get_local_profile_ambiguous_canonical_match_falls_back(caplog):
+    _local_profile("first", "https://example.com/authors/me")
+    _local_profile("second", "https://Example.com/authors/me/")
+    processor = WebmentionProcessor()
+
+    # An exact stored match is unique and wins.
+    assert processor._get_local_profile(
+        "https://example.com/authors/me", source_url="https://example.com/p"
+    ).user.username == ("first")
+    # A variant that only matches after normalisation is ambiguous: no profile.
+    with caplog.at_level("WARNING", logger="indieweb.processors"):
+        for _ in range(3):
+            assert (
+                processor._get_local_profile("https://example.com:443/authors/me/", source_url="https://example.com/p")
+                is None
+            )
+    assert "2 profiles match author URL" in caplog.text
+
+
+@pytest.mark.django_db
+def test_get_local_profile_duplicate_exact_urls_fall_back():
+    _local_profile("first", "https://example.com/authors/me")
+    _local_profile("second", "https://example.com/authors/me")
+
+    processor = WebmentionProcessor()
+    assert processor._get_local_profile("https://example.com/authors/me", source_url="https://example.com/p") is None

@@ -37,7 +37,18 @@ try:
 except ImportError:  # pragma: no cover - platforms without POSIX resource limits
     resource = None
 
-NON_RENDERED_LINK_ANCESTORS = {"noscript", "template"}
+# Elements whose descendant links do not count as rendered mentions. The list
+# is kept conservative on purpose (see "Source Link Verification" in
+# docs/webmention.rst): ``noscript`` and ``template`` content is not shown,
+# ``head`` holds metadata only, links in ``svg`` and ``math`` foreign content
+# are not accepted as visible mentions, and ``iframe``, ``textarea``, ``title``,
+# ``script`` and ``style`` take raw text in a browser, so markup inside them is
+# never a link. CSS-hidden content and the ``hidden`` attribute are not
+# checked.
+NON_RENDERED_LINK_ANCESTORS = frozenset(
+    {"noscript", "template", "head", "svg", "math", "iframe", "textarea", "title", "script", "style"}
+)
+
 
 EXIT_FAILED = 1
 EXIT_MEMORY_LIMIT = 3
@@ -120,18 +131,29 @@ def _urls_match(left: str, right: str) -> bool:
 def _rendered_link_tags(html_content: str) -> list[Tag]:
     """Return the ``<a href>`` elements of ``html_content`` that a browser renders.
 
-    Links inside non-rendered containers do not count. Elements arrive in
-    document order, so whether an element is hidden follows from its parent
-    alone and the scan stays linear in the document size whatever the nesting.
+    Links inside non-rendered containers (:data:`NON_RENDERED_LINK_ANCESTORS`)
+    do not count. Elements arrive in document order, so whether an element is
+    hidden follows from its parent alone and the scan stays linear in the
+    document size whatever the nesting. ``head_hidden`` tracks elements hidden
+    only by a ``head`` ancestor; a ``body`` element below them is rendered
+    again, because ``html.parser`` nests ``<body>`` in ``<head>`` when the
+    document omits ``</head>``.
     """
     soup = BeautifulSoup(html_content, "html.parser")
     hidden: set[int] = set()
+    head_hidden: set[int] = set()
     links: list[Tag] = []
     for tag in soup.find_all(True):
         if not isinstance(tag, Tag):
             continue
-        if tag.name in NON_RENDERED_LINK_ANCESTORS or id(tag.parent) in hidden:
+        parent_id = id(tag.parent)
+        if parent_id in hidden or (tag.name in NON_RENDERED_LINK_ANCESTORS and tag.name != "head"):
             hidden.add(id(tag))
+        elif parent_id in head_hidden:
+            if tag.name != "body":
+                head_hidden.add(id(tag))
+        elif tag.name == "head":
+            head_hidden.add(id(tag))
         elif tag.name == "a" and tag.get("href") is not None:
             links.append(tag)
     return links
