@@ -41,7 +41,7 @@ Running Tox
 
 Tox is used to test the supported Python and Django version matrix:
 
-- Django 5.2 LTS on Python 3.10, 3.11, 3.12, 3.13, and 3.14
+- Django 5.2 LTS on Python 3.11, 3.12, 3.13, and 3.14
 - Django 6.0 on Python 3.12, 3.13, and 3.14
 - Django 6.1 on Python 3.12, 3.13, and 3.14
 

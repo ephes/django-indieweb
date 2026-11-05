@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from datetime import timezone as dt_timezone
+from datetime import UTC, datetime, timedelta
 from io import StringIO
 from unittest.mock import patch
 
@@ -16,7 +15,7 @@ from django.test.utils import CaptureQueriesContext
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
 from indieweb.websub import prune_websub_delivery_attempts, websub_delivery_attempt_retention_days
 
-NOW = datetime(2026, 10, 12, 12, 0, tzinfo=dt_timezone.utc)
+NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
 CUTOFF = NOW - timedelta(days=30)
 
 

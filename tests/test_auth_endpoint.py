@@ -8,7 +8,7 @@ Tests for `django-indieweb` auth endpoint.
 """
 
 import json
-from datetime import datetime, timedelta, timezone  # noqa: E501
+from datetime import UTC, datetime, timedelta  # noqa: E501
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -369,7 +369,7 @@ def test_auth_timeout_reset(client, user):
     # Second approval should reset timeout
     response = client.post(base_url, data=form_data)
     auth = Auth.objects.get(owner=user, me=data["me"][0])
-    assert (datetime.now(timezone.utc) - auth.created).seconds <= timeout
+    assert (datetime.now(UTC) - auth.created).seconds <= timeout
 
 
 @pytest.mark.django_db

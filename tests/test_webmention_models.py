@@ -1,6 +1,6 @@
 """Test cases for Webmention models."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -86,7 +86,7 @@ class TestWebmentionModel:
             author_photo="https://example.com/johndoe.jpg",
             content="This is a reply to your article.",
             content_html="<p>This is a reply to your article.</p>",
-            published=datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            published=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
         )
 
         assert webmention.author_name == "John Doe"
@@ -138,7 +138,7 @@ class TestWebmentionModel:
 
         # Update to verified status
         webmention.status = "verified"
-        webmention.verified_at = datetime.now(timezone.utc)
+        webmention.verified_at = datetime.now(UTC)
         webmention.save()
 
         assert webmention.verified_at is not None
@@ -181,7 +181,7 @@ class TestWebmentionSourceSnapshotModel:
             source_url="https://example.com/post",
             target_url="https://mysite.com/article",
         )
-        fetched_at = datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)
+        fetched_at = datetime(2026, 4, 30, 12, 0, 0, tzinfo=UTC)
 
         snapshot = WebmentionSourceSnapshot.objects.create(
             webmention=webmention,
@@ -216,7 +216,7 @@ class TestWebmentionSourceSnapshotModel:
             raw_source_html="<html></html>",
             final_source_url="https://example.com/post",
             content_digest="b" * 64,
-            fetched_at=datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 4, 30, 12, 0, 0, tzinfo=UTC),
         )
 
         assert snapshot.parsed_h_entry == {}
@@ -233,7 +233,7 @@ class TestWebmentionSourceSnapshotModel:
             raw_source_html="<html></html>",
             final_source_url="https://example.com/post",
             content_digest="c" * 64,
-            fetched_at=datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 4, 30, 12, 0, 0, tzinfo=UTC),
         )
 
         webmention.delete()
@@ -252,7 +252,7 @@ class TestWebmentionNestedResponseModel:
             target_url="https://mysite.com/article",
             status="verified",
         )
-        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
 
         child = WebmentionNestedResponse.objects.create(
             webmention=webmention,
@@ -304,7 +304,7 @@ class TestWebmentionNestedResponseModel:
             target_url="https://mysite.com/article",
             status="verified",
         )
-        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         child = WebmentionNestedResponse(
             webmention=webmention,
             identity="https://example.com/comments/1",
@@ -326,7 +326,7 @@ class TestWebmentionNestedResponseModel:
             target_url="https://mysite.com/article",
             status="verified",
         )
-        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
 
         child = WebmentionNestedResponse.objects.create(
             webmention=webmention,
@@ -359,7 +359,7 @@ class TestWebmentionNestedResponseModel:
             source_url="https://example.net/post",
             target_url="https://mysite.com/article",
         )
-        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        seen_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         identity = "https://comments.example/reply"
 
         WebmentionNestedResponse.objects.create(
@@ -394,8 +394,8 @@ class TestWebmentionNestedResponseModel:
         child = WebmentionNestedResponse.objects.create(
             webmention=webmention,
             identity="https://example.com/post#child",
-            first_seen_at=datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc),
-            last_seen_at=datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc),
+            first_seen_at=datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC),
+            last_seen_at=datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC),
         )
 
         webmention.delete()
@@ -409,11 +409,11 @@ class TestWebmentionOutboundTargetModel:
 
     def test_create_outbound_target_with_documented_fields(self):
         """Test creating a complete outbound target-history row."""
-        endpoint_discovered_at = datetime(2026, 5, 2, 10, 0, 0, tzinfo=timezone.utc)
-        first_sent_at = datetime(2026, 5, 2, 10, 1, 0, tzinfo=timezone.utc)
-        last_sent_at = datetime(2026, 5, 2, 10, 2, 0, tzinfo=timezone.utc)
-        last_seen_at = datetime(2026, 5, 2, 10, 3, 0, tzinfo=timezone.utc)
-        last_attempted_at = datetime(2026, 5, 2, 10, 4, 0, tzinfo=timezone.utc)
+        endpoint_discovered_at = datetime(2026, 5, 2, 10, 0, 0, tzinfo=UTC)
+        first_sent_at = datetime(2026, 5, 2, 10, 1, 0, tzinfo=UTC)
+        last_sent_at = datetime(2026, 5, 2, 10, 2, 0, tzinfo=UTC)
+        last_seen_at = datetime(2026, 5, 2, 10, 3, 0, tzinfo=UTC)
+        last_attempted_at = datetime(2026, 5, 2, 10, 4, 0, tzinfo=UTC)
 
         target = WebmentionOutboundTarget.objects.create(
             source_url="https://source.example/posts/1",
@@ -555,11 +555,11 @@ class TestWebmentionOutboundTargetModel:
             source_url="https://source.example/posts/2",
             target_url="https://target.example/articles/2",
         )
-        endpoint_discovered_at = datetime(2026, 5, 2, 11, 0, 0, tzinfo=timezone.utc)
-        first_sent_at = datetime(2026, 5, 2, 11, 1, 0, tzinfo=timezone.utc)
-        last_sent_at = datetime(2026, 5, 2, 11, 2, 0, tzinfo=timezone.utc)
-        last_seen_at = datetime(2026, 5, 2, 11, 3, 0, tzinfo=timezone.utc)
-        last_attempted_at = datetime(2026, 5, 2, 11, 4, 0, tzinfo=timezone.utc)
+        endpoint_discovered_at = datetime(2026, 5, 2, 11, 0, 0, tzinfo=UTC)
+        first_sent_at = datetime(2026, 5, 2, 11, 1, 0, tzinfo=UTC)
+        last_sent_at = datetime(2026, 5, 2, 11, 2, 0, tzinfo=UTC)
+        last_seen_at = datetime(2026, 5, 2, 11, 3, 0, tzinfo=UTC)
+        last_attempted_at = datetime(2026, 5, 2, 11, 4, 0, tzinfo=UTC)
 
         target.endpoint_url = "https://target.example/webmention"
         target.endpoint_discovered_at = endpoint_discovered_at

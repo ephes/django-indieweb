@@ -10,7 +10,7 @@ authors = [
 version = "0.6.2"
 description = "includes indieauth, micropub, and webmention endpoints"
 readme = "README.rst"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = [
     "indieweb",
     "indieauth",
@@ -31,7 +31,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -74,10 +73,8 @@ Source = "https://github.com/ephes/django-indieweb"
 
 [tool.uv]
 # Floors for transitive dev tooling with security fixes (Dependabot alerts).
-# No filelock fix supports Python 3.10; that fork resolves to the newest
-# 3.10-compatible release (4.1.0), which is still affected.
 constraint-dependencies = [
-    "filelock>=4.2.1; python_version >= '3.11'",
+    "filelock>=4.2.1",
     "virtualenv>=21.14.9",
 ]
 
@@ -89,7 +86,7 @@ exclude_dirs = ["docs/_build"]
 
 [tool.ruff]
 line-length = 119
-target-version = "py310"
+target-version = "py311"
 src = ["src"]
 
 [tool.ruff.lint]
