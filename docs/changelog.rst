@@ -5,6 +5,20 @@ Changelog
 
 Unreleased
 ----------
+* **Received Webmention verification hardening** (backlog priority 4):
+
+  * **Behavior change:** links inside ``<svg>``, ``<math>``, ``<iframe>``,
+    ``<textarea>``, ``<title>``, ``<script>`` and ``<style>``, and links
+    written among the metadata in ``<head>``, no longer verify a source link
+    or a Vouch, in addition to the existing ``<template>`` and
+    ``<noscript>``. Content after the head metadata still counts when
+    ``</head>`` or ``<body>`` is omitted. See "Source Link Verification" in
+    the Webmention docs.
+  * **Behavior change:** the local-profile author override matches
+    ``Profile.url`` after normalising scheme and host case, IDNA, the
+    default port and a trailing slash. When more than one profile matches,
+    no profile is used and a warning is logged; previously duplicate exact
+    ``Profile.url`` values raised ``MultipleObjectsReturned``.
 * Update the development lock's certifi CA bundle to 2026.10.19 for the
   eMudhra/emSign CA compromise
   (`GHSA-6q48-6c7w-9gw2 <https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2>`_).

@@ -915,3 +915,72 @@ def test_capacity_rejection_preserves_row_and_returns_retryable_response(setting
     assert webmention.status == ("verified" if verified else "pending")
     assert webmention.verified_at == previous_time
     assert webmention.content == "previous"
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        f'<html><head><a href="{TARGET_URL}">hidden</a></head><body><p>text</p></body></html>',
+        f'<head><title>t</title><meta charset="utf-8"><a href="{TARGET_URL}">hidden</a></head>',
+        f'<svg viewBox="0 0 10 10"><a href="{TARGET_URL}"><text>hidden</text></a></svg>',
+        f'<svg><foreignObject><div><a href="{TARGET_URL}">hidden</a></div></foreignObject></svg>',
+        f'<math><mi><a href="{TARGET_URL}">hidden</a></mi></math>',
+        f'<iframe><a href="{TARGET_URL}">hidden</a></iframe>',
+        f'<head><template><body><a href="{TARGET_URL}">hidden</a></body></template></head>',
+        f'<body><head><a href="{TARGET_URL}">hidden</a></head></body>',
+        f'<head><link rel="me" href="https://x.example/"><a href="{TARGET_URL}"></a><p>after</p>',
+    ],
+    ids=[
+        "head",
+        "head-after-meta",
+        "svg",
+        "svg-foreign-object",
+        "math",
+        "iframe",
+        "body-in-head-template",
+        "head-in-body",
+        "a-among-head-metadata",
+    ],
+)
+def test_links_in_head_and_foreign_content_do_not_verify(html):
+    assert _html_links_to_target(html, TARGET_URL) is False
+    assert _html_links_to_source_domain(html, SOURCE_URL.replace("example.com", "mysite.com")) is False
+    assert not webmention_parse_worker.analyze_source(html, SOURCE_URL, TARGET_URL)["links_to_target"]
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        f'<html><head><title>t</title></head><body><a href="{TARGET_URL}">shown</a></body></html>',
+        # html.parser nests <body> in <head> when </head> is omitted.
+        f'<html><head><title>t</title><meta charset="utf-8"><body><p><a href="{TARGET_URL}">shown</a>',
+        f'<svg><a href="https://other.example/">x</a></svg><p><a href="{TARGET_URL}">shown</a></p>',
+        f'<head><title>t</title></head><math><mi>x</mi></math><a href="{TARGET_URL}">shown</a>',
+        f'<!doctype html><html><head><meta charset="utf-8"><title>x</title><p><a href="{TARGET_URL}">shown</a>',
+        f'<html><head><title>x</title><div class="h-entry"><a href="{TARGET_URL}">shown</a></div>',
+        f'<head><title>x</title><h1>Post</h1><a href="{TARGET_URL}">shown</a>',
+    ],
+    ids=[
+        "explicit-head",
+        "unclosed-head",
+        "after-svg",
+        "after-math",
+        "no-head-end-no-body-p",
+        "no-head-end-no-body-div",
+        "a-after-head-ended",
+    ],
+)
+def test_rendered_links_next_to_hidden_containers_still_verify(html):
+    assert _html_links_to_target(html, TARGET_URL) is True
+    assert _html_links_to_source_domain(html, SOURCE_URL.replace("example.com", "mysite.com")) is True
+    assert webmention_parse_worker.analyze_source(html, SOURCE_URL, TARGET_URL)["links_to_target"]
+
+
+def test_vouch_link_in_head_or_svg_does_not_verify():
+    for hidden in (
+        f'<head><a href="{SOURCE_URL}">x</a></head>',
+        f'<svg><a href="{SOURCE_URL}">x</a></svg>',
+    ):
+        assert webmention_parse_worker.analyze_vouch(hidden, SOURCE_URL) == {"links_to_source_domain": False}
+    shown = f'<head><title>t</title></head><body><a href="{SOURCE_URL}">x</a></body>'
+    assert webmention_parse_worker.analyze_vouch(shown, SOURCE_URL) == {"links_to_source_domain": True}

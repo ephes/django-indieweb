@@ -1646,7 +1646,8 @@ class WebmentionProcessor:
         Remote Webmention source pages are attacker-controlled. They may claim
         a local ``u-url`` in their author h-card, so local profile data is only
         trusted as an override when the source document itself is hosted on the
-        current Django ``Site`` domain.
+        current Django ``Site`` domain. Stored profile URLs are matched by
+        :func:`_lookup_profile_by_canonical_url`.
         """
         if not author_url:
             return None
@@ -1660,12 +1661,91 @@ class WebmentionProcessor:
             if source_url is None or _canonical_domain_for_vouch(source_url) != current_domain:
                 return None
 
-            if _canonical_domain_for_vouch(author_url) == current_domain:
-                return Profile.objects.get(url=author_url)
-        except (Profile.DoesNotExist, Site.DoesNotExist):
-            pass
+            # The author URL must also be on the current site; hosts compare
+            # like profile URLs (IDNA, default port), with ``www.`` ignored.
+            # ``Site.domain`` has no scheme, so either scheme's default port
+            # may be dropped from it.
+            author_key = _canonical_profile_url(author_url)
+            site_hosts = {
+                _profile_url_site_host(key)
+                for key in (
+                    _canonical_profile_url(f"https://{current_site.domain}"),
+                    _canonical_profile_url(f"http://{current_site.domain}"),
+                )
+                if key is not None
+            }
+            if author_key is None or _profile_url_site_host(author_key) not in site_hosts:
+                return None
+        except Site.DoesNotExist:
+            return None
 
+        return _lookup_profile_by_canonical_url(author_url, author_key)
+
+
+def _canonical_profile_url(value: str) -> str | None:
+    """Return a comparison key for a profile URL, or ``None`` if it is not one.
+
+    Scheme and host are lowercased, the host is IDNA-encoded, a default port
+    (``:80`` for ``http``, ``:443`` for ``https``) is dropped and a trailing
+    slash on the path is ignored, so ``https://Example.COM:443/me/`` and
+    ``https://example.com/me`` give the same key. Path case, query and fragment
+    are kept as they are, and ``www.`` is not stripped: two URLs that may name
+    different pages never share a key.
+    """
+    try:
+        parsed = urlparse(value.strip())
+        host = parsed.hostname
+        port = parsed.port
+    except (ValueError, AttributeError):
         return None
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https") or not host or "@" in parsed.netloc:
+        return None
+    try:
+        host = host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        host = host.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    default_port = 443 if scheme == "https" else 80
+    netloc = host if port is None or port == default_port else f"{host}:{port}"
+    path = parsed.path.rstrip("/")
+    return urlunparse((scheme, netloc, path, parsed.params, parsed.query, parsed.fragment))
+
+
+def _profile_url_site_host(key: str) -> str:
+    """Return the host of a :func:`_canonical_profile_url` key without ``www.``, for the same-site check."""
+    netloc = urlparse(key).netloc
+    return netloc[4:] if netloc.startswith("www.") else netloc
+
+
+def _lookup_profile_by_canonical_url(author_url: str, author_key: str) -> Profile | None:
+    """Return the one local profile whose ``url`` matches ``author_url``.
+
+    A unique exact match wins. Otherwise stored URLs are compared by
+    :func:`_canonical_profile_url` in Python, so no migration or indexed field
+    is needed; this reads the ``url`` of every profile that has one. When more
+    than one profile matches, nothing is returned and the parsed author data is
+    used instead, so an ambiguous match never picks a profile at random.
+    """
+    exact = list(Profile.objects.filter(url=author_url).order_by("pk")[:2])
+    if len(exact) == 1:
+        return exact[0]
+
+    matches = [
+        pk
+        for pk, url in Profile.objects.exclude(url="").order_by("pk").values_list("pk", "url").iterator()
+        if _canonical_profile_url(url) == author_key
+    ]
+    if len(matches) == 1:
+        return Profile.objects.filter(pk=matches[0]).first()
+    if len(matches) > 1:
+        logger.warning(
+            "Ignoring local profile override: %d profiles match author URL %s",
+            len(matches),
+            redact_url(author_url),
+        )
+    return None
 
 
 def process_queued_webmention(webmention_id: int, *, client: httpx.Client | None = None) -> Webmention:
