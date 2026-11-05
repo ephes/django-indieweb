@@ -40,14 +40,6 @@ The 2026-05-10 Medium fix restricted local-profile author rewrites to source pag
 
 `processors.py:64` excludes only `noscript` and `template`; an `<a href>` inside `<head>`, foreign content (SVG/MathML), or CSS-hidden ancestors still satisfies the rendered-anchor invariant. Self-attestation by the source author bounds practical impact, but tightening the ancestor list (or, for Vouch proof, requiring the link inside an h-card or visible body region) closes the silent-vouch concern.
 
-#### `_extract_external_target_urls` case-insensitive same-domain compare
-
-`senders.py:567-583` compares `urlparse(...).netloc` with `==`. A link `https://Example.COM/x` from a source on `https://example.com/` is treated as cross-domain and produces a self-mention. Lowercase both sides (or use `_origin_for_url` from `http_client.py:233`) and strip default ports.
-
-#### `send_webmention` vouch URL: comment intent or pass `default_address_resolver`
-
-`senders.py:326` calls `validate_safe_http_url(vouch, resolver=None)` (syntactic only). The vouch URL is not fetched on this path, so this is future-proofing. Either add a comment documenting the intentional `resolver=None`, or pass `default_address_resolver` to be consistent and let the comment be the future-proof note.
-
 #### Sanity-check HEAD-discovered Webmention endpoints against GET
 
 `WebmentionSender.discover_endpoint` accepts a HEAD-discovered endpoint without checking whether a following GET would advertise the same endpoint (`senders.py:165-178`). Each hop remains SSRF-screened, so this is delivery accuracy rather than a direct network bypass. Document the accepted behavior or add a cheap GET sniff before sending.
@@ -70,9 +62,7 @@ The 2026-05-10 Medium fix restricted local-profile author rewrites to source pag
 
 ### WebSub Enhancements
 
-#### Layered `httpx.Timeout` for `WebmentionSender`
-
-`senders.py:108-110, 167, 336` use scalar timeouts (10 s HEAD, 30 s POST). With `WEBMENTION_MAX_REDIRECTS = 5` (`http_client.py:16`), worst-case wall-clock is ~180 s per POST delivery (initial + 5 redirects × 30 s) and ~60 s per HEAD discovery. A hostile endpoint that slow-rolls writes without exceeding any single phase timeout can sustain that. Replace with `SAFE_HTTP_DEFAULT_TIMEOUT`-style `httpx.Timeout(connect, read, write, pool)` and a per-call deadline.
+No current WebSub Enhancements items.
 
 ### Micropub Enhancements and Extensions
 
@@ -84,9 +74,7 @@ No current Syndication and Storage Examples items.
 
 ### Webmention and Reader Boundaries
 
-#### Opt-in `INDIEWEB_WEBMENTION_STRICT_REDIRECTS`
-
-`senders.py:330-338` does not opt into `cross_origin_strip`, so `request_with_webmention_redirects` replays the source/target POST body cross-origin up to five hops (`http_client.py:300-326`). Each hop is still SSRF-screened, but the sender becomes an opaque endpoint pivot for attacker-controlled redirect chains. Add an opt-in `INDIEWEB_WEBMENTION_STRICT_REDIRECTS` setting that flips `cross_origin_strip=True` for operators who do not need bug-for-bug compatibility with quirky endpoints.
+No current Webmention and Reader Boundaries items.
 
 ## Agent Workflow Improvements
 

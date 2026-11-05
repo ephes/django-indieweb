@@ -589,7 +589,11 @@ dictionaries with the ordinary ``success``, ``status_code``, ``target``,
 external absolute HTTP(S) links. Relative URLs, same-domain URLs, and targets
 without a discovered endpoint do not produce ordinary send results or outbound
 history rows. Recording target history is an additional durable side effect,
-not a change to which ordinary targets are delivered.
+not a change to which ordinary targets are delivered. Same-domain means the
+same host after lowercasing, IDNA encoding and dropping the scheme's default
+port, so a link to ``https://Example.COM:443/x`` from a source on
+``https://example.com/`` is skipped; a link to another port of the same host
+(``https://example.com:8443/``) is still sent.
 
 Callers that need the earlier no-write behavior for tests or unusual
 integrations can pass ``record_history=False``:
@@ -995,6 +999,35 @@ preserved for every followed redirect status (``301``, ``302``, ``303``,
 ``307``, and ``308``). The final endpoint response is considered successful
 only when it returns HTTP ``200``, ``201``, or ``202``; redirect errors return
 the existing ``{"success": False, ...}`` result shape.
+
+By default the endpoint ``POST`` is replayed to another origin when the endpoint
+redirects there; each hop is still SSRF-screened. Set
+``INDIEWEB_WEBMENTION_STRICT_REDIRECTS = True`` to fail such a delivery
+instead, so the form payload (``source``, ``target`` and ``vouch``) only goes
+to the origin (scheme, host and port) that was discovered. Same-origin
+redirects are still followed. Discovery and source-content fetches send no
+payload and are not affected by this setting.
+
+Outbound timeouts
+-----------------
+
+Every outbound request uses layered per-operation timeouts: discovery
+(``HEAD`` and ``GET``) and source-content fetches allow 3 seconds to connect,
+5 seconds per read or write and 2 seconds to get a pooled connection; endpoint
+delivery ``POST`` allows 15 seconds per read for endpoints that process the
+Webmention before they answer. On top of that, each discovery (``HEAD`` and
+the ``GET`` fallback together), each delivery and each source-content fetch
+has a total budget across all redirects and body reads,
+``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` (default 30 seconds). A
+discovery over the budget finds no endpoint; a delivery over the budget
+returns ``{"success": False, "status_code": None, "error": ...}``. The budget
+is a check, not an interrupt, with the same limits as the receive-side
+:ref:`fetch budget <webmention-fetch-total-timeout>`.
+
+``send_webmention`` checks an optional ``vouch`` URL only syntactically (it must
+be an absolute ``http``/``https`` URL that is not a literal private or local
+address). The sender never fetches the Vouch URL, so it does not resolve its
+host; the receiving site fetches it with its own checks.
 
 Authorship Extraction
 =====================

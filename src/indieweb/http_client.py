@@ -341,9 +341,11 @@ def request_with_webmention_redirects(
     followed redirects, including Webmention endpoint ``POST`` delivery. Each
     request URL and redirect target is screened with the shared SSRF checks.
 
-    Webmention sender compatibility deliberately permits cross-origin redirects
-    with method/body preservation, so this helper does not opt into the strict
-    cross-origin mode in :func:`request_with_safe_redirects`.
+    Webmention sender compatibility permits cross-origin redirects with
+    method/body preservation by default. Callers that opt into
+    ``INDIEWEB_WEBMENTION_STRICT_REDIRECTS`` pass ``cross_origin_strip=True``
+    through ``request_kwargs`` to refuse them (see
+    :func:`request_with_safe_redirects`).
 
     When ``max_bytes`` is provided the response is streamed and decoded bytes are
     bounded so a hostile Webmention endpoint cannot force the sender to buffer
@@ -360,6 +362,7 @@ def request_with_safe_redirects(
     *,
     resolver: AddressResolver | None = default_address_resolver,
     max_bytes: int | None = None,
+    total_timeout: float | None = None,
     pin_to_resolved_ip: bool = True,
     cross_origin_strip: bool = False,
     **request_kwargs: Any,
@@ -383,14 +386,20 @@ def request_with_safe_redirects(
     :class:`WebmentionRedirectError` before any network call to the new origin
     is made. Use this for secret-bearing callers (WebSub subscribe and
     publish) where method/body/header replay across origins is unsafe; the
-    Webmention sender path keeps the default permissive behavior.
+    Webmention sender path keeps the default permissive behavior unless
+    ``INDIEWEB_WEBMENTION_STRICT_REDIRECTS`` is enabled.
+
+    When ``total_timeout`` is provided, the request is also routed through
+    streaming so the budget covers the whole redirect chain and the body
+    reads; see :func:`stream_with_safe_redirects` for its limits.
     """
-    if max_bytes is not None:
+    if max_bytes is not None or total_timeout is not None:
         return stream_with_safe_redirects(
             client,
             method,
             url,
             max_bytes=max_bytes,
+            total_timeout=total_timeout,
             resolver=resolver,
             pin_to_resolved_ip=pin_to_resolved_ip,
             cross_origin_strip=cross_origin_strip,

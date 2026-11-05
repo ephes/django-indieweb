@@ -1441,6 +1441,43 @@ be reported as a failure (``success=False``, ``status_code=None``,
 Set this to ``None`` only when an upstream proxy, queue, or worker boundary
 enforces an equivalent limit; malformed values fall back to the default cap.
 
+INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Time budget in seconds for one outbound Webmention call of
+``WebmentionSender``: one endpoint discovery (the ``HEAD`` probe and the
+``GET`` fallback share it), one endpoint delivery ``POST``, or one
+source-content fetch, each counted across all redirects and body reads.
+
+**Default:** ``30``
+
+The per-operation timeouts only bound a single connect, read, write or pool
+wait (discovery and fetches: 3 / 5 / 5 / 2 seconds; delivery: 3 / 15 / 5 / 2
+seconds). Without the budget a slow redirect chain or an endpoint that
+trickles its answer could hold a worker for up to six hops of read timeouts.
+A discovery over the budget finds no endpoint, a delivery over the budget is
+reported as a failure with ``status_code=None``, and a source fetch over the
+budget returns ``None``. The budget is a check, not an interrupt; see
+:ref:`webmention-fetch-total-timeout` for its limits. Values that are not a
+finite positive number fall back to the default with a warning.
+
+INDIEWEB_WEBMENTION_STRICT_REDIRECTS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Refuse cross-origin redirects during outbound Webmention delivery.
+
+**Default:** ``False``
+
+By default an endpoint redirect keeps the ``POST`` method and the
+``source``/``target``/``vouch`` form body for every hop, including hops to
+another origin, for compatibility with endpoints behind such redirects. Each
+hop is SSRF-screened, but the sender can be used to send that body to an
+origin the discovered endpoint chose. With ``True`` (only the boolean
+``True`` enables it), a redirect to a different scheme, host or port fails
+the delivery before any request to the new origin; same-origin redirects are
+still followed. Endpoint discovery and source-content fetches send no body and
+are unaffected.
+
 INDIEWEB_WEBMENTION_HEAD_MAX_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

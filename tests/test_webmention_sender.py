@@ -1552,3 +1552,266 @@ def test_discover_endpoint_does_not_fall_back_to_get_when_head_redirects_to_unsa
 )
 def test_parse_html_for_endpoint_uses_document_order_and_empty_href(sender, html, expected):
     assert sender._parse_html_for_endpoint(html, "https://target.com/their-post?x=1") == expected
+
+
+class _SenderClock:
+    """A monotonic clock that only advances when a fake transport says so."""
+
+    def __init__(self, monkeypatch):
+        from indieweb import http_client
+
+        self.now = 0.0
+        monkeypatch.setattr(http_client.time, "monotonic", lambda: self.now)
+
+
+@override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
+def test_send_webmention_total_timeout_cuts_off_slow_redirect_chain(sender, source_url, target_url, monkeypatch):
+    """A redirect chain where every hop stays inside the per-operation timeouts still hits the total budget."""
+    clock = _SenderClock(monkeypatch)
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        clock.now += 10
+        return httpx.Response(307, headers={"Location": f"/hop-{len(captured)}"})
+
+    result = sender.send_webmention(
+        source_url, target_url, "https://target.com/webmention", client=_make_test_client(handler)
+    )
+
+    assert result["success"] is False
+    assert result["status_code"] is None
+    assert "deadline" in result["error"]
+    # Hops at t=10, 20 and 30: the third hop's headers arrive after the budget.
+    assert len(captured) == 3
+    assert clock.now == 30
+
+
+@override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
+def test_discover_endpoint_total_timeout_covers_head_and_get(sender, target_url, monkeypatch):
+    """HEAD and the GET fallback share one budget; a used-up budget skips the GET."""
+    clock = _SenderClock(monkeypatch)
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        clock.now += 10
+        if len(captured) < 3:
+            return httpx.Response(302, headers={"Location": f"/hop-{len(captured)}"})
+        return httpx.Response(200)
+
+    # HEAD at t=10, 20, 30 ends with a 200 without a Link header, but the
+    # budget is gone, so discovery fails without a GET.
+    assert sender.discover_endpoint(target_url, client=_make_test_client(handler)) is None
+    assert [request.method for request in captured] == ["HEAD", "HEAD", "HEAD"]
+
+
+@override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
+def test_discover_endpoint_get_fallback_gets_the_remaining_budget(sender, target_url, monkeypatch):
+    clock = _SenderClock(monkeypatch)
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        clock.now += 10
+        if request.method == "HEAD":
+            return httpx.Response(405)
+        return httpx.Response(200, headers={"Link": '</webmention>; rel="webmention"'})
+
+    # HEAD ends at t=10, the GET's headers arrive at t=20: inside the budget.
+    assert sender.discover_endpoint(target_url, client=_make_test_client(handler)) == "https://target.com/webmention"
+    clock.now = 0.0
+    captured.clear()
+
+    def slow_get(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        clock.now += 20
+        if request.method == "HEAD":
+            return httpx.Response(405)
+        return httpx.Response(200, headers={"Link": '</webmention>; rel="webmention"'})
+
+    # HEAD ends at t=20, the GET's headers arrive at t=40: over the budget.
+    assert sender.discover_endpoint(target_url, client=_make_test_client(slow_get)) is None
+    assert [request.method for request in captured] == ["HEAD", "GET"]
+
+
+@override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
+def test_fetch_content_total_timeout_cuts_off_dripping_body(sender, source_url, monkeypatch):
+    clock = _SenderClock(monkeypatch)
+
+    class Drip(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(50):
+                clock.now += 1
+                yield b"x"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=Drip())
+
+    assert sender.fetch_content(source_url, client=_make_test_client(handler)) is None
+    assert clock.now == 25
+
+
+def test_sender_uses_layered_per_operation_timeouts(sender, source_url, target_url):
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(202)
+
+    client = _make_test_client(handler)
+    sender.discover_endpoint(target_url, client=client)
+    sender.send_webmention(source_url, target_url, "https://target.com/webmention", client=client)
+
+    head, get, post = captured
+    assert head.method == "HEAD" and get.method == "GET" and post.method == "POST"
+    layered_discovery = {"connect": 3.0, "read": 5.0, "write": 5.0, "pool": 2.0}
+    assert head.extensions["timeout"] == layered_discovery
+    assert get.extensions["timeout"] == layered_discovery
+    assert post.extensions["timeout"] == {"connect": 3.0, "read": 15.0, "write": 5.0, "pool": 2.0}
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "5", float("inf"), float("nan"), None])
+def test_invalid_send_total_timeout_setting_falls_back_to_the_default(settings, caplog, value):
+    from indieweb.senders import _webmention_send_total_timeout
+
+    settings.INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS = value
+    assert _webmention_send_total_timeout() == 30.0
+    assert "Invalid INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS" in caplog.text
+
+
+@pytest.mark.parametrize("value,expected", [(3, 3.0), (0.5, 0.5)])
+def test_send_total_timeout_setting_accepts_positive_numbers(settings, value, expected):
+    from indieweb.senders import _webmention_send_total_timeout
+
+    settings.INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS = value
+    assert _webmention_send_total_timeout() == expected
+
+
+def _cross_origin_redirect_handler(captured: list[httpx.Request], location: str):
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if len(captured) == 1:
+            return httpx.Response(307, headers={"Location": location})
+        return httpx.Response(202)
+
+    return handler
+
+
+@pytest.mark.parametrize("strict", [None, False])
+def test_send_webmention_replays_post_cross_origin_by_default(settings, sender, source_url, target_url, strict):
+    """Without strict redirects, a cross-origin redirect keeps the POST body (unchanged behaviour)."""
+    if strict is not None:
+        settings.INDIEWEB_WEBMENTION_STRICT_REDIRECTS = strict
+    captured: list[httpx.Request] = []
+    handler = _cross_origin_redirect_handler(captured, "https://other.example/webmention")
+
+    result = sender.send_webmention(
+        source_url, target_url, "https://target.com/webmention", client=_make_test_client(handler)
+    )
+
+    assert result["success"] is True
+    assert _request_urls(captured) == ["https://target.com/webmention", "https://other.example/webmention"]
+    assert captured[1].method == "POST"
+    assert captured[1].content == captured[0].content
+
+
+@override_settings(INDIEWEB_WEBMENTION_STRICT_REDIRECTS=True)
+@pytest.mark.parametrize(
+    "location",
+    [
+        "https://other.example/webmention",
+        "http://target.com/webmention",
+        "https://target.com:8443/webmention",
+    ],
+)
+def test_strict_redirects_refuse_cross_origin_endpoint_redirect(sender, source_url, target_url, location):
+    """With strict redirects, the POST body is never sent to another origin."""
+    captured: list[httpx.Request] = []
+    handler = _cross_origin_redirect_handler(captured, location)
+
+    result = sender.send_webmention(
+        source_url,
+        target_url,
+        "https://target.com/webmention",
+        vouch="https://vouch.example/page",
+        client=_make_test_client(handler),
+    )
+
+    assert result["success"] is False
+    assert "cross-origin redirect" in result["error"]
+    assert _request_urls(captured) == ["https://target.com/webmention"]
+
+
+@override_settings(INDIEWEB_WEBMENTION_STRICT_REDIRECTS=True)
+@pytest.mark.parametrize("location", ["/api/webmention", "https://TARGET.com:443/api/webmention"])
+def test_strict_redirects_still_follow_same_origin_endpoint_redirect(sender, source_url, target_url, location):
+    captured: list[httpx.Request] = []
+    handler = _cross_origin_redirect_handler(captured, location)
+
+    result = sender.send_webmention(
+        source_url, target_url, "https://target.com/webmention", client=_make_test_client(handler)
+    )
+
+    assert result["success"] is True
+    assert len(captured) == 2
+    assert captured[1].url.path == "/api/webmention"
+    assert captured[1].content == captured[0].content
+
+
+@override_settings(INDIEWEB_WEBMENTION_STRICT_REDIRECTS="yes")
+def test_strict_redirects_only_enabled_by_true(sender, source_url, target_url):
+    captured: list[httpx.Request] = []
+    handler = _cross_origin_redirect_handler(captured, "https://other.example/webmention")
+
+    result = sender.send_webmention(
+        source_url, target_url, "https://target.com/webmention", client=_make_test_client(handler)
+    )
+
+    assert result["success"] is True
+    assert len(captured) == 2
+
+
+def test_extract_external_target_urls_normalises_host_case_and_default_port(sender):
+    html = """
+    <a href="https://Example.COM:443/x">same, upper case and default port</a>
+    <a href="https://example.com/y">same</a>
+    <a href="http://EXAMPLE.com:80/z">same host, other scheme with default port</a>
+    <a href="https://example.com:8443/other-port">other port</a>
+    <a href="https://other.example/post">other host</a>
+    """
+
+    assert sender._extract_external_target_urls("https://example.com/x", html) == [
+        "https://example.com:8443/other-port",
+        "https://other.example/post",
+    ]
+    assert sender._extract_external_target_urls("https://EXAMPLE.com:443/post", html) == [
+        "https://example.com:8443/other-port",
+        "https://other.example/post",
+    ]
+
+
+def test_send_webmention_does_not_resolve_vouch_host(sender, source_url, target_url):
+    """The Vouch URL is checked syntactically only; its host is never looked up by the sender."""
+    resolved_hosts: list[str] = []
+
+    def resolver(host, port):
+        resolved_hosts.append(host)
+        return ["93.184.216.34"]
+
+    class _Delivered:
+        response = httpx.Response(202)
+        final_url = "https://target.com/webmention"
+
+    with (
+        patch("indieweb.senders.default_address_resolver", resolver),
+        patch("indieweb.senders.request_with_webmention_redirects", return_value=_Delivered()) as deliver,
+    ):
+        result = sender.send_webmention(
+            source_url, target_url, "https://target.com/webmention", vouch="https://vouch.example/page"
+        )
+
+    assert result["success"] is True
+    assert resolved_hosts == ["target.com"]
+    assert deliver.call_args.kwargs["resolver"] is resolver
+    assert deliver.call_args.kwargs["data"]["vouch"] == "https://vouch.example/page"

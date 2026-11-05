@@ -1,6 +1,9 @@
 """Webmention sender implementation."""
 
+import logging
+import math
 import re
+import time
 from datetime import timedelta
 from urllib.parse import urljoin, urlparse
 
@@ -14,6 +17,7 @@ from .http_client import (
     SAFE_HTTP_DEFAULT_TIMEOUT,
     AddressResolver,
     HTTPResponseTooLarge,
+    HTTPTotalTimeoutExceeded,
     RedirectedResponse,
     default_address_resolver,
     disable_client_cookies,
@@ -25,6 +29,8 @@ from .http_client import (
 )
 from .models import WebmentionOutboundTarget
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES = 1024 * 1024
 DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES = 64 * 1024
 DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES = 1024 * 1024
@@ -33,6 +39,32 @@ DEFAULT_WEBMENTION_MAX_TARGETS_PER_HOST = 5
 DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS = 24 * 60 * 60
 DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
+DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS = 30.0
+# Per-operation timeouts for endpoint discovery and delivery. Each one only
+# bounds a single connect, read, write or pool wait; the total budget from
+# ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` bounds a whole call.
+WEBMENTION_DISCOVERY_TIMEOUT = SAFE_HTTP_DEFAULT_TIMEOUT
+WEBMENTION_DELIVERY_TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=5.0, pool=2.0)
+
+
+def _webmention_send_total_timeout() -> float:
+    """Return the time budget in seconds for one outbound discovery, delivery or source fetch."""
+    configured = getattr(
+        settings, "INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS", DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
+    )
+    if isinstance(configured, (int, float)) and not isinstance(configured, bool):
+        if math.isfinite(configured) and configured > 0:
+            return float(configured)
+    logger.warning(
+        "Invalid INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS; using "
+        f"{DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS} seconds"
+    )
+    return DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
+
+
+def _webmention_strict_redirects() -> bool:
+    """Return whether endpoint delivery refuses cross-origin redirects."""
+    return getattr(settings, "INDIEWEB_WEBMENTION_STRICT_REDIRECTS", False) is True
 
 
 def _sender_fetch_max_bytes() -> int | None:
@@ -218,8 +250,8 @@ class WebmentionSender:
     """Sends webmentions to target URLs."""
 
     def __init__(self) -> None:
-        self.timeout = 10
-        self.post_timeout = 30
+        self.timeout: httpx.Timeout = WEBMENTION_DISCOVERY_TIMEOUT
+        self.post_timeout: httpx.Timeout = WEBMENTION_DELIVERY_TIMEOUT
 
     def extract_urls(self, html_content: str) -> list[str]:
         """Extract all URLs from HTML content.
@@ -251,7 +283,9 @@ class WebmentionSender:
         not yield an endpoint (including when the target answers HEAD with an
         error status), falls back to GET and checks that response's ``Link``
         header before parsing HTML. SSRF, redirect and response-size failures
-        stay fail-closed and are never retried with GET.
+        stay fail-closed and are never retried with GET. HEAD and GET share
+        one ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` budget; a
+        discovery over the budget returns ``None``.
 
         Args:
             target_url: The URL to discover the endpoint for
@@ -278,6 +312,7 @@ class WebmentionSender:
             )
         )
         resolver = default_address_resolver if close_client else None
+        deadline = time.monotonic() + _webmention_send_total_timeout()
         try:
             validate_safe_http_url(target_url, resolver=resolver)
             # First try HEAD request to check Link headers
@@ -288,6 +323,7 @@ class WebmentionSender:
                 resolver=resolver,
                 timeout=self.timeout,
                 max_bytes=_sender_head_max_bytes(),
+                total_timeout=deadline - time.monotonic(),
             )
             # Targets that reject HEAD (e.g. 405) still get a GET attempt; only
             # a successful HEAD response's Link header is trusted.
@@ -296,14 +332,19 @@ class WebmentionSender:
                 if endpoint:
                     return endpoint
 
-            # Fall back to GET: Link header first, then HTML
+            # Fall back to GET: Link header first, then HTML. The GET gets
+            # only what is left of the discovery budget.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise HTTPTotalTimeoutExceeded("HTTP total deadline exceeded")
             discovered = stream_with_safe_redirects(
                 http_client,
                 "GET",
                 target_url,
                 max_bytes=_sender_fetch_max_bytes(),
                 resolver=resolver,
-                timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                timeout=self.timeout,
+                total_timeout=remaining,
             )
             response = discovered.response
             response.raise_for_status()
@@ -420,6 +461,15 @@ class WebmentionSender:
             client: Optional injected ``httpx.Client``. See
                 :meth:`discover_endpoint` for the safety semantics.
 
+        The POST, including any redirects and the response body, must finish
+        within ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS``. With
+        ``INDIEWEB_WEBMENTION_STRICT_REDIRECTS = True`` a redirect to another
+        origin fails the delivery instead of replaying the POST body there.
+
+        The Vouch URL is only checked syntactically (``resolver=None``): the
+        sender never fetches it, so its host is not resolved. The receiver
+        fetches it, with its own SSRF checks, when it verifies the Vouch.
+
         Returns:
             Dict with 'success', 'status_code', and optionally 'error'
         """
@@ -440,6 +490,9 @@ class WebmentionSender:
         try:
             validate_safe_http_url(endpoint, resolver=resolver)
             if vouch:
+                # Syntactic check only, on purpose: the sender never fetches
+                # the Vouch URL, so a DNS lookup would only add latency and a
+                # failure mode. Resolve it here if this path ever fetches it.
                 validate_safe_http_url(vouch, resolver=None)
             payload = {"source": source, "target": target}
             if vouch:
@@ -452,6 +505,8 @@ class WebmentionSender:
                 resolver=resolver,
                 timeout=self.post_timeout,
                 max_bytes=_sender_response_max_bytes(),
+                total_timeout=_webmention_send_total_timeout(),
+                cross_origin_strip=_webmention_strict_redirects(),
             )
             response = delivered.response
 
@@ -515,6 +570,7 @@ class WebmentionSender:
                 max_bytes=_sender_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
+                total_timeout=_webmention_send_total_timeout(),
             )
             response = fetched.response
             response.raise_for_status()
@@ -713,14 +769,16 @@ class WebmentionSender:
     def _extract_external_target_urls(self, source_url: str, html_content: str) -> list[str]:
         """Extract current absolute external HTTP(S) targets from HTML content."""
         urls = self.extract_urls(html_content)
-        source_domain = urlparse(source_url).netloc
+        # Compare canonical hosts (lowercase, IDNA, default port dropped) so
+        # ``https://Example.COM:443/x`` counts as the source's own domain.
+        source_domain = _canonical_destination_host(source_url)
         target_urls = []
 
         for target_url in urls:
             if not is_safe_http_url(target_url, resolver=None):
                 continue
 
-            target_domain = urlparse(target_url).netloc
+            target_domain = _canonical_destination_host(target_url)
             if target_domain == source_domain:
                 continue
 

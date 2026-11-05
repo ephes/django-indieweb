@@ -9,6 +9,27 @@ Unreleased
   eMudhra/emSign CA compromise
   (`GHSA-6q48-6c7w-9gw2 <https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2>`_).
   The package's own dependencies are unchanged.
+* **Outbound Webmention hardening** (backlog priority 4):
+
+  * **Behavior change:** ``WebmentionSender`` uses layered per-operation
+    timeouts instead of the scalar 10 second (discovery) and 30 second
+    (delivery) timeouts: 3 seconds to connect, 5 seconds per read or write
+    (15 seconds per read for delivery) and 2 seconds for the pool. Each
+    discovery, delivery and source-content fetch also has a total budget
+    across redirects and body reads, set with the new
+    ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` setting (default 30).
+    ``WebmentionSender.timeout`` and ``post_timeout`` are now
+    ``httpx.Timeout`` objects.
+  * New opt-in ``INDIEWEB_WEBMENTION_STRICT_REDIRECTS`` setting (default
+    ``False``): when ``True``, a delivery whose endpoint redirects to another
+    origin fails instead of replaying the ``POST`` body there.
+  * **Behavior change:** the same-domain skip for outbound targets compares
+    hosts case-insensitively and ignores the scheme's default port, so links
+    such as ``https://Example.COM:443/x`` from ``https://example.com/`` no
+    longer produce a self-mention.
+  * ``send_webmention`` documents that the Vouch URL is only checked
+    syntactically and its host is not resolved, because the sender never
+    fetches it.
 * **Security hardening** (backlog priority 3):
 
   * **Behavior change:** the IndieAuth authorization and token endpoints

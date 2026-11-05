@@ -2,6 +2,36 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-05
+
+### Outbound Webmention sender hardening (priority-4 bundle)
+
+Completes the backlog items "Layered `httpx.Timeout` for `WebmentionSender`",
+"Opt-in `INDIEWEB_WEBMENTION_STRICT_REDIRECTS`",
+"`_extract_external_target_urls` case-insensitive same-domain compare" and
+"`send_webmention` vouch URL: comment intent or pass `default_address_resolver`".
+
+- `WebmentionSender` uses layered `httpx.Timeout`s (discovery 3/5/5/2 s,
+  delivery 3/15/5/2 s) plus a total budget per discovery (HEAD and GET
+  fallback share it), delivery and source fetch:
+  `INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS` (default 30).
+  `request_with_safe_redirects` accepts `total_timeout` and streams when it
+  is set, so the budget also applies with the response cap disabled.
+- `INDIEWEB_WEBMENTION_STRICT_REDIRECTS = True` passes
+  `cross_origin_strip=True` for the delivery POST; default unchanged.
+- Same-domain skip compares `_canonical_destination_host` (lowercase, IDNA,
+  default port dropped).
+- Vouch URL: kept `resolver=None` on purpose (never fetched by the sender);
+  documented in code and docs, with a test that its host is not resolved.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`, `git diff --check`.
+- Documentation: `docs/configuration.rst` (two new settings),
+  `docs/webmention.rst` (strict redirects, outbound timeouts, Vouch check,
+  same-domain rule).
+- Changelog: Unreleased "Outbound Webmention hardening" entry in
+  `docs/changelog.rst`.
+
 ## 2026-10-14
 
 ### IndieAuth endpoints parse multipart bodies before authentication

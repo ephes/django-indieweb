@@ -777,3 +777,21 @@ def test_without_total_timeout_a_slow_body_is_not_cut_off(monkeypatch):
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=Drip()))) as client:
         result = stream_with_safe_redirects(client, "GET", "https://example.com/", max_bytes=100, resolver=None)
     assert result.response.content == b"x" * 20
+
+
+def test_request_with_safe_redirects_enforces_total_timeout_without_byte_cap(monkeypatch):
+    """A total timeout routes through streaming even when ``max_bytes`` is disabled."""
+    clock = _Clock(monkeypatch)
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        clock.now += 3
+        return httpx.Response(302, headers={"location": f"/hop-{len(calls)}"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(HTTPTotalTimeoutExceeded):
+            request_with_safe_redirects(
+                client, "POST", "https://example.com/", max_bytes=None, resolver=None, total_timeout=5, data={"a": "b"}
+            )
+    assert len(calls) == 2
