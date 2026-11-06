@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* **Behavior change:** subscriber requests with a secret and an HTTP hub now
+  raise ``ValueError`` before writing subscription state, rather than returning
+  an unsuccessful result and recording a denial.
+* WebSub rejects malformed signature digests without a server error, requires
+  finite positive request budgets across redirects/body chunks, and rolls back
+  pending subscription preparation when configuration validation fails.
 * Micropub source/media query and media-delete handler failures now honor
   ``INDIEWEB_LOG_REDACTION`` at WARNING and ERROR. Redact mode digests URLs,
   filters and arbitrary exception messages and omits tracebacks, retaining

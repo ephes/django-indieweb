@@ -6,6 +6,8 @@ import hashlib
 import hmac
 import inspect
 import logging
+import math
+import string
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -190,7 +192,7 @@ def _websub_timeout(timeout: float | None) -> float:
         parsed = float(configured)
     except (TypeError, ValueError) as exc:
         raise ValueError("WebSub timeout must be a positive number") from exc
-    if parsed <= 0:
+    if not math.isfinite(parsed) or parsed <= 0:
         raise ValueError("WebSub timeout must be a positive number")
     return parsed
 
@@ -654,6 +656,7 @@ def _post_subscription_request(
             data=data,
             resolver=resolver,
             max_bytes=_hub_response_max_bytes(),
+            total_timeout=request_timeout,
             cross_origin_strip=True,
         )
         return delivered.response
@@ -681,22 +684,26 @@ def request_websub_subscription(
     the request and should later verify the callback; verification state is
     confirmed by the callback view.
     """
-    (
-        subscription,
-        validated_mode,
-        previous_state,
-        previous_pending_secret,
-        previous_pending_secret_set,
-    ) = _prepare_subscription_request(
-        topic_url,
-        hub_url,
-        mode=mode,
-        lease_seconds=lease_seconds,
-        secret=secret,
-    )
-    callback_url = build_websub_callback_url(subscription, callback_base_url)
     configured_timeout = timeout if timeout is not None else getattr(settings, "INDIEWEB_WEBSUB_TIMEOUT", None)
     request_timeout = _websub_timeout(configured_timeout)
+    if secret and mode == WebSubSubscription.MODE_SUBSCRIBE and urlparse(hub_url).scheme.lower() != "https":
+        raise WebSubSecretRequiresHTTPSError("WebSub subscription with hub.secret requires an https hub_url")
+    # Callback construction depends on the token. Roll back preparation if it fails.
+    with transaction.atomic(using=router.db_for_write(WebSubSubscription)):
+        (
+            subscription,
+            validated_mode,
+            previous_state,
+            previous_pending_secret,
+            previous_pending_secret_set,
+        ) = _prepare_subscription_request(
+            topic_url,
+            hub_url,
+            mode=mode,
+            lease_seconds=lease_seconds,
+            secret=secret,
+        )
+        callback_url = build_websub_callback_url(subscription, callback_base_url)
 
     close_client = client is None
     http_client = client or disable_client_cookies(
@@ -1283,6 +1290,8 @@ def validate_websub_delivery_signature(
         # digest for that strongest algorithm authenticates the delivery.
         digestmod = WEBSUB_SIGNATURE_ALGORITHMS[algorithm]
         expected = hmac.new(secret.encode("utf-8"), body, digestmod).hexdigest()
+        if len(received_digest) != len(expected) or any(char not in string.hexdigits for char in received_digest):
+            continue
         if hmac.compare_digest(expected, received_digest):
             return algorithm
     raise ValueError("WebSub delivery signature did not validate")
@@ -1622,6 +1631,7 @@ def notify_hubs(
                     data=data,
                     resolver=resolver,
                     max_bytes=_hub_response_max_bytes(),
+                    total_timeout=request_timeout,
                     cross_origin_strip=True,
                 )
                 response = delivered.response

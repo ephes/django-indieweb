@@ -622,3 +622,20 @@ django-indieweb does not auto-discover feeds, auto-subscribe to arbitrary
 topics, renew leases in the background, parse delivered feeds, create calendar
 or post models, or run a WebSub hub. Existing publisher helper APIs and the
 ``notify_websub`` command remain backward-compatible.
+
+Request validation and budgets
+------------------------------
+
+Subscriber requests validate timeout, lease, secret transport and callback
+configuration before committing pending state. Invalid configuration raises
+``ValueError`` without changing subscriptions or contacting the hub. This also
+applies to a secret submitted to an HTTP hub: earlier versions returned a
+failure result and recorded the rejection instead.
+``INDIEWEB_WEBSUB_TIMEOUT`` must be finite and positive. It also supplies the
+shared HTTP helper's total budget per hub, across redirects and streamed body
+chunks, for both subscription and publication requests. The budget is checked
+when HTTPX yields control; it does not interrupt a socket read. Inactivity
+timeouts remain in effect. An expired hub does not prevent notifying later hubs.
+Malformed signature digests (including non-ASCII, nonhexadecimal or wrong-length
+values) return ``403``. The strongest supplied supported algorithm must still
+validate, even when weaker signatures are valid.

@@ -4533,3 +4533,13 @@ cross-origin redirect mode and the ``hub.secret`` HTTPS gate.
 - Validation: `uv run pytest`, `uv run mypy`, Ruff lint/format, configured prek
   hooks, Sphinx with warnings as errors, and the supported tox matrix including
   migrations.
+
+## 2026-11-06
+
+### WebSub input and preflight boundaries (round 46 B7)
+
+Reject malformed HMAC digests, enforce finite per-hub total request budgets,
+and validate/roll back subscription preparation before network I/O.
+Validation: pytest with coverage, migration-enabled pytest, mypy, Ruff, prek,
+and Sphinx warnings-as-errors. Added synthetic callback and streaming regressions.
+Documentation: docs/websub.rst. Changelog: Unreleased. No matching backlog items.
