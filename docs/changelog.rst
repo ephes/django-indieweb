@@ -5,6 +5,25 @@ Changelog
 
 Unreleased
 ----------
+* **Housekeeping hardening** (backlog priority 4):
+
+  * **Behavior change:** Micropub ``mp-slug`` sanitising collapses every run
+    of dots to one, so values such as ``foo..bar`` reach the handler as
+    ``foo.bar`` and no ``..`` survives. Leading whitespace mixed with
+    leading dots is now stripped as well (``" . foo"`` becomes ``foo``).
+  * **Behavior change:** the bundled ``h-card.html`` template renders an
+    ``h_card.email`` value as a ``mailto:`` link only when it passes Django's
+    ``EmailValidator``, through the new ``h_card_safe_emails`` filter. This
+    matters for values written through paths that skip
+    ``Profile.full_clean`` (``QuerySet.update``, raw SQL, fixtures).
+  * ``example_project.py`` adds ``XFrameOptionsMiddleware`` and renders its
+    home page from ``examples/templates/example_project/test_page.html``
+    instead of building a ``Template`` from a string literal on every request.
+  * Documented that migration ``0026`` drops the old WebSub
+    ``recent_accepted_delivery_digests`` column without a backfill. No
+    released version wrote it, so release upgrades are unaffected; see
+    "Content Distribution" in the WebSub docs for the development-snapshot
+    case.
 * **BREAKING:** Dropped Python 3.10 support (minimum is now 3.11). Python 3.10
   reached end of life in October 2026, and no filelock release with the
   security fixes below supports it. The tox and CI matrix, classifiers, Ruff

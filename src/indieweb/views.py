@@ -2621,8 +2621,13 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
     def _sanitize_slug_value(value: Any) -> str | None:
         if not isinstance(value, str):
             return None
-        # Keep slug semantics handler-owned while removing path/control tricks.
-        cleaned = re.sub(r"[\x00-\x1f\x7f/\\]+", "", value).strip().lstrip(".")
+        # Keep slug semantics handler-owned while removing path/control tricks:
+        # control characters and slashes are dropped, any run of dots collapses
+        # to one so no ``..`` survives, and leading dots and whitespace are
+        # stripped (trailing whitespace too).
+        cleaned = re.sub(r"[\x00-\x1f\x7f/\\]+", "", value)
+        cleaned = re.sub(r"\.{2,}", ".", cleaned)
+        cleaned = re.sub(r"^[\s.]+", "", cleaned).rstrip()
         return cleaned or None
 
     def _normalize_slug_property(self, properties: dict[str, Any]) -> bool:

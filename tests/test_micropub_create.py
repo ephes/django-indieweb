@@ -446,6 +446,51 @@ class TestMicropubCreate:
         assert received_properties["mp-slug"] == ["badpathname"]
 
     @pytest.mark.django_db
+    def test_form_create_collapses_interior_dot_runs_in_mp_slug(self, client, token, micropub_url, monkeypatch):
+        received_properties = None
+
+        class TestHandler(InMemoryMicropubHandler):
+            def create_entry(self, properties, user):
+                nonlocal received_properties
+                received_properties = properties
+                return super().create_entry(properties, user)
+
+        monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: TestHandler())
+
+        response = client.post(
+            micropub_url,
+            data={"h": "entry", "content": "Slug test", "mp-slug": "foo..bar/..baz"},
+            Authorization=f"Bearer {token.key}",
+        )
+
+        assert response.status_code == 201
+        assert received_properties is not None
+        assert received_properties["mp-slug"] == ["foo.bar.baz"]
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("foo..bar", "foo.bar"),
+            ("foo...bar", "foo.bar"),
+            ("a./.b", "a.b"),
+            ("a.\x1f.b", "a.b"),
+            ("foo..", "foo."),
+            ("..foo..bar..", "foo.bar."),
+            (".. ..", None),
+            (" . foo ", "foo"),
+            ("v1.2-notes", "v1.2-notes"),
+            ("single.dot", "single.dot"),
+        ],
+    )
+    def test_sanitize_slug_value_leaves_no_dot_dot(self, raw, expected):
+        from indieweb.views import MicropubView
+
+        sanitized = MicropubView._sanitize_slug_value(raw)
+
+        assert sanitized == expected
+        assert sanitized is None or ".." not in sanitized
+
+    @pytest.mark.django_db
     def test_form_create_omits_empty_sanitized_mp_slug(self, client, token, micropub_url, monkeypatch):
         received_properties = None
 

@@ -2,6 +2,38 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-06
+
+### Housekeeping hardening (priority-4 bundle)
+
+Completes the backlog items "Strip interior `..` from Micropub slugs",
+"Add clickjacking middleware to `example_project.py`", "Move
+`example_project.py` runtime template into a real template file", "Validate
+h-card mailto email shape before rendering" and "Document or backfill
+migration `0026` replay-state drop".
+
+- `MicropubView._sanitize_slug_value` collapses every run of dots to one after
+  removing control characters and slashes, then strips leading dots and
+  whitespace together, so no `..` reaches the handler.
+- `example_project.py` adds `XFrameOptionsMiddleware` and renders
+  `examples/templates/example_project/test_page.html` with `render()`; a
+  subprocess smoke test (`tests/test_example_project.py`) migrates a temporary
+  SQLite database and checks the page, the template and `X-Frame-Options: DENY`.
+- New `h_card_safe_emails` filter (Django `EmailValidator`, the same check as
+  `Profile.full_clean`); the bundled `h-card.html` renders only emails that
+  pass it.
+- Migration `0026`: documented instead of backfilled. WebSub and migrations
+  `0016`-`0026` first shipped together in 0.6.0, so no released version
+  wrote the dropped column; only unreleased development snapshots with `0022`
+  but not `0025` are affected.
+- Validation: `uv run pytest`, `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`, `git diff --check`.
+- Documentation: `docs/h-card.rst` (email rendering), `docs/websub.rst`
+  (Content Distribution: migration `0025`/`0026` upgrade note),
+  `CONTRIBUTING.rst` (example project middleware and template).
+- Changelog: Unreleased "Housekeeping hardening" entry in `docs/changelog.rst`.
+
 ## 2026-11-05
 
 ### Received Webmention verification hardening (priority-4 bundle)
