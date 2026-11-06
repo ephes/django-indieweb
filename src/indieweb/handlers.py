@@ -159,6 +159,9 @@ class MicropubContentHandler(ABC):
         The default ``None`` return means this optional capability is unsupported by
         the handler. Implementations that can enumerate host-owned content should
         honor ``limit``, ``offset``, and ``filter`` and return a ``MicropubEntryList``.
+        HTTP list queries always pass a positive, bounded limit and an offset in
+        0..2147483647. Apply pagination before materializing the result; the view
+        also truncates serialized items to the requested limit.
         ``filter`` is ``None`` when the client omitted it or submitted an empty value.
         ``total`` should only be set when it is known accurately after filtering and
         before pagination.
@@ -183,6 +186,9 @@ class MicropubContentHandler(ABC):
         empty ``MicropubMediaList(items=[])`` for "no items"; return ``None`` only
         when list mode is unsupported. Override this method on the handler
         subclass; instance-level assignments are not detected by the view.
+        HTTP list queries always pass a positive, bounded limit and an offset in
+        0..2147483647. Apply pagination before materializing the result; the view
+        also truncates serialized items to the requested limit.
         """
         return None
 

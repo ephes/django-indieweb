@@ -355,7 +355,7 @@ def test_media_source_query_list_omits_total_when_unknown(client, monkeypatch, u
     response = client.get(f"{media_url}?q=source", Authorization=f"Bearer {token.key}")
 
     assert response.status_code == 200
-    assert response.json()["paging"] == {"limit": None, "offset": 0}
+    assert response.json()["paging"] == {"limit": 20, "offset": 0}
 
 
 @pytest.mark.django_db
