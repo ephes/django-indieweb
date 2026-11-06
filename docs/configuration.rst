@@ -2238,6 +2238,11 @@ logs a warning, ignores the credential setting, and keeps the non-credential
 wildcard behavior. It never emits ``Access-Control-Allow-Credentials: true``
 with wildcard origins.
 
+Allowed-origin responses expose ``Location`` in ``Access-Control-Expose-Headers``
+so browser Micropub clients can read the URL of newly created content or media.
+Existing exposure headers are merged case-insensitively. Disabled CORS and
+origins outside the allowlist receive no exposure headers from this package.
+
 INDIEWEB_CORS_ALLOW_CREDENTIALS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

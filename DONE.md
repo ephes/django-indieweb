@@ -4554,3 +4554,13 @@ blocked by sandbox shared-memory permissions; its CI gate must pass before merge
 Validation commands: pytest/coverage, migration-enabled pytest, mypy, Ruff,
 prek, Sphinx. Docs: WebSub, Webmention and development. Changelog: Unreleased.
 No matching backlog items.
+
+### Micropub publication lifecycle (round 46 B9, 2026-11-06)
+
+Unified single/multi-upload ownership through URL construction; retained inline
+photo ownership until successful entry creation. Exposed Location for configured
+CORS origins while merging prior exposure headers. Regression tests use synthetic
+uploads and storage, preserving unrelated objects and successful entries' photos.
+Validation commands: pytest/coverage, migration-enabled pytest, mypy, Ruff,
+prek and Sphinx. Documentation: Micropub and configuration; changelog: Unreleased.
+No matching backlog items. Round 47 selected no django-indieweb slices.

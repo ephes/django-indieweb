@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Micropub compensates newly saved media if URL publication fails, and removes
+  new inline photos when content validation or entry creation fails. Successful
+  entries retain their photos. Allowed-origin CORS responses now expose
+  ``Location`` while preserving existing exposed headers.
 * WebSub outgoing request completion is bound to its pending generation, so
   late errors cannot undo verification or newer requests. Outbound Webmention
   history uses atomic counters and start-time ordering to preserve newer
