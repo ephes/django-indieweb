@@ -1446,7 +1446,7 @@ INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
 
 Time budget in seconds for one outbound Webmention call of
 ``WebmentionSender``: one endpoint discovery (the ``HEAD`` probe and the
-``GET`` fallback share it), one endpoint delivery ``POST``, or one
+``GET`` confirmation share it), one endpoint delivery ``POST``, or one
 source-content fetch, each counted across all redirects and body reads.
 
 **Default:** ``30``
@@ -1486,13 +1486,15 @@ Maximum decoded response size accepted while probing a target URL with
 
 **Default:** ``65536`` (64 KiB)
 
-The sender checks ``Link`` headers with a ``HEAD`` request before falling back
-to ``GET``. The ``GET`` fallback also runs when the target answers ``HEAD``
-with an error status (for example ``405``); it checks the ``GET`` response's
+The sender probes ``HEAD`` before confirming with ``GET``, including when
+HEAD advertises an endpoint or answers with an error status (for example
+``405``). GET is authoritative; HEAD-only endpoints are not used. Discovery
+checks the ``GET`` response's
 ``Link`` header first, then the first ``<link>`` or ``<a>`` element with
 ``rel="webmention"`` in document order. An empty ``href`` names the target page
 itself. Unsafe URLs, redirect failures and oversized responses during ``HEAD``
-end discovery without a ``GET`` retry. Some hostile servers still attach large or
+end discovery without a ``GET`` retry. This includes an unsafe or unresolvable
+endpoint advertised by a successful HEAD response. Some hostile servers still attach large or
 compressed bodies to ``HEAD`` responses; this cap routes the request through
 the same streaming redirect helper used by body-fetching calls so decoded
 content is bounded before buffering. Set this to ``None`` only when an

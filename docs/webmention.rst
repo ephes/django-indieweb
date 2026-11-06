@@ -484,8 +484,7 @@ HTTP amplifier, including later ``resend_salmentions()`` re-fanout cycles.
 Trusted-author deployments can raise these caps or set either value to
 ``None`` when an external queue supplies equivalent throttling.
 Endpoint discovery also caps decoded ``HEAD`` responses at 64 KiB
-(``INDIEWEB_WEBMENTION_HEAD_MAX_BYTES``) before falling back to ``GET`` HTML
-discovery.
+(``INDIEWEB_WEBMENTION_HEAD_MAX_BYTES``) before confirming with ``GET`` discovery.
 
 ``WebmentionSender`` methods such as ``discover_endpoint``,
 ``send_webmention``, and ``fetch_content`` accept an optional ``client``
@@ -1005,7 +1004,14 @@ redirect chain marks the Webmention ``failed`` through the same failed-state
 path described below.
 
 Send-side endpoint discovery follows redirects for both the initial ``HEAD``
-request and the fallback ``GET`` request. Relative Webmention endpoints found
+request and the confirming ``GET`` request. GET runs even when HEAD advertises
+an endpoint and is authoritative: its ``Link`` header takes precedence over
+HTML. If GET advertises a different endpoint, that endpoint is used; if GET
+fails or advertises none, no HEAD-only endpoint is used. The same safety,
+response-size and shared total-timeout limits apply to confirmation. As before,
+an unsafe or unresolvable endpoint advertised by a successful HEAD response
+ends discovery before GET, even if GET would advertise a safe endpoint.
+Relative Webmention endpoints found
 in ``Link`` headers or HTML ``<link rel="webmention">`` / ``<a
 rel="webmention">`` elements are resolved against the final target page URL
 after redirects, not the originally requested URL.
@@ -1042,7 +1048,7 @@ Every outbound request uses layered per-operation timeouts: discovery
 5 seconds per read or write and 2 seconds to get a pooled connection; endpoint
 delivery ``POST`` allows 15 seconds per read for endpoints that process the
 Webmention before they answer. On top of that, each discovery (``HEAD`` and
-the ``GET`` fallback together), each delivery and each source-content fetch
+the ``GET`` confirmation together), each delivery and each source-content fetch
 has a total budget across all redirects and body reads,
 ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` (default 30 seconds). A
 discovery over the budget finds no endpoint; a delivery over the budget

@@ -28,10 +28,6 @@ No current Priority 3 items.
 
 `models.py:437` is `models.TextField()`; `processors._webmention_fetch_max_bytes()` defaults to 1 MiB. Each verified webmention persists up to ~1 MiB of attacker-controlled HTML. Document a snapshot retention policy (gzip the column, retain only the last N snapshots, or cap snapshot size lower than fetch size).
 
-#### Sanity-check HEAD-discovered Webmention endpoints against GET
-
-`WebmentionSender.discover_endpoint` accepts a HEAD-discovered endpoint without checking whether a following GET would advertise the same endpoint (`senders.py:165-178`). Each hop remains SSRF-screened, so this is delivery accuracy rather than a direct network bypass. Document the accepted behavior or add a cheap GET sniff before sending.
-
 ### WebSub Enhancements
 
 No current WebSub Enhancements items.

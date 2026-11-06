@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* **Behavior change:** outbound Webmention discovery confirms HEAD-advertised
+  endpoints with GET. GET's Link header, then HTML, is authoritative; a
+  HEAD-only endpoint is no longer used when GET fails or advertises none.
+  Confirmation shares the existing discovery timeout and safety limits.
 * **Housekeeping hardening** (backlog priority 4):
 
   * **Behavior change:** Micropub ``mp-slug`` sanitising collapses every run

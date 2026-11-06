@@ -279,11 +279,13 @@ class WebmentionSender:
     def discover_endpoint(self, target_url: str, *, client: httpx.Client | None = None) -> str | None:
         """Discover the webmention endpoint for a target URL.
 
-        Tries a HEAD request for an HTTP ``Link`` header first. When HEAD does
-        not yield an endpoint (including when the target answers HEAD with an
-        error status), falls back to GET and checks that response's ``Link``
-        header before parsing HTML. SSRF, redirect and response-size failures
-        stay fail-closed and are never retried with GET. HEAD and GET share
+        Probes HEAD first, then confirms discovery with GET even when HEAD
+        advertises an endpoint. GET is authoritative: its ``Link`` header
+        takes precedence over HTML, and a HEAD-only endpoint is not used.
+        HEAD error statuses still allow GET discovery. SSRF, redirect and
+        response-size failures stay fail-closed and are never retried with GET,
+        including an unsafe or unresolvable HEAD-advertised endpoint.
+        HEAD and GET share
         one ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` budget; a
         discovery over the budget returns ``None``.
 
@@ -325,14 +327,12 @@ class WebmentionSender:
                 max_bytes=_sender_head_max_bytes(),
                 total_timeout=deadline - time.monotonic(),
             )
-            # Targets that reject HEAD (e.g. 405) still get a GET attempt; only
-            # a successful HEAD response's Link header is trusted.
+            # Preserve fail-closed validation of successful HEAD advertisements.
+            # HEAD errors (e.g. 405) still allow a GET attempt.
             if discovered.response.is_success:
-                endpoint = self._endpoint_from_link_header(discovered, resolver=resolver)
-                if endpoint:
-                    return endpoint
+                self._endpoint_from_link_header(discovered, resolver=resolver)
 
-            # Fall back to GET: Link header first, then HTML. The GET gets
+            # Confirm with GET: Link header first, then HTML. The GET gets
             # only what is left of the discovery budget.
             remaining = deadline - time.monotonic()
             if remaining <= 0:
