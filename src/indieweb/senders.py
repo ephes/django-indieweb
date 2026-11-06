@@ -4,12 +4,15 @@ import logging
 import math
 import re
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup, Tag
 from django.conf import settings
+from django.db import router
+from django.db.models import Case, F, Q, Value, When
 from django.utils import timezone
 
 from .http_client import (
@@ -612,6 +615,7 @@ class WebmentionSender:
         results = []
 
         for target_url in target_urls:
+            attempt_started_at = timezone.now()
             # Discover endpoint
             endpoint = self.discover_endpoint(target_url)
             if endpoint:
@@ -622,6 +626,7 @@ class WebmentionSender:
                 results.append(result)
                 if record_history:
                     self._record_outbound_target(
+                        attempt_started_at=attempt_started_at,
                         source_url=source_url,
                         target_url=target_url,
                         endpoint=endpoint,
@@ -670,6 +675,7 @@ class WebmentionSender:
                     results.append(skipped)
                     continue
 
+            attempt_started_at = timezone.now()
             endpoint = self.discover_endpoint(target_url)
             if endpoint:
                 result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url)
@@ -685,6 +691,7 @@ class WebmentionSender:
             result["provenance"] = provenance
             results.append(result)
             target = self._record_outbound_target(
+                attempt_started_at=attempt_started_at,
                 source_url=source_url,
                 target_url=target_url,
                 endpoint=endpoint,
@@ -693,8 +700,7 @@ class WebmentionSender:
                 seen_in_source=target_url in current_targets,
                 sent=endpoint is not None,
             )
-            if historical_only and not result["success"] and self._salmention_failure_limit_reached(target):
-                target.delete()
+            if historical_only and not result["success"] and self._delete_failed_outbound_target(target):
                 result["dropped"] = True
                 result["skipped"] = True
                 result["skip_reason"] = "failure_drop"
@@ -819,34 +825,63 @@ class WebmentionSender:
         vouch_url: str | None,
         seen_in_source: bool,
         sent: bool,
+        attempt_started_at: datetime | None = None,
     ) -> WebmentionOutboundTarget:
         """Create or refresh outbound Webmention target history for an attempt."""
-        now = timezone.now()
-        target, _ = WebmentionOutboundTarget.objects.get_or_create(
-            source_url=source_url,
-            target_url=target_url,
-        )
-
-        if endpoint:
-            target.endpoint_url = endpoint
-            target.endpoint_discovered_at = now
-        if sent:
-            if target.first_sent_at is None:
-                target.first_sent_at = now
-            target.last_sent_at = now
-            target.last_vouch_url = vouch_url or ""
-        target.last_attempted_at = now
-        target.last_status_code = result.get("status_code")
+        started = attempt_started_at or timezone.now()
+        target, _ = WebmentionOutboundTarget.objects.get_or_create(source_url=source_url, target_url=target_url)
+        using = router.db_for_write(WebmentionOutboundTarget, instance=target)
+        current = Q(last_attempted_at__isnull=True) | Q(last_attempted_at__lte=started)
+        after_success = Q(last_successful_attempt_at__isnull=True) | Q(last_successful_attempt_at__lte=started)
         success = bool(result.get("success"))
-        target.last_success = success
-        target.last_error = result.get("error") or ""
+        # Every expression sees the current stored row in one atomic SQL update.
+        updates: dict[str, Any] = {
+            "modified": timezone.now(),
+            "last_attempted_at": Case(When(current, then=Value(started)), default=F("last_attempted_at")),
+            "last_status_code": Case(
+                When(current, then=Value(result.get("status_code"))), default=F("last_status_code")
+            ),
+            "last_success": Case(When(current, then=Value(success)), default=F("last_success")),
+            "last_error": Case(When(current, then=Value(result.get("error") or "")), default=F("last_error")),
+            "consecutive_failures": (
+                Case(When(current, then=Value(0)), default=F("consecutive_failures"))
+                if success
+                else Case(When(after_success, then=F("consecutive_failures") + 1), default=F("consecutive_failures"))
+            ),
+        }
         if success:
-            target.consecutive_failures = 0
-        else:
-            target.consecutive_failures += 1
+            updates["last_successful_attempt_at"] = Case(
+                When(current, then=Value(started)), default=F("last_successful_attempt_at")
+            )
+        if endpoint:
+            fresh_endpoint = Q(endpoint_discovered_at__isnull=True) | Q(endpoint_discovered_at__lte=started)
+            updates["endpoint_url"] = Case(When(fresh_endpoint, then=Value(endpoint)), default=F("endpoint_url"))
+            updates["endpoint_discovered_at"] = Case(
+                When(fresh_endpoint, then=Value(started)), default=F("endpoint_discovered_at")
+            )
+        if sent:
+            fresh_sent = Q(last_sent_at__isnull=True) | Q(last_sent_at__lte=started)
+            updates["first_sent_at"] = Case(
+                When(Q(first_sent_at__isnull=True) | Q(first_sent_at__gt=started), then=Value(started)),
+                default=F("first_sent_at"),
+            )
+            updates["last_sent_at"] = Case(When(fresh_sent, then=Value(started)), default=F("last_sent_at"))
+            updates["last_vouch_url"] = Case(
+                When(fresh_sent, then=Value(vouch_url or "")), default=F("last_vouch_url")
+            )
         if seen_in_source:
-            target.last_seen_in_source_at = now
-        target.save()
+            updates["last_seen_in_source_at"] = Case(
+                When(
+                    Q(last_seen_in_source_at__isnull=True) | Q(last_seen_in_source_at__lte=started),
+                    then=Value(started),
+                ),
+                default=F("last_seen_in_source_at"),
+            )
+        for field_name, expression in updates.items():
+            if isinstance(expression, Case):
+                expression.output_field = WebmentionOutboundTarget._meta.get_field(field_name)
+        WebmentionOutboundTarget.objects.using(using).filter(pk=target.pk).update(**updates)
+        target.refresh_from_db(using=using)
         return target
 
     def _target_provenance(self, target_url: str, current_targets: set[str], historical_targets: set[str]) -> str:
@@ -866,8 +901,15 @@ class WebmentionSender:
         """Return a policy skip result for a historical-only target, if one applies."""
         now = timezone.now()
         if self._salmention_failure_limit_reached(row):
-            if not dry_run:
-                row.delete()
+            if not dry_run and not self._delete_failed_outbound_target(row):
+                # A concurrent attempt changed or removed this history. Reconsider
+                # from a fresh snapshot on the next invocation, without sending now.
+                return self._salmention_skip_result(
+                    row.target_url,
+                    "history_changed",
+                    "Historical target changed during failure pruning",
+                    dry_run=False,
+                )
             return self._salmention_skip_result(
                 row.target_url,
                 "failure_drop",
@@ -922,6 +964,21 @@ class WebmentionSender:
         if dropped:
             result["dropped"] = True
         return result
+
+    def _delete_failed_outbound_target(self, row: WebmentionOutboundTarget) -> bool:
+        """Delete only the failed generation inspected by the caller."""
+        using = router.db_for_write(WebmentionOutboundTarget, instance=row)
+        deleted, _ = (
+            WebmentionOutboundTarget.objects.using(using)
+            .filter(
+                pk=row.pk,
+                last_attempted_at=row.last_attempted_at,
+                last_success=False,
+                consecutive_failures__gte=_salmention_max_consecutive_failures(),
+            )
+            .delete()
+        )
+        return bool(deleted)
 
     def _salmention_failure_limit_reached(self, row: WebmentionOutboundTarget) -> bool:
         """Return whether a target has reached the historical failure drop threshold."""

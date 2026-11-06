@@ -527,6 +527,7 @@ class WebmentionOutboundTarget(models.Model):
     last_sent_at = models.DateTimeField(null=True, blank=True)
     last_attempted_at = models.DateTimeField(null=True, blank=True)
     last_status_code = models.PositiveIntegerField(null=True, blank=True)
+    last_successful_attempt_at = models.DateTimeField(null=True, blank=True)
     last_success = models.BooleanField(default=False)
     last_error = models.TextField(blank=True)
     consecutive_failures = models.PositiveIntegerField(default=0)
@@ -588,6 +589,7 @@ class WebSubSubscription(models.Model):
     state = models.CharField(max_length=32, choices=STATE_CHOICES, default=STATE_PENDING_SUBSCRIBE)
 
     pending_mode = models.CharField(max_length=16, choices=MODE_CHOICES, blank=True)
+    request_generation = models.UUIDField(null=True, editable=False)
     requested_lease_seconds = models.PositiveIntegerField(null=True, blank=True)
     confirmed_lease_seconds = models.PositiveIntegerField(null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)

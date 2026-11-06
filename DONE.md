@@ -4543,3 +4543,14 @@ and validate/roll back subscription preparation before network I/O.
 Validation: pytest with coverage, migration-enabled pytest, mypy, Ruff, prek,
 and Sphinx warnings-as-errors. Added synthetic callback and streaming regressions.
 Documentation: docs/websub.rst. Changelog: Unreleased. No matching backlog items.
+
+### Outbound concurrent state (round 46 B8, 2026-11-06)
+
+Bound WebSub preparation/completion to request generations and updated
+Webmention history atomically, ordering diagnostics by attempt start time.
+Added migrations and synthetic overlapping/concurrent regressions on SQLite
+and a disposable PostgreSQL CI service. Local PostgreSQL initialization is
+blocked by sandbox shared-memory permissions; its CI gate must pass before merge.
+Validation commands: pytest/coverage, migration-enabled pytest, mypy, Ruff,
+prek, Sphinx. Docs: WebSub, Webmention and development. Changelog: Unreleased.
+No matching backlog items.

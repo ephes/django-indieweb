@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* WebSub outgoing request completion is bound to its pending generation, so
+  late errors cannot undo verification or newer requests. Outbound Webmention
+  history uses atomic counters and start-time ordering to preserve newer
+  success, endpoint and observation history. History timestamps and cooldown /
+  success-cutoff windows now start before discovery instead of after delivery.
+  Apply the new database migration, which seeds existing success watermarks.
+  Synthetic PostgreSQL state regressions now run on branch pushes and PRs.
 * **Behavior change:** subscriber requests with a secret and an HTTP hub now
   raise ``ValueError`` before writing subscription state, rather than returning
   an unsuccessful result and recording a denial.
