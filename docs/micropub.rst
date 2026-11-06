@@ -665,6 +665,14 @@ Unexpected hook exceptions return ``500`` and are logged.
 Optional URL policy hook
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
+All responses that reach the token-authenticated Micropub resource boundary
+(entry and media endpoints), including source/source-list successes,
+authentication failures and handler errors, carry ``Cache-Control: private,
+no-store, no-cache, max-age=0, must-revalidate`` and ``Vary: Authorization``.
+Clients and caches must not store draft/source content or reuse it after token
+revocation. Each source request rechecks authentication and handler permissions.
+Public IndieAuth metadata and Webmention endpoints keep their separate policies.
+
 The Micropub entry source query (``GET /indieweb/micropub/?q=source&url=...``),
 the media source-by-URL query, and the media delete action accept a submitted
 URL and forward it to the configured handler. Hosts that need to gate those

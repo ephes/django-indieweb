@@ -5,6 +5,17 @@ Changelog
 
 Unreleased
 ----------
+* **Security / compatibility:** guarded outbound HTTP requests advertise identity
+  encoding on every hop and reject compressed/stacked/unknown Content-Encoding
+  before reading or decoding the body. Servers must honor identity negotiation;
+  disabling the response byte cap also disables this decompression protection.
+* **Security:** introspection, redirect, client-ID and Vouch policy failure logs
+  now redact hook paths, URLs and exception messages in redact mode, retaining
+  operation/exception-class context and fail-closed behavior. Passthrough mode
+  retains detailed diagnostics.
+* **Security:** token-authenticated Micropub entry/media responses now use private
+  no-store cache controls and Vary: Authorization, including handler errors and
+  authentication failures, so cached source content cannot bypass revocation.
 * Micropub compensates newly saved media if URL publication fails, and removes
   new inline photos when content validation or entry creation fails. Successful
   entries retain their photos. Allowed-origin CORS responses now expose

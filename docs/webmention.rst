@@ -251,7 +251,10 @@ snapshot persistence, and nested response persistence happen in a worker
 instead of the public request path.
 
 Fetched source and Vouch responses are streamed and capped by
-``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` while decoded response chunks are read.
+``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` while identity body chunks are read.
+Guarded fetches request identity encoding and refuse compressed responses before
+reading or decoding them; see :ref:`guarded-http-encoding` for compatibility and
+allocation limits.
 Oversized responses mark the Webmention ``failed`` and are not stored as
 source snapshots. Nested response extraction is bounded by
 ``INDIEWEB_WEBMENTION_NESTED_RESPONSE_MAX_DEPTH`` and

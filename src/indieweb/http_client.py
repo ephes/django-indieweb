@@ -370,8 +370,11 @@ def request_with_safe_redirects(
     """Run an HTTP request after SSRF checks, re-checking every redirect.
 
     When ``max_bytes`` is provided, the request is routed through streaming so the
-    decoded body is bounded before it is fully buffered, giving callers
-    decompression-bomb protection on the non-streaming helper too.
+    body is bounded before it is fully buffered. Guarded requests advertise
+    identity encoding and refuse any other Content-Encoding before decoding.
+    This avoids unbounded decompressor output allocation, including stacked
+    encodings. Servers that ignore identity negotiation are incompatible with
+    guarded fetches and raise httpx.DecodingError.
 
     When ``pin_to_resolved_ip`` is True (default) and a ``resolver`` is
     configured, the URL host is resolved once and the request is connected to
@@ -483,7 +486,9 @@ def _prepare_pinned_request(
 def _decoded_response_content_with_limit(
     response: httpx.Response, *, max_bytes: int | None, deadline: float | None = None
 ) -> bytes:
-    """Read decoded response bytes while enforcing ``max_bytes`` and ``deadline``."""
+    """Bound body reads, refusing compression before any decoder can allocate output."""
+    if max_bytes is not None and response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+        raise httpx.DecodingError("guarded responses require identity Content-Encoding")
     if deadline is not None:
         if not isinstance(response.stream, httpx.SyncByteStream):
             raise TypeError("a total timeout needs a synchronous response stream")
@@ -547,6 +552,10 @@ def stream_with_safe_redirects(
     or the end of the body (trailers). Such a wait is noticed only afterwards.
     :class:`HTTPTotalTimeoutExceeded` is raised when the budget is used up.
     """
+    if max_bytes is not None:
+        headers = httpx.Headers(request_kwargs.get("headers"))
+        headers["Accept-Encoding"] = "identity"
+        request_kwargs = {**request_kwargs, "headers": headers}
     deadline = time.monotonic() + total_timeout if total_timeout is not None else None
     current_url = url
 

@@ -876,6 +876,28 @@ reading the body when the header is present. Also configure a tight Django
 so oversized or malformed requests are stopped before they reach application
 workers.
 
+.. _guarded-http-encoding:
+
+Guarded outbound HTTP responses
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Whenever the shared HTTP helpers enforce a response byte cap (``max_bytes``),
+requests send ``Accept-Encoding: identity`` on every redirect hop, overriding
+client defaults and caller encoding headers. Responses whose bodies are consumed
+must omit
+``Content-Encoding`` or specify a single ``identity`` value. Any other value,
+including compressed, stacked, or unknown encodings, raises
+``httpx.DecodingError`` before the response body is read or decoded. Protocol
+callers treat this as a fetch/request failure. Servers that ignore identity
+negotiation are incompatible with guarded fetches.
+
+This policy prevents decompression from allocating output beyond the allowance;
+setting the cap to ``None`` disables this protection and permits HTTPX's normal
+decoding. Byte counting, redirect/SSRF checks, IP pinning and total deadlines
+remain in effect as configured. The limit bounds retained body bytes, not the
+HTTP transport's raw input chunks or total process memory. Already-buffered
+responses supplied by callers cannot retroactively receive an allocation bound.
+
 INDIEWEB_WEBSUB_HUB_RESPONSE_MAX_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -886,7 +908,8 @@ subscribe and publish requests.
 
 WebSub hub responses are typically small acknowledgements; the cap protects
 django-indieweb against hostile or misconfigured hubs that return large or
-compressed-bomb payloads. Hub responses above this limit are surfaced as
+compressed-bomb payloads. Guarded responses use
+:ref:`identity encoding <guarded-http-encoding>`. Hub responses above this limit are surfaced as
 request failures rather than buffered into memory:
 ``request_websub_subscription()`` records the failure on the subscription's
 ``last_request_error`` diagnostics, and ``notify_hubs()`` returns it on the
@@ -1255,7 +1278,8 @@ Vouch fetches.
 
 **Default:** ``1048576`` (1 MiB)
 
-Responses are streamed and counted while decoded chunks are read. Responses
+Responses are streamed and counted while identity body chunks are read; see
+:ref:`guarded-http-encoding` for the compression compatibility policy. Responses
 over this limit mark the Webmention ``failed`` and are not stored as source
 snapshots. Set this to ``None`` only when an upstream proxy, queue, or worker
 boundary enforces an equivalent limit.
@@ -1463,7 +1487,8 @@ during outbound delivery (``WebmentionSender.send_webmention``).
 
 **Default:** ``1048576`` (1 MiB)
 
-Responses are streamed and counted while decoded chunks are read. A hostile
+Responses are streamed and counted while identity body chunks are read; see
+:ref:`guarded-http-encoding` for the compression compatibility policy. A hostile
 endpoint that returns more than the configured limit causes the delivery to
 be reported as a failure (``success=False``, ``status_code=None``,
 ``error="response too large: ..."``) instead of buffering the unbounded body.
@@ -2429,6 +2454,15 @@ logged once as a warning, so a misspelled opt-in never leaks values.
   ``TokenIntrospectionView`` for token-not-found / expired-token /
   duplicate-token failure logs) digests the full token so even the
   leading bytes never appear in redacted logs.
+
+For token introspection authorizers, redirect validators, client-ID validators
+and Webmention Vouch trust policies, ERROR diagnostics digest import paths,
+submitted URLs and arbitrary exception messages in redact mode. This guarantee
+covers these four hooks, rather than all host-defined policy hooks. They keep the fixed operation name and exception class
+without traceback details, and continue to deny access on import/call failures
+or invalid callable configuration. Passthrough mode retains raw policy paths,
+URLs and exception messages, which may contain credentials or user data from
+host hooks; use redact mode for privacy-sensitive deployments.
 
 Three kinds of value are digested in redact mode at every log level,
 including ERROR, because they are credentials or identify a user or client

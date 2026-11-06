@@ -710,7 +710,7 @@ def test_total_timeout_checks_raw_chunks_that_decode_to_nothing(monkeypatch):
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(HTTPTotalTimeoutExceeded):
             stream_with_safe_redirects(
-                client, "GET", "https://example.com/", max_bytes=100, resolver=None, total_timeout=4
+                client, "GET", "https://example.com/", max_bytes=None, resolver=None, total_timeout=4
             )
     assert clock.now == 4
 
@@ -759,7 +759,7 @@ def test_total_timeout_is_a_timeout_and_leaves_fast_responses_alone(monkeypatch)
     assert issubclass(HTTPTotalTimeoutExceeded, httpx.TimeoutException)
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = stream_with_safe_redirects(
-            client, "GET", "https://example.com/start", max_bytes=100, resolver=None, total_timeout=4
+            client, "GET", "https://example.com/start", max_bytes=None, resolver=None, total_timeout=4
         )
     assert result.response.content == b"ok"
     assert result.final_url == "https://example.com/final"
@@ -795,3 +795,59 @@ def test_request_with_safe_redirects_enforces_total_timeout_without_byte_cap(mon
                 client, "POST", "https://example.com/", max_bytes=None, resolver=None, total_timeout=5, data={"a": "b"}
             )
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "gzip, gzip", "gzip, identity", "unknown"])
+def test_guarded_fetch_refuses_encoding_before_reading_or_decoding(encoding):
+    """Even a single high-ratio chunk must never reach an HTTP decoder."""
+    reads = []
+    closes = []
+    compressed = gzip.compress(b"x" * (1024 * 1024))
+    if encoding == "gzip, gzip":
+        compressed = gzip.compress(compressed)
+
+    class EncodedBody(httpx.SyncByteStream):
+        def __iter__(self):
+            reads.append(True)
+            yield compressed
+
+        def close(self):
+            closes.append(True)
+
+    def handler(request):
+        return httpx.Response(200, headers={"Content-Encoding": encoding}, stream=EncodedBody())
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.DecodingError, match="identity"):
+            request_with_safe_redirects(client, "GET", "https://example.com/", max_bytes=16, resolver=None)
+    assert reads == []
+    assert closes == [True]
+
+
+@pytest.mark.parametrize("encoding", [None, "identity", " IDENTITY "])
+def test_guarded_fetch_requests_identity_on_each_hop_and_retains_byte_limit(encoding):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        assert request.headers["Accept-Encoding"] == "identity"
+        assert request.headers["X-Synthetic"] == "retained"
+        if len(requests) == 1:
+            return httpx.Response(302, headers={"Location": "/final"})
+        headers = {"Content-Encoding": encoding} if encoding else {}
+        return httpx.Response(200, headers=headers, stream=httpx.ByteStream(b"0123456789abcdef"))
+
+    with httpx.Client(transport=httpx.MockTransport(handler), headers={"Accept-Encoding": "gzip"}) as client:
+        result = request_with_safe_redirects(
+            client,
+            "GET",
+            "https://example.com/",
+            max_bytes=16,
+            total_timeout=5,
+            resolver=public_resolver,
+            headers={"Accept-Encoding": "br", "X-Synthetic": "retained"},
+        )
+    assert result.response.content == b"0123456789abcdef"
+    assert len(requests) == 2
+    assert all(request.url.host == "93.184.216.34" for request in requests)
+    assert all(request.headers["Host"] == "example.com" for request in requests)

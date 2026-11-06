@@ -35,8 +35,10 @@ from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.http import urlencode
 from django.utils.module_loading import import_string
+from django.views.decorators.cache import never_cache
 from django.views.decorators.clickjacking import xframe_options_deny
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.vary import vary_on_headers
 from django.views.generic import View
 
 from .cors import CorsMixin
@@ -857,14 +859,17 @@ def _client_id_allowed(client_id: str) -> bool:
     try:
         validator = import_string(validator_path)
     except Exception as exc:
-        logger.error(f"Failed to load INDIEWEB_CLIENT_ID_VALIDATOR {validator_path}: {exc}")
+        logger.error(
+            f"Failed to load INDIEWEB_CLIENT_ID_VALIDATOR {redact_state(str(validator_path))} "
+            f"({type(exc).__name__}): {redact_text(str(exc))}"
+        )
         return False
     try:
         return bool(validator(normalized_client_id))
     except Exception as exc:
         logger.error(
             f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={_log_client_id(normalized_client_id)!r}: "
-            f"{redact_text(str(exc))}"
+            f"({type(exc).__name__}): {redact_text(str(exc))}"
         )
         return False
 
@@ -888,15 +893,22 @@ def _introspection_authorizer_allows(caller_token: Token, target_token: Token) -
         try:
             authorizer = import_string(authorizer_path)
         except Exception as exc:
-            logger.error(f"Failed to load INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER {authorizer_path!r}: {exc}")
+            logger.error(
+                f"Failed to load INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER {redact_state(str(authorizer_path))!r} "
+                f"({type(exc).__name__}): {redact_text(str(exc))}"
+            )
             return False
         if not callable(authorizer):
-            logger.error(f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER {authorizer_path!r} is not callable")
+            logger.error(
+                f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER {redact_state(str(authorizer_path))!r} is not callable"
+            )
             return False
         try:
             result = authorizer(caller_token, target_token)
         except Exception as exc:
-            logger.error(f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER raised: {exc}")
+            logger.error(
+                f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER raised ({type(exc).__name__}): {redact_text(str(exc))}"
+            )
             return False
         # Strict identity check: the docs and security guarantee promise that
         # only an explicit ``True`` permits introspection. Truthy non-bool
@@ -1224,16 +1236,19 @@ def _redirect_uri_allowed(client_id: str, redirect_uri: str) -> bool:
     if validator_path:
         try:
             validator = import_string(validator_path)
-        except ImportError as exc:
-            logger.error(f"Failed to load INDIEWEB_REDIRECT_URI_VALIDATOR {validator_path}: {exc}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to load INDIEWEB_REDIRECT_URI_VALIDATOR {redact_state(str(validator_path))} "
+                f"({type(exc).__name__}): {redact_text(str(exc))}"
+            )
             return False
         if not callable(validator):
-            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR {validator_path} is not callable")
+            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR {redact_state(str(validator_path))} is not callable")
             return False
         try:
             result = validator(client_id, redirect_uri)
         except Exception as exc:
-            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR raised: {exc}")
+            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR raised ({type(exc).__name__}): {redact_text(str(exc))}")
             return False
         if not isinstance(result, bool):
             return False
@@ -1593,6 +1608,8 @@ class TokenAuthMixin(View):
             return False
         return required_scope in scope.split()
 
+    @method_decorator(never_cache)
+    @method_decorator(vary_on_headers("Authorization"))
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not self.authenticated(request):
             return _bearer_authentication_error_response()

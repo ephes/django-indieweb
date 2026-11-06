@@ -105,7 +105,7 @@ def test_allowed_origin_gets_cors_headers_on_actual_response(client, settings, t
 
     assert response.status_code == 200
     assert response["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
-    assert response["Vary"] == "Origin"
+    assert {part.strip() for part in response["Vary"].split(",")} == {"Authorization", "Origin"}
     assert "me=https%3A%2F%2Fexample.org" in response.content.decode("utf-8")
 
 
@@ -132,7 +132,7 @@ def test_disallowed_origin_gets_no_cors_headers_on_actual_response(client, setti
 
     assert response.status_code == 200
     assert "Access-Control-Allow-Origin" not in response
-    assert response["Vary"] == "Origin"
+    assert {part.strip() for part in response["Vary"].split(",")} == {"Authorization", "Origin"}
 
 
 @pytest.mark.django_db
@@ -179,7 +179,7 @@ def test_allowed_origin_gets_cors_headers_on_authentication_failure(client, sett
     assert response.status_code == 401
     assert response.content == b"authentication error"
     assert response["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
-    assert response["Vary"] == "Origin"
+    assert {part.strip() for part in response["Vary"].split(",")} == {"Authorization", "Origin"}
 
 
 @pytest.mark.django_db
@@ -192,7 +192,7 @@ def test_wildcard_origin_uses_star_without_credentials(client, settings, token):
     assert response.status_code == 200
     assert response["Access-Control-Allow-Origin"] == "*"
     assert "Access-Control-Allow-Credentials" not in response
-    assert "Vary" not in response
+    assert response["Vary"] == "Authorization"
 
 
 @pytest.mark.django_db
@@ -207,7 +207,7 @@ def test_wildcard_with_credentials_uses_star_without_credentials(client, setting
     assert response.status_code == 200
     assert response["Access-Control-Allow-Origin"] == "*"
     assert "Access-Control-Allow-Credentials" not in response
-    assert "Vary" not in response
+    assert response["Vary"] == "Authorization"
     assert "wildcard CORS credentials are unsupported" in caplog.text
 
 
@@ -236,7 +236,7 @@ def test_explicit_allowlist_with_credentials_echoes_origin(client, settings, tok
     assert response.status_code == 200
     assert response["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
     assert response["Access-Control-Allow-Credentials"] == "true"
-    assert response["Vary"] == "Origin"
+    assert {part.strip() for part in response["Vary"].split(",")} == {"Authorization", "Origin"}
 
 
 @pytest.mark.django_db
