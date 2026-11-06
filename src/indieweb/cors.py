@@ -109,6 +109,12 @@ def _allow_origin_value(config: CorsConfig, origin: str) -> str:
 
 
 def _add_cors_headers(response: HttpResponseBase, config: CorsConfig, origin: str) -> HttpResponseBase:
+    exposed = [
+        value.strip() for value in response.get("Access-Control-Expose-Headers", "").split(",") if value.strip()
+    ]
+    if "location" not in {value.lower() for value in exposed}:
+        exposed.append("Location")
+    response["Access-Control-Expose-Headers"] = ", ".join(exposed)
     if "Access-Control-Allow-Origin" in response:
         if response["Access-Control-Allow-Origin"] != "*":
             patch_vary_headers(response, ("Origin",))

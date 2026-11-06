@@ -644,28 +644,42 @@ def _save_micropub_media_upload(validated_upload: _ValidatedMicropubMediaUpload)
         raise _MicropubMediaUploadError(500) from exc
 
 
+def _cleanup_micropub_media_uploads(stored_names: list[str]) -> None:
+    """Best-effort compensation for storage objects owned by this request."""
+    for stored_name in stored_names:
+        try:
+            default_storage.delete(stored_name)
+        except Exception:
+            logger.exception(f"Failed to clean up stored Micropub media upload {stored_name!r}")
+
+
 def _store_micropub_media_upload(request: HttpRequest, upload: UploadedFile) -> str:
-    """Validate and store a Micropub media upload, returning the absolute media URL."""
-    validated_upload = _validate_micropub_media_uploads([upload])[0]
-    return _absolute_storage_url(request, _save_micropub_media_upload(validated_upload))
+    """Validate and publish one upload using the shared ownership boundary."""
+    return _store_micropub_media_uploads(request, [upload])[0]
 
 
-def _store_micropub_media_uploads(request: HttpRequest, uploads: list[UploadedFile]) -> list[str]:
-    """Validate and store multiple uploads, cleaning up partial saves if storage fails."""
+def _store_micropub_media_uploads(
+    request: HttpRequest,
+    uploads: list[UploadedFile],
+    *,
+    owned_names: list[str] | None = None,
+) -> list[str]:
+    """Own newly stored files until every URL is ready, then transfer ownership."""
     validated_uploads = _validate_micropub_media_uploads(uploads)
-
     stored_names: list[str] = []
     try:
         for validated_upload in validated_uploads:
             stored_names.append(_save_micropub_media_upload(validated_upload))
-    except _MicropubMediaUploadError:
-        for stored_name in stored_names:
-            try:
-                default_storage.delete(stored_name)
-            except OSError:
-                logger.exception(f"Failed to clean up stored Micropub media upload {stored_name!r}")
-        raise
-    return [_absolute_storage_url(request, stored_name) for stored_name in stored_names]
+        urls = [_absolute_storage_url(request, stored_name) for stored_name in stored_names]
+        if owned_names is not None:
+            owned_names.extend(stored_names)
+        return urls
+    except Exception as exc:
+        _cleanup_micropub_media_uploads(stored_names)
+        if isinstance(exc, _MicropubMediaUploadError):
+            raise
+        logger.exception("Unexpected error publishing Micropub media upload")
+        raise _MicropubMediaUploadError(500) from exc
 
 
 def _micropub_media_upload_error_response(exc: _MicropubMediaUploadError) -> HttpResponse:
@@ -2393,7 +2407,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
                 properties.update(list_props)
 
         photo_uploads = request.FILES.getlist("photo")
-        for media_url in _store_micropub_media_uploads(request, photo_uploads):
+        for media_url in _store_micropub_media_uploads(
+            request, photo_uploads, owned_names=getattr(self, "_create_upload_names", None)
+        ):
             photo_values = properties.setdefault("photo", [])
             photo_values.append(media_url)
 
@@ -2988,25 +3004,36 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if create_property_error is not None:
             return create_property_error
 
-        # Parse properties from request
-        try:
-            properties = self.parse_request_data(request)
-        except (_MicropubMediaUploadError, _MicropubInvalidProperties) as exc:
-            return self._create_parse_error_response(exc)
-        if not self._create_properties_valid(request, properties):
-            return self._invalid_request()
+        return self._handle_create(request)
 
-        # Get the content handler and create entry
-        handler = get_micropub_handler()
-
+    def _handle_create(self, request: HttpRequest) -> HttpResponse:
+        """Keep inline uploads owned until the content handler accepts the entry."""
+        self._create_upload_names: list[str] = []
+        entry_created = False
         try:
-            entry = handler.create_entry(properties, self.token.owner)
-        except ValueError as exc:
-            logger.warning(f"create_entry rejected request: {exc}")
-            return self._invalid_request()
-        except Exception:
-            logger.exception("Unexpected error in create_entry")
-            return HttpResponse(status=500)
+            # Parse properties from request
+            try:
+                properties = self.parse_request_data(request)
+            except (_MicropubMediaUploadError, _MicropubInvalidProperties) as exc:
+                return self._create_parse_error_response(exc)
+            if not self._create_properties_valid(request, properties):
+                return self._invalid_request()
+
+            # Get the content handler and create entry
+            handler = get_micropub_handler()
+
+            try:
+                entry = handler.create_entry(properties, self.token.owner)
+            except ValueError as exc:
+                logger.warning(f"create_entry rejected request: {exc}")
+                return self._invalid_request()
+            except Exception:
+                logger.exception("Unexpected error in create_entry")
+                return HttpResponse(status=500)
+            entry_created = True
+        finally:
+            if not entry_created:
+                _cleanup_micropub_media_uploads(self._create_upload_names)
 
         # Return 201 Created with Location header
         response = HttpResponse(status=201)

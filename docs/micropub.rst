@@ -561,6 +561,27 @@ types, serve uploads defensively:
   ``DATA_UPLOAD_MAX_NUMBER_FILES`` lets a hostile sender exhaust memory
   with thousands of file parts before the view's per-request cap fires.
 
+Upload ownership and failed creation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Media uploads retain request ownership until every storage URL and absolute
+response URL is constructed. If storage or URL construction fails, all objects
+created by that upload operation are deleted on a best-effort basis; pre-existing
+objects are untouched.
+
+Inline multipart photos remain owned by the create request until
+``create_entry`` returns successfully. Validation rejection, handler
+``ValueError`` and unexpected handler errors clean up the new inline uploads.
+An adapter that raises must leave no committed entry referring to these photos.
+Once the handler returns successfully, the entry owns its photos, including if
+constructing the entry response later fails. Independently uploaded media URLs
+are never owned by a subsequent create request and are not deleted on rejection.
+
+Allowed cross-origin clients can read the ``Location`` response header from
+successful content and media creation. Built-in CORS adds ``Location`` to
+``Access-Control-Expose-Headers``, preserving existing exposed headers. CORS
+must be enabled for the client's origin as described in the configuration guide.
+
 Media Source and Delete Hooks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
