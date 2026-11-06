@@ -479,5 +479,5 @@ def test_client_id_validator_failure_log_keeps_values_in_passthrough_mode(client
 
     assert (
         f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={CLIENT_MARKER!r}: "
-        f"Policy lookup failed for {CLIENT_MARKER}"
+        f"(ValueError): Policy lookup failed for {CLIENT_MARKER}"
     ) in caplog.text

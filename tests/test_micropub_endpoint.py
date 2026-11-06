@@ -65,7 +65,7 @@ def test_no_token(client, micropub_endpoint_url, micropub_payload):
     response = client.post(micropub_endpoint_url, data=micropub_payload)
     assert response.status_code == 401
     assert "error" in response.content.decode("utf-8")
-    assert response["Cache-Control"] == "no-store"
+    assert {"private", "no-store"} <= {part.strip() for part in response["Cache-Control"].split(",")}
     assert response["WWW-Authenticate"] == "Bearer"
 
 
@@ -100,7 +100,7 @@ def test_correct_token_body(client, token, micropub_endpoint_url, micropub_paylo
     response = client.post(micropub_endpoint_url, data=micropub_payload)
     assert response.status_code == 401
     assert response.content == b"authentication error"
-    assert response["Cache-Control"] == "no-store"
+    assert {"private", "no-store"} <= {part.strip() for part in response["Cache-Control"].split(",")}
     assert response["WWW-Authenticate"] == "Bearer"
 
 
@@ -199,7 +199,7 @@ def test_bearer_header_with_extra_parts_is_rejected(client, token, micropub_endp
 
     assert response.status_code == 401
     assert response.content == b"authentication error"
-    assert response["Cache-Control"] == "no-store"
+    assert {"private", "no-store"} <= {part.strip() for part in response["Cache-Control"].split(",")}
     assert response["WWW-Authenticate"] == "Bearer"
 
 

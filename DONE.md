@@ -4564,3 +4564,32 @@ uploads and storage, preserving unrelated objects and successful entries' photos
 Validation commands: pytest/coverage, migration-enabled pytest, mypy, Ruff,
 prek and Sphinx. Documentation: Micropub and configuration; changelog: Unreleased.
 No matching backlog items. Round 47 selected no django-indieweb slices.
+
+### IndieWeb private protocol boundaries (security scout round 49, B17)
+
+- `indieweb-http-predecode-memory-ceiling`: capped HTTP fetches advertise
+  identity encoding on every hop and reject other content encodings before
+  reading/decoding. Synthetic single-chunk and stacked gzip streams are never
+  consumed; identity bodies retain size, deadline and SSRF/IP-pinning checks.
+- `indieweb-policy-hook-error-log-redaction`: introspection, redirect, client-ID
+  and Vouch policy import/call diagnostics redact paths, URLs and exception
+  messages while preserving operation/type context and fail-closed results.
+  Synthetic endpoint/processor tests cover import, non-callable and raising
+  hooks in redact and passthrough modes.
+- `indieweb-micropub-source-private-cache-policy`: the token-authenticated
+  resource boundary adds private/no-store controls and Authorization Vary to
+  entry/media responses, including authentication and handler errors. Synthetic
+  draft source/source-list tests exercise cache middleware and token revocation.
+- Validation: `uv run pytest` (coverage gate), `uv run mypy`,
+  `uv run ruff check .`, `uv run ruff format --check .`,
+  `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`, `git diff --check`,
+  file-backed SQLite state regressions with migrations. PostgreSQL startup was
+  blocked by OS shared-memory exhaustion; the branch CI PostgreSQL check is
+  required before merge. Each slice's new regressions failed before its fix.
+- Documentation: HTTP compatibility and privacy guidance in
+  `docs/configuration.rst`, `docs/webmention.rst` and `docs/micropub.rst`.
+  Changelog: three Unreleased security entries; no version bump. No matching
+  pending entries existed in `BACKLOG.md`; its unrelated follow-ups stay open.
+- Adoption requires an updated package in consuming applications; no deployment,
+  release or publication is part of this change.

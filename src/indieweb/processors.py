@@ -37,7 +37,7 @@ from .http_client import (
     response_text_with_limit,
     stream_with_safe_redirects,
 )
-from .log_redaction import redact_url
+from .log_redaction import redact_state, redact_text, redact_url
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from .parse_isolation import (
     SourceAnalysis,
@@ -746,10 +746,13 @@ class WebmentionProcessor:
         try:
             policy = import_string(policy_path)
         except Exception as exc:
-            logger.error(f"Failed to load INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY {policy_path}: {exc}")
+            logger.error(
+                f"Failed to load INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY {redact_state(str(policy_path))} "
+                f"({type(exc).__name__}): {redact_text(str(exc))}"
+            )
             return cast("Callable[..., bool]", _reject_vouch_policy)
         if not callable(policy):
-            logger.error(f"INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY {policy_path!r} is not callable")
+            logger.error(f"INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY {redact_state(str(policy_path))!r} is not callable")
             return _reject_vouch_policy
         return cast("Callable[..., bool]", policy)
 
@@ -774,7 +777,10 @@ class WebmentionProcessor:
                     )
                 )
             except Exception as exc:
-                logger.error(f"INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY raised for vouch_url={vouch_url!r}: {exc}")
+                logger.error(
+                    f"INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY raised for vouch_url={redact_url(vouch_url)!r} "
+                    f"({type(exc).__name__}): {redact_text(str(exc))}"
+                )
                 return False
 
         if not self._configured_vouch_trusted_domains():
