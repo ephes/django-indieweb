@@ -564,6 +564,12 @@ types, serve uploads defensively:
 Media Source and Delete Hooks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+Source/media handler failures follow :ref:`log-redaction`, including unexpected
+ERROR-level failures: redact mode keeps operation and exception-class context
+without exposing submitted URLs, filters, exception messages or tracebacks.
+Passthrough mode retains full diagnostics. Handler ``ValueError`` still maps
+to ``400 invalid_request`` and unexpected exceptions to an empty ``500``.
+
 django-indieweb does not keep a bundled media index. Direct uploads are stored
 through Django storage, but listing uploaded files, returning metadata for a
 specific media URL, and deleting media remain host-owned operations. Host

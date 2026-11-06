@@ -5,6 +5,11 @@ Changelog
 
 Unreleased
 ----------
+* Micropub source/media query and media-delete handler failures now honor
+  ``INDIEWEB_LOG_REDACTION`` at WARNING and ERROR. Redact mode digests URLs,
+  filters and arbitrary exception messages and omits tracebacks, retaining
+  operation and exception-class context. Passthrough diagnostics and the
+  ``400``/``500`` response contracts are unchanged.
 * **Behavior change:** Micropub source and media list queries share configurable
   finite default/maximum limits (``INDIEWEB_MICROPUB_QUERY_DEFAULT_LIMIT=20``,
   ``INDIEWEB_MICROPUB_QUERY_MAX_LIMIT=100``). Zero, oversized limits and offsets

@@ -4517,3 +4517,19 @@ cross-origin redirect mode and the ``hub.secret`` HTTPS gate.
 - Validation: `uv run pytest`, `uv run mypy`, Ruff lint/format, configured prek
   hooks, Sphinx with warnings as errors, and the supported tox matrix including
   migrations.
+
+### Keep Micropub adapter failure logs private
+
+- Applied the configured URL privacy policy to source/media lookup, listing and
+  media-delete failures at WARNING and ERROR. Redact mode digests free-form
+  exception/filter text and omits tracebacks; operation and exception class
+  remain available. Passthrough diagnostics and 400/500 responses are preserved.
+- Regression proof: 30 synthetic handler-failure cases failed before the fix;
+  all 40 privacy cases pass, covering chained exceptions and normalized/invalid
+  redaction settings without external services or personal data.
+- Documentation: precise call-site policy in `docs/configuration.rst` and
+  `docs/micropub.rst`.
+- Changelog: Unreleased fix; no corresponding backlog item to remove.
+- Validation: `uv run pytest`, `uv run mypy`, Ruff lint/format, configured prek
+  hooks, Sphinx with warnings as errors, and the supported tox matrix including
+  migrations.

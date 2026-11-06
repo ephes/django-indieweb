@@ -353,6 +353,21 @@ def _micropub_query_page(request: HttpRequest) -> tuple[int, int]:
     return limit, offset
 
 
+def _log_micropub_query_error(operation: str, context: str, exc: Exception) -> None:
+    """Keep adapter exception messages and tracebacks private in redact mode."""
+    rejected = isinstance(exc, ValueError)
+    prefix = f"{operation} rejected" if rejected else f"Unexpected error in {operation}"
+    logger.log(
+        logging.WARNING if rejected else logging.ERROR,
+        "%s %s (%s): %s",
+        prefix,
+        context,
+        type(exc).__name__,
+        redact_text(str(exc)),
+        exc_info=not rejected and configured_mode() == "passthrough",
+    )
+
+
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_COUNT = 10
@@ -2889,12 +2904,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
 
         try:
             entry = handler.get_entry(url, self.token.owner)
-        except ValueError as exc:
-            logger.warning(f"get_entry rejected url={redact_url(url)!r}: {exc}")
-            return self._invalid_request()
-        except Exception:
-            logger.exception(f"Unexpected error in get_entry for url={url!r}")
-            return HttpResponse(status=500)
+        except Exception as exc:
+            _log_micropub_query_error("get_entry", f"url={redact_url(url)!r}", exc)
+            return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
         if entry is None:
             logger.warning(f"get_entry did not find url={redact_url(url)!r}")
             return self._invalid_request()
@@ -2933,18 +2945,15 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
                 offset=effective_offset,
                 filter=request.GET.get("filter") or None,
             )
-        except ValueError as exc:
-            logger.warning(
-                "list_entries rejected source list query "
-                f"limit={effective_limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}: {exc}"
+        except Exception as exc:
+            _log_micropub_query_error(
+                "list_entries",
+                "source list query "
+                f"limit={effective_limit!r} offset={effective_offset!r} "
+                f"filter={redact_text(request.GET.get('filter') or '')!r}",
+                exc,
             )
-            return self._invalid_request()
-        except Exception:
-            logger.exception(
-                "Unexpected error in list_entries for source list query "
-                f"limit={effective_limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}"
-            )
-            return HttpResponse(status=500)
+            return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
 
         if result is None:
             return HttpResponse("not_implemented", status=501)
@@ -3113,12 +3122,9 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
             return self._not_implemented()
         try:
             item = handler.get_media(url, self.token.owner)
-        except ValueError as exc:
-            logger.warning(f"get_media rejected url={redact_url(url)!r}: {exc}")
-            return self._invalid_request()
-        except Exception:
-            logger.exception(f"Unexpected error in get_media for url={url!r}")
-            return HttpResponse(status=500)
+        except Exception as exc:
+            _log_micropub_query_error("get_media", f"url={redact_url(url)!r}", exc)
+            return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
         if item is None:
             logger.warning(f"get_media did not find url={redact_url(url)!r}")
             return self._invalid_request()
@@ -3140,18 +3146,15 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
                 offset=effective_offset,
                 filter=request.GET.get("filter") or None,
             )
-        except ValueError as exc:
-            logger.warning(
-                "list_media rejected source query "
-                f"limit={limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}: {exc}"
+        except Exception as exc:
+            _log_micropub_query_error(
+                "list_media",
+                "source list query "
+                f"limit={limit!r} offset={effective_offset!r} "
+                f"filter={redact_text(request.GET.get('filter') or '')!r}",
+                exc,
             )
-            return self._invalid_request()
-        except Exception:
-            logger.exception(
-                "Unexpected error in list_media for source query "
-                f"limit={limit!r} offset={effective_offset!r} filter={request.GET.get('filter')!r}"
-            )
-            return HttpResponse(status=500)
+            return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
 
         if result is None:
             return self._not_implemented()
@@ -3187,12 +3190,9 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
             return self._not_implemented()
         try:
             deleted = handler.delete_media(url, self.token.owner)
-        except ValueError as exc:
-            logger.warning(f"delete_media rejected url={redact_url(url)!r}: {exc}")
-            return self._invalid_request()
-        except Exception:
-            logger.exception(f"Unexpected error in delete_media for url={url!r}")
-            return HttpResponse(status=500)
+        except Exception as exc:
+            _log_micropub_query_error("delete_media", f"url={redact_url(url)!r}", exc)
+            return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
 
         if deleted is not True:
             logger.warning(f"delete_media did not delete url={redact_url(url)!r}")

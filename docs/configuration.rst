@@ -2443,9 +2443,17 @@ The ``notify_websub`` management command applies the same policy to stdout:
 topic and hub URLs are digested, and a request error without an HTTP status
 (free-form text that can embed a URL) is printed as ``<redacted:DIGEST>``.
 
-Other ERROR-level lines, such as unexpected handler failures, are not
-redacted, so operators retain full URLs for incident response. Rotate ``SECRET_KEY`` to invalidate previously-emitted
-digests; values are scoped to the current key.
+Micropub source/media adapter failures also honor this policy at WARNING and
+ERROR: ``get_entry``, ``list_entries``, ``get_media``, ``list_media``, and
+``delete_media`` log the operation and exception class. In redact mode,
+submitted URLs are digested, free-form filters and exception messages are
+rendered as ``<redacted:DIGEST>``, and exception tracebacks (including chained
+messages) are omitted. Passthrough mode retains raw URLs, filters and messages,
+plus tracebacks for unexpected failures. Responses remain ``400 invalid_request``
+for handler ``ValueError`` and empty ``500`` for unexpected exceptions.
+
+Other ERROR-level lines are not uniformly redacted. Rotate ``SECRET_KEY`` to
+invalidate previously-emitted digests; values are scoped to the current key.
 
 Testing Configuration
 ---------------------
