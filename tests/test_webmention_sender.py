@@ -173,8 +173,7 @@ def test_discover_endpoint_from_link_header(sender, source_url, target_url):
     endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/webmention"
-    assert len(captured) == 1
-    assert captured[0].method == "HEAD"
+    assert [request.method for request in captured] == ["HEAD", "GET"]
     assert str(captured[0].url) == target_url
 
 
@@ -206,6 +205,7 @@ def test_discover_endpoint_follows_redirect_to_link_header(sender, source_url, t
             _sender_response(status_code=302, headers={"Location": final_url}),
             _sender_response(status_code=200, headers={"Link": '<https://target.com/webmention>; rel="webmention"'}),
         ]
+        * 2
     )
     captured: list[httpx.Request] = []
 
@@ -216,7 +216,7 @@ def test_discover_endpoint_follows_redirect_to_link_header(sender, source_url, t
     endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
 
     assert endpoint == "https://target.com/webmention"
-    assert _request_urls(captured) == [target_url, final_url]
+    assert _request_urls(captured) == [target_url, final_url] * 2
 
 
 def test_discover_endpoint_resolves_relative_link_header_against_final_url(sender, source_url, target_url):
@@ -227,6 +227,7 @@ def test_discover_endpoint_resolves_relative_link_header_against_final_url(sende
             _sender_response(status_code=301, headers={"Location": final_url}),
             _sender_response(status_code=200, headers={"Link": '<wm>; rel="webmention"'}),
         ]
+        * 2
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1425,19 +1426,19 @@ def test_parse_link_header_ignores_misleading_or_malformed_values(sender, link_v
 
 
 def test_discover_endpoint_uses_link_header_with_quoted_comma(sender):
-    """HEAD discovery finds the endpoint and resolves it against the final URL."""
+    """GET confirms the quoted Link endpoint against the final URL."""
     response = Mock()
     response.headers = {"Link": '</webmention>; title="hello, world"; rel="webmention"'}
     discovered = Mock(response=response, final_url="https://93.184.216.34/post")
 
     with (
         patch("indieweb.senders.request_with_webmention_redirects", return_value=discovered),
-        patch("indieweb.senders.stream_with_safe_redirects") as mock_get,
+        patch("indieweb.senders.stream_with_safe_redirects", return_value=discovered) as mock_get,
     ):
         endpoint = sender.discover_endpoint("https://93.184.216.34/post")
 
     assert endpoint == "https://93.184.216.34/webmention"
-    mock_get.assert_not_called()
+    mock_get.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -1589,7 +1590,7 @@ def test_send_webmention_total_timeout_cuts_off_slow_redirect_chain(sender, sour
 
 @override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
 def test_discover_endpoint_total_timeout_covers_head_and_get(sender, target_url, monkeypatch):
-    """HEAD and the GET fallback share one budget; a used-up budget skips the GET."""
+    """HEAD and GET confirmation share one budget; a used-up budget skips the GET."""
     clock = _SenderClock(monkeypatch)
     captured: list[httpx.Request] = []
 
@@ -1607,7 +1608,7 @@ def test_discover_endpoint_total_timeout_covers_head_and_get(sender, target_url,
 
 
 @override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
-def test_discover_endpoint_get_fallback_gets_the_remaining_budget(sender, target_url, monkeypatch):
+def test_discover_endpoint_get_confirmation_gets_the_remaining_budget(sender, target_url, monkeypatch):
     clock = _SenderClock(monkeypatch)
     captured: list[httpx.Request] = []
 
@@ -1815,3 +1816,44 @@ def test_send_webmention_does_not_resolve_vouch_host(sender, source_url, target_
     assert resolved_hosts == ["target.com"]
     assert deliver.call_args.kwargs["resolver"] is resolver
     assert deliver.call_args.kwargs["data"]["vouch"] == "https://vouch.example/page"
+
+
+@pytest.mark.parametrize(
+    ("get_status", "get_headers", "get_html", "expected"),
+    [
+        (200, {"Link": '</head-wm>; rel="webmention"'}, "", "https://target.com/head-wm"),
+        (200, {"Link": '</get-wm>; rel="webmention"'}, "", "https://target.com/get-wm"),
+        (200, {}, '<link rel="webmention" href="/html-wm">', "https://target.com/html-wm"),
+        (200, {}, "", None),
+        (404, {"Link": '</head-wm>; rel="webmention"'}, "", None),
+        (200, {"Link": '<http://127.0.0.1/wm>; rel="webmention"'}, "", None),
+    ],
+)
+def test_head_endpoint_requires_get_confirmation(sender, target_url, get_status, get_headers, get_html, expected):
+    """Only GET's safe, successful advertisement can select a delivery endpoint."""
+    methods = []
+
+    def handler(request):
+        methods.append(request.method)
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Link": '</head-wm>; rel="webmention"'})
+        return httpx.Response(get_status, headers=get_headers, text=get_html)
+
+    with _make_test_client(handler) as client:
+        assert sender.discover_endpoint(target_url, client=client) == expected
+    assert methods == ["HEAD", "GET"]
+
+
+def test_unsafe_head_endpoint_stops_before_get(sender, target_url):
+    """Preserve fail-closed HEAD validation even if GET would advertise safely."""
+    methods = []
+
+    def handler(request):
+        methods.append(request.method)
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Link": '<http://127.0.0.1/wm>; rel="webmention"'})
+        return httpx.Response(200, headers={"Link": '</safe-wm>; rel="webmention"'})
+
+    with _make_test_client(handler) as client:
+        assert sender.discover_endpoint(target_url, client=client) is None
+    assert methods == ["HEAD"]

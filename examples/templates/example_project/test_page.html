@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <title>Test Webmention Page</title>
     {% load webmention_tags %}
     {% webmention_endpoint_link %}
-</head>
-<body>
+  </head>
+  <body>
     <h1>Test Webmention Page</h1>
     <p>This page can receive webmentions! The endpoint is at /webmention/</p>
 
@@ -22,5 +22,5 @@ curl -X POST http://{{ request.get_host }}/webmention/ \
 
     <hr>
     <p><a href="/admin/">Django Admin</a> | <a href="/webmention/">Webmention Endpoint</a></p>
-</body>
+  </body>
 </html>

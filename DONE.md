@@ -4485,3 +4485,20 @@ cross-origin redirect mode and the ``hub.secret`` HTTPS gate.
 - Documentation: fixed-window semantics and non-atomic counts in configuration,
   API and Webmention docs; exact counts need atomic shared-cache operations.
 - Changelog: Unreleased bugfix and upgrade note; no matching backlog item.
+
+## 2026-11-06
+
+### Sanity-check HEAD-discovered Webmention endpoints against GET
+
+- Endpoint discovery always confirms a successful HEAD probe with GET. GET's
+  Link header, then HTML, selects the endpoint; no HEAD-only fallback is used.
+  Existing SSRF checks, redirect limits, response caps and shared budget remain.
+- Applied the configured DjHTML indentation to the example page so the
+  all-files hook gate passes.
+- Validation: six regression cases failed before the fix; 154 sender tests,
+  full pytest (1,958 tests, 91.92% coverage), `uv run mypy`, Ruff lint/format,
+  prek hooks and Sphinx with warnings as errors passed. All 10 supported tox
+  CI matrix environments and the migration-enabled environment passed.
+- Documentation: updated discovery behavior in `docs/webmention.rst` and
+  `docs/configuration.rst`.
+- Changelog: added the behavior change under Unreleased.

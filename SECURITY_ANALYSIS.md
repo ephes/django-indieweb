@@ -777,13 +777,10 @@ Validated NEW lower-priority residuals (hardening / defense-in-depth):
   path that bypasses the producer would persist a hostile scheme.
   Either call ``full_clean(exclude=...)`` before save, or document the
   invariant explicitly with an assertion.
-- WebmentionSender HEAD-discovered endpoint is never sanity-checked
-  against a GET response (``senders.py:165-178``). HEAD/GET divergence
-  on hostile targets steers delivery toward an endpoint a browser
-  auto-discovery would not pick. Each hop is still SSRF-screened, so
-  the impact is limited to "delivered to a different endpoint than a
-  browser would". Document as accepted, or add a cheap GET sniff before
-  sending.
+- **Resolved 2026-11-06:** HEAD-discovered endpoints are confirmed against
+  GET; GET's Link header, then HTML, is authoritative. No HEAD-only endpoint
+  is used when GET fails or advertises none. Existing HEAD safety failures
+  (including unsafe advertised endpoints) still stop discovery before GET.
 - ``WebmentionSender._parse_link_header`` (``senders.py:230-238``)
   splits Link entries on bare commas; an RFC 8288 quoted parameter
   containing a comma is mis-parsed and can pair the rel="webmention"
