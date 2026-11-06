@@ -191,3 +191,43 @@ def test_h_card_render_drops_unsafe_org_url_from_bypassed_h_card(user, profile):
     assert "Bad Org" in rendered
     assert "javascript:" not in rendered
     assert 'class="u-url"' not in rendered
+
+
+def test_h_card_render_drops_malformed_email_from_bypassed_h_card(user, profile):
+    """Emails injected via QuerySet.update that are not addr-specs must not render as mailto links."""
+    Profile.objects.filter(pk=profile.pk).update(
+        h_card={
+            "name": ["Test User"],
+            "email": [
+                "not an email",
+                "alice@example.com?subject=hi",
+                "<script>@example.com",
+                {"value": "dict@example.com"},
+                "ok@example.com",
+            ],
+        }
+    )
+    fresh_profile = Profile.objects.get(pk=profile.pk)
+    template = Template("{% load indieweb_tags %}{% h_card profile %}")
+    rendered = template.render(Context({"profile": fresh_profile}))
+    assert rendered.count('class="u-email"') == 1
+    assert 'href="mailto:ok%40example.com"' in rendered
+    assert "not an email" not in rendered
+    assert "subject=hi" not in rendered
+    assert "dict@example.com" not in rendered
+    assert "<script>" not in rendered
+
+
+def test_h_card_render_omits_email_when_none_valid(user, profile):
+    Profile.objects.filter(pk=profile.pk).update(h_card={"name": ["Test User"], "email": ["mailto:"]})
+    fresh_profile = Profile.objects.get(pk=profile.pk)
+    template = Template("{% load indieweb_tags %}{% h_card profile %}")
+    rendered = template.render(Context({"profile": fresh_profile}))
+    assert 'class="u-email"' not in rendered
+
+
+@pytest.mark.parametrize("values", [None, "ok@example.com", 42, {"email": "ok@example.com"}])
+def test_h_card_safe_emails_rejects_non_list_input(values):
+    from indieweb.templatetags.indieweb_tags import h_card_safe_emails
+
+    assert h_card_safe_emails(values) == []

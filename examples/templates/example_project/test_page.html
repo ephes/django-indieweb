@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Webmention Page</title>
+    {% load webmention_tags %}
+    {% webmention_endpoint_link %}
+</head>
+<body>
+    <h1>Test Webmention Page</h1>
+    <p>This page can receive webmentions! The endpoint is at /webmention/</p>
+
+    <h2>Send a test webmention:</h2>
+    <pre>
+curl -X POST http://{{ request.get_host }}/webmention/ \
+  -d "source=https://example.com/your-post" \
+  -d "target=http://{{ request.get_host }}/"
+    </pre>
+
+    <h2>Webmentions for this page:</h2>
+    <p>Count: {% webmention_count request.build_absolute_uri %}</p>
+    {% show_webmentions request.build_absolute_uri %}
+
+    <hr>
+    <p><a href="/admin/">Django Admin</a> | <a href="/webmention/">Webmention Endpoint</a></p>
+</body>
+</html>

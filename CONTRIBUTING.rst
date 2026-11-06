@@ -229,7 +229,9 @@ To run the Django development server with the example project script
 The script refuses to start without ``DJANGO_SECRET_KEY`` unless
 ``ALLOW_UNSAFE_DEV_SECRET=1`` is set, never auto-creates a superuser
 (use ``python example_project.py createsuperuser`` to make one), and
-binds to ``localhost``/``127.0.0.1`` by default.
+binds to ``localhost``/``127.0.0.1`` by default. Its middleware list includes
+Django's ``XFrameOptionsMiddleware`` for clickjacking protection, and its home
+page is rendered from ``examples/templates/example_project/test_page.html``.
 
 You can then test the endpoints at http://localhost:8000/indieweb/
 

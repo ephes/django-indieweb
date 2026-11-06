@@ -290,7 +290,10 @@ Best Practices
    ``ValidationError`` from ``Profile.full_clean()``. The bundled
    ``h-card.html`` template re-applies the same scheme restriction at render
    time so bypass paths (``QuerySet.update``, ``bulk_update``, raw SQL,
-   fixtures) cannot leak unsafe URLs into rendered pages.
+   fixtures) cannot leak unsafe URLs into rendered pages. The same template
+   renders ``h_card.email`` values as ``mailto:`` links only when they pass
+   Django's ``EmailValidator`` (the ``h_card_safe_emails`` filter); other
+   values are skipped.
 
 API Reference
 =============

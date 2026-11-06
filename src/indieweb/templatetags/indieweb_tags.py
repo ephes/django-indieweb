@@ -4,6 +4,8 @@ from typing import Any
 
 from django import template
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
 from django.template.loader import render_to_string
 
 from indieweb.h_card import normalize_property_names
@@ -45,6 +47,31 @@ def h_card_safe_urls(values: Any) -> list[str]:
         candidate = h_card_safe_url(value)
         if candidate:
             safe.append(candidate)
+    return safe
+
+
+_h_card_email_validator = EmailValidator()
+
+
+@register.filter(name="h_card_safe_emails")
+def h_card_safe_emails(values: Any) -> list[str]:
+    """Return the h-card email values that are valid addr-specs, dropping the rest.
+
+    Applies the same ``EmailValidator`` as ``Profile.full_clean`` at render time,
+    so values stored through bypass paths (``QuerySet.update``, ``bulk_update``,
+    raw SQL, fixtures) are not rendered as confusing ``mailto:`` links.
+    """
+    if not isinstance(values, (list, tuple)):
+        return []
+    safe: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        try:
+            _h_card_email_validator(value)
+        except ValidationError:
+            continue
+        safe.append(value)
     return safe
 
 

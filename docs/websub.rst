@@ -337,6 +337,19 @@ record an acceptance, regardless of whether the database backend supports
 ``SELECT FOR UPDATE``. The losing concurrent delivery sees the same HTTP
 ``409`` response as a sequential replay.
 
+Migration ``0026_drop_recent_accepted_delivery_digests`` drops the old
+``WebSubSubscription.recent_accepted_delivery_digests`` JSON column without
+copying its digests into ``WebSubAcceptedDelivery`` rows, and migration
+``0025_websubaccepteddelivery`` creates that table empty. No released version
+wrote the JSON column: WebSub support and migrations ``0016`` to ``0026``
+first shipped together in 0.6.0, so upgrading from 0.5.x or any 0.6 release
+loses no replay history. Only a deployment that ran an unreleased development
+snapshot with migration ``0022`` but not ``0025`` had digests in that column.
+For such a deployment, a hub that retries an already-accepted delivery within
+the replay window (default 300 seconds) right after the migrations run is
+accepted again. Run the migrations during a quiet period, or wait one replay
+window after stopping deliveries before migrating.
+
 Subscribe with a strong ``hub.secret`` whenever possible. Deliveries for rows
 with a stored secret must include a valid SHA-256-or-stronger HMAC signature.
 ``X-Hub-Signature-256`` is preferred over legacy ``X-Hub-Signature`` when both
