@@ -693,6 +693,35 @@ separate origin where possible and add defensive response headers such as
 ``X-Content-Type-Options: nosniff`` and ``Content-Disposition: attachment``
 for non-image or otherwise risky media.
 
+.. _micropub-query-limits:
+
+Micropub Source and Media Query Limits
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``INDIEWEB_MICROPUB_QUERY_DEFAULT_LIMIT`` (default ``20``) and
+``INDIEWEB_MICROPUB_QUERY_MAX_LIMIT`` (default ``100``) apply to both source
+and media ``GET ?q=source`` list queries (without ``url``). Both settings
+must be integers satisfying ``1 <= default <= maximum <= 2147483647``;
+invalid configuration raises ``ImproperlyConfigured``. There is no unlimited
+setting.
+
+Omitted ``limit`` uses the configured default. Explicit limits must be in
+``1..maximum``; ``limit=0`` is rejected, never treated as unlimited. Offset
+must be in ``0..2147483647`` and defaults to ``0``. Malformed or out-of-range
+values return ``400 invalid_request`` before calling the list hook. The
+fixed offset domain is independent of the platform's native integer size.
+``paging.limit`` and ``paging.offset`` report the effective adapter arguments;
+``total`` remains the handler's optional filtered count before pagination.
+
+**Migration for handler authors:** media queries previously passed ``None``
+for omitted limits, and both endpoints accepted zero and arbitrary positive
+limits/offsets. They now always pass a positive bounded limit and a supported
+offset. Apply these arguments before materializing results and return at most
+``limit`` items; the view also caps serialized items at that limit. Existing
+optional hook signatures remain compatible. Clients needing more items must
+request successive pages. These limits do not cap individual item sizes or
+replace host-owned authorization and query-cost controls.
+
 Media Source and Delete Hooks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

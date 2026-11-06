@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* **Behavior change:** Micropub source and media list queries share configurable
+  finite default/maximum limits (``INDIEWEB_MICROPUB_QUERY_DEFAULT_LIMIT=20``,
+  ``INDIEWEB_MICROPUB_QUERY_MAX_LIMIT=100``). Zero, oversized limits and offsets
+  outside ``0..2147483647`` return ``400`` before adapter calls. Media no longer
+  passes ``None`` for omitted limits; handlers must paginate before materializing
+  results. Serialized pages are capped at the effective limit and paging
+  metadata reports the adapter arguments. See the configuration migration notes.
 * **Behavior change:** outbound Webmention discovery confirms HEAD-advertised
   endpoints with GET. GET's Link header, then HTML, is authoritative; a
   HEAD-only endpoint is no longer used when GET fails or advertises none.

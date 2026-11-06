@@ -602,12 +602,16 @@ Successful list responses are JSON:
          }
        }
      ],
-     "paging": {"limit": null, "offset": 0, "total": 1}
+     "paging": {"limit": 20, "offset": 0, "total": 1}
    }
 
-``limit`` and ``offset`` are optional non-negative integers; malformed values
-return ``400 invalid_request``. ``filter`` is passed through to the host hook
-as submitted. ``total`` is included only when the hook returns a known total.
+``limit`` defaults to ``20`` and must be in ``1..100`` by default; zero is
+rejected. ``offset`` defaults to ``0`` and must be in ``0..2147483647``.
+Malformed or out-of-range values return ``400 invalid_request`` before the
+hook runs. See :ref:`micropub-query-limits` for configuration and handler
+migration notes. ``filter`` is passed through to the host hook as submitted
+(empty values become ``None``). ``total`` is included only when the hook
+returns a known total.
 
 Fetch metadata for one URL by adding ``url``:
 
@@ -1016,10 +1020,13 @@ already include one, so clients have a value they can submit to update/delete or
 enumeration, ordering, permissions, filtering, and whether ``total`` can be
 reported accurately.
 
-``limit`` and ``offset`` must be non-negative integers. If ``limit`` is omitted,
-django-indieweb passes a default limit of ``20`` to avoid unbounded source-list
-responses; omitted ``offset`` defaults to ``0``. ``filter`` is optional and is
-passed to the handler as a free-form string. The in-memory handler matches it
+``limit`` defaults to ``20`` and must be in ``1..100`` by default; zero is
+rejected. ``offset`` defaults to ``0`` and must be in ``0..2147483647``.
+Malformed or out-of-range values return ``400 invalid_request`` before the
+hook runs. See :ref:`micropub-query-limits` for configuration and handler
+migration notes. Paging metadata reflects the effective limit/offset, and
+serialized pages contain at most ``limit`` items. ``filter`` is optional and
+is passed to the handler as a free-form string. The in-memory handler matches it
 case-insensitively as a substring against a stable JSON serialization of each
 source item. Cursor-style ``after``/``before`` paging, bundled post storage or
 search, media source/delete hooks, command properties, and syndication routing

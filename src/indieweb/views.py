@@ -23,7 +23,7 @@ import filetype
 from django.conf import settings
 from django.contrib.auth.views import redirect_to_login
 from django.contrib.sites.models import Site
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
 from django.db import IntegrityError, transaction
@@ -329,7 +329,30 @@ def _configured_server_managed_properties() -> frozenset[str]:
     )
 
 
-DEFAULT_MICROPUB_SOURCE_LIST_LIMIT = 20
+# Fixed protocol domain, independent of the platform's native integer size.
+MICROPUB_QUERY_MAX_OFFSET = 2**31 - 1
+
+
+def _micropub_query_page(request: HttpRequest) -> tuple[int, int]:
+    """Return bounded source/media paging arguments or reject invalid input."""
+    default = getattr(settings, "INDIEWEB_MICROPUB_QUERY_DEFAULT_LIMIT", 20)
+    maximum = getattr(settings, "INDIEWEB_MICROPUB_QUERY_MAX_LIMIT", 100)
+    if (
+        type(default) is not int
+        or type(maximum) is not int
+        or not 1 <= default <= maximum <= MICROPUB_QUERY_MAX_OFFSET
+    ):
+        raise ImproperlyConfigured(
+            "Micropub query limits must be integers with 1 <= "
+            "INDIEWEB_MICROPUB_QUERY_DEFAULT_LIMIT <= INDIEWEB_MICROPUB_QUERY_MAX_LIMIT <= 2147483647"
+        )
+    limit = int(request.GET.get("limit", default))
+    offset = int(request.GET.get("offset", 0))
+    if not 1 <= limit <= maximum or not 0 <= offset <= MICROPUB_QUERY_MAX_OFFSET:
+        raise ValueError("unsupported Micropub query page")
+    return limit, offset
+
+
 MICROPUB_MEDIA_STORAGE_PREFIX = "indieweb/media"
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_COUNT = 10
@@ -2899,13 +2922,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
     def _handle_source_list_query(self, request: HttpRequest, handler: MicropubContentHandler) -> HttpResponse:
         """Dispatch ``GET ?q=source`` without ``url`` into the optional list hook."""
         try:
-            limit = self._parse_optional_non_negative_int(request.GET.get("limit"))
-            offset = self._parse_optional_non_negative_int(request.GET.get("offset"))
+            effective_limit, effective_offset = _micropub_query_page(request)
         except ValueError:
             return self._invalid_request()
-
-        effective_limit = DEFAULT_MICROPUB_SOURCE_LIST_LIMIT if limit is None else limit
-        effective_offset = 0 if offset is None else offset
 
         try:
             result = handler.list_entries(
@@ -2931,7 +2950,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return HttpResponse("not_implemented", status=501)
 
         body: dict[str, Any] = {
-            "items": [self._source_list_item(entry) for entry in result.entries],
+            "items": [self._source_list_item(entry) for entry in result.entries[:effective_limit]],
             "paging": {
                 "limit": effective_limit,
                 "offset": effective_offset,
@@ -3043,15 +3062,6 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         return HttpResponse("not_implemented", status=501)
 
     @staticmethod
-    def _parse_optional_non_negative_int(value: str | None) -> int | None:
-        if value is None:
-            return None
-        parsed = int(value)
-        if parsed < 0:
-            raise ValueError
-        return parsed
-
-    @staticmethod
     def _media_item_body(item: MicropubMediaItem) -> dict[str, Any]:
         properties = dict(item.properties)
         properties.setdefault("url", [item.url])
@@ -3119,12 +3129,10 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
             return self._not_implemented()
 
         try:
-            limit = self._parse_optional_non_negative_int(request.GET.get("limit"))
-            offset = self._parse_optional_non_negative_int(request.GET.get("offset"))
+            limit, effective_offset = _micropub_query_page(request)
         except ValueError:
             return self._invalid_request()
 
-        effective_offset = 0 if offset is None else offset
         try:
             result = handler.list_media(
                 self.token.owner,
@@ -3149,7 +3157,7 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
             return self._not_implemented()
 
         body: dict[str, Any] = {
-            "items": [self._media_item_body(item) for item in result.items],
+            "items": [self._media_item_body(item) for item in result.items[:limit]],
             "paging": {
                 "limit": limit,
                 "offset": effective_offset,

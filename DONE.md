@@ -4502,3 +4502,18 @@ cross-origin redirect mode and the ``hub.secret`` HTTPS gate.
 - Documentation: updated discovery behavior in `docs/webmention.rst` and
   `docs/configuration.rst`.
 - Changelog: added the behavior change under Unreleased.
+
+### Bound Micropub source and media list pages
+
+- Added shared configurable default/maximum query limits (20/100), rejected zero
+  and unsupported paging values before adapter calls, and fixed the offset
+  domain at 0..2147483647 on every platform. Serialized pages also respect the
+  effective limit; owner, filter and optional total semantics are preserved.
+- Regression proof: 29 new pagination cases failed against the original views;
+  focused pagination/source/media tests passed after the fix.
+- Documentation: configuration and adapter migration guidance in
+  `docs/configuration.rst`, `docs/micropub.rst` and handler docstrings.
+- Changelog: Unreleased behavior change; no corresponding backlog item to remove.
+- Validation: `uv run pytest`, `uv run mypy`, Ruff lint/format, configured prek
+  hooks, Sphinx with warnings as errors, and the supported tox matrix including
+  migrations.
