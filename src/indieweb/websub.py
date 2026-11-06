@@ -8,6 +8,7 @@ import inspect
 import logging
 import math
 import string
+import uuid
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -481,19 +482,18 @@ def _save_subscription_request_success(
     mode: str,
     status_code: int,
 ) -> None:
-    subscription.last_request_at = timezone.now()
-    subscription.last_request_mode = mode
-    subscription.last_request_status_code = status_code
-    subscription.last_request_error = ""
-    subscription.save(
-        update_fields=[
-            "last_request_at",
-            "last_request_mode",
-            "last_request_status_code",
-            "last_request_error",
-            "modified",
-        ]
+    using = _subscription_write_db(subscription)
+    WebSubSubscription.objects.using(using).filter(
+        pk=subscription.pk,
+        request_generation=subscription.request_generation,
+    ).update(
+        last_request_at=timezone.now(),
+        last_request_mode=mode,
+        last_request_status_code=status_code,
+        last_request_error="",
+        modified=timezone.now(),
     )
+    subscription.refresh_from_db(using=using)
 
 
 def _save_subscription_request_failure(
@@ -506,30 +506,28 @@ def _save_subscription_request_failure(
     status_code: int | None,
     error: str,
 ) -> None:
-    subscription.last_request_at = timezone.now()
-    subscription.last_request_mode = mode
-    subscription.last_request_status_code = status_code
-    subscription.last_request_error = error[:500]
-    subscription.pending_mode = ""
-    subscription.pending_secret = previous_pending_secret
-    subscription.pending_secret_set = previous_pending_secret_set
-    if mode == WebSubSubscription.MODE_SUBSCRIBE and previous_state != WebSubSubscription.STATE_ACTIVE:
-        subscription.state = WebSubSubscription.STATE_DENIED
-    else:
-        subscription.state = previous_state
-    subscription.save(
-        update_fields=[
-            "state",
-            "pending_mode",
-            "pending_secret",
-            "pending_secret_set",
-            "last_request_at",
-            "last_request_mode",
-            "last_request_status_code",
-            "last_request_error",
-            "modified",
-        ]
+    using = _subscription_write_db(subscription)
+    # One conditional write: callbacks and newer preparations retire our ownership.
+    WebSubSubscription.objects.using(using).filter(
+        pk=subscription.pk,
+        request_generation=subscription.request_generation,
+        pending_mode=mode,
+    ).update(
+        last_request_at=timezone.now(),
+        last_request_mode=mode,
+        last_request_status_code=status_code,
+        last_request_error=error[:500],
+        pending_mode="",
+        pending_secret=previous_pending_secret,
+        pending_secret_set=previous_pending_secret_set,
+        state=(
+            WebSubSubscription.STATE_DENIED
+            if mode == WebSubSubscription.MODE_SUBSCRIBE and previous_state != WebSubSubscription.STATE_ACTIVE
+            else previous_state
+        ),
+        modified=timezone.now(),
     )
+    subscription.refresh_from_db(using=using)
 
 
 def _prepare_subscription_request(
@@ -548,11 +546,13 @@ def _prepare_subscription_request(
 
     if validated_mode == WebSubSubscription.MODE_UNSUBSCRIBE:
         try:
-            subscription = WebSubSubscription.objects.get(hub_url=validated_hub_url, topic_url=validated_topic_url)
+            subscription = WebSubSubscription.objects.select_for_update().get(
+                hub_url=validated_hub_url, topic_url=validated_topic_url
+            )
         except WebSubSubscription.DoesNotExist as exc:
             raise ValueError("cannot unsubscribe an unknown WebSub subscription") from exc
     else:
-        subscription, _created = WebSubSubscription.objects.get_or_create(
+        subscription, _created = WebSubSubscription.objects.select_for_update().get_or_create(
             hub_url=validated_hub_url,
             topic_url=validated_topic_url,
         )
@@ -567,6 +567,7 @@ def _prepare_subscription_request(
             subscription.lease_expires_at = None
     else:
         subscription.state = WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
+    subscription.request_generation = uuid.uuid4()
     subscription.pending_mode = validated_mode
     subscription.requested_lease_seconds = validated_lease_seconds
     if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
@@ -577,6 +578,7 @@ def _prepare_subscription_request(
             "state",
             "pending_mode",
             "requested_lease_seconds",
+            "request_generation",
             "confirmed_lease_seconds",
             "lease_expires_at",
             "pending_secret",

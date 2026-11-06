@@ -268,3 +268,18 @@ Development Commands Summary
 
     # Publish to PyPI
     uv publish --token your_token
+
+State-transition regressions also run in CI against a disposable PostgreSQL 17
+service on branch pushes and pull requests. The service contains only synthetic
+rows. To run the same tests against your disposable local PostgreSQL instance::
+
+    DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_outbound_state.py
+
+The test settings use database ``indieweb_synthetic``, user/password ``synthetic``
+and localhost port 5432 (override ``INDIEWEB_TEST_POSTGRES_PORT`` if needed).
+Never point these settings at a database containing real data.
+
+For overlapping SQLite connections use a disposable file-backed test database
+(shared-cache in-memory tables do not wait for concurrent locks)::
+
+    DJANGO_INDIEWEB_TEST_SQLITE_PATH=/tmp/indieweb-synthetic.sqlite3 uv run pytest --migrations --no-cov tests/test_outbound_state.py

@@ -18,7 +18,11 @@ USE_TZ = True
 SECRET_KEY = env("DJANGO_INDIEWEB_TEST_SECRET_KEY", default="insecure-test-key-do-not-use")
 
 DATABASES = {
-    "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": ":memory:",
+        "TEST": {"NAME": env("DJANGO_INDIEWEB_TEST_SQLITE_PATH", default=None)},
+    },
     # Second database for multi-database regression tests. Only tests that
     # request it with ``@pytest.mark.django_db(databases=[...])`` can use it.
     "other": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},

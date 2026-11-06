@@ -1452,3 +1452,25 @@ API Reference
 =============
 
 See :doc:`api` for detailed API documentation of all webmention-related classes and functions.
+
+Overlapping outbound history
+----------------------------
+
+Outbound history updates counters atomically on the unique source/target pair,
+including first-row creation. Attempts are ordered by their start time (before
+endpoint discovery); equal timestamps are resolved in database completion order.
+The latest attempt owns outcome diagnostics. Older successful attempts do not
+reset newer failures. Failures count once unless they predate the latest accepted
+success. Endpoint, sent and source-observation timestamps never move backwards.
+Apply migrations to add the successful-attempt watermark used by this policy.
+
+These history timestamps now refer to attempt start rather than completion;
+resend cooldown and successful-history cutoff windows therefore begin at
+attempt start as well. Migration initializes existing successful rows' watermark
+from their stored (completion-time) ``last_attempted_at``. Failure-drop deletion
+is conditional on the inspected attempt still owning the failed history.
+
+If failed history changes or disappears during pre-send pruning, that target is
+skipped with ``history_changed`` for the current invocation. A later invocation
+reads fresh history and reapplies cooldown/cutoff policy; the stale attempt never
+recreates a concurrently dropped row or sends immediately after a newer success.

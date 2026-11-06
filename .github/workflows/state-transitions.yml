@@ -1,0 +1,40 @@
+name: State transitions
+
+"on": [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  postgres:
+    name: PostgreSQL state regressions
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: synthetic
+          POSTGRES_PASSWORD: synthetic
+          POSTGRES_DB: indieweb_synthetic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --frozen
+      - name: Check file-backed SQLite state transitions
+        env:
+          DJANGO_INDIEWEB_TEST_SQLITE_PATH: /tmp/indieweb-synthetic.sqlite3
+        run: uv run pytest --migrations --no-cov tests/test_outbound_state.py
+      - name: Check state transitions with migrations
+        env:
+          DJANGO_SETTINGS_MODULE: tests.settings_postgres
+        run: uv run pytest --migrations --no-cov tests/test_outbound_state.py

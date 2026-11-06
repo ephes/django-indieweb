@@ -639,3 +639,9 @@ timeouts remain in effect. An expired hub does not prevent notifying later hubs.
 Malformed signature digests (including non-ASCII, nonhexadecimal or wrong-length
 values) return ``403``. The strongest supplied supported algorithm must still
 validate, even when weaker signatures are valid.
+
+Outgoing request results own a unique pending generation. A late error cannot
+undo callback verification or a newer staged request; a late HTTP success cannot
+replace a newer request's diagnostics. Preparation locks the current subscription
+row, and completion uses a conditional database update. Network I/O runs outside
+these transactions. Apply migrations before using this behavior.

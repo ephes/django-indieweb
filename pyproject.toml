@@ -65,6 +65,7 @@ dev = [
     "types-requests",
     "sphinxcontrib-mermaid>=1.0.0",
     "prek>=0.3.10",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.urls]
