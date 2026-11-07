@@ -2212,7 +2212,7 @@ def _token_timestamp(value: datetime) -> int:
     return math.floor(value.timestamp())
 
 
-class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
+class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMixin, View):
     """IndieAuth token introspection endpoint for verifying issued bearer tokens."""
 
     rate_limit_key = "token_introspection"

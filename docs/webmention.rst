@@ -1354,13 +1354,29 @@ The ``webmention_received`` signal is sent when a webmention is processed:
 .. code-block:: python
 
     from django.dispatch import receiver
-    from indieweb.signals import webmention_received
+    from indieweb.processors import webmention_received
 
     @receiver(webmention_received)
-    def handle_webmention(sender, webmention, created, **kwargs):
-        if created and webmention.status == 'verified':
+    def handle_webmention(sender, webmention, **kwargs):
+        if webmention.status == 'verified':
             # Send notification, update cache, etc.
             print(f"New webmention from {webmention.source_url}")
+
+Post-commit notification failures
+---------------------------------
+
+Verified receives dispatch ``webmention_received`` after the database commit
+using Django's ``Signal.send_robust`` and a robust ``transaction.on_commit``
+callback. A receiver exception does not change committed status, parsed data,
+nested responses or the source snapshot, does not fail the receive, and does
+not prevent later receivers from running. Hosts should make receiver effects
+idempotent; this notification is not a durable queue or an automatic retry.
+
+Receiver failures are reported at ERROR by ``django.dispatch`` with the bounded
+exception class only. Exception messages, receiver names and tracebacks are
+omitted for these notifications, including in passthrough mode, because they
+can contain private submitted content. Monitor that logger to detect integration
+failures; notification exceptions are not propagated to the caller.
 
 Models
 ======
