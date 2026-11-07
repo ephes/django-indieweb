@@ -4654,14 +4654,12 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
 - Documentation: h-card persistence and configuration logging contracts updated.
   Changelog: Unreleased entries.
 
-## 2026-11-07
+### Public Webmention display costs (round 57 I1)
 
 This initial attempt is historical and superseded by the
 “Collation-independent Webmention card counts (round 57 I1 repair)” entry below.
 Its grouped query and pending review/backlog status do not describe the repaired
 bundle.
-
-### Public Webmention display costs (round 57 I1)
 
 - Implemented `indieweb-bulk-card-mention-counts` then
   `indieweb-display-defers-ingest-payloads`. Counts use one grouped lookup for

@@ -18,6 +18,7 @@ def count_collation(request, transactional_db):
         return
 
     name = "indieweb_test_insensitive"
+    pattern_indexes = []
     if connection.vendor == "sqlite":
 
         def key(value):
@@ -32,6 +33,17 @@ def count_collation(request, transactional_db):
                 f'CREATE COLLATION "{name}" (provider = icu, '
                 "locale = 'und-u-ka-shifted-ks-level1', deterministic = false)"
             )
+            # PostgreSQL cannot apply a nondeterministic collation while a
+            # varchar_pattern_ops index exists. Preserve and restore the exact
+            # definitions around this temporary schema change.
+            cursor.execute(
+                "SELECT indexname, indexdef FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND tablename = %s AND indexdef LIKE %s",
+                [Webmention._meta.db_table, "%varchar_pattern_ops%"],
+            )
+            pattern_indexes = cursor.fetchall()
+            for index_name, _ in pattern_indexes:
+                cursor.execute(f"DROP INDEX {connection.ops.quote_name(index_name)}")
     else:
         pytest.skip("Collation regression runs on SQLite and PostgreSQL")
 
@@ -57,6 +69,8 @@ def count_collation(request, transactional_db):
             original.db_collation = old_collation
         if connection.vendor == "postgresql":
             with connection.cursor() as cursor:
+                for _, definition in pattern_indexes:
+                    cursor.execute(definition)
                 cursor.execute(f'DROP COLLATION "{name}"')
         else:
             connection.connection.create_collation(name, None)
