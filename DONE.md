@@ -4653,3 +4653,25 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
   configured prek hooks, Sphinx and migration-enabled tox.
 - Documentation: h-card persistence and configuration logging contracts updated.
   Changelog: Unreleased entries.
+
+## 2026-11-07
+
+### Efficient, atomic protocol persistence (round 57 I2)
+
+- Completed `indieweb-bulk-nested-response-upsert` then
+  `indieweb-delivery-diagnostic-write-atomicity`. Nested sync loads identities
+  once and bulk creates/updates at most 25 rows per statement; preserves URL
+  validation, first observations, current/retired state and modified times.
+  Diagnostic summary/attempt writes share the subscription's routed alias and
+  atomic block. Replay ledger and parent freshness/locking are unchanged.
+  No matching pending BACKLOG items existed.
+- Validation: failing-before-fix query and rollback/routing regressions;
+  exact fresh/unchanged/changed 1/50-child budgets, parent isolation,
+  reappearance, malformed URLs, production-caller rollback and deterministic
+  stale/newer receive interleaving; two-database diagnostic success/rollback;
+  pytest/coverage, mypy, Ruff/format, prek, Sphinx and migration-enabled tests.
+- Documentation: nested bulk write semantics and WebSub diagnostic transactions
+  documented. Changelog: Unreleased entries; no schema or version changes.
+- PostgreSQL verification: local initdb was blocked by shared-memory exhaustion;
+  new nested/routed diagnostic tests run in the branch PostgreSQL CI job with
+  migrations and two synthetic databases before merge.

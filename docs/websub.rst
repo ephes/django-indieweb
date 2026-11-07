@@ -311,7 +311,12 @@ digest, status code, delivery time, signature algorithm, and the latest
 accepted delivery digest. Each accepted delivery is recorded as a
 ``WebSubAcceptedDelivery`` row used for replay detection; each recorded
 delivery attempt also creates a ``WebSubDeliveryAttempt`` row with the same
-bounded metadata for operator diagnostics. Duplicate bodies matching any
+bounded metadata for operator diagnostics. The subscription summary and attempt
+are written atomically on the subscription's routed write database; an attempt
+write failure rolls back the summary too. A failed call can leave the passed
+Python instance modified in memory; refresh it before reuse. This diagnostic
+transaction is separate from the accepted-delivery replay ledger and does not
+change callback response/failure handling. Duplicate bodies matching any
 retained accepted digest within the replay window are rejected with HTTP
 ``409`` for 300 seconds by default, so a captured payload A is rejected even
 after a different legitimate payload B has been accepted in between. Set

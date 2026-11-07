@@ -1470,17 +1470,19 @@ def record_websub_delivery(
         subscription.last_accepted_delivery_at = received_at
         subscription.last_accepted_delivery_digest = delivery_digest
         update_fields.extend(["last_accepted_delivery_at", "last_accepted_delivery_digest"])
-    subscription.save(update_fields=update_fields)
-    WebSubDeliveryAttempt.objects.create(
-        subscription=subscription,
-        received_at=received_at,
-        content_type=clipped_content_type,
-        size=delivery_size,
-        digest=delivery_digest,
-        signature_algorithm=signature_algorithm or "",
-        status_code=status_code,
-        error=clipped_error,
-    )
+    alias = router.db_for_write(WebSubSubscription, instance=subscription)
+    with transaction.atomic(using=alias):
+        subscription.save(using=alias, update_fields=update_fields)
+        WebSubDeliveryAttempt.objects.using(alias).create(
+            subscription_id=subscription.pk,
+            received_at=received_at,
+            content_type=clipped_content_type,
+            size=delivery_size,
+            digest=delivery_digest,
+            signature_algorithm=signature_algorithm or "",
+            status_code=status_code,
+            error=clipped_error,
+        )
 
 
 def get_websub_delivery_hook() -> Any | None:

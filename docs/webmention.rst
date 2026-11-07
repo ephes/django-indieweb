@@ -1493,3 +1493,18 @@ If failed history changes or disappears during pre-send pruning, that target is
 skipped with ``history_changed`` for the current invocation. A later invocation
 reads fresh history and reapplies cooldown/cutoff policy; the stale attempt never
 recreates a concurrently dropped row or sends immediately after a newer success.
+
+Nested-response write batches
+================================
+
+Verified parent processing loads current child identities once and writes new
+and existing children in batches of at most 25 using Django's bulk ORM APIs.
+This keeps statement size within conservative parameter limits on supported
+databases. Duplicate identities use the last validated candidate. First-seen
+and creation times survive updates/reappearance, current children refresh
+last-seen/verified/modified times, and disappeared children become ``missing``
+without deleting historical content. URL validation still precedes writes.
+The existing parent row lock, freshness check and child-sync savepoint remain
+in place: a failed child batch rolls back all child changes without demoting
+an otherwise verified parent. Bulk writes do not emit per-child save signals;
+notification hooks remain at the parent processing boundary.

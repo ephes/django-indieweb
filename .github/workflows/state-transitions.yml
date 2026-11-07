@@ -45,3 +45,10 @@ jobs:
           uv run pytest --migrations --no-cov
           tests/test_receive_notifications.py tests/test_webmention_processor.py
           -k 'postcommit_notification or freshness_watermark or skips_stale_outcome'
+
+      - name: Check nested batches and routed diagnostics with PostgreSQL
+        env:
+          DJANGO_SETTINGS_MODULE: tests.settings_postgres
+        run: >-
+          uv run pytest --migrations --no-cov
+          tests/test_nested_response_queries.py tests/test_delivery_diagnostic_atomicity.py

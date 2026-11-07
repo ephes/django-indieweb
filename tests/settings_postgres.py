@@ -14,3 +14,6 @@ DATABASES = {
         "PORT": os.environ.get("INDIEWEB_TEST_POSTGRES_PORT", "5432"),
     },
 }
+
+# Separate synthetic database for routed diagnostic rollback tests.
+DATABASES["other"] = {**DATABASES["default"], "NAME": "indieweb_synthetic_other"}

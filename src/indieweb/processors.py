@@ -1145,8 +1145,50 @@ class WebmentionProcessor:
                 webmention.pk,
             )
 
-        for candidate in candidates:
-            self._upsert_nested_response(webmention=webmention, candidate=candidate, seen_at=seen_at)
+        # Parent processing holds its row lock and the caller's savepoint covers
+        # the whole sync. Deduplicate before bulk writes (last candidate wins).
+        by_identity = {candidate["identity"]: candidate for candidate in candidates}
+        existing = {
+            child.identity: child
+            for child in WebmentionNestedResponse.objects.filter(
+                webmention=webmention, identity__in=current_identities
+            ).only("identity")
+        }
+        presentation_fields = (
+            "response_url",
+            "author_name",
+            "author_url",
+            "author_photo",
+            "content",
+            "content_html",
+            "published",
+            "mention_type",
+            "parsed_h_entry",
+            "content_digest",
+        )
+        creates = []
+        updates = []
+        modified = timezone.now()
+        for identity, candidate in by_identity.items():
+            child = existing.get(identity)
+            if child is None:
+                child = WebmentionNestedResponse(webmention=webmention, identity=identity, first_seen_at=seen_at)
+                creates.append(child)
+            else:
+                updates.append(child)
+            for field in presentation_fields:
+                setattr(child, field, candidate[field])
+            child.status = "verified"
+            child.last_seen_at = child.verified_at = seen_at
+            child.modified = modified
+        if creates:
+            WebmentionNestedResponse.objects.bulk_create(creates, batch_size=25)
+        if updates:
+            WebmentionNestedResponse.objects.bulk_update(
+                updates,
+                [*presentation_fields, "status", "last_seen_at", "verified_at", "modified"],
+                batch_size=25,
+            )
 
         # QuerySet.update() does not run auto_now, so modified is set explicitly for retired rows.
         WebmentionNestedResponse.objects.filter(webmention=webmention).exclude(
@@ -1156,7 +1198,7 @@ class WebmentionProcessor:
     def _validated_nested_candidate(self, webmention: Webmention, candidate: dict[str, Any]) -> dict[str, Any] | None:
         """Apply the model's URL validators at the ingest boundary.
 
-        ``get_or_create`` and ``save`` do not run model validation. A candidate
+        ``bulk_create`` and ``bulk_update`` do not run model validation. A candidate
         whose ``identity`` fails is dropped; an invalid optional URL is blanked.
         """
         instance = WebmentionNestedResponse(**{field: candidate[field] for field in _NESTED_RESPONSE_URL_FIELDS})
@@ -1177,68 +1219,6 @@ class WebmentionProcessor:
             )
             return {**candidate, **dict.fromkeys(invalid_fields, "")}
         return candidate
-
-    def _upsert_nested_response(
-        self,
-        *,
-        webmention: Webmention,
-        candidate: dict[str, Any],
-        seen_at: datetime,
-    ) -> None:
-        """Create or update one stable nested response row."""
-        defaults = {
-            "response_url": candidate["response_url"],
-            "author_name": candidate["author_name"],
-            "author_url": candidate["author_url"],
-            "author_photo": candidate["author_photo"],
-            "content": candidate["content"],
-            "content_html": candidate["content_html"],
-            "published": candidate["published"],
-            "mention_type": candidate["mention_type"],
-            "status": "verified",
-            "first_seen_at": seen_at,
-            "last_seen_at": seen_at,
-            "verified_at": seen_at,
-            "parsed_h_entry": candidate["parsed_h_entry"],
-            "content_digest": candidate["content_digest"],
-        }
-        nested_response, created = WebmentionNestedResponse.objects.get_or_create(
-            webmention=webmention,
-            identity=candidate["identity"],
-            defaults=defaults,
-        )
-        if created:
-            return
-
-        nested_response.status = "verified"
-        nested_response.last_seen_at = seen_at
-        nested_response.verified_at = seen_at
-        nested_response.parsed_h_entry = candidate["parsed_h_entry"]
-        nested_response.content_digest = candidate["content_digest"]
-        nested_response.mention_type = candidate["mention_type"]
-        update_fields = [
-            "status",
-            "last_seen_at",
-            "verified_at",
-            "parsed_h_entry",
-            "content_digest",
-            "mention_type",
-            "modified",
-        ]
-
-        for field in (
-            "response_url",
-            "author_name",
-            "author_url",
-            "author_photo",
-            "content",
-            "content_html",
-            "published",
-        ):
-            setattr(nested_response, field, candidate[field])
-            update_fields.append(field)
-
-        nested_response.save(update_fields=update_fields)
 
     def _nested_response_identities(self, h_entry: dict[str, Any], base_url: str) -> list[str]:
         """Collect stable identities for nested h-entry items inside the parent h-entry."""
