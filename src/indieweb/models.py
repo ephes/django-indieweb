@@ -864,8 +864,16 @@ class Profile(models.Model):
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         """Save profile and sync quick-access fields with h_card data."""
-        # Sync fields before saving
-        self._sync_fields_from_h_card()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            update_fields = set(update_fields)
+            if not update_fields:
+                return
+            if "h_card" in update_fields:
+                update_fields |= self._sync_fields_from_h_card()
+            kwargs["update_fields"] = update_fields
+        else:
+            self._sync_fields_from_h_card()
 
         # Validate
         self.full_clean()
@@ -931,23 +939,26 @@ class Profile(models.Model):
                 except ValidationError as e:
                     raise ValidationError(f"Invalid email in h_card: {email}") from e
 
-    def _sync_fields_from_h_card(self) -> None:
-        """Sync quick-access fields with h_card data."""
+    def _sync_fields_from_h_card(self) -> set[str]:
+        """Sync explicitly supplied h-card properties and report derived fields."""
+        derived: set[str] = set()
         if not self.h_card:
-            return
-
-        # Sync name
-        if "name" in self.h_card and self.h_card["name"]:
-            self.name = self.h_card["name"][0]
-
-        # Sync URL
-        if "url" in self.h_card and self.h_card["url"]:
-            self.url = self.h_card["url"][0]
-
-        # Sync photo URL
-        if "photo" in self.h_card and self.h_card["photo"]:
-            photo = self.h_card["photo"][0]
-            if isinstance(photo, dict) and "value" in photo:
-                self.photo_url = photo["value"]
-            elif isinstance(photo, str):
-                self.photo_url = photo
+            return derived
+        for property_name, field_name in (("name", "name"), ("url", "url"), ("photo", "photo_url")):
+            if property_name not in self.h_card:
+                continue
+            values = self.h_card[property_name]
+            if values == []:
+                value = ""
+            elif values:
+                value = values[0]
+                if property_name == "photo":
+                    if isinstance(value, dict) and "value" in value:
+                        value = value["value"]
+                    elif not isinstance(value, str):
+                        continue
+            else:
+                continue
+            setattr(self, field_name, value)
+            derived.add(field_name)
+        return derived

@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* Profile h-card-only partial saves now persist their derived quick-access
+  fields; explicit empty property arrays clear them. Unrelated partial saves
+  preserve unsaved h-card changes, and empty update-fields saves remain no-ops.
+* Micropub create/update/delete/undelete failure diagnostics now honor log
+  redaction, with bounded context/message fields and exception-class context.
+  Redact mode omits private messages, URLs and tracebacks; response codes and
+  intentional passthrough diagnostics remain compatible.
 * Committed Webmention receives now use robust post-commit signal dispatch:
   failing receivers cannot fail the receive or prevent later receivers, and
   their diagnostics omit private messages and tracebacks.

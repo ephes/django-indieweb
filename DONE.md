@@ -4637,3 +4637,19 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
   branch CI because local initdb cannot allocate shared memory.
 - Documentation: Webmention integration and configuration guides describe
   notification failure and endpoint admission. Changelog: Unreleased entries.
+
+### Persisted profiles and mutation log privacy (round 53 I2)
+
+- Completed, in order, `indieweb-profile-partial-save-derived-fields`,
+  `indieweb-profile-explicit-empty-field-clearing`, and
+  `indieweb-mutation-handler-diagnostic-redaction`. H-card partial saves include
+  only derived fields, explicit empty arrays clear values, and omitted keys /
+  unrelated partial updates / empty-update no-ops retain their contracts.
+  Mutation handlers reuse the redaction-aware diagnostic helper with bounded
+  rendered fields and preserved response status/passthrough tracebacks.
+  No matching pending BACKLOG items existed.
+- Validation: failing-before-fix persisted-profile and four-operation privacy
+  regressions, including large/chained exceptions; pytest/coverage, mypy, Ruff,
+  configured prek hooks, Sphinx and migration-enabled tox.
+- Documentation: h-card persistence and configuration logging contracts updated.
+  Changelog: Unreleased entries.

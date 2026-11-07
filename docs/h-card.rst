@@ -78,6 +78,19 @@ The ``h_card`` field stores all h-card properties as JSON, following the microfo
 .. note::
    The common fields (``name``, ``photo_url``, ``url``) are automatically synchronized with the h_card data when saving. If you update the h_card JSON, these fields will be updated automatically.
 
+Saving profile changes
+----------------------
+
+``Profile.save(update_fields=["h_card"])`` also persists each quick-access
+field derived from the saved h-card properties. Explicit empty arrays for
+``name``, ``url`` or ``photo`` clear ``name``, ``url`` or ``photo_url``;
+properties omitted from the h-card preserve independently supplied values.
+A structured photo with a ``value`` URL remains supported.
+
+Partial saves that omit ``h_card`` do not synchronize or publish unsaved h-card
+changes. An empty ``update_fields`` iterable is a no-op, before synchronization
+or validation. Full saves retain validation and synchronize supplied properties.
+
 Property Name Normalization
 ---------------------------
 
