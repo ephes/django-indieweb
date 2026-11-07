@@ -1326,8 +1326,8 @@ def test_redeem_rejects_overlong_redirect_uri(client, user):
 
 
 @pytest.mark.django_db
-def test_redeem_loses_race_when_code_consumed_concurrently(client, user, monkeypatch):
-    """If another request consumes the code after lookup, the delete-count gate rejects this one."""
+def test_redeem_rejects_code_consumed_after_lookup(client, user, monkeypatch):
+    """A stale lookup must return the endpoint's consumed-code rejection response."""
     auth = _redeemable_auth(user)
     original = Auth.get_for_raw_key
 

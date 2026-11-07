@@ -1826,16 +1826,8 @@ def test_token_introspection_does_not_mutate_token_rows(client, user, token_intr
 
 
 @pytest.mark.django_db
-def test_concurrent_authorization_code_exchange_single_use(client, auth, token_endpoint_url, token_payload):
-    """A racing competitor that consumes the auth code mid-exchange must yield invalid_grant.
-
-    The test suite runs on SQLite ``:memory:`` where connections are not
-    shared across threads, so a faithful threading test cannot exercise lock
-    contention. Instead, simulate the race deterministically: right after the
-    view has matched the code, a competing request consumes the row. The
-    delete-count gate must observe that nothing was deleted and return
-    ``invalid_grant`` without issuing a token.
-    """
+def test_token_exchange_rejects_code_consumed_after_lookup(client, auth, token_endpoint_url, token_payload):
+    """A stale lookup must return the endpoint's consumed-code rejection response."""
     real_lookup = models.Auth.get_for_raw_key
 
     def lookup_then_competitor_consumes(raw_key, **filters):
@@ -1864,26 +1856,6 @@ def test_authorization_code_cannot_be_exchanged_twice(client, auth, token_endpoi
     assert second.status_code == 400
     assert second.content == b"invalid_grant"
     assert models.Token.objects.count() == 1
-
-
-@pytest.mark.django_db
-def test_token_exchange_consumes_auth_through_delete_count_gate(client, auth, token_endpoint_url, token_payload):
-    """The consume-and-issue sequence must go through the shared single-use gate."""
-    from indieweb import views
-
-    real_consume = views._consume_auth_code
-    consumed: list[int] = []
-
-    def spy(matched):
-        consumed.append(matched.pk)
-        return real_consume(matched)
-
-    with patch.object(views, "_consume_auth_code", side_effect=spy):
-        response = client.post(token_endpoint_url, data=token_payload)
-
-    assert response.status_code == 201
-    assert consumed == [auth.pk]
-    assert not models.Auth.objects.filter(pk=auth.pk).exists()
 
 
 @pytest.mark.django_db

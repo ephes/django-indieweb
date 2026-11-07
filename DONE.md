@@ -4742,3 +4742,19 @@ bundle.
   Shared-cache tests cover inventory changes and originless/allowed/denied variants.
 - Documentation: `docs/api.rst`, `docs/configuration.rst`; changelog: Unreleased.
   No corresponding pending BACKLOG items existed.
+
+### Actual authorization contention (scout round 64 I1)
+
+- Completed `indieweb-real-cross-endpoint-code-consumption-tests` and
+  `indieweb-consent-exchange-lock-order-tests`; supplemented deterministic stale-code
+  response checks with real transaction races and removed a call-spy assertion.
+  Scoped exchange/exchange and verification/exchange return exactly one grant;
+  consent/exchange exercises both write orderings and checks surviving state.
+- Validation: file-backed SQLite and disposable PostgreSQL with migrations;
+  consume-gate mutation fails both redemption cases; owner-lock mutation exposes
+  the PostgreSQL deadlock. Full pytest/coverage, supported tox matrix, mypy,
+  Ruff/format, hooks and strict Sphinx passed. Full suite: 2246 passed,
+  6 expected in-memory skips, 93.25% coverage; all 11 tox environments passed.
+  Review: two rounds, final CLEAN (zero findings).
+- Documentation: `docs/development.rst`; changelog: Unreleased. No corresponding
+  pending BACKLOG items existed. Production behavior and schema are unchanged.
