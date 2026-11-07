@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from django import template
-from django.db.models import Count, Prefetch
+from django.db.models import Prefetch
 from django.db.models.functions import Coalesce
 from django.urls import reverse
 from django.utils.html import format_html
@@ -175,21 +175,21 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
 
 @register.simple_tag
 def prepare_webmention_counts(target_urls: Sequence[str]) -> dict[str, dict[str, int]]:
-    """Group verified top-level counts for one page; assign as ``webmention_counts``."""
+    """Count exact URL/type strings for one page; assign as ``webmention_counts``."""
     counts: dict[str, dict[str, int]] = {url: {} for url in target_urls if url}
     if counts:
         rows = (
             Webmention.objects.filter(target_url__in=counts, status="verified")
             .order_by()
-            .values("target_url", "mention_type")
-            .annotate(total=Count("pk"))
+            .values_list("target_url", "mention_type", "status")
+            .iterator()
         )
-        for row in rows:
-            if row["target_url"] not in counts:
-                # A case/space-insensitive DB collation can match a different
-                # spelling. Preserve its legacy count semantics via fallback.
-                return {}
-            counts[row["target_url"]][row["mention_type"]] = row["total"]
+        # SQL is only a candidate filter: collations may equate distinct URLs,
+        # types or statuses. Never group or compare these strings in the DB.
+        for url, kind, status in rows:
+            if url in counts and status == "verified":
+                by_type = counts[url]
+                by_type[kind] = by_type.get(kind, 0) + 1
     return counts
 
 
@@ -215,10 +215,5 @@ def webmention_count(context: dict[str, Any], target_url: str, mention_type: str
             typed_counts = cast(Mapping[str, int], by_type)
             return typed_counts.get(mention_type, 0) if mention_type else sum(typed_counts.values())
 
-    # Count only verified webmentions
-    webmentions = Webmention.objects.filter(target_url=target_url, status="verified")
-
-    if mention_type:
-        webmentions = webmentions.filter(mention_type=mention_type)
-
-    return webmentions.count()
+    by_type = prepare_webmention_counts([target_url])[target_url]
+    return by_type.get(mention_type, 0) if mention_type else sum(by_type.values())

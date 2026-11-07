@@ -4656,6 +4656,11 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
 
 ## 2026-11-07
 
+This initial attempt is historical and superseded by the
+“Collation-independent Webmention card counts (round 57 I1 repair)” entry below.
+Its grouped query and pending review/backlog status do not describe the repaired
+bundle.
+
 ### Public Webmention display costs (round 57 I1)
 
 - Implemented `indieweb-bulk-card-mention-counts` then
@@ -4672,3 +4677,37 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
 - Review gate: unmerged. The second review found a remaining grouped-count
   collation-equivalence defect; stop-on-recurrence rule applied. Follow-up is
   recorded in BACKLOG; the display projection itself has no review findings.
+
+### Efficient, atomic protocol persistence (round 57 I2)
+
+- Completed `indieweb-bulk-nested-response-upsert` then
+  `indieweb-delivery-diagnostic-write-atomicity`. Nested sync loads identities
+  once and bulk creates/updates at most 25 rows per statement; preserves URL
+  validation, first observations, current/retired state and modified times.
+  Diagnostic summary/attempt writes share the subscription's routed alias and
+  atomic block. Replay ledger and parent freshness/locking are unchanged.
+  No matching pending BACKLOG items existed.
+- Validation: failing-before-fix query and rollback/routing regressions;
+  exact fresh/unchanged/changed 1/50-child budgets, parent isolation,
+  reappearance, malformed URLs, production-caller rollback and deterministic
+  stale/newer receive interleaving; two-database diagnostic success/rollback;
+  pytest/coverage, mypy, Ruff/format, prek, Sphinx and migration-enabled tests.
+- Documentation: nested bulk write semantics and WebSub diagnostic transactions
+  documented. Changelog: Unreleased entries; no schema or version changes.
+- PostgreSQL verification: local initdb was blocked by shared-memory exhaustion;
+  new nested/routed diagnostic tests run in the branch PostgreSQL CI job with
+  migrations and two synthetic databases before merge.
+
+### Collation-independent Webmention card counts (round 57 I1 repair)
+
+- Replaced SQL grouping and collation fallback with one scalar-row query and
+  exact Python counting, shared by prepared and standalone tags. URL, type and
+  status comparisons no longer depend on database collation. This intentionally
+  replaces permissive legacy comparisons; no normalization or schema change.
+- Validation: real SQLite collations reproduce the old merged-group defect;
+  default and permissive SQLite/PostgreSQL regression cases cover case, accents,
+  Unicode composition, trailing spaces, missing spellings, status/type filtering,
+  template callers and prepared/fallback parity. PostgreSQL runs in CI because
+  local initdb cannot allocate shared memory. CI also exercises deferred display.
+- Documentation: updated count semantics, upgrade note and scalar-row tradeoff
+  in Webmention docs and Unreleased changelog; removed resolved BACKLOG item.

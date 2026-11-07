@@ -8,10 +8,18 @@ Unreleased
 * Added optional page-level verified Webmention count batching via
   ``prepare_webmention_counts`` and the request-local ``webmention_counts`` context.
   On upgrade, incompatible existing values under that context name are ignored;
-  collation-dependent URL matches fall back to individual counts.
+  both prepared and standalone counts now compare exact URL, type and verified
+  status strings independently of database collation. On permissive collations,
+  counts no longer include case/accent/Unicode/space-equivalent spellings.
 * Webmention display queries defer ingestion diagnostics and child parse payloads;
   bundled output is unchanged. Custom templates accessing deferred fields perform
   lazy queries (see the integration guide).
+* Nested Webmention responses use one identity lookup and bounded bulk writes
+  rather than per-child queries, preserving validation, timestamps, retirement
+  and the existing parent transaction/savepoint boundaries.
+* WebSub delivery summaries and diagnostic attempts now commit or roll back
+  together on the subscription's routed write database. Replay acceptance and
+  callback response contracts are unchanged.
 * Profile h-card-only partial saves now persist their derived quick-access
   fields; explicit empty property arrays clear them. Unrelated partial saves
   preserve unsaved h-card changes, and empty update-fields saves remain no-ops.

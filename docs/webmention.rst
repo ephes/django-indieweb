@@ -1510,15 +1510,23 @@ in the same template context as the existing count tags:
       {% webmention_count card.url "reply" as replies %}
     {% endfor %}
 
-The helper is also callable from Python. Preparation uses one grouped query;
-all subsequent counts for those URLs use zero queries, including absent URLs
+The helper is also callable from Python. Preparation uses one query selecting
+only URL, type and status scalars, then counts exact strings in Python. All
+subsequent counts for prepared URLs use zero queries, including absent URLs
 and types. Counts remain integers for verified top-level mentions only. URLs
-outside the prepared page retain the single-target query fallback. Existing
-context values with an incompatible shape are ignored. If a database collation
-matches a stored URL spelling outside the supplied exact strings, the helper
-returns an empty mapping so all counts use the database's legacy semantics. The mapping
+outside the prepared page use the same counting path in a single query.
+Existing context values with an incompatible shape are ignored. The mapping
 is a request-local snapshot: prepare it again after writes rather than caching
 it across requests.
+
+Both prepared and standalone counts compare URL, type and verified status
+exactly, independent of database collation on SQLite and PostgreSQL. Case,
+accents, Unicode composition and trailing spaces are not normalized. On upgrade,
+hosts using a permissive collation may see smaller counts where distinct strings
+previously compared equal. SQL filtering only selects candidate rows; no SQL
+GROUP BY or collation-specific fallback is used. This reads one small tuple per
+candidate mention rather than one aggregate per type, without loading model
+instances or ingestion payloads. Supply only the current page's target URLs.
 
 ``show_webmentions`` defers parent ``spam_check_result``, ``status_token``,
 ``vouch_url``, ``verified_at``, ``vouch_verified_at`` and ``last_received_at``,
@@ -1528,3 +1536,18 @@ filter, for cross-type deduplication). Nested ordering and deduplication are
 unchanged. Custom templates still receive model instances; accessing a deferred
 field lazily issues an extra query per instance. Hosts displaying ingestion
 metadata should load it explicitly in a host-owned queryset instead.
+
+Nested-response write batches
+================================
+
+Verified parent processing loads current child identities once and writes new
+and existing children in batches of at most 25 using Django's bulk ORM APIs.
+This keeps statement size within conservative parameter limits on supported
+databases. Duplicate identities use the last validated candidate. First-seen
+and creation times survive updates/reappearance, current children refresh
+last-seen/verified/modified times, and disappeared children become ``missing``
+without deleting historical content. URL validation still precedes writes.
+The existing parent row lock, freshness check and child-sync savepoint remain
+in place: a failed child batch rolls back all child changes without demoting
+an otherwise verified parent. Bulk writes do not emit per-child save signals;
+notification hooks remain at the parent processing boundary.

@@ -283,3 +283,15 @@ For overlapping SQLite connections use a disposable file-backed test database
 (shared-cache in-memory tables do not wait for concurrent locks)::
 
     DJANGO_INDIEWEB_TEST_SQLITE_PATH=/tmp/indieweb-synthetic.sqlite3 uv run pytest --migrations --no-cov tests/test_outbound_state.py
+
+Nested-response batches and routed WebSub diagnostics also run with migrations
+on the synthetic PostgreSQL CI service, including an isolated second database::
+
+    DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_nested_response_queries.py tests/test_delivery_diagnostic_atomicity.py
+
+Webmention count and display regressions run on both SQLite and the disposable
+PostgreSQL service. Count tests temporarily apply case/accent/space-insensitive
+collations to real columns and restore them after each test (PostgreSQL requires
+ICU support, provided by the CI image)::
+
+    DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_webmention_count_collations.py tests/test_webmention_display_queries.py

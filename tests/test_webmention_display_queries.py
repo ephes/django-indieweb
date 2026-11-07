@@ -14,7 +14,7 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.mark.parametrize("size", [1, 20])
-def test_card_counts_are_grouped_and_reused(size, django_assert_num_queries):
+def test_card_counts_are_batched_and_reused(size, django_assert_num_queries):
     urls = [f"https://target.example/{i}" for i in range(size)]
     for url in urls[:-1]:
         for kind in ("reply", "like", "mention", "repost"):
@@ -101,17 +101,3 @@ def test_display_defers_payloads_without_lazy_template_queries(size, django_asse
 def test_count_context_collision_uses_legacy_fallback(existing, django_assert_num_queries):
     with django_assert_num_queries(1):
         assert webmention_tags.webmention_count({"webmention_counts": existing}, "url") == 0
-
-
-def test_batch_collation_mismatch_preserves_legacy_fallback(monkeypatch, django_assert_num_queries):
-    from unittest.mock import Mock
-
-    rows = [{"target_url": "https://EXAMPLE.test/post", "mention_type": "reply", "total": 1}]
-    query = Mock()
-    query.order_by.return_value.values.return_value.annotate.return_value = rows
-    with monkeypatch.context() as mocked:
-        mocked.setattr(Webmention.objects, "filter", Mock(return_value=query))
-        counts = webmention_tags.prepare_webmention_counts(["https://example.test/post"])
-    assert counts == {}
-    with django_assert_num_queries(1):
-        assert webmention_tags.webmention_count({"webmention_counts": counts}, "https://example.test/post") == 0
