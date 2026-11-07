@@ -4709,3 +4709,21 @@ bundle.
   local initdb cannot allocate shared memory. CI also exercises deferred display.
 - Documentation: updated count semantics, upgrade note and scalar-row tradeoff
   in Webmention docs and Unreleased changelog; removed resolved BACKLOG item.
+
+## 2026-11-07
+
+### Current WebSub diagnostic writes (scout round 61)
+
+- `indieweb-diagnostic-save-preserves-rotated-secrets`: diagnostics use explicit
+  column updates, preserving concurrently rotated active/pending credentials.
+- `indieweb-delivery-summary-observation-fence`: independent conditional
+  observation watermarks preserve latest/accepted summaries and every attempt.
+- Regression tests reproduce stale-key writes and gated out-of-order commits
+  in both routed/default databases, all success/failure permutations and ties.
+- Validation: all 11 new regression cases failed before the fixes; 19 focused
+  cases and full pytest passed (2235 passed, 2 skipped; coverage 93.02%). Mypy,
+  Ruff, hooks, strict docs and all 11 supported tox/migrations environments
+  passed. Local PostgreSQL initialization is blocked by exhausted macOS shared
+  memory; the branch PostgreSQL CI gate must pass before merge.
+- Documentation: updated `docs/websub.rst`; changelog: Unreleased.
+  No corresponding pending BACKLOG items existed.
