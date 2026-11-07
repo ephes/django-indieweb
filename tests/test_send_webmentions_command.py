@@ -41,12 +41,13 @@ def test_command_with_content_provided(mock_sender_class):
     ]
 
     out = StringIO()
-    call_command(
-        "send_webmentions",
-        "https://example.com/my-post",
-        content='<a href="https://target1.com/post">Link</a>',
-        stdout=out,
-    )
+    with pytest.raises(CommandError, match="failed"):
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content='<a href="https://target1.com/post">Link</a>',
+            stdout=out,
+        )
 
     output = out.getvalue()
     assert "Found 2 URLs in content" in output
@@ -150,6 +151,7 @@ def test_command_dry_run(mock_sender_class):
         "https://example.com/other-post",  # Same domain
         "/relative-url",  # Relative URL
     ]
+    mock_sender.select_target_urls.return_value = ["https://target.com/post"]
     mock_sender.discover_endpoint.side_effect = [
         "https://target.com/webmention",
         None,  # Second call would be for a different URL
@@ -172,7 +174,10 @@ def test_command_dry_run(mock_sender_class):
     assert "DRY RUN MODE" in output
     assert "Found 3 URLs in content" in output
     assert "https://target.com/post -> https://target.com/webmention" in output
-    assert "https://example.com/other-post (skipped: same domain)" in output
+    assert "Selected 1 targets after URL, same-host and fanout policy exclusions" in output
+    mock_sender.select_target_urls.assert_called_once_with(
+        "https://example.com/my-post", '<a href="https://target.com/post">Link</a>'
+    )
     assert "https://history.example/post" not in output
 
     # Should not actually send webmentions in dry run
@@ -333,13 +338,14 @@ def test_salmention_resend_output_includes_provenance_and_no_endpoint(mock_sende
     ]
 
     out = StringIO()
-    call_command(
-        "send_webmentions",
-        "https://example.com/my-post",
-        content='<a href="https://current.example/post">Current</a>',
-        salmention_resend=True,
-        stdout=out,
-    )
+    with pytest.raises(CommandError, match="failed"):
+        call_command(
+            "send_webmentions",
+            "https://example.com/my-post",
+            content='<a href="https://current.example/post">Current</a>',
+            salmention_resend=True,
+            stdout=out,
+        )
 
     output = out.getvalue()
     assert "Resent 1/3 Salmention webmentions successfully" in output

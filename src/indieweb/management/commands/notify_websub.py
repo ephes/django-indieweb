@@ -65,3 +65,6 @@ class Command(BaseCommand):
                 else:
                     detail = redact_text(result.error)
                 self.stdout.write(self.style.ERROR(f"✗ {displayed_hub} ({detail})"))
+
+        if success_count < len(results):
+            raise CommandError(f"{len(results) - success_count} WebSub hub notifications failed")

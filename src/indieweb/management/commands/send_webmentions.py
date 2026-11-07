@@ -2,13 +2,11 @@
 
 import sys
 from typing import Any
-from urllib.parse import urlparse
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import URLValidator
 
-from indieweb.http_client import is_safe_http_url
 from indieweb.senders import WebmentionSender
 
 
@@ -66,7 +64,7 @@ class Command(BaseCommand):
             if salmention_resend:
                 self._handle_salmention_dry_run(sender, source_url, html_content)
             else:
-                self._handle_dry_run(sender, source_url, urls)
+                self._handle_dry_run(sender, source_url, html_content)
         elif salmention_resend:
             self._handle_salmention_send(sender, source_url, html_content, vouch_url)
         else:
@@ -84,19 +82,11 @@ class Command(BaseCommand):
             raise CommandError(f"Failed to fetch content from {source_url}")
         return fetched_content
 
-    def _handle_dry_run(self, sender: WebmentionSender, source_url: str, urls: list[str]) -> None:
-        """Show what webmentions would be sent without actually sending."""
-        source_domain = urlparse(source_url).netloc
-
-        for url in urls:
-            if not is_safe_http_url(url, resolver=None):
-                continue
-
-            target_domain = urlparse(url).netloc
-            if target_domain == source_domain:
-                self.stdout.write(f"  - {url} (skipped: same domain)")
-                continue
-
+    def _handle_dry_run(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
+        """Discover only targets admitted by the ordinary sender's policy."""
+        targets = sender.select_target_urls(source_url, html_content)
+        self.stdout.write(f"Selected {len(targets)} targets after URL, same-host and fanout policy exclusions")
+        for url in targets:
             endpoint = sender.discover_endpoint(url)
             if endpoint:
                 self.stdout.write(f"  - {url} -> {endpoint}")
@@ -117,11 +107,14 @@ class Command(BaseCommand):
             self.stdout.write("No webmentions were sent (no valid targets found)")
             return
 
-        success_count = sum(1 for r in results if r["success"])
-        self.stdout.write(f"\nSent {success_count}/{len(results)} webmentions successfully\n")
+        sent_results = [result for result in results if not result.get("skipped")]
+        success_count = sum(1 for r in sent_results if r["success"])
+        self.stdout.write(f"\nSent {success_count}/{len(sent_results)} webmentions successfully\n")
 
         for result in results:
-            if result["success"]:
+            if result.get("skipped"):
+                self.stdout.write(self.style.WARNING(f"- {result['target']} (skipped by policy)"))
+            elif result["success"]:
                 self.stdout.write(
                     self.style.SUCCESS(f"✓ {result['target']} -> {result['endpoint']} (HTTP {result['status_code']})")
                 )
@@ -131,6 +124,9 @@ class Command(BaseCommand):
                         f"✗ {result['target']} -> {result['endpoint']} (Error: {result.get('error', 'Unknown error')})"
                     )
                 )
+
+        if success_count < len(sent_results):
+            raise CommandError(f"{len(sent_results) - success_count} Webmention deliveries failed")
 
     def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
         """Show the Salmention resend target union without sending or recording history."""
@@ -161,7 +157,7 @@ class Command(BaseCommand):
             self.stdout.write("No Salmention resends were sent (no current or historical targets found)")
             return
 
-        sent_results = [result for result in results if not result.get("skipped")]
+        sent_results = [result for result in results if not result.get("skipped") or result.get("attempted")]
         success_count = sum(1 for r in sent_results if r["success"])
         skipped_count = len(results) - len(sent_results)
         summary = f"\nResent {success_count}/{len(sent_results)} Salmention webmentions successfully"
@@ -171,7 +167,7 @@ class Command(BaseCommand):
 
         for result in results:
             line = self._format_salmention_result(result)
-            if result.get("skipped"):
+            if result.get("skipped") and not result.get("attempted"):
                 self.stdout.write(self.style.WARNING(line))
                 continue
             if result["success"]:
@@ -179,13 +175,16 @@ class Command(BaseCommand):
             else:
                 self.stdout.write(self.style.ERROR(line))
 
+        if success_count < len(sent_results):
+            raise CommandError(f"{len(sent_results) - success_count} Salmention deliveries failed")
+
     def _format_salmention_result(self, result: dict[str, Any]) -> str:
         """Format one provenance-aware resend result."""
         target = result["target"]
         endpoint = result["endpoint"]
         provenance = result.get("provenance", "unknown")
 
-        if result.get("skipped"):
+        if result.get("skipped") and not result.get("attempted"):
             action = "dropped" if result.get("dropped") else "skipped"
             return f"- [{provenance}] {target} ({action}: {result.get('error', 'Policy skip')})"
 

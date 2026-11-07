@@ -150,8 +150,11 @@ Pass hubs explicitly with repeated ``--hub`` options:
        --hub https://backup.example/websub
 
 The command exits with a Django ``CommandError`` for invalid URLs or when no
-hub is configured. Individual hub failures are printed but do not abort
-notification of later hubs.
+hub is configured. All hubs are attempted and every redacted result is
+printed before any delivery error is raised. If any notification failed,
+the command then raises ``CommandError`` (nonzero shell exit), including
+partially successful batches. Successful empty-body 2xx responses still count
+as successes.
 
 Subscriber Lease Inspection
 ---------------------------
@@ -172,7 +175,10 @@ The command prints metadata only: subscription id, topic URL, hub URL, status,
 and ``lease_expires_at``. It does not send renewal or unsubscribe requests.
 Applications that want to renew a listed subscription should make an explicit
 call to ``request_websub_subscription()`` from their own operator workflow.
-Use ``--renewal-window-hours 0`` to list expired subscriptions only.
+Use ``--renewal-window-hours 0`` to list expired subscriptions only. The window
+must be finite and non-negative, and adding it to the current time must stay
+within Python's datetime range (through year 9999). Invalid or overflowing
+windows raise ``CommandError`` before any database query.
 
 The same lease-inspection behavior is available through
 ``get_websub_expired_subscriptions()``, ``get_websub_renewal_candidates()``,
@@ -521,7 +527,11 @@ them with the ``prune_websub_delivery_attempts`` management command:
 ``--days`` defaults to ``INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS``.
 Without either, or with a value that is not a positive integer, the command
 exits with an error and deletes nothing. The cutoff is the current time minus
-the retention days; an attempt received exactly at the cutoff is kept. Rows
+the retention days; an attempt received exactly at the cutoff is kept. The
+retention must keep the cutoff within Python's datetime range (year 1 or
+later), so the maximum whole-day retention depends on the reference date.
+Out-of-range values raise ``ValueError`` in the helper or ``CommandError``
+in the command before any query or deletion, including in dry-run mode. Rows
 are deleted in primary-key batches (``--batch-size``, default 1000) until none
 is left, so a single run drains a large backlog without one unbounded
 ``DELETE``. The command prints the cutoff and the number of rows it deleted or,
@@ -637,8 +647,9 @@ and leaves stored values unchanged. Restore the required keys before retrying.
 
 django-indieweb does not auto-discover feeds, auto-subscribe to arbitrary
 topics, renew leases in the background, parse delivered feeds, create calendar
-or post models, or run a WebSub hub. Existing publisher helper APIs and the
-``notify_websub`` command remain backward-compatible.
+or post models, or run a WebSub hub. Publisher helper APIs retain their
+per-hub result contract; the ``notify_websub``
+command reports failed batches with a nonzero exit as described above.
 
 Request validation and budgets
 ------------------------------

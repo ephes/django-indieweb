@@ -80,14 +80,16 @@ def _challenge(verifier, method):
 @pytest.mark.parametrize("suffix", ["\n", "\r", "\x00", "é"])
 def test_redemption_rejects_non_unreserved_verifier(client, owner, route, method, suffix):
     verifier = "A" * 42 + suffix
-    # Model legacy/malformed stored challenges too: lexical validation must run before comparison.
+    # Matching legacy malformed challenges exercise lexical validation before comparison.
+    # Only NUL needs a stand-in stored challenge because PostgreSQL rejects NUL text.
+    challenge = "A" * 43 if method == "plain" and suffix == "\x00" else _challenge(verifier, method)
     auth = models.Auth.objects.create(
         owner=owner,
         me="https://me.example/",
         client_id="https://client.example/",
         redirect_uri="https://client.example/callback",
         scope="create",
-        code_challenge=_challenge(verifier, method),
+        code_challenge=challenge,
         code_challenge_method=method,
     )
     response = client.post(

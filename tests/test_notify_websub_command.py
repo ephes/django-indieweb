@@ -47,13 +47,14 @@ def test_notify_websub_command_accepts_repeated_hub_arguments(mock_notify_hubs):
     ]
 
     out = StringIO()
-    call_command(
-        "notify_websub",
-        "https://example.com/feed",
-        hub=["https://hub.example/", "https://backup.example/websub"],
-        timeout=2.5,
-        stdout=out,
-    )
+    with pytest.raises(CommandError, match="failed"):
+        call_command(
+            "notify_websub",
+            "https://example.com/feed",
+            hub=["https://hub.example/", "https://backup.example/websub"],
+            timeout=2.5,
+            stdout=out,
+        )
 
     output = out.getvalue()
     assert "Notified 1/2 WebSub hubs for https://example.com/feed" in output
@@ -78,7 +79,8 @@ def test_notify_websub_command_reports_request_errors(mock_notify_hubs):
     ]
 
     out = StringIO()
-    call_command("notify_websub", "https://example.com/feed", stdout=out)
+    with pytest.raises(CommandError, match="failed"):
+        call_command("notify_websub", "https://example.com/feed", stdout=out)
 
     assert "✗ https://hub.example/ (connection refused)" in out.getvalue()
 
@@ -113,7 +115,8 @@ def test_notify_websub_command_redacts_request_errors_in_redact_mode(mock_notify
     ]
 
     out = StringIO()
-    call_command("notify_websub", "https://example.com/feed", stdout=out)
+    with pytest.raises(CommandError, match="failed"):
+        call_command("notify_websub", "https://example.com/feed", stdout=out)
 
     output = out.getvalue()
     assert "internal-marker" not in output
@@ -137,7 +140,8 @@ def test_notify_websub_command_keeps_http_status_in_redact_mode(mock_notify_hubs
     ]
 
     out = StringIO()
-    call_command("notify_websub", "https://example.com/feed", stdout=out)
+    with pytest.raises(CommandError, match="failed"):
+        call_command("notify_websub", "https://example.com/feed", stdout=out)
 
     assert "(HTTP 503)" in out.getvalue()
     assert "body-marker" not in out.getvalue()

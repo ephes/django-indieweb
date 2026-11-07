@@ -609,7 +609,7 @@ class WebmentionSender:
                 return []
 
         # Extract deliverable target URLs from content
-        target_urls = self._limit_target_urls(self._extract_external_target_urls(source_url, html_content))
+        target_urls = self.select_target_urls(source_url, html_content)
 
         # Send webmentions to each URL
         results = []
@@ -701,6 +701,8 @@ class WebmentionSender:
                 sent=endpoint is not None,
             )
             if historical_only and not result["success"] and self._delete_failed_outbound_target(target):
+                # Retain policy flags, but distinguish this failed attempt from a pre-attempt drop.
+                result["attempted"] = True
                 result["dropped"] = True
                 result["skipped"] = True
                 result["skip_reason"] = "failure_drop"
@@ -771,6 +773,14 @@ class WebmentionSender:
             ordered_targets.append(target_url)
 
         return self._limit_target_urls(ordered_targets), current_targets, historical_rows, historical_targets
+
+    def select_target_urls(self, source_url: str, html_content: str) -> list[str]:
+        """Return ordered current external targets after URL, same-host and fanout policy.
+
+        Selection performs no network requests or history reads/writes, so ordinary
+        sending and command previews can use exactly the same admission policy.
+        """
+        return self._limit_target_urls(self._extract_external_target_urls(source_url, html_content))
 
     def _extract_external_target_urls(self, source_url: str, html_content: str) -> list[str]:
         """Extract current absolute external HTTP(S) targets from HTML content."""

@@ -5,6 +5,15 @@ Changelog
 
 Unreleased
 ----------
+* Webmention (ordinary/Salmention) and WebSub notification commands now report
+  all returned results, then exit nonzero if any attempted delivery failed,
+  including failed historical resends dropped after reaching the failure limit.
+  Policy skips alone remain successful; ordinary sends still omit targets
+  without discovered endpoints.
+* Reject nonfinite or unrepresentable WebSub renewal/retention windows before
+  database access, including prune dry runs.
+* Ordinary Webmention dry runs now share the sender's canonical same-host and
+  fanout target policy, without POSTs or outbound history writes.
 * Reject JSON integer decoder limits as ``400 invalid_request`` on Micropub
   and media endpoints before handler/storage effects.
 * Require full-string unreserved PKCE challenges and verifiers, rejecting
