@@ -451,3 +451,40 @@ def test_browser_token_management_ui_is_excluded_from_cors(client, settings, use
     assert "Access-Control-Allow-Origin" not in list_response
     assert revoke_response.status_code == 200
     assert "Access-Control-Allow-Origin" not in revoke_response
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("origin", [ALLOWED_ORIGIN, OTHER_ORIGIN])
+def test_originless_cache_entry_does_not_hide_origin_variant(client, settings, origin):
+    from django.core.cache import cache
+
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
+    settings.MIDDLEWARE = [
+        "django.middleware.cache.UpdateCacheMiddleware",
+        *settings.MIDDLEWARE,
+        "django.middleware.cache.FetchFromCacheMiddleware",
+    ]
+    settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    settings.CACHE_MIDDLEWARE_SECONDS = 600
+    cache.clear()
+    url = reverse("indieweb:auth-metadata")
+    try:
+        first = client.get(url)
+        assert first.status_code == 200
+        second = client.get(url, HTTP_ORIGIN=origin)
+        assert second.status_code == 200
+        assert second.get("Access-Control-Allow-Origin") == (origin if origin == ALLOWED_ORIGIN else None)
+        assert "Origin" in first.get("Vary", "")
+        assert "Origin" in second.get("Vary", "")
+    finally:
+        cache.clear()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("vary", ["Accept-Language, Cookie", "*"])
+def test_originless_response_preserves_existing_vary(client, settings, vary):
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
+    response = HttpResponse("synthetic metadata", headers={"Vary": vary})
+    with patch("indieweb.views.IndieAuthMetadataView.get", return_value=response):
+        result = client.get(reverse("indieweb:auth-metadata"))
+    assert set(result["Vary"].split(", ")) == ({"*"} if vary == "*" else {"Accept-Language", "Cookie", "Origin"})

@@ -2289,8 +2289,9 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAu
 
 
 class UserLoginRequiredMixin(View):
-    """Mixin for browser views that require a logged-in Django user."""
+    """Mixin for private browser views that require a logged-in Django user."""
 
+    @method_decorator(never_cache)
     def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
         if not request.user.is_authenticated:
             login_url = getattr(settings, "LOGIN_URL", "/accounts/login/")
@@ -2314,9 +2315,14 @@ class TokenRevokeView(UserLoginRequiredMixin, View):
     """Revoke an access token owned by the authenticated user."""
 
     def post(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponseBase:
-        token = get_object_or_404(Token, pk=pk, owner_id=request.user.pk)
-        token.delete()
-        response = redirect("indieweb:tokens")
+        access_grant = Token.objects.filter(pk=pk, owner_id=request.user.pk).first()
+        if access_grant is None:
+            # Return inside dispatch so missing/foreign IDs get the same
+            # private cache and framing policy as successful revocations.
+            response = HttpResponse(status=404)
+        else:
+            access_grant.delete()
+            response = redirect("indieweb:tokens")
         response["Content-Security-Policy"] = "frame-ancestors 'none'"
         return response
 

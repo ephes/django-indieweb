@@ -152,7 +152,7 @@ class CorsMixin(View):
         response = super().dispatch(request, *args, **kwargs)
         if _origin_allowed(config, origin):
             return _add_cors_headers(response, config, origin or "")
-        if origin and not config.allow_all_origins:
+        if not config.allow_all_origins:
             patch_vary_headers(response, ("Origin",))
         return response
 

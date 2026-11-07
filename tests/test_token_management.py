@@ -204,3 +204,60 @@ def test_token_revoke_get_does_not_delete_token(client, user):
 
     assert response.status_code == 405
     assert models.Token.objects.filter(pk=token.pk).exists()
+
+
+def assert_private_inventory(response):
+    directives = {part.strip() for part in response["Cache-Control"].split(",")}
+    assert {"private", "no-store", "no-cache", "max-age=0", "must-revalidate"} <= directives
+    assert response["X-Frame-Options"] == "DENY"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("outcome", ["owner", "empty", "anonymous", "revoke", "foreign", "missing", "method"])
+def test_token_browser_outcomes_are_private(client, user, other_user, tokens_url, outcome):
+    foreign = _make_token(other_user, client_id="https://foreign.example.org", key="synthetic-foreign-key")
+    if outcome != "anonymous":
+        client.force_login(user)
+    if outcome == "owner":
+        _make_token(user, client_id="https://owned.example.org", key="synthetic-owned-key")
+    if outcome in {"owner", "empty", "anonymous"}:
+        response = client.get(tokens_url)
+        assert response.status_code == (302 if outcome == "anonymous" else 200)
+    else:
+        token = _make_token(user)
+        pk = foreign.pk if outcome == "foreign" else token.pk + foreign.pk + 100 if outcome == "missing" else token.pk
+        url = reverse("indieweb:token-revoke", args=[pk])
+        response = client.get(url) if outcome == "method" else client.post(url)
+        assert response.status_code == (
+            405 if outcome == "method" else 404 if outcome in {"foreign", "missing"} else 302
+        )
+    assert_private_inventory(response)
+    assert b"https://foreign.example.org" not in response.content
+    assert b"synthetic-owned-key" not in response.content
+    assert b"synthetic-foreign-key" not in response.content
+    assert models.Token.objects.filter(pk=foreign.pk).exists()
+
+
+@pytest.mark.django_db
+def test_inventory_is_not_replayed_from_shared_cache(client, settings, user, tokens_url):
+    from django.core.cache import cache
+
+    settings.MIDDLEWARE = [
+        "django.middleware.cache.UpdateCacheMiddleware",
+        *settings.MIDDLEWARE,
+        "django.middleware.cache.FetchFromCacheMiddleware",
+    ]
+    settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    cache.clear()
+    try:
+        client.force_login(user)
+        token = _make_token(user, client_id="https://removed.example.org")
+        first = client.get(tokens_url)
+        token.delete()
+        second = client.get(tokens_url)
+        assert b"https://removed.example.org" in first.content
+        assert b"https://removed.example.org" not in second.content
+        assert_private_inventory(first)
+        assert_private_inventory(second)
+    finally:
+        cache.clear()

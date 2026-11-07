@@ -2251,6 +2251,10 @@ protocol processing. Responses that echo a specific request origin also
 receive ``Vary: Origin``. Disallowed origins receive no permissive CORS
 headers, and origin-dependent responses include ``Vary: Origin`` so shared
 caches do not reuse an origin-specific decision for another browser origin.
+Allowlist mode also adds ``Vary: Origin`` when the request has no ``Origin``,
+so an originless cached response cannot hide a later browser's CORS headers.
+Existing ``Vary`` fields (including ``*``) are preserved. This cache variation
+never replaces authorization or scope checks.
 
 For allow-all deployments:
 

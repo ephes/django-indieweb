@@ -11,6 +11,13 @@ Unreleased
   recording no longer re-encrypts fallback-bound secrets; retain fallback keys
   until renewal or callback verification saves them under the new primary.
 
+* Browser token-management inventory, login/revoke redirects and view-generated
+  errors use private/no-store cache controls, retaining owner filtering and
+  framing protection. Missing/foreign revoke IDs return an empty 404 with those
+  headers instead of rendering the host's 404 page. Bearer keys remain undisclosed.
+* Allowlist CORS responses now vary on Origin even for originless requests,
+  preserving existing Vary fields and wildcard behavior.
+
 * Added optional page-level verified Webmention count batching via
   ``prepare_webmention_counts`` and the request-local ``webmention_counts`` context.
   On upgrade, incompatible existing values under that context name are ignored;

@@ -623,13 +623,20 @@ endpoint and does not change the ``/indieweb/token/`` wire protocol.
 
 The list shows token metadata including ``client_id``, ``me``, ``scope``,
 ``created``, ``modified``, ``expires_at``, and active/expired status. Full
-bearer token keys are not displayed.
+bearer token keys are not displayed. The owner inventory, login redirects,
+revocation redirects, and missing/foreign-ID or unsupported-method responses
+use the same private/no-store cache policy as token-protected resource views.
+HTTP caches must not retain the inventory. CSRF protection remains enforced by
+Django's site middleware; middleware-generated responses follow the host's
+response policy.
 
 Each token can be revoked with a CSRF-protected ``POST`` to
 ``/indieweb/tokens/<pk>/revoke/``. Revocation deletes the matching ``Token``
 row, so the bearer token immediately stops authenticating Micropub requests.
 Users can only list and revoke tokens owned by their own account. Missing or
-foreign token IDs return ``404`` from the revoke view.
+foreign token IDs return an empty ``404`` from the revoke view, with the same
+cache/framing headers; this endpoint does not render the host's ``handler404``
+page.
 
 **Error Response:**
 
