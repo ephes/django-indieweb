@@ -504,7 +504,7 @@ def _load_micropub_json_object(request: HttpRequest) -> dict[str, Any] | object 
         - The parsed ``dict`` when the body is a valid JSON object.
         - ``None`` when the request is not ``application/json``.
         - The ``_MICROPUB_JSON_INVALID`` sentinel when the body is malformed
-          (syntax error, invalid UTF-8, or recursion-limited) or decodes to a
+          (syntax error, invalid UTF-8, excessive integer digits, or recursion-limited) or decodes to a
           non-object value.
 
     The parsed result is cached on the request so each authenticated body is
@@ -519,7 +519,7 @@ def _load_micropub_json_object(request: HttpRequest) -> dict[str, Any] | object 
         return cached
     try:
         payload = json.loads(request.body)
-    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, RecursionError):
+    except (ValueError, AttributeError, RecursionError):
         result: dict[str, Any] | object = _MICROPUB_JSON_INVALID
     else:
         result = payload if isinstance(payload, dict) else _MICROPUB_JSON_INVALID
@@ -1274,7 +1274,7 @@ def _validate_pkce_request(challenge: str | None, method: str | None) -> tuple[s
         return None
     if not (PKCE_CHALLENGE_MIN <= len(challenge) <= PKCE_CHALLENGE_MAX):
         return None
-    if not PKCE_UNRESERVED_RE.match(challenge):
+    if not PKCE_UNRESERVED_RE.fullmatch(challenge):
         return None
     effective_method = method if method else "plain"
     if effective_method not in ALLOWED_PKCE_METHODS:
@@ -1314,7 +1314,7 @@ def _verify_pkce(stored_challenge: str, stored_method: str, submitted_verifier: 
         return False
     if not (PKCE_VERIFIER_MIN <= len(submitted_verifier) <= PKCE_VERIFIER_MAX):
         return False
-    if not PKCE_UNRESERVED_RE.match(submitted_verifier):
+    if not PKCE_UNRESERVED_RE.fullmatch(submitted_verifier):
         return False
     if stored_method == "plain":
         return hmac.compare_digest(stored_challenge, submitted_verifier)
@@ -2524,11 +2524,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         and silently produce surprising behavior (e.g. an empty entry being created).
 
         Delegates to ``_load_micropub_json_object`` for parsing, which catches
-        ``json.JSONDecodeError`` (syntax errors), ``UnicodeDecodeError`` (invalid UTF-8 in
-        ``request.body``; ``json.loads`` decodes bytes as UTF-8 internally),
+        ``ValueError`` (including JSON syntax errors, invalid UTF-8 and integer digit limits),
         ``AttributeError`` (defensive — ``request.body`` should always be bytes, but a
         misbehaving middleware could substitute it), and ``RecursionError`` (raised by
-        ``json.loads`` on extremely deeply nested objects). All four become
+        ``json.loads`` on extremely deeply nested objects). All become
         ``400 invalid_request`` rather than a ``500`` from the unhandled exception path.
         """
         payload = _load_micropub_json_object(request)

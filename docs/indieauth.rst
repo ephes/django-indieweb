@@ -444,6 +444,8 @@ Security Considerations
    ``plain``; defaults to ``plain`` when ``code_challenge`` is sent without a
    method, per RFC 7636 §4.3). Malformed challenges and unsupported methods
    are rejected with HTTP 400 *before* any authorization code is issued.
+   Challenges and verifiers must match the entire unreserved string; trailing
+   newlines, other control characters and non-ASCII characters are rejected.
    When an auth code was issued with a ``code_challenge``, the token
    endpoint and the authorization-endpoint code redemption both require a
    matching ``code_verifier`` and rejects any mismatch,
