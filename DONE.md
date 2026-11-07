@@ -4727,3 +4727,18 @@ bundle.
   memory; the branch PostgreSQL CI gate must pass before merge.
 - Documentation: updated `docs/websub.rst`; changelog: Unreleased.
   No corresponding pending BACKLOG items existed.
+
+### Browser response privacy and variation (scout round 62)
+
+- `indieweb-token-management-private-response-policy`: reuse Django's
+  never-cache resource policy for browser inventory/revoke outcomes, including
+  login, missing/foreign IDs and unsupported methods; owner and CSRF checks remain.
+- `indieweb-cors-vary-for-originless-responses`: allowlist responses always vary
+  on Origin, preserving existing Vary values and wildcard semantics.
+- Validation: 11 regression cases failed on original source; all 56 focused
+  token-management/CORS tests passed after the fixes. Full pytest passed
+  (2236 passed, 2 skipped; coverage 93.04%). Mypy, Ruff, hooks and strict docs
+  passed, as did all 11 supported tox/migrations environments.
+  Shared-cache tests cover inventory changes and originless/allowed/denied variants.
+- Documentation: `docs/api.rst`, `docs/configuration.rst`; changelog: Unreleased.
+  No corresponding pending BACKLOG items existed.
