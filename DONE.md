@@ -4778,3 +4778,22 @@ bundle.
   environments passed. Review: CLEAN in one round.
 - Documentation: `docs/development.rst`; changelog: Unreleased. No corresponding
   pending BACKLOG items existed. Existing fast matrix and version are unchanged.
+
+## 2026-11-07
+
+### Strict Micropub numeric and PKCE input boundaries (scout round 70 A1)
+
+- Completed `indieweb-micropub-integer-decoder-failure-envelope` and
+  `indieweb-pkce-unreserved-full-string-match`. Numeric decoder ValueError now
+  uses the cached invalid-payload sentinel; PKCE checks require the entire
+  unreserved string, retaining existing method and length policy.
+- Reproduced both bugs on develop: 10 focused endpoint cases fail without the
+  fixes; all 38 focused cases pass with them. Fixtures are synthetic and the
+  integer digit limit is explicitly controlled and restored.
+- Validation: full pytest/coverage, supported tox matrix and migration/storage
+  lanes, mypy, Ruff, configured prek hooks and strict Sphinx build.
+- Review: CLEAN, zero findings. Full suite: 2286 passed, six expected
+  in-memory skips, 93.27% coverage; PostgreSQL storage: 20 passed, additional
+  PostgreSQL protocol/query cases: 221 passed.
+- Documentation: `docs/micropub.rst`, `docs/indieauth.rst`; changelog: Unreleased.
+  No corresponding pending BACKLOG items existed.

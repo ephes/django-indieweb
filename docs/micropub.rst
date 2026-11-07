@@ -1200,6 +1200,10 @@ its own task or record pending syndication state:
 Error Handling
 --------------
 
+Malformed JSON includes numeric literals exceeding Python's integer digit
+limit. Both Micropub and media endpoints reject these bodies with
+``400 invalid_request`` before invoking handlers or storage.
+
 The Micropub endpoint returns the following HTTP status codes:
 
 - ``201 Created`` - Success on entry create, and on update/undelete actions

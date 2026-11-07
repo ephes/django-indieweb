@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Reject JSON integer decoder limits as ``400 invalid_request`` on Micropub
+  and media endpoints before handler/storage effects.
+* Require full-string unreserved PKCE challenges and verifiers, rejecting
+  trailing newlines and other forbidden characters without changing PKCE policy.
 * Add token issuance/rotation rollback regressions and required local file-SQLite
   and opt-in PostgreSQL storage lanes, with migrations and a fail-on-skip guard.
 * Add committed, independent-connection
