@@ -5,6 +5,8 @@ Changelog
 
 Unreleased
 ----------
+* Correct tutorial bearer validation for hashed storage and add a Web Crypto
+  S256 client flow with single-use callback state and checked token exchange.
 * Add token issuance/rotation rollback regressions and required local file-SQLite
   and opt-in PostgreSQL storage lanes, with migrations and a fail-on-skip guard.
 * Add committed, independent-connection

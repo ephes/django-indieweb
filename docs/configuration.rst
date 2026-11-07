@@ -2352,6 +2352,11 @@ disabled). For an internet-facing IndieAuth/Micropub deployment, copy the
 settings block below into your ``settings.py`` and customise for your
 domain:
 
+The :ref:`tutorial-pkce-client` example generates S256 challenges with Web
+Crypto and consumes its state/verifier once on callback. Configure this
+client's exact origin and callback in the allowlists below, and give the
+logged-in user a matching profile URL for ``INDIEWEB_BIND_ME_TO_USER``.
+
 .. code-block:: python
 
    # Hardened defaults for public IndieAuth/Micropub endpoints.

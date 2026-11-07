@@ -2,6 +2,23 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-07
+
+### Secure IndieAuth tutorial examples (round 68 B12)
+
+- Validate issued raw bearer keys through `Token.get_for_raw_key`, retaining
+  active-owner/expiry checks and rejecting malformed headers and storage hashes.
+- Generate state and S256 PKCE with Web Crypto; consume pending state/verifier
+  once and save credentials only after a successful, validated exchange.
+- Validation: executable RST examples, real synthetic authorization/token
+  round trips, pytest coverage gate, mypy, Ruff, prek, strict Sphinx build.
+  Regressions fail against the prior tutorial. Full Python 3.11/Django 5.2
+  tox lane and the required file-SQLite storage lane also pass.
+- Documentation: tutorial plus production-hardening link. Changelog: Unreleased.
+- Backlog: these scout findings had no existing BACKLOG entry.
+- Integration pending: the required review could not run because reviewer
+  authentication was revoked; this bundle is parked for review, not merged.
+
 ## 2026-11-06
 
 ### Housekeeping hardening (priority-4 bundle)

@@ -67,6 +67,8 @@ Implementing IndieAuth Login
 
 Here's how to implement IndieAuth login in your application:
 
+.. _tutorial-pkce-client:
+
 Client-Side Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -83,68 +85,86 @@ Client-Side Implementation
 
    .. code-block:: javascript
 
-      document.getElementById('indieauth-form').addEventListener('submit', (e) => {
+      // Run in a secure context (HTTPS in production).
+      function randomBase64url(size = 32) {
+          const bytes = crypto.getRandomValues(new Uint8Array(size));
+          return btoa(String.fromCharCode(...bytes))
+              .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      document.getElementById('indieauth-form').addEventListener('submit', async (e) => {
           e.preventDefault();
-
-          const me = e.target.me.value;
-          const client_id = window.location.origin;
-          const redirect_uri = window.location.origin + '/auth/callback';
-          const state = Math.random().toString(36).substring(2, 15);
-          const scope = 'create media';
-
-          // Store state for verification
-          sessionStorage.setItem('indieauth_state', state);
-
-          // Redirect to authorization endpoint
+          const state = randomBase64url(24);
+          const verifier = randomBase64url();
+          const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+          const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+              .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          const pending = {
+              state, verifier, me: e.target.me.value,
+              client_id: window.location.origin,
+              redirect_uri: window.location.origin + '/auth/callback',
+          };
+          sessionStorage.setItem('indieauth_pending', JSON.stringify(pending));
           const authUrl = new URL('/indieweb/auth/', window.location.origin);
-          authUrl.searchParams.append('me', me);
-          authUrl.searchParams.append('client_id', client_id);
-          authUrl.searchParams.append('redirect_uri', redirect_uri);
-          authUrl.searchParams.append('state', state);
-          authUrl.searchParams.append('scope', scope);
-
+          authUrl.search = new URLSearchParams({
+              me: pending.me, client_id: pending.client_id,
+              redirect_uri: pending.redirect_uri, state, scope: 'create media',
+              response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256',
+          });
           window.location.href = authUrl.toString();
       });
 
-3. **Handle the callback:**
+3. **Handle the callback:** Run this as a module script on ``/auth/callback``.
+   This example uses your own same-origin authorization and token endpoints;
+   it does not discover remote identity providers. Only one pending attempt
+   is retained per tab. Keep both pages in the
+   same tab so session storage survives the redirect.
 
    .. code-block:: javascript
 
-      // On your callback page
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
-      const state = urlParams.get('state');
-      const me = urlParams.get('me');
-
-      // Verify state
-      if (state !== sessionStorage.getItem('indieauth_state')) {
-          alert('Invalid state parameter');
-          return;
+      async function finishIndieAuthLogin() {
+          const params = new URLSearchParams(window.location.search);
+          const stored = sessionStorage.getItem('indieauth_pending');
+          // Consume once, including on denial, mismatch or failed exchange.
+          sessionStorage.removeItem('indieauth_pending');
+          localStorage.removeItem('micropub_token');
+          localStorage.removeItem('micropub_me');
+          const pending = stored ? JSON.parse(stored) : null;
+          const code = params.get('code');
+          const state = params.get('state');
+          if (!pending || !pending.state || !pending.verifier || !code || !state ||
+              params.has('error') || state !== pending.state) {
+              throw new Error('Invalid or missing IndieAuth callback');
+          }
+          const response = await fetch('/indieweb/token/', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'Accept': 'application/json',
+              },
+              body: new URLSearchParams({
+                  grant_type: 'authorization_code', code,
+                  client_id: pending.client_id, redirect_uri: pending.redirect_uri,
+                  me: pending.me, code_verifier: pending.verifier,
+              }),
+          });
+          if (!response.ok) {
+              throw new Error('IndieAuth token exchange failed');
+          }
+          const result = await response.json();
+          if (typeof result.access_token !== 'string' || !result.access_token ||
+              result.token_type !== 'Bearer' || result.me !== pending.me) {
+              throw new Error('Invalid IndieAuth token response');
+          }
+          localStorage.setItem('micropub_token', result.access_token);
+          localStorage.setItem('micropub_me', result.me);
       }
 
-      // Exchange code for token
-      fetch('/indieweb/token/', {
-          method: 'POST',
-          headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-              code: code,
-              client_id: window.location.origin,
-              redirect_uri: window.location.origin + '/auth/callback',
-              me: me,
-              scope: 'create media'
-          })
-      })
-      .then(response => response.text())
-      .then(data => {
-          const params = new URLSearchParams(data);
-          const access_token = params.get('access_token');
-
-          // Store the token securely
-          localStorage.setItem('micropub_token', access_token);
-          localStorage.setItem('micropub_me', params.get('me'));
-      });
+      try {
+          await finishIndieAuthLogin();
+      } catch (error) {
+          console.error(error); // Show a login failure and require a fresh attempt.
+      }
 
 Using the Micropub Endpoint
 ---------------------------
@@ -318,18 +338,21 @@ For server-side applications, you might want to validate tokens:
 
    def validate_token(request):
        auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-       if auth_header.startswith('Bearer '):
-           key = auth_header.split()[1]
-           try:
-               token = Token.objects.get(key=key)
-               if not token.owner.is_active:
-                   return None
-               if token.is_expired():
-                   return None
-               return token
-           except Token.DoesNotExist:
-               pass
-       return None
+       parts = auth_header.split()
+       if len(parts) != 2 or parts[0].lower() != 'bearer':
+           return None
+       try:
+           token = Token.get_for_raw_key(parts[1])
+       except Token.DoesNotExist:
+           return None
+       if not token.owner.is_active or token.is_expired():
+           return None
+       return token
+
+Use the issued raw key as the bearer credential. Database ``Token.key`` values
+are storage hashes, never bearer credentials; ``get_for_raw_key`` refuses them.
+Revoked or replaced keys fail lookup. This helper authenticates a token only;
+your application must also enforce scopes and object ownership for each action.
 
 Security Considerations
 -----------------------

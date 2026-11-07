@@ -345,3 +345,12 @@ failure after a real token INSERT/UPDATE and after code deletion; code, bearer
 hash, expiry and modification time must roll back together. A healthy retry
 then succeeds once. Moving issuance outside the atomic block fails both tests.
 A broken migration must fail the migration-enabled lane during database setup.
+
+Executable tutorial checks
+--------------------------
+
+The pytest suite executes the tutorial's JavaScript using Node.js (18 or newer)
+and its Web Crypto implementation, with synthetic browser storage and network
+responses. Install Node.js alongside Python before running the suite. These
+checks also send the generated PKCE values through the real Django test
+endpoints; no browser, external identity provider or real account is needed.
