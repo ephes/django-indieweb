@@ -1,6 +1,6 @@
 """Template tags for displaying webmentions."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from django import template
@@ -127,19 +127,29 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
     if not target_url:
         return {"webmentions": [], "target_url": target_url}
 
-    nested_responses = WebmentionNestedResponse.objects.filter(
-        status="verified",
-        webmention__status="verified",
-    ).order_by(
-        Coalesce("published", "first_seen_at").desc(),
-        "-first_seen_at",
-        "-created",
-        "pk",
+    nested_responses = (
+        WebmentionNestedResponse.objects.filter(
+            status="verified",
+            webmention__status="verified",
+        )
+        .defer("parsed_h_entry", "content_digest")
+        .order_by(
+            Coalesce("published", "first_seen_at").desc(),
+            "-first_seen_at",
+            "-created",
+            "pk",
+        )
     )
 
     # Filter for verified webmentions
-    webmentions = Webmention.objects.filter(target_url=target_url, status="verified").prefetch_related(
-        Prefetch("nested_responses", queryset=nested_responses, to_attr="_verified_nested_responses")
+    webmentions = (
+        Webmention.objects.filter(target_url=target_url, status="verified")
+        .defer(
+            "spam_check_result", "status_token", "vouch_url", "verified_at", "vouch_verified_at", "last_received_at"
+        )
+        .prefetch_related(
+            Prefetch("nested_responses", queryset=nested_responses, to_attr="_verified_nested_responses")
+        )
     )
 
     if mention_type:
@@ -163,6 +173,26 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
     }
 
 
+@register.simple_tag
+def prepare_webmention_counts(target_urls: Sequence[str]) -> dict[str, dict[str, int]]:
+    """Count exact URL/type strings for one page; assign as ``webmention_counts``."""
+    counts: dict[str, dict[str, int]] = {url: {} for url in target_urls if url}
+    if counts:
+        rows = (
+            Webmention.objects.filter(target_url__in=counts, status="verified")
+            .order_by()
+            .values_list("target_url", "mention_type", "status")
+            .iterator()
+        )
+        # SQL is only a candidate filter: collations may equate distinct URLs,
+        # types or statuses. Never group or compare these strings in the DB.
+        for url, kind, status in rows:
+            if url in counts and status == "verified":
+                by_type = counts[url]
+                by_type[kind] = by_type.get(kind, 0) + 1
+    return counts
+
+
 @register.simple_tag(takes_context=True)
 def webmention_count(context: dict[str, Any], target_url: str, mention_type: str | None = None) -> int:
     """
@@ -178,10 +208,12 @@ def webmention_count(context: dict[str, Any], target_url: str, mention_type: str
     if not target_url:
         return 0
 
-    # Count only verified webmentions
-    webmentions = Webmention.objects.filter(target_url=target_url, status="verified")
+    counts = context.get("webmention_counts")
+    if isinstance(counts, Mapping):
+        by_type = counts.get(target_url)
+        if isinstance(by_type, Mapping) and all(type(value) is int for value in by_type.values()):
+            typed_counts = cast(Mapping[str, int], by_type)
+            return typed_counts.get(mention_type, 0) if mention_type else sum(typed_counts.values())
 
-    if mention_type:
-        webmentions = webmentions.filter(mention_type=mention_type)
-
-    return webmentions.count()
+    by_type = prepare_webmention_counts([target_url])[target_url]
+    return by_type.get(mention_type, 0) if mention_type else sum(by_type.values())

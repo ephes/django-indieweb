@@ -1494,6 +1494,49 @@ skipped with ``history_changed`` for the current invocation. A later invocation
 reads fresh history and reapplies cooldown/cutoff policy; the stale attempt never
 recreates a concurrently dropped row or sends immediately after a newer success.
 
+Page-level count batching and display queries
+=============================================
+
+For a page of cards, prepare counts once using a page-sized sequence of target
+URL strings supplied by the view. Assign the result to ``webmention_counts``
+in the same template context as the existing count tags:
+
+.. code-block:: html+django
+
+    {% load webmention_tags %}
+    {% prepare_webmention_counts page_target_urls as webmention_counts %}
+    {% for card in page_cards %}
+      {% webmention_count card.url as total %}
+      {% webmention_count card.url "reply" as replies %}
+    {% endfor %}
+
+The helper is also callable from Python. Preparation uses one query selecting
+only URL, type and status scalars, then counts exact strings in Python. All
+subsequent counts for prepared URLs use zero queries, including absent URLs
+and types. Counts remain integers for verified top-level mentions only. URLs
+outside the prepared page use the same counting path in a single query.
+Existing context values with an incompatible shape are ignored. The mapping
+is a request-local snapshot: prepare it again after writes rather than caching
+it across requests.
+
+Both prepared and standalone counts compare URL, type and verified status
+exactly, independent of database collation on SQLite and PostgreSQL. Case,
+accents, Unicode composition and trailing spaces are not normalized. On upgrade,
+hosts using a permissive collation may see smaller counts where distinct strings
+previously compared equal. SQL filtering only selects candidate rows; no SQL
+GROUP BY or collation-specific fallback is used. This reads one small tuple per
+candidate mention rather than one aggregate per type, without loading model
+instances or ingestion payloads. Supply only the current page's target URLs.
+
+``show_webmentions`` defers parent ``spam_check_result``, ``status_token``,
+``vouch_url``, ``verified_at``, ``vouch_verified_at`` and ``last_received_at``,
+and child ``parsed_h_entry`` and ``content_digest``. Bundled templates use only
+loaded presentation fields and render with two queries (three with a type
+filter, for cross-type deduplication). Nested ordering and deduplication are
+unchanged. Custom templates still receive model instances; accessing a deferred
+field lazily issues an extra query per instance. Hosts displaying ingestion
+metadata should load it explicitly in a host-owned queryset instead.
+
 Nested-response write batches
 ================================
 

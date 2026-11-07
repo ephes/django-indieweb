@@ -5,6 +5,15 @@ Changelog
 
 Unreleased
 ----------
+* Added optional page-level verified Webmention count batching via
+  ``prepare_webmention_counts`` and the request-local ``webmention_counts`` context.
+  On upgrade, incompatible existing values under that context name are ignored;
+  both prepared and standalone counts now compare exact URL, type and verified
+  status strings independently of database collation. On permissive collations,
+  counts no longer include case/accent/Unicode/space-equivalent spellings.
+* Webmention display queries defer ingestion diagnostics and child parse payloads;
+  bundled output is unchanged. Custom templates accessing deferred fields perform
+  lazy queries (see the integration guide).
 * Nested Webmention responses use one identity lookup and bounded bulk writes
   rather than per-child queries, preserving validation, timestamps, retirement
   and the existing parent transaction/savepoint boundaries.
