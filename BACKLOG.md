@@ -10,7 +10,15 @@ No current Priority 1 items.
 
 ## Priority 2
 
-No current Priority 2 items.
+### Page-count batching with collation-equivalent URL spellings
+
+The round 57 I1 feature branch adds optional grouped counts. Review remains
+blocked: if multiple requested URL spellings compare equal under the database
+collation, GROUP BY can return one requested key and leave another at zero.
+Resolve this without changing legacy count semantics, add a synthetic merged-row
+regression, and obtain a clean review before merging the bundle.
+References: `src/indieweb/templatetags/webmention_tags.py:prepare_webmention_counts`,
+`tests/test_webmention_display_queries.py`, `docs/webmention.rst`.
 
 ## Priority 3
 

@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* Added optional page-level verified Webmention count batching via
+  ``prepare_webmention_counts`` and the request-local ``webmention_counts`` context.
+  On upgrade, incompatible existing values under that context name are ignored;
+  collation-dependent URL matches fall back to individual counts.
+* Webmention display queries defer ingestion diagnostics and child parse payloads;
+  bundled output is unchanged. Custom templates accessing deferred fields perform
+  lazy queries (see the integration guide).
 * Profile h-card-only partial saves now persist their derived quick-access
   fields; explicit empty property arrays clear them. Unrelated partial saves
   preserve unsaved h-card changes, and empty update-fields saves remain no-ops.

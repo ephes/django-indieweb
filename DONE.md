@@ -4653,3 +4653,22 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
   configured prek hooks, Sphinx and migration-enabled tox.
 - Documentation: h-card persistence and configuration logging contracts updated.
   Changelog: Unreleased entries.
+
+## 2026-11-07
+
+### Public Webmention display costs (round 57 I1)
+
+- Implemented `indieweb-bulk-card-mention-counts` then
+  `indieweb-display-defers-ingest-payloads`. Counts use one grouped lookup for
+  a supplied page and no further queries for prepared targets/types. Display
+  defers ingestion fields while preserving model instances and bundled output.
+  No matching pending BACKLOG entries existed; existing work remains unchanged.
+- Validation: new regressions fail on the original code; exact query budgets
+  for 1/20 URLs and children, selected-column exclusions, full-output parity,
+  template deduplication tests, migration-enabled display tests, pytest/coverage,
+  mypy, Ruff/format, configured prek hooks and warning-free Sphinx build.
+- Documentation: Webmention batch integration and custom-template lazy-loading
+  caveat documented. Changelog: Unreleased entries; no schema/version change.
+- Review gate: unmerged. The second review found a remaining grouped-count
+  collation-equivalence defect; stop-on-recurrence rule applied. Follow-up is
+  recorded in BACKLOG; the display projection itself has no review findings.

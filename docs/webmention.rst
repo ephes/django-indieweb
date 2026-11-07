@@ -1493,3 +1493,38 @@ If failed history changes or disappears during pre-send pruning, that target is
 skipped with ``history_changed`` for the current invocation. A later invocation
 reads fresh history and reapplies cooldown/cutoff policy; the stale attempt never
 recreates a concurrently dropped row or sends immediately after a newer success.
+
+Page-level count batching and display queries
+=============================================
+
+For a page of cards, prepare counts once using a page-sized sequence of target
+URL strings supplied by the view. Assign the result to ``webmention_counts``
+in the same template context as the existing count tags:
+
+.. code-block:: html+django
+
+    {% load webmention_tags %}
+    {% prepare_webmention_counts page_target_urls as webmention_counts %}
+    {% for card in page_cards %}
+      {% webmention_count card.url as total %}
+      {% webmention_count card.url "reply" as replies %}
+    {% endfor %}
+
+The helper is also callable from Python. Preparation uses one grouped query;
+all subsequent counts for those URLs use zero queries, including absent URLs
+and types. Counts remain integers for verified top-level mentions only. URLs
+outside the prepared page retain the single-target query fallback. Existing
+context values with an incompatible shape are ignored. If a database collation
+matches a stored URL spelling outside the supplied exact strings, the helper
+returns an empty mapping so all counts use the database's legacy semantics. The mapping
+is a request-local snapshot: prepare it again after writes rather than caching
+it across requests.
+
+``show_webmentions`` defers parent ``spam_check_result``, ``status_token``,
+``vouch_url``, ``verified_at``, ``vouch_verified_at`` and ``last_received_at``,
+and child ``parsed_h_entry`` and ``content_digest``. Bundled templates use only
+loaded presentation fields and render with two queries (three with a type
+filter, for cross-type deduplication). Nested ordering and deduplication are
+unchanged. Custom templates still receive model instances; accessing a deferred
+field lazily issues an extra query per instance. Hosts displaying ingestion
+metadata should load it explicitly in a host-owned queryset instead.
