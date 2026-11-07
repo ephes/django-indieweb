@@ -295,3 +295,28 @@ collations to real columns and restore them after each test (PostgreSQL requires
 ICU support, provided by the CI image)::
 
     DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_webmention_count_collations.py tests/test_webmention_display_queries.py
+
+Authorization contention tests
+------------------------------
+
+``tests/test_auth_contention.py`` complements deterministic stale-code rejection checks
+with committed requests on independent connections. It covers token/token and
+auth/token redemption of a scoped code, plus consent/exchange in both write
+orders. Events pause a completed DELETE until the competing request reaches its
+DELETE call; they do not assert scheduler-level lock-wait overlap. Every worker
+result or exception is collected and connections are closed. PostgreSQL statement/lock timeouts and
+bounded event waits prevent a deadlock from hanging the suite.
+
+Use a fresh temporary directory for file-backed SQLite::
+
+    storage_dir=$(mktemp -d)
+    DJANGO_INDIEWEB_TEST_SQLITE_PATH="$storage_dir/test.sqlite3" uv run pytest --migrations --no-cov tests/test_auth_contention.py
+
+Run the same cases against a disposable synthetic PostgreSQL database::
+
+    DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_auth_contention.py
+
+The normal in-memory SQLite suite skips these cases because shared-cache
+locking cannot reproduce the supported file-backed behavior. The regression
+oracles reject a removed consume gate (two successful redemptions) and an owner
+row lock before consent DELETE (PostgreSQL consent/exchange deadlock).
