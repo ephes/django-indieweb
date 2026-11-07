@@ -4797,3 +4797,28 @@ bundle.
   PostgreSQL protocol/query cases: 221 passed.
 - Documentation: `docs/micropub.rst`, `docs/indieauth.rst`; changelog: Unreleased.
   No corresponding pending BACKLOG items existed.
+
+### Honest maintenance command outcomes and previews (scout round 71 I1)
+
+- Completed `indieweb-webmention-command-failure-exit`,
+  `indieweb-websub-notify-failure-exit`, `indieweb-maintenance-window-range-errors`
+  and `indieweb-dry-run-send-target-policy-parity`. Delivery commands finish
+  reporting batches before raising CommandError for attempted failures; policy
+  skips alone succeed. Nonfinite/overflowing windows fail before queries.
+  Ordinary previews share the sender's public target-selection policy.
+- Reproduced all four bugs against develop with 20 failing focused cases.
+  Synthetic tests cover all/mixed/no failures, redaction, complete hub attempts,
+  read-only previews, canonical hosts, fanout caps and datetime range edges.
+- Validation: full pytest/coverage, supported tox matrix and migration/storage
+  lanes, mypy, Ruff, configured prek hooks and strict Sphinx build.
+- Review: two accepted warnings repaired (post-attempt Salmention drops and
+  ordinary discovery documentation); scoped re-review CLEAN, zero findings.
+  Real-sender drop regressions fail before the repair and pass afterward.
+  Full suite: 2322 passed, six expected in-memory skips, 93.10% coverage.
+- PostgreSQL portability: malformed submitted NUL verifiers use a representable
+  stored challenge; other legacy malformed challenges retain lexical coverage.
+  The portability review was suggestion-only; its suggestion to narrow the
+  substitute to NUL was implemented. Both new boundary suites pass all 74 cases
+  on SQLite and migrated PostgreSQL. All 12 tox environments passed.
+- Documentation: `docs/webmention.rst`, `docs/websub.rst`; changelog: Unreleased.
+  No corresponding pending BACKLOG items existed.

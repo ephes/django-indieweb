@@ -1045,7 +1045,10 @@ def prune_websub_delivery_attempts(
     days = websub_delivery_attempt_retention_days(retention_days)
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
         raise ValueError("WebSub delivery-attempt prune batch size must be a positive integer")
-    cutoff = (now or timezone.now()) - timedelta(days=days)
+    try:
+        cutoff = (now or timezone.now()) - timedelta(days=days)
+    except OverflowError as exc:
+        raise ValueError("WebSub delivery-attempt retention exceeds the supported datetime range") from exc
     # Count, select and delete on the write database. Batches selected from a
     # lagging read replica would keep returning rows that are already deleted.
     attempts = WebSubDeliveryAttempt.objects.using(router.db_for_write(WebSubDeliveryAttempt))
@@ -1088,10 +1091,14 @@ def get_websub_renewal_candidates(
     if within < timedelta(0):
         raise ValueError("renewal candidate window must be non-negative")
     reference_time = now or timezone.now()
+    try:
+        cutoff = reference_time + within
+    except OverflowError as exc:
+        raise ValueError("renewal candidate window exceeds the supported datetime range") from exc
     return WebSubSubscription.objects.filter(
         state=WebSubSubscription.STATE_ACTIVE,
         lease_expires_at__isnull=False,
-        lease_expires_at__lte=reference_time + within,
+        lease_expires_at__lte=cutoff,
     ).order_by("lease_expires_at", "pk")
 
 

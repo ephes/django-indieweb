@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import timedelta
 from typing import Any
 
@@ -28,10 +29,13 @@ class Command(BaseCommand):
     def handle(self, *args: Any, **options: Any) -> None:
         """Print expired subscriptions and renewal candidates."""
         renewal_window_hours = options["renewal_window_hours"]
-        if renewal_window_hours < 0:
-            raise CommandError("--renewal-window-hours must be non-negative")
+        if not math.isfinite(renewal_window_hours) or renewal_window_hours < 0:
+            raise CommandError("--renewal-window-hours must be finite and non-negative")
 
-        summaries = summarize_websub_leases(within=timedelta(hours=renewal_window_hours))
+        try:
+            summaries = summarize_websub_leases(within=timedelta(hours=renewal_window_hours))
+        except (ValueError, OverflowError) as exc:
+            raise CommandError("--renewal-window-hours exceeds the supported datetime range") from exc
         if not summaries:
             self.stdout.write("No WebSub subscriptions require lease attention")
             return

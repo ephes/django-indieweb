@@ -743,7 +743,17 @@ available, success or error, and a provenance label:
 No-endpoint union targets remain visible in resend output as failures with an
 ``Error: No endpoint found`` message. Policy skips are shown separately as
 ``skipped`` or ``dropped`` rows and are not counted as sent Webmentions in the
-summary.
+summary when no attempt was made. A failed historical attempt that reaches the
+failure threshold and is then dropped has ``attempted=True`` alongside its
+policy flags; it counts as a failure in the command summary and exit status.
+
+Both ordinary and Salmention sends report all results, then raise
+``CommandError`` (nonzero shell exit) if any attempted delivery failed,
+including no-endpoint failures in Salmention resend mode. Ordinary sends
+retain their existing discovery behavior: targets without endpoints are
+omitted from delivery results and do not cause a failure exit. All-success
+and policy-skipped-only batches exit successfully. Partial successes are
+still delivered and recorded.
 
 In resend mode, ``--dry-run`` shows the union of current and historical targets
 for exactly the provided source URL, labels each target with the same
@@ -751,7 +761,11 @@ for exactly the provided source URL, labels each target with the same
 for display, and rediscovers endpoints for eligible targets without sending
 Webmentions or writing outbound target history.
 Without resend mode, ``--dry-run`` keeps showing only current targets and
-preserves the ordinary same-domain skip and endpoint-discovery preview. The
+uses ``WebmentionSender.select_target_urls()`` just like ordinary sending:
+canonical same-host exclusion (case, IDNA and default ports), safe URLs and
+per-source/per-host fanout caps apply before endpoint discovery. The preview
+reports the selected count after policy exclusions and performs no POSTs or
+outbound history writes; endpoint discovery can still fetch remote pages. The
 existing ``--content`` option, including ``--content -`` for stdin, and
 ``--vouch`` work in both modes.
 
