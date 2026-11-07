@@ -355,7 +355,7 @@ def _micropub_query_page(request: HttpRequest) -> tuple[int, int]:
     return limit, offset
 
 
-def _log_micropub_query_error(operation: str, context: str, exc: Exception) -> None:
+def _log_micropub_handler_error(operation: str, context: str, exc: Exception) -> None:
     """Keep adapter exception messages and tracebacks private in redact mode."""
     rejected = isinstance(exc, ValueError)
     prefix = f"{operation} rejected" if rejected else f"Unexpected error in {operation}"
@@ -363,9 +363,9 @@ def _log_micropub_query_error(operation: str, context: str, exc: Exception) -> N
         logging.WARNING if rejected else logging.ERROR,
         "%s %s (%s): %s",
         prefix,
-        context,
-        type(exc).__name__,
-        redact_text(str(exc)),
+        context[:512],
+        type(exc).__name__[:80],
+        redact_text(str(exc))[:512],
         exc_info=not rejected and configured_mode() == "passthrough",
     )
 
@@ -2757,10 +2757,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             entry = handler.update_entry(url, updates, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"update_entry rejected url={redact_url(url)!r}: {exc}")
+            _log_micropub_handler_error("update_entry", f"url={redact_url(url)!r}", exc)
             return self._invalid_request()
-        except Exception:
-            logger.exception(f"Unexpected error in update_entry for url={url!r}")
+        except Exception as exc:
+            _log_micropub_handler_error("update_entry", f"url={redact_url(url)!r}", exc)
             return HttpResponse(status=500)
         return self._action_response(request, entry, url)
 
@@ -2773,10 +2773,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             handler.delete_entry(url, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"delete_entry rejected url={redact_url(url)!r}: {exc}")
+            _log_micropub_handler_error("delete_entry", f"url={redact_url(url)!r}", exc)
             return self._invalid_request()
-        except Exception:
-            logger.exception(f"Unexpected error in delete_entry for url={url!r}")
+        except Exception as exc:
+            _log_micropub_handler_error("delete_entry", f"url={redact_url(url)!r}", exc)
             return HttpResponse(status=500)
         return HttpResponse(status=204)
 
@@ -2789,10 +2789,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             entry = handler.undelete_entry(url, self.token.owner)
         except ValueError as exc:
-            logger.warning(f"undelete_entry rejected url={redact_url(url)!r}: {exc}")
+            _log_micropub_handler_error("undelete_entry", f"url={redact_url(url)!r}", exc)
             return self._invalid_request()
-        except Exception:
-            logger.exception(f"Unexpected error in undelete_entry for url={url!r}")
+        except Exception as exc:
+            _log_micropub_handler_error("undelete_entry", f"url={redact_url(url)!r}", exc)
             return HttpResponse(status=500)
         return self._action_response(request, entry, url)
 
@@ -2938,7 +2938,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         try:
             entry = handler.get_entry(url, self.token.owner)
         except Exception as exc:
-            _log_micropub_query_error("get_entry", f"url={redact_url(url)!r}", exc)
+            _log_micropub_handler_error("get_entry", f"url={redact_url(url)!r}", exc)
             return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
         if entry is None:
             logger.warning(f"get_entry did not find url={redact_url(url)!r}")
@@ -2979,7 +2979,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
                 filter=request.GET.get("filter") or None,
             )
         except Exception as exc:
-            _log_micropub_query_error(
+            _log_micropub_handler_error(
                 "list_entries",
                 "source list query "
                 f"limit={effective_limit!r} offset={effective_offset!r} "
@@ -3042,10 +3042,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             try:
                 entry = handler.create_entry(properties, self.token.owner)
             except ValueError as exc:
-                logger.warning(f"create_entry rejected request: {exc}")
+                _log_micropub_handler_error("create_entry", "request", exc)
                 return self._invalid_request()
-            except Exception:
-                logger.exception("Unexpected error in create_entry")
+            except Exception as exc:
+                _log_micropub_handler_error("create_entry", "request", exc)
                 return HttpResponse(status=500)
             entry_created = True
         finally:
@@ -3167,7 +3167,7 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         try:
             item = handler.get_media(url, self.token.owner)
         except Exception as exc:
-            _log_micropub_query_error("get_media", f"url={redact_url(url)!r}", exc)
+            _log_micropub_handler_error("get_media", f"url={redact_url(url)!r}", exc)
             return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
         if item is None:
             logger.warning(f"get_media did not find url={redact_url(url)!r}")
@@ -3191,7 +3191,7 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
                 filter=request.GET.get("filter") or None,
             )
         except Exception as exc:
-            _log_micropub_query_error(
+            _log_micropub_handler_error(
                 "list_media",
                 "source list query "
                 f"limit={limit!r} offset={effective_offset!r} "
@@ -3235,7 +3235,7 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         try:
             deleted = handler.delete_media(url, self.token.owner)
         except Exception as exc:
-            _log_micropub_query_error("delete_media", f"url={redact_url(url)!r}", exc)
+            _log_micropub_handler_error("delete_media", f"url={redact_url(url)!r}", exc)
             return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
 
         if deleted is not True:
