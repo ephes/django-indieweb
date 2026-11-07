@@ -4593,3 +4593,17 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
   pending entries existed in `BACKLOG.md`; its unrelated follow-ups stay open.
 - Adoption requires an updated package in consuming applications; no deployment,
   release or publication is part of this change.
+
+## 2026-11-07
+
+### Credential migration isolation and streaming (round 51 I1)
+
+- Completed `indieweb-security-data-migrations-database-alias` and
+  `indieweb-key-hashing-migration-streamed-rows`; all historical security
+  transforms use the schema editor alias, and credential hashing avoids the
+  QuerySet result cache. No matching pending BACKLOG items existed.
+- Validation: real two-alias historical migration regression (1005 credentials
+  per model/database), repeat-transform identity checks; pytest/coverage, mypy,
+  Ruff, configured prek hooks, Sphinx, migration-enabled tox.
+- Documentation: configuration guide explains applicability, database isolation
+  and remaining status-token set cost. Changelog: Unreleased entry.

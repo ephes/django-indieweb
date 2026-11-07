@@ -21,25 +21,27 @@ def _hash_token_key(raw_key):
 
 
 def hash_existing_token_keys(apps, schema_editor):
+    alias = schema_editor.connection.alias
     Token = apps.get_model("indieweb", "Token")
-    for token in Token.objects.all().only("pk", "key"):
+    for token in Token.objects.using(alias).all().only("pk", "key").iterator(chunk_size=1000):
         if token.key.startswith(TOKEN_KEY_HASH_PREFIX):
             continue
         token.key = _hash_token_key(token.key)
-        token.save(update_fields=["key"])
+        token.save(using=alias, update_fields=["key"])
 
 
 def assign_webmention_status_tokens(apps, schema_editor):
+    alias = schema_editor.connection.alias
     Webmention = apps.get_model("indieweb", "Webmention")
-    used_tokens = set(Webmention.objects.exclude(status_token="").values_list("status_token", flat=True))
-    for webmention in Webmention.objects.filter(status_token="").only("pk", "status_token"):
+    used_tokens = set(Webmention.objects.using(alias).exclude(status_token="").values_list("status_token", flat=True))
+    for webmention in Webmention.objects.using(alias).filter(status_token="").only("pk", "status_token"):
         while True:
             status_token = get_random_string(length=WEBMENTION_STATUS_TOKEN_LENGTH)
             if status_token not in used_tokens:
                 used_tokens.add(status_token)
                 break
         webmention.status_token = status_token
-        webmention.save(update_fields=["status_token"])
+        webmention.save(using=alias, update_fields=["status_token"])
 
 
 class Migration(migrations.Migration):
