@@ -5,20 +5,18 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import logging
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from django.conf import settings
-from django.db import migrations, models
+from django.db import migrations, models, transaction
 
 WEBSUB_SECRET_ENCRYPTED_PREFIX = "fernet$"
 WEBSUB_SECRET_KEY_SALT = b"django-indieweb-websub-secret-v1"
-logger = logging.getLogger(__name__)
 
 
-def _websub_secret_fernet() -> Fernet:
+def _websub_secret_fernet(secret_key: str | None = None) -> Fernet:
     key_material = hmac.new(
-        str(settings.SECRET_KEY).encode("utf-8"),
+        str(settings.SECRET_KEY if secret_key is None else secret_key).encode("utf-8"),
         WEBSUB_SECRET_KEY_SALT,
         hashlib.sha256,
     ).digest()
@@ -36,14 +34,13 @@ def _decrypt_secret(value: str) -> str:
     if not value or not value.startswith(WEBSUB_SECRET_ENCRYPTED_PREFIX):
         return value
     token = value.removeprefix(WEBSUB_SECRET_ENCRYPTED_PREFIX)
+    keys = [settings.SECRET_KEY, *getattr(settings, "SECRET_KEY_FALLBACKS", [])]
     try:
-        return _websub_secret_fernet().decrypt(token.encode("ascii")).decode("utf-8")
-    except (InvalidToken, UnicodeDecodeError):
-        logger.warning(
-            "Could not decrypt a WebSub secret during reverse migration; leaving encrypted value in place",
-            exc_info=True,
-        )
-        return value
+        return MultiFernet([_websub_secret_fernet(key) for key in keys]).decrypt(token.encode("ascii")).decode("utf-8")
+    except (InvalidToken, UnicodeError):
+        raise RuntimeError(
+            "Cannot reverse WebSub secret encryption: a stored secret cannot be decrypted with the configured keys."
+        ) from None
 
 
 def encrypt_websub_secrets(apps, schema_editor) -> None:  # type: ignore[no-untyped-def]
@@ -66,18 +63,19 @@ def encrypt_websub_secrets(apps, schema_editor) -> None:  # type: ignore[no-unty
 def decrypt_websub_secrets(apps, schema_editor) -> None:  # type: ignore[no-untyped-def]
     alias = schema_editor.connection.alias
     WebSubSubscription = apps.get_model("indieweb", "WebSubSubscription")
-    for subscription in WebSubSubscription.objects.using(alias).all().iterator():
-        updated_fields = []
-        decrypted_secret = _decrypt_secret(subscription.secret)
-        if decrypted_secret != subscription.secret:
-            subscription.secret = decrypted_secret
-            updated_fields.append("secret")
-        decrypted_pending_secret = _decrypt_secret(subscription.pending_secret)
-        if decrypted_pending_secret != subscription.pending_secret:
-            subscription.pending_secret = decrypted_pending_secret
-            updated_fields.append("pending_secret")
-        if updated_fields:
-            subscription.save(using=alias, update_fields=updated_fields)
+    with transaction.atomic(using=alias):
+        for subscription in WebSubSubscription.objects.using(alias).all().iterator():
+            updated_fields = []
+            decrypted_secret = _decrypt_secret(subscription.secret)
+            if decrypted_secret != subscription.secret:
+                subscription.secret = decrypted_secret
+                updated_fields.append("secret")
+            decrypted_pending_secret = _decrypt_secret(subscription.pending_secret)
+            if decrypted_pending_secret != subscription.pending_secret:
+                subscription.pending_secret = decrypted_pending_secret
+                updated_fields.append("pending_secret")
+            if updated_fields:
+                subscription.save(using=alias, update_fields=updated_fields)
 
 
 class Migration(migrations.Migration):

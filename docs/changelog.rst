@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* WebSub secret-migration rollback supports fallback keys and refuses
+  unrecoverable ciphertext before schema narrowing without changing stored values.
+  Replay pruning, inserts and maintenance now share the subscription's routed
+  write database and its atomic/savepoint boundaries.
 * Historical credential/status-token migrations now honor the selected database
   for all reads and writes. Auth/Token hashing streams batches of 1000 rows;
   already applied migrations and stored hashes are unchanged.

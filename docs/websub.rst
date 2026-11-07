@@ -613,10 +613,11 @@ bookkeeping saves that go through ``update_fields``. Keep the old value in
 ``SECRET_KEY_FALLBACKS`` until every active subscription has been saved at
 least once under the new primary (any successful renewal or callback
 verification triggers a save); once removed, ciphertexts still bound to the
-old key can no longer be decrypted. Rolling the
-``0021_encrypt_websub_secrets`` migration back after rotating ``SECRET_KEY``
-may leave encrypted values in place; the reverse migration logs a warning when
-it cannot decrypt a stored secret.
+old key can no longer be decrypted. The reverse
+``0021_encrypt_websub_secrets`` migration also tries the primary key and each
+fallback. If any nonempty encrypted secret (including a pending secret) cannot
+be recovered, rollback raises a value-free error before narrowing the columns
+and leaves stored values unchanged. Restore the required keys before retrying.
 
 django-indieweb does not auto-discover feeds, auto-subscribe to arbitrary
 topics, renew leases in the background, parse delivered feeds, create calendar
@@ -645,3 +646,13 @@ undo callback verification or a newer staged request; a late HTTP success cannot
 replace a newer request's diagnostics. Preparation locks the current subscription
 row, and completion uses a conditional database update. Network I/O runs outside
 these transactions. Apply migrations before using this behavior.
+
+Replay transactions and multiple databases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``accept_websub_delivery`` resolves the replay model's write database once with
+Django's router and the subscription instance as a hint. Expiry pruning, insert,
+count maintenance, and both atomic/savepoint boundaries use that same alias.
+A duplicate insert does not poison an enclosing transaction on that database;
+a later failure rolls back pruning and insertion together. Count caps remain
+best-effort under concurrent distinct deliveries.
