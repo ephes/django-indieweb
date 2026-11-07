@@ -4607,3 +4607,16 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
   Ruff, configured prek hooks, Sphinx, migration-enabled tox.
 - Documentation: configuration guide explains applicability, database isolation
   and remaining status-token set cost. Changelog: Unreleased entry.
+
+### Secret rollback and replay atomicity (round 51 I2)
+
+- Completed `indieweb-websub-secret-rollback-key-fallbacks` and
+  `indieweb-websub-replay-transaction-database-alias`. Reverse encryption tries
+  configured fallback keys and aborts atomically on unrecoverable values;
+  replay queries and savepoints consistently use the routed write alias.
+  No matching pending BACKLOG items existed.
+- Validation: real rollback migrations (current/fallback/unknown keys, corrupt
+  and non-ASCII ciphertext), routed replay rollback and duplicate savepoints;
+  pytest/coverage, mypy, Ruff, prek, Sphinx and migration-enabled tox.
+- Documentation: WebSub and configuration guides describe rollback failures
+  and replay alias guarantees. Changelog: Unreleased entry.

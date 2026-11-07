@@ -1010,9 +1010,10 @@ preserve the existing stored secret when
 earlier unverified staged secret. When a renewal request provides a new secret,
 that value is staged and only becomes the active delivery secret after the hub
 verifies the renewal; failed renewal requests keep the previous secret.
-If the encryption key material is no longer available during migration
-rollback, the reverse migration leaves encrypted values in place and logs a
-warning before the schema narrows the storage columns.
+Migration ``0021`` rollback tries ``SECRET_KEY`` and ``SECRET_KEY_FALLBACKS``
+with the same derivation. Unrecoverable encrypted secrets abort rollback with
+a value-free error before schema narrowing; the database's stored values remain
+unchanged. Restore the encryption keys before retrying rollback.
 
 For production, subscribe with a strong ``hub.secret`` for every topic. Set
 ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = True`` if unsigned deliveries

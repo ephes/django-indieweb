@@ -1377,16 +1377,17 @@ def accept_websub_delivery(
     if replay_window_seconds is None:
         return True
 
-    with transaction.atomic():
+    alias = router.db_for_write(WebSubAcceptedDelivery, instance=subscription)
+    with transaction.atomic(using=alias):
         cutoff = received_at - timedelta(seconds=replay_window_seconds)
-        WebSubAcceptedDelivery.objects.filter(
+        WebSubAcceptedDelivery.objects.using(alias).filter(
             subscription=subscription,
             accepted_at__lt=cutoff,
         ).delete()
 
         try:
-            with transaction.atomic():  # savepoint
-                WebSubAcceptedDelivery.objects.create(
+            with transaction.atomic(using=alias):  # savepoint
+                WebSubAcceptedDelivery.objects.using(alias).create(
                     subscription=subscription,
                     body_digest=body_digest,
                     accepted_at=received_at,
@@ -1400,11 +1401,14 @@ def accept_websub_delivery(
         # eviction is skipped and pruning happens purely via the replay window.
         if history_max is not None:
             keep_ids = list(
-                WebSubAcceptedDelivery.objects.filter(subscription=subscription)
+                WebSubAcceptedDelivery.objects.using(alias)
+                .filter(subscription=subscription)
                 .order_by("-accepted_at", "-pk")
                 .values_list("pk", flat=True)[:history_max]
             )
-            WebSubAcceptedDelivery.objects.filter(subscription=subscription).exclude(pk__in=keep_ids).delete()
+            WebSubAcceptedDelivery.objects.using(alias).filter(subscription=subscription).exclude(
+                pk__in=keep_ids
+            ).delete()
 
     return True
 
