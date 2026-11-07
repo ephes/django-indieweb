@@ -550,6 +550,17 @@ this command never touches them. It also leaves subscriptions and their
 ``last_delivery_*`` summary fields unchanged, so the latest delivery status
 stays visible after its attempt row is pruned.
 
+Delivery diagnostics write only diagnostic columns, so a callback holding an old
+subscription instance cannot restore credentials after a secret/key rotation.
+Summary and attempt writes remain atomic on the subscription's routed write
+database. Every attempt is retained; latest-delivery and latest-accepted
+summaries advance independently only for a strictly newer observation timestamp.
+An older attempt finishing later (or an equal timestamp) cannot replace a newer
+summary. Rejections never clear the last accepted delivery. Diagnostic recording
+does not re-encrypt secrets under a new primary key. During key rotation,
+keep fallback keys until subscriptions have been saved through renewal or
+callback verification under the new primary, as described below.
+
 Signed Deliveries
 -----------------
 

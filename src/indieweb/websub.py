@@ -21,7 +21,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.db import IntegrityError, router, transaction
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.http import HttpResponseBase
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -1449,30 +1449,31 @@ def record_websub_delivery(
     delivery_size = len(body)
     delivery_digest = hashlib.sha256(body).hexdigest()
     clipped_error = error[:500]
-    subscription.last_delivery_at = received_at
-    subscription.last_delivery_content_type = clipped_content_type
-    subscription.last_delivery_size = delivery_size
-    subscription.last_delivery_digest = delivery_digest
-    subscription.last_delivery_signature_algorithm = signature_algorithm or ""
-    subscription.last_delivery_status_code = status_code
-    subscription.last_delivery_error = clipped_error
-    update_fields = [
-        "last_delivery_at",
-        "last_delivery_content_type",
-        "last_delivery_size",
-        "last_delivery_digest",
-        "last_delivery_signature_algorithm",
-        "last_delivery_status_code",
-        "last_delivery_error",
-        "modified",
-    ]
-    if status_code == 204:
-        subscription.last_accepted_delivery_at = received_at
-        subscription.last_accepted_delivery_digest = delivery_digest
-        update_fields.extend(["last_accepted_delivery_at", "last_accepted_delivery_digest"])
+    summary = {
+        "last_delivery_at": received_at,
+        "last_delivery_content_type": clipped_content_type,
+        "last_delivery_size": delivery_size,
+        "last_delivery_digest": delivery_digest,
+        "last_delivery_signature_algorithm": signature_algorithm or "",
+        "last_delivery_status_code": status_code,
+        "last_delivery_error": clipped_error,
+    }
+    accepted = {
+        "last_accepted_delivery_at": received_at,
+        "last_accepted_delivery_digest": delivery_digest,
+    }
     alias = router.db_for_write(WebSubSubscription, instance=subscription)
     with transaction.atomic(using=alias):
-        subscription.save(using=alias, update_fields=update_fields)
+        current = WebSubSubscription.objects.using(alias).filter(pk=subscription.pk)
+        # QuerySet.update only touches diagnostics: Model.save may re-encrypt
+        # stale credentials and add them to update_fields after a key rotation.
+        current.filter(Q(last_delivery_at__isnull=True) | Q(last_delivery_at__lt=received_at)).update(
+            **summary, modified=timezone.now()
+        )
+        if status_code == 204:
+            current.filter(
+                Q(last_accepted_delivery_at__isnull=True) | Q(last_accepted_delivery_at__lt=received_at)
+            ).update(**accepted, modified=timezone.now())
         WebSubDeliveryAttempt.objects.using(alias).create(
             subscription_id=subscription.pk,
             received_at=received_at,
@@ -1483,6 +1484,7 @@ def record_websub_delivery(
             status_code=status_code,
             error=clipped_error,
         )
+        subscription.refresh_from_db(using=alias, fields=[*summary, *accepted, "modified"])
 
 
 def get_websub_delivery_hook() -> Any | None:

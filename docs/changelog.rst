@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* WebSub diagnostic writes cannot restore stale active/pending secrets after a
+  rotation. Latest and accepted summaries advance independently by observation
+  time, retaining all attempts atomically on the routed database. Delivery
+  recording no longer re-encrypts fallback-bound secrets; retain fallback keys
+  until renewal or callback verification saves them under the new primary.
+
 * Added optional page-level verified Webmention count batching via
   ``prepare_webmention_counts`` and the request-local ``webmention_counts`` context.
   On upgrade, incompatible existing values under that context name are ignored;
