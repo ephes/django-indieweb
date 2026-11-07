@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Nested Webmention responses use one identity lookup and bounded bulk writes
+  rather than per-child queries, preserving validation, timestamps, retirement
+  and the existing parent transaction/savepoint boundaries.
+* WebSub delivery summaries and diagnostic attempts now commit or roll back
+  together on the subscription's routed write database. Replay acceptance and
+  callback response contracts are unchanged.
 * Profile h-card-only partial saves now persist their derived quick-access
   fields; explicit empty property arrays clear them. Unrelated partial saves
   preserve unsaved h-card changes, and empty update-fields saves remain no-ops.
