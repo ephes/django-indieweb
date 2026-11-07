@@ -4758,3 +4758,23 @@ bundle.
   Review: two rounds, final CLEAN (zero findings).
 - Documentation: `docs/development.rst`; changelog: Unreleased. No corresponding
   pending BACKLOG items existed. Production behavior and schema are unchanged.
+
+### Issuance durability and required storage lanes (scout round 64 I2)
+
+- Completed `indieweb-token-issuance-rollback-tests` and
+  `indieweb-required-storage-test-lanes`. Real INSERT/UPDATE failure after code
+  deletion restores the code and prior bearer hash/expiry/modified together;
+  healthy retry redeems once. No production or schema changes were necessary.
+- Added required local `storage-sqlite` and opt-in `storage-postgres` tox lanes
+  covering authorization races, issuance rollback and outgoing-history writers
+  with real migrations. Required concurrency guards fail instead of skipping;
+  SQLite uses a fresh tox-owned test database. No hosted workflow changes.
+- Validation: SQLite/PostgreSQL storage cases, full pytest/coverage, supported
+  tox/migrations matrix, mypy, Ruff/format, hooks and strict Sphinx. Mutations
+  moving issuance outside atomic fail both rollback cases; a broken migration
+  fails setup; an in-memory required storage lane fails rather than skipping.
+  Full suite: 2248 passed, 6 expected in-memory skips, 93.02% coverage.
+  Both 20-case storage lanes passed without skips; all 12 default tox
+  environments passed. Review: CLEAN in one round.
+- Documentation: `docs/development.rst`; changelog: Unreleased. No corresponding
+  pending BACKLOG items existed. Existing fast matrix and version are unchanged.

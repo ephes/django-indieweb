@@ -101,9 +101,7 @@ def test_late_failed_send_preserves_newer_success_and_observation(monkeypatch):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("existing", [False, True])
-def test_concurrent_history_failures_count_twice(existing):
-    if connection.vendor == "sqlite" and "mode=memory" in str(connection.settings_dict["NAME"]):
-        pytest.skip("SQLite shared-cache memory tables do not wait for locks; use DJANGO_INDIEWEB_TEST_SQLITE_PATH")
+def test_concurrent_history_failures_count_twice(existing, concurrent_database):
     if existing:
         _record(success=True)
     barrier = Barrier(2)

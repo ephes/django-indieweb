@@ -17,9 +17,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
-def committed_auth():
-    if connection.vendor == "sqlite" and "mode=memory" in str(connection.settings_dict["NAME"]):
-        pytest.skip("Requires file SQLite or PostgreSQL; see docs/development.rst")
+def committed_auth(concurrent_database):
     owner = get_user_model().objects.create_user(username="synthetic-owner")
     return Auth.objects.create(
         owner=owner,

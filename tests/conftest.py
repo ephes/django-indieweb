@@ -40,3 +40,18 @@ def private_parse_slots(settings, parse_lock_dir):
     for the same two slots and fail with ``WebmentionParseCapacityError``.
     """
     settings.INDIEWEB_WEBMENTION_PARSE_LOCK_DIR = parse_lock_dir
+
+
+@pytest.fixture
+def concurrent_database():
+    """Shared-cache SQLite cannot wait for locks; required lanes must not skip."""
+    import os
+
+    from django.db import connection
+
+    name = str(connection.settings_dict["NAME"])
+    if connection.vendor == "sqlite" and (name == ":memory:" or "mode=memory" in name):
+        message = "Concurrency requires file SQLite or PostgreSQL; see docs/development.rst"
+        if os.environ.get("DJANGO_INDIEWEB_REQUIRE_STORAGE_TESTS") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
