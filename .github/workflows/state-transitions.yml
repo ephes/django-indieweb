@@ -38,3 +38,10 @@ jobs:
         env:
           DJANGO_SETTINGS_MODULE: tests.settings_postgres
         run: uv run pytest --migrations --no-cov tests/test_outbound_state.py
+      - name: Check receive commits and freshness with PostgreSQL
+        env:
+          DJANGO_SETTINGS_MODULE: tests.settings_postgres
+        run: >-
+          uv run pytest --migrations --no-cov
+          tests/test_receive_notifications.py tests/test_webmention_processor.py
+          -k 'postcommit_notification or freshness_watermark or skips_stale_outcome'

@@ -1708,7 +1708,7 @@ class TestWebmentionProcessor:
                     "indieweb.processors.WebmentionSourceSnapshot.objects.update_or_create",
                     side_effect=RuntimeError("snapshot unavailable"),
                 ),
-                patch("indieweb.processors.webmention_received.send") as mock_signal,
+                patch("indieweb.processors.webmention_received.send_robust") as mock_signal,
                 django_capture_on_commit_callbacks(execute=True),
             ):
                 webmention = processor.process_webmention(source_url, target_url)
@@ -2568,7 +2568,7 @@ class TestWebmentionProcessor:
             processor,
             return_value=httpx.Response(200, headers={"content-type": "text/html"}, text=html_content),
         ):
-            with patch("indieweb.processors.webmention_received.send") as mock_signal:
+            with patch("indieweb.processors.webmention_received.send_robust") as mock_signal:
                 with django_capture_on_commit_callbacks(execute=True):
                     webmention = processor.process_webmention(source_url, target_url)
 

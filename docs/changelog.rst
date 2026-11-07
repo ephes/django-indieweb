@@ -5,6 +5,11 @@ Changelog
 
 Unreleased
 ----------
+* Committed Webmention receives now use robust post-commit signal dispatch:
+  failing receivers cannot fail the receive or prevent later receivers, and
+  their diagnostics omit private messages and tracebacks.
+* Token introspection now applies the shared IndieAuth body admission cap,
+  including no-store 413 responses before authentication or form parsing.
 * WebSub secret-migration rollback supports fallback keys and refuses
   unrecoverable ciphertext before schema narrowing without changing stored values.
   Replay pruning, inserts and maintenance now share the subscription's routed

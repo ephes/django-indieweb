@@ -4620,3 +4620,20 @@ No matching backlog items. Round 47 selected no django-indieweb slices.
   pytest/coverage, mypy, Ruff, prek, Sphinx and migration-enabled tox.
 - Documentation: WebSub and configuration guides describe rollback failures
   and replay alias guarantees. Changelog: Unreleased entry.
+
+### Receive lifecycle and admission (round 53 I1)
+
+- Verified `indieweb-receive-outcome-observation-order` is already fixed on
+  develop: the locked freshness fence rejects older start-time outcomes before
+  Vouch/status/parsed/nested/snapshot changes; existing freshness tests pass.
+- Completed `indieweb-receive-signal-failure-contract` and
+  `indieweb-introspection-body-admission-limit`. Notifications use Django robust
+  APIs with context-local redaction of Django's own dispatch diagnostics;
+  introspection reuses the existing admission mixin in its documented MRO.
+  No matching pending BACKLOG entries existed.
+- Validation: real post-commit three-receiver regression, unparsed body-cap
+  cases and authenticated introspection schema; pytest/coverage, mypy, Ruff,
+  prek, Sphinx and migration-enabled tox. PostgreSQL receive checks run in
+  branch CI because local initdb cannot allocate shared memory.
+- Documentation: Webmention integration and configuration guides describe
+  notification failure and endpoint admission. Changelog: Unreleased entries.

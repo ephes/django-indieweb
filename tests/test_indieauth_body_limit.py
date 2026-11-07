@@ -13,6 +13,7 @@ from indieweb import models
 from indieweb.views import (
     DEFAULT_INDIEAUTH_MAX_BODY_BYTES,
     AuthView,
+    TokenIntrospectionView,
     TokenView,
     indieauth_max_body_bytes,
 )
@@ -20,6 +21,7 @@ from indieweb.views import (
 VIEWS = [
     pytest.param(AuthView, "indieweb:auth", id="auth"),
     pytest.param(TokenView, "indieweb:token", id="token"),
+    pytest.param(TokenIntrospectionView, "indieweb:token-introspection", id="introspection"),
 ]
 
 
@@ -217,3 +219,35 @@ def test_oversized_consent_post_is_rejected_before_csrf_check(user):
     )
     assert response.status_code == 413
     assert models.Auth.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_bounded_introspection_keeps_authenticated_schema(client, user):
+    grant = models.Token.objects.create(
+        owner=user, me="https://me.example/", client_id="https://client.example/", scope="create"
+    )
+    response = client.post(
+        reverse("indieweb:token-introspection"),
+        {"token": grant.key},
+        Authorization=f"Bearer {grant.key}",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["active"] is True
+    assert (data["me"], data["client_id"], data["scope"]) == (grant.me, grant.client_id, grant.scope)
+    assert isinstance(data["iat"], int)
+    assert response["Cache-Control"] == "no-store"
+
+
+@pytest.mark.django_db
+def test_oversize_introspection_with_valid_caller_is_unparsed(user):
+    grant = models.Token.objects.create(
+        owner=user, me="https://me.example/", client_id="https://client.example/", scope="create"
+    )
+    request, response = _dispatch(
+        TokenIntrospectionView,
+        "indieweb:token-introspection",
+        CONTENT_LENGTH=str(DEFAULT_INDIEAUTH_MAX_BODY_BYTES + 1),
+        HTTP_AUTHORIZATION=f"Bearer {grant.key}",
+    )
+    _assert_rejected_unparsed(request, response)

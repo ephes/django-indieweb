@@ -12,6 +12,7 @@ import logging
 import math
 import re
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -64,6 +65,40 @@ logger = logging.getLogger(__name__)
 
 # Signal sent when a webmention is received and processed
 webmention_received = Signal()
+
+_notification_dispatch: ContextVar[bool] = ContextVar("webmention_notification_dispatch", default=False)
+
+
+class _NotificationLogFilter(logging.Filter):
+    """Sanitize Django's robust-dispatch diagnostics in this notification context."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _notification_dispatch.get():
+            error_type = type(record.exc_info[1]).__name__[:80] if record.exc_info else "Exception"
+            record.msg = "Webmention post-commit receiver failed (%s)"
+            record.args = (error_type,)
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+        return True
+
+
+# send_robust logs exceptions itself, before returning them to the caller.
+# A context-local logging filter keeps those messages/tracebacks out of every
+# handler without muting unrelated signals or changing Django's dispatch logic.
+logging.getLogger("django.dispatch").addFilter(_NotificationLogFilter())
+
+
+def _notify_webmention_received(sender: type, webmention: Webmention, source_url: str, target_url: str) -> None:
+    context = _notification_dispatch.set(True)
+    try:
+        webmention_received.send_robust(
+            sender=sender, webmention=webmention, source_url=source_url, target_url=target_url
+        )
+    finally:
+        _notification_dispatch.reset(context)
+
+
 MAX_NESTED_RESPONSE_IDENTITY_LENGTH = 500
 _NESTED_RESPONSE_URL_FIELDS = ("identity", "response_url", "author_url", "author_photo")
 DEFAULT_WEBMENTION_FETCH_MAX_BYTES = 1024 * 1024
@@ -610,12 +645,14 @@ class WebmentionProcessor:
 
         sender_class = self.__class__
         transaction.on_commit(
-            lambda: webmention_received.send(
+            lambda: _notify_webmention_received(
                 sender=sender_class,
                 webmention=webmention,
                 source_url=source_url,
                 target_url=target_url,
-            )
+            ),
+            using=webmention._state.db,
+            robust=True,
         )
 
     def _mark_webmention_failed(self, webmention: Webmention, last_received_at: datetime | None = None) -> None:

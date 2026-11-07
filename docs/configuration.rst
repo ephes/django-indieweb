@@ -139,7 +139,8 @@ INDIEWEB_INDIEAUTH_MAX_BODY_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Maximum request-body size, in bytes, accepted by the IndieAuth authorization
-endpoint (``/indieweb/auth/``) and token endpoint (``/indieweb/token/``).
+endpoint (``/indieweb/auth/``), token endpoint (``/indieweb/token/``), and
+token introspection endpoint (``/indieweb/token/introspect/``).
 
 **Default:** ``65536`` (64 KiB)
 
@@ -150,9 +151,9 @@ endpoint (``/indieweb/auth/``) and token endpoint (``/indieweb/token/``).
    # settings.py
    INDIEWEB_INDIEAUTH_MAX_BODY_BYTES = 16 * 1024  # 16 KiB
 
-Both endpoints accept ``application/x-www-form-urlencoded`` and
+All three endpoints accept ``application/x-www-form-urlencoded`` and
 ``multipart/form-data`` bodies (HTML forms and Django's test client may send
-multipart), and both read the body before the caller is authenticated. The
+multipart). Admission runs before authentication and form parsing. The
 limit is checked from the request headers before Django parses the body, and
 the request is answered with HTTP ``413`` (``Cache-Control: no-store``) when:
 
