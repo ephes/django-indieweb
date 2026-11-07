@@ -54,7 +54,8 @@ To run tests for the full supported matrix::
     tox
 
 The full matrix requires the corresponding Python interpreters to be available
-locally. GitHub Actions provides them in CI.
+locally. The default tox run also includes the required ``storage-sqlite`` lane
+and the existing migrations lane. Run all checks locally before integration.
 
 To run tests for a specific Python/Django combination::
 
@@ -320,3 +321,27 @@ The normal in-memory SQLite suite skips these cases because shared-cache
 locking cannot reproduce the supported file-backed behavior. The regression
 oracles reject a removed consume gate (two successful redemptions) and an owner
 row lock before consent DELETE (PostgreSQL consent/exchange deadlock).
+
+Required local storage lanes
+----------------------------
+
+The fast default pytest run uses in-memory SQLite and skips six real contention
+cases. A local validation is complete only after the migration and storage
+lanes also pass::
+
+    uv run tox -e py313-django52-migrations,storage-sqlite
+    INDIEWEB_TEST_POSTGRES_PORT=5432 uv run tox -e storage-postgres
+
+``storage-sqlite`` owns a database under tox's temporary directory and recreates
+it with ``--create-db`` on every run. Both storage lanes enable real migrations
+and set ``DJANGO_INDIEWEB_REQUIRE_STORAGE_TESTS=1``: selecting an in-memory SQLite
+database is a failure, never a successful skip. The PostgreSQL lane is opt-in
+and uses only the disposable synthetic instance described above. No workflow
+or hosted matrix jobs are added; these are required local checks.
+
+Both lanes run authorization contention, outgoing-history concurrent writers,
+and fresh/reissued token persistence rollback. The rollback tests inject a
+failure after a real token INSERT/UPDATE and after code deletion; code, bearer
+hash, expiry and modification time must roll back together. A healthy retry
+then succeeds once. Moving issuance outside the atomic block fails both tests.
+A broken migration must fail the migration-enabled lane during database setup.

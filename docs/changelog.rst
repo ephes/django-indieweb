@@ -5,7 +5,9 @@ Changelog
 
 Unreleased
 ----------
-* Replace simulated authorization races with committed, independent-connection
+* Add token issuance/rotation rollback regressions and required local file-SQLite
+  and opt-in PostgreSQL storage lanes, with migrations and a fail-on-skip guard.
+* Add committed, independent-connection
   redemption and consent/exchange tests for file SQLite and PostgreSQL.
 * WebSub diagnostic writes cannot restore stale active/pending secrets after a
   rotation. Latest and accepted summaries advance independently by observation
