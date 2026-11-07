@@ -17,12 +17,13 @@ def _hash_auth_key(raw_key):
 
 
 def hash_existing_auth_keys(apps, schema_editor):
+    alias = schema_editor.connection.alias
     Auth = apps.get_model("indieweb", "Auth")
-    for auth in Auth.objects.all().only("pk", "key"):
+    for auth in Auth.objects.using(alias).all().only("pk", "key").iterator(chunk_size=1000):
         if auth.key.startswith(TOKEN_KEY_HASH_PREFIX):
             continue
         auth.key = _hash_auth_key(auth.key)
-        auth.save(update_fields=["key"])
+        auth.save(using=alias, update_fields=["key"])
 
 
 class Migration(migrations.Migration):

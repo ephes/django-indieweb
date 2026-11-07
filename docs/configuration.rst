@@ -2555,3 +2555,16 @@ Cache token lookups for better performance:
                return None
 
        return token
+
+Historical security migrations and multiple databases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Credential transforms in migrations ``0020``, ``0021`` and ``0023`` read and
+save only on the database selected by ``migrate --database``. Token and Auth
+key hashing streams rows in batches of 1000 without caching the full table;
+the separate Webmention status-token uniqueness set still grows with row count.
+These corrections apply to future migration runs only. Do not unapply hashing
+migrations to rerun them or rotate already deployed credentials: existing hashes
+and encrypted secrets are preserved on repeated transforms. Already applied
+migrations are not automatically rerun; audit any earlier secondary-database
+migration separately before adopting its credentials.

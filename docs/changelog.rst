@@ -5,6 +5,9 @@ Changelog
 
 Unreleased
 ----------
+* Historical credential/status-token migrations now honor the selected database
+  for all reads and writes. Auth/Token hashing streams batches of 1000 rows;
+  already applied migrations and stored hashes are unchanged.
 * **Security / compatibility:** guarded outbound HTTP requests advertise identity
   encoding on every hop and reject compressed/stacked/unknown Content-Encoding
   before reading or decoding the body. Servers must honor identity negotiation;

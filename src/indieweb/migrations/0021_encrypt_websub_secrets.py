@@ -47,8 +47,9 @@ def _decrypt_secret(value: str) -> str:
 
 
 def encrypt_websub_secrets(apps, schema_editor) -> None:  # type: ignore[no-untyped-def]
+    alias = schema_editor.connection.alias
     WebSubSubscription = apps.get_model("indieweb", "WebSubSubscription")
-    for subscription in WebSubSubscription.objects.all().iterator():
+    for subscription in WebSubSubscription.objects.using(alias).all().iterator():
         updated_fields = []
         encrypted_secret = _encrypt_secret(subscription.secret)
         if encrypted_secret != subscription.secret:
@@ -59,12 +60,13 @@ def encrypt_websub_secrets(apps, schema_editor) -> None:  # type: ignore[no-unty
             subscription.pending_secret = encrypted_pending_secret
             updated_fields.append("pending_secret")
         if updated_fields:
-            subscription.save(update_fields=updated_fields)
+            subscription.save(using=alias, update_fields=updated_fields)
 
 
 def decrypt_websub_secrets(apps, schema_editor) -> None:  # type: ignore[no-untyped-def]
+    alias = schema_editor.connection.alias
     WebSubSubscription = apps.get_model("indieweb", "WebSubSubscription")
-    for subscription in WebSubSubscription.objects.all().iterator():
+    for subscription in WebSubSubscription.objects.using(alias).all().iterator():
         updated_fields = []
         decrypted_secret = _decrypt_secret(subscription.secret)
         if decrypted_secret != subscription.secret:
@@ -75,7 +77,7 @@ def decrypt_websub_secrets(apps, schema_editor) -> None:  # type: ignore[no-unty
             subscription.pending_secret = decrypted_pending_secret
             updated_fields.append("pending_secret")
         if updated_fields:
-            subscription.save(update_fields=updated_fields)
+            subscription.save(using=alias, update_fields=updated_fields)
 
 
 class Migration(migrations.Migration):
