@@ -4,6 +4,22 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-07
 
+### Executable host adapter documentation (round 68 B13)
+
+- Complete the Micropub example's owned-object helper; constrain all reads,
+  updates and deletes to canonical blog paths and the authenticated author.
+  Document model assumptions, replace-only mapping and unsupported undelete.
+- Make URL resolver and spam checker modules independently importable with
+  required `Any` imports; document a local configured-adapter load check.
+- Validation: executable RST blocks against a synthetic Django BlogPost model,
+  including owner lifecycle and malformed/foreign URL rejection; pytest coverage
+  gate, mypy, Ruff, prek and strict Sphinx build. Regressions fail on prior docs.
+  The adapter examples also pass on Python 3.11/Django 5.2.
+- Documentation: Micropub/Webmention guides. Changelog: Unreleased.
+- Backlog: these scout findings had no existing BACKLOG entry.
+- Integration pending: the required review could not run because reviewer
+  authentication was revoked; this bundle is parked for review, not merged.
+
 ### Secure IndieAuth tutorial examples (round 68 B12)
 
 - Validate issued raw bearer keys through `Token.get_for_raw_key`, retaining

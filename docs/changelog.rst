@@ -5,6 +5,8 @@ Changelog
 
 Unreleased
 ----------
+* Complete the custom Micropub handler with a shared canonical URL/author
+  lookup, and make both Webmention adapter examples independently importable.
 * Correct tutorial bearer validation for hashed storage and add a Web Crypto
   S256 client flow with single-use callback state and checked token exchange.
 * Add token issuance/rotation rollback regressions and required local file-SQLite

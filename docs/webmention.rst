@@ -78,9 +78,11 @@ Create a URL resolver to map target URLs to your content objects:
 .. code-block:: python
 
     # myproject/webmention_config.py
+    from typing import Any
+    from urllib.parse import urlparse
+
     from indieweb.interfaces import URLResolver
     from myapp.models import BlogPost
-    from urllib.parse import urlparse
 
     class MyURLResolver(URLResolver):
         def resolve(self, target_url: str) -> Any | None:
@@ -111,6 +113,9 @@ Create a custom spam checker:
 
 .. code-block:: python
 
+    # myproject/webmention_config.py (append below the resolver, or use separately)
+    from typing import Any
+
     from indieweb.interfaces import SpamChecker
     from indieweb.models import Webmention
 
@@ -128,6 +133,21 @@ Create a custom spam checker:
                 'confidence': 0.9 if is_spam else 0.1,
                 'details': 'Keyword-based detection'
             }
+
+To use this checker, set
+``INDIEWEB_SPAM_CHECKER = 'myproject.webmention_config.MySpamChecker'``.
+
+After copying the classes into ``myproject/webmention_config.py`` and adapting
+the model lookup, check that Django can import and instantiate them locally:
+
+.. code-block:: bash
+
+    python manage.py shell -c "from django.utils.module_loading import import_string; from django.conf import settings; print(import_string(settings.INDIEWEB_URL_RESOLVER)()); print(import_string(settings.INDIEWEB_SPAM_CHECKER)())"
+
+This checks adapter loading, not the accuracy of your URL or spam policy. The
+resolver above illustrates path-to-slug mapping; keep your receiver's target
+host validation enabled and adapt the lookup to your routes. The keyword
+checker is only an example policy, not comprehensive spam protection.
 
 Receiving and Queued Processing
 ===============================

@@ -47,10 +47,29 @@ handler:
 .. code:: python
 
    # myapp/micropub_handler.py
+   import re
+   from urllib.parse import urlsplit
+
    from indieweb.handlers import MicropubContentHandler, MicropubEntry
    from myapp.models import BlogPost
 
    class BlogPostMicropubHandler(MicropubContentHandler):
+       # Set this to your canonical public origin, without a trailing slash.
+       public_origin = 'https://blog.example'
+
+       def _get_post_from_url(self, url, user):
+           try:
+               path = urlsplit(url).path
+           except ValueError as exc:
+               raise ValueError('Invalid post URL') from exc
+           match = re.fullmatch(r'/blog/([A-Za-z0-9_-]+)/', path)
+           if not match or url not in (path, self.public_origin + path):
+               raise ValueError('Invalid post URL')
+           try:
+               return BlogPost.objects.get(slug=match[1], author=user)
+           except BlogPost.DoesNotExist as exc:
+               raise ValueError('Post not found or not owned') from exc
+
        def create_entry(self, properties, user):
            # Extract properties
            content = properties.get('content', [''])[0]
@@ -76,22 +95,18 @@ handler:
            )
 
        def get_entry(self, url, user):
-           # Parse URL to get post
            try:
-               post = BlogPost.objects.get(
-                   slug=url.split('/')[-2],  # Adjust based on your URL structure
-                   author=user
-               )
-               return MicropubEntry(
-                   url=post.get_absolute_url(),
-                   properties={
-                       'name': [post.title],
-                       'content': [post.content],
-                       'published': [post.created.isoformat()],
-                   }
-               )
-           except BlogPost.DoesNotExist:
+               post = self._get_post_from_url(url, user)
+           except ValueError:
                return None
+           return MicropubEntry(
+               url=post.get_absolute_url(),
+               properties={
+                   'name': [post.title],
+                   'content': [post.content],
+                   'published': [post.created.isoformat()],
+               }
+           )
 
        def update_entry(self, url, updates, user):
            # Implement update logic
@@ -114,6 +129,21 @@ handler:
        def undelete_entry(self, url, user):
            # Implement if you support soft deletes
            raise NotImplementedError("Undelete not supported")
+
+This example assumes your ``BlogPost`` model generates a unique slug on creation,
+has the fields and tag manager shown above, and returns ``/blog/<slug>/`` from
+``get_absolute_url()``. Set ``public_origin`` to your canonical HTTPS origin.
+The shared lookup accepts only that exact absolute URL or the root-relative
+path, with an ASCII letter/digit/underscore/hyphen slug and trailing slash.
+Queries, fragments, encoded paths, other origins and other routes are rejected;
+all reads and mutations filter by the authenticated author before accessing the
+post. Missing and foreign-owned posts share the same failure response.
+
+The update example maps ``replace`` for ``name`` and ``content`` only; extend
+it for other properties and operations your model supports. Delete is permanent.
+Undelete is deliberately unsupported and raises ``NotImplementedError``; clients
+must not request it for this handler. Use a soft-delete model and implement
+owned-object restoration if your application needs undelete.
 
 4. Configure Your Handler
 ~~~~~~~~~~~~~~~~~~~~~~~~~
