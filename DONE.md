@@ -2,6 +2,22 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-08
+
+### Round 77 I3: nested identity URL isolation and bounded Accept qualities
+
+Completes the backlog item "Round 77 I3 integration".
+
+- Malformed nested Webmention `uid`/`url` identities are skipped individually
+  (`src/indieweb/processors.py`); IndieAuth JSON/form negotiation admits only
+  bounded HTTP quality values and uppercase `Q` (`src/indieweb/views.py`).
+- Validation: the PostgreSQL run that was blocked in the sandbox passed against
+  a disposable synthetic PostgreSQL 17 database
+  (`tests/test_nested_malformed_urls.py`, `tests/test_accept_quality.py`, 48
+  passed; full suite on PostgreSQL 2501 passed), plus `tox -e storage-postgres`
+  and all tox environments.
+- Docs: `docs/webmention.rst`, `docs/indieauth.rst`; changelog Unreleased.
+
 ## 2026-11-06
 
 ### Housekeeping hardening (priority-4 bundle)
