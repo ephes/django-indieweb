@@ -4834,3 +4834,13 @@ bundle.
   Sphinx build pass. Fixtures are synthetic and independent of platform.
 - Documentation: target matching policy in `docs/webmention.rst`.
 - Changelog: `docs/changelog.rst` Unreleased. No matching backlog item existed.
+
+### Remote content sanitizer contracts (round 77, I2)
+
+- Add an HTML5-parsed adversarial corpus and positive preservation checks for
+  the public HTML/URL cleaners, including repeated cleaning and mandatory rel.
+  The existing nh3 allowlist passes all 37 new cases; no cleaner fix was needed.
+- Validation: full pytest/coverage, mypy, Ruff, hooks and warning-strict Sphinx.
+- Documentation: supported tags/attributes in `docs/webmention.rst` and focused
+  test command in `docs/development.rst`.
+- Changelog: `docs/changelog.rst` Unreleased. No matching backlog item existed.

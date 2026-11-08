@@ -5,6 +5,8 @@ Changelog
 
 Unreleased
 ----------
+* Specify remote HTML sanitizer security, repeated-cleaning stability and
+  safe-content preservation with focused adversarial and positive contracts.
 * Webmention source/content proof and mention classification now preserve
   repeated-query value order and reject lossy query decoding equivalences.
   Distinct query keys remain order-insensitive; undecodable queries require

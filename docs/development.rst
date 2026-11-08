@@ -36,6 +36,11 @@ To generate an HTML coverage report::
     uv run pytest --cov-report=html
     open htmlcov/index.html
 
+Standalone sanitizer security and content-preservation contracts use a fixed
+synthetic HTML corpus, parsed as HTML5 fragments. Run them directly with::
+
+    uv run pytest tests/test_sanitizers.py --no-cov
+
 Running Tox
 -----------
 
