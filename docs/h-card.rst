@@ -91,6 +91,14 @@ Partial saves that omit ``h_card`` do not synchronize or publish unsaved h-card
 changes. An empty ``update_fields`` iterable is a no-op, before synchronization
 or validation. Full saves retain validation and synchronize supplied properties.
 
+All top-level property values must be arrays. ``name``, ``url`` and ``email``
+items must be strings; ``photo`` items may also be objects with a string
+``value`` URL and an optional string ``alt``. ``adr`` and ``org`` items must
+be objects. Unsupported containers or items raise a Django ``ValidationError``
+on ``h_card`` before quick-access fields are synchronized or database writes
+occur. Invalid h-card URL/email values also report errors on ``h_card``.
+Use ``normalize_h_card()`` explicitly to wrap scalar input before saving if needed.
+
 Property Name Normalization
 ---------------------------
 
@@ -118,6 +126,16 @@ Non-mapping input also raises ``ValidationError``.
 and the admin form reject it before saving. The ``{% h_card %}`` tag returns
 an empty string for legacy colliding or non-mapping rows so pages continue to render without
 publishing an ambiguous profile. Correct the stored keys to restore the card.
+
+Normalization admits at most 32 levels below the root mapping and 10,000
+visited values in total, counting the root, every mapping/list and every scalar.
+The node budget is shared across all properties and nested lists. Exceeding
+either limit raises ``ValidationError`` with code ``invalid_h_card``;
+``validate_h_card()`` returns ``False``. Profile validation checks these limits
+before Django serializes the JSON field, and saving checks them before deriving
+quick-access fields. The template tag omits over-limit legacy cards written
+through validation bypasses. Ordinary nested address/organization data is
+preserved; property normalization leaves the input unchanged.
 
 H-Card Properties
 -----------------

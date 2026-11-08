@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Validate h-card property containers and supported item shapes before deriving
+  profile fields; invalid h-card values report field-scoped validation errors.
+  Preserve explicit empty-list clearing and structured photo support.
+* Bound h-card normalization to 32 levels and 10,000 visited values, including
+  nested lists. Reject excess work before model JSON serialization and omit
+  over-limit legacy cards during rendering.
 * Add committed receive recovery journeys for snapshot-write failure and partial
   child constraint failure, including connection reopen and clean retry.
   Document independent snapshot/child progress and eventual reconciliation.

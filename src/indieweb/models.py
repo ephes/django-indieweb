@@ -914,18 +914,27 @@ class Profile(models.Model):
 
         super().save(*args, **kwargs)
 
+    def full_clean(self, *args: Any, **kwargs: Any) -> None:
+        """Admit h-card work before JSONField validation serializes the input."""
+        self._validate_h_card()
+        super().full_clean(*args, **kwargs)
+
     def clean(self) -> None:
         """Validate h_card data before saving."""
         super().clean()
+        self._validate_h_card()
         self._validate_quick_access_urls()
-        from .h_card import normalize_property_names
+
+    def _validate_h_card(self) -> None:
+        from .h_card import normalize_property_names, validate_h_card_properties
 
         try:
             normalize_property_names(self.h_card)
+            validate_h_card_properties(self.h_card)
+            self._validate_h_card_urls()
+            self._validate_h_card_emails()
         except ValidationError as exc:
             raise ValidationError({"h_card": exc}) from exc
-        self._validate_h_card_urls()
-        self._validate_h_card_emails()
 
     def _validate_quick_access_urls(self) -> None:
         """Restrict the synced ``url``/``photo_url`` fields to ``http``/``https``."""
@@ -980,24 +989,18 @@ class Profile(models.Model):
 
     def _sync_fields_from_h_card(self) -> set[str]:
         """Sync explicitly supplied h-card properties and report derived fields."""
+        self._validate_h_card()
         derived: set[str] = set()
-        if not isinstance(self.h_card, dict):
-            return derived
         for property_name, field_name in (("name", "name"), ("url", "url"), ("photo", "photo_url")):
             if property_name not in self.h_card:
                 continue
             values = self.h_card[property_name]
             if values == []:
                 value = ""
-            elif values:
-                value = values[0]
-                if property_name == "photo":
-                    if isinstance(value, dict) and "value" in value:
-                        value = value["value"]
-                    elif not isinstance(value, str):
-                        continue
             else:
-                continue
+                value = values[0]
+                if isinstance(value, dict):
+                    value = value["value"]
             setattr(self, field_name, value)
             derived.add(field_name)
         return derived

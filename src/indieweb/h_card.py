@@ -5,34 +5,39 @@ from typing import Any
 import mf2py
 from django.core.exceptions import ValidationError
 
+H_CARD_MAX_DEPTH = 32
+H_CARD_MAX_NODES = 10_000
+
 
 def normalize_property_names(data: dict[str, Any]) -> dict[str, Any]:
-    """Convert hyphenated property names to underscores for Django templates."""
+    """Copy and normalize names within a shared depth/node budget."""
     if not isinstance(data, dict):
         raise ValidationError("H-card properties must be a mapping", code="invalid_h_card")
-    normalized: dict[str, Any] = {}
+    nodes = 0
 
-    for key, value in data.items():
-        # Convert hyphens to underscores
-        new_key = key.replace("-", "_")
-        if new_key in normalized:
-            raise ValidationError("H-card property name collision after normalization", code="property_name_collision")
-
+    def normalize(value: Any, depth: int) -> Any:
+        nonlocal nodes
+        nodes += 1
+        if depth > H_CARD_MAX_DEPTH or nodes > H_CARD_MAX_NODES:
+            raise ValidationError("H-card exceeds normalization work limits", code="invalid_h_card")
+        if isinstance(value, dict):
+            normalized: dict[str, Any] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ValidationError("H-card property names must be strings", code="invalid_h_card")
+                new_key = key.replace("-", "_")
+                if new_key in normalized:
+                    raise ValidationError(
+                        "H-card property name collision after normalization", code="property_name_collision"
+                    )
+                normalized[new_key] = normalize(item, depth + 1)
+            return normalized
         if isinstance(value, list):
-            new_value: list[Any] = []
-            for item in value:
-                if isinstance(item, dict):
-                    # Recursively normalize nested objects
-                    new_value.append(normalize_property_names(item))
-                else:
-                    new_value.append(item)
-            normalized[new_key] = new_value
-        elif isinstance(value, dict):
-            normalized[new_key] = normalize_property_names(value)
-        else:
-            normalized[new_key] = value
+            return [normalize(item, depth + 1) for item in value]
+        return value
 
-    return normalized
+    result: dict[str, Any] = normalize(data, 0)
+    return result
 
 
 def parse_h_card(html: str, url: str = "") -> dict[str, Any]:
@@ -60,21 +65,36 @@ def validate_h_card(h_card: dict[str, Any]) -> bool:
 
     try:
         normalize_property_names(h_card)
+        validate_h_card_properties(h_card)
     except ValidationError:
         return False
 
-    # Check that all values are lists
-    for key, value in h_card.items():
-        if not isinstance(value, list):
-            return False
-
-        # For nested objects like adr and org
-        if key in ["adr", "org"]:
-            for item in value:
-                if not isinstance(item, dict):
-                    return False
-
     return True
+
+
+def validate_h_card_properties(h_card: dict[str, Any]) -> None:
+    """Require list containers and supported items before deriving profile fields."""
+    if not isinstance(h_card, dict):
+        raise ValidationError("H-card properties must be a mapping", code="invalid_h_card")
+    for key, value in h_card.items():
+        if not isinstance(key, str):
+            raise ValidationError("H-card property names must be strings", code="invalid_h_card")
+        if not isinstance(value, list):
+            raise ValidationError(f"H-card {key} must be a list", code="invalid_h_card")
+        for item in value:
+            valid = True
+            if key in ("name", "url", "email"):
+                valid = isinstance(item, str)
+            elif key == "photo":
+                valid = isinstance(item, str) or (
+                    isinstance(item, dict)
+                    and isinstance(item.get("value"), str)
+                    and ("alt" not in item or isinstance(item["alt"], str))
+                )
+            elif key in ("adr", "org"):
+                valid = isinstance(item, dict)
+            if not valid:
+                raise ValidationError(f"Unsupported item in h-card {key}", code="invalid_h_card")
 
 
 def normalize_h_card(data: dict[str, Any]) -> dict[str, Any]:
@@ -86,20 +106,8 @@ def normalize_h_card(data: dict[str, Any]) -> dict[str, Any]:
 
     for key, value in data.items():
         if isinstance(value, list):
-            # Already a list, but check if items need normalization
-            normalized_list = []
-            for item in value:
-                if isinstance(item, dict) and key in ["adr", "org"]:
-                    # These should contain dictionaries, recurse
-                    normalized_list.append(normalize_property_names(item))
-                else:
-                    normalized_list.append(item)
-            normalized[key] = normalized_list
+            normalized[key] = value
         else:
-            # Convert to list
-            if isinstance(value, dict) and key in ["adr", "org"]:
-                normalized[key] = [normalize_property_names(value)]
-            else:
-                normalized[key] = [value]
+            normalized[key] = [value]
 
     return normalized

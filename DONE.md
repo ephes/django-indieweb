@@ -4,6 +4,21 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-08
 
+### Round 83: bounded h-card admission
+
+- Validate property list containers and supported name/URL/email/photo items
+  before deriving profile fields. Reject malformed values with errors on
+  `h_card`, preserving database state, explicit empty-list clearing and supported
+  structured photos. No corresponding backlog item.
+- Bound normalization across mappings and nested lists to depth 32 and 10,000
+  visited values. Preflight profile input before JSONField serialization;
+  over-limit bypass-written legacy cards render empty.
+- Validation: synthetic regressions failed against the original implementation;
+  focused tests, `just check`, tox matrix/migrations/storage-SQLite, configured
+  hooks and strict Sphinx build. Exact-limit and ordinary nested-data tests cover
+  retained behavior.
+- Docs: `docs/h-card.rst`; changelog: Unreleased in `docs/changelog.rst`.
+
 ### Round 81 I4: partial receive persistence recovery
 
 - Added real constraint-failure journeys after snapshot update and after child
