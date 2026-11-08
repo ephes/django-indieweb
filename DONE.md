@@ -13,8 +13,10 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   implementation changes. Skipping snapshot repair writes or removing the child
   savepoint fails the corresponding regression; unmutated tests pass first.
 - Validation: file-backed SQLite and disposable local PostgreSQL with migrations,
-  focused recovery tests, mypy, Ruff, hooks and Sphinx. Full coverage and
-  required tox migration/storage lanes are integration gates.
+  recovery tests, full coverage suites, mypy, Ruff, hooks and Sphinx; required
+  tox migration/storage lanes passed. The combined file-SQLite run exposed an
+  existing collation fixture's closed-connection assumption; explicitly opening
+  that fixture's connection makes it compatible with connection-reopen journeys.
 - Docs: corrected snapshot/child failure contract in `docs/webmention.rst`;
   changelog: Unreleased. No matching backlog item.
 

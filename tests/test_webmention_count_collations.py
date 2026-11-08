@@ -20,6 +20,7 @@ def count_collation(request, transactional_db):
     name = "indieweb_test_insensitive"
     pattern_indexes = []
     if connection.vendor == "sqlite":
+        connection.ensure_connection()
 
         def key(value):
             return "".join(
