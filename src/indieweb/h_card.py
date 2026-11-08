@@ -3,15 +3,20 @@
 from typing import Any
 
 import mf2py
+from django.core.exceptions import ValidationError
 
 
 def normalize_property_names(data: dict[str, Any]) -> dict[str, Any]:
     """Convert hyphenated property names to underscores for Django templates."""
+    if not isinstance(data, dict):
+        raise ValidationError("H-card properties must be a mapping", code="invalid_h_card")
     normalized: dict[str, Any] = {}
 
     for key, value in data.items():
         # Convert hyphens to underscores
         new_key = key.replace("-", "_")
+        if new_key in normalized:
+            raise ValidationError("H-card property name collision after normalization", code="property_name_collision")
 
         if isinstance(value, list):
             new_value: list[Any] = []
@@ -51,6 +56,11 @@ def validate_h_card(h_card: dict[str, Any]) -> bool:
     All property values should be lists per microformats2 spec.
     """
     if not isinstance(h_card, dict):
+        return False
+
+    try:
+        normalize_property_names(h_card)
+    except ValidationError:
         return False
 
     # Check that all values are lists

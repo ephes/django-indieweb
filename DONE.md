@@ -4940,3 +4940,21 @@ bundle.
   migration/file-SQLite/PostgreSQL storage lanes. No matching BACKLOG item.
 - Docs: README, docs/configuration.rst and docs/micropub.rst;
   docs/changelog.rst Unreleased.
+
+### Round 80 B39: issued grant saves and h-card collisions
+
+- Preserve rotated Auth/Token credentials when stale issuing instances save
+  unrelated data; retain explicit replacement and one-time delivery support.
+- Reject normalized h-card property collisions recursively without mutating
+  input. No matching planned item remains in BACKLOG.md.
+- Validation: new stale-issuer and collision regressions failed on the original
+  code; focused and full frozen pytest, mypy, read-only Ruff, configured hooks,
+  Sphinx, migration/file-SQLite and synthetic PostgreSQL storage checks.
+- Docs: docs/indieauth.rst and docs/h-card.rst; docs/changelog.rst Unreleased.
+
+- Rebased onto current develop; reject even empty non-mapping h-card values
+  consistently in model validation and rendering. Preserve issuing-instance
+  state after failed saves so retries cannot recreate consumed grants.
+- Regression evidence: current develop fails the stale-issuer, collision and
+  malformed-input tests; the rebased parked fix fails seven expanded cases
+  covering empty malformed values and failed-save instance state.

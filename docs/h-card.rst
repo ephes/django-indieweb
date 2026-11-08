@@ -106,7 +106,18 @@ This happens automatically in:
 * The ``{% h_card %}`` template tag
 * The ``normalize_h_card()`` function
 
-When storing h-card data in the database, you can use either format - both will work correctly.
+When storing h-card data in the database, you can use either format. Do not
+include both spellings of a property in the same mapping: ``a-b`` and ``a_b``
+collide after normalization. ``normalize_property_names()``, ``normalize_h_card()``
+and ``parse_h_card()`` raise Django ``ValidationError`` with code
+``property_name_collision`` for collisions, including nested dictionaries in
+``adr``, ``org`` and extension properties. The input is left unchanged and no
+normalized result is returned. Single-spelling extension properties remain supported.
+Non-mapping input also raises ``ValidationError``.
+``validate_h_card()`` returns ``False`` on a collision; profile model validation
+and the admin form reject it before saving. The ``{% h_card %}`` tag returns
+an empty string for legacy colliding or non-mapping rows so pages continue to render without
+publishing an ambiguous profile. Correct the stored keys to restore the card.
 
 H-Card Properties
 -----------------
