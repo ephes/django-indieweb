@@ -1273,6 +1273,20 @@ sanitized remote HTML are kept only when they are absolute ``http://`` or
 ``https://`` URLs; relative URLs are dropped so remote content cannot render
 same-origin-looking links.
 
+The public ``sanitize_webmention_html`` cleaner preserves paragraphs, line
+breaks, nested lists (``ul``, ``ol``, ``li``), quotations (``blockquote``, ``q``,
+``cite``), preformatted text and code (``pre``, ``code``), and inline formatting
+(``a``, ``abbr``, ``b``, ``strong``, ``em``, ``i``, ``s``, ``del``, ``span``).
+Unicode text, entity meanings and preformatted whitespace survive cleaning.
+Allowed attributes are ``href`` and ``title`` on links, ``title`` on
+abbreviations, and ``cite`` on quotations. Links receive
+``rel="nofollow noopener ugc"``. URL attributes use
+``sanitize_remote_webmention_url``: only valid absolute HTTP(S) URLs without
+userinfo are kept. Comments, event handlers and other attributes are stripped;
+active and foreign content such as scripts, styles, forms, SVG and MathML is
+removed with its contents. Repeated cleaning preserves the safe fragment's
+text, structure and allowed attributes.
+
 Validate source URLs, author URLs, author photos, and target URLs before
 storing or linking them. Processor-owned Webmention author URLs and author
 photos are restricted to absolute ``http://`` and ``https://`` values; unsafe
