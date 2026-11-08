@@ -41,6 +41,28 @@ synthetic HTML corpus, parsed as HTML5 fragments. Run them directly with::
 
     uv run pytest tests/test_sanitizers.py --no-cov
 
+Parse Worker Protocol and Watchdog Tests
+----------------------------------------
+
+The settings-free parse child accepts one JSON object per invocation. The
+internal ``source`` request requires exactly ``operation="source"``, ``html``,
+``base_url`` and ``target_url``; ``vouch`` requires exactly
+``operation="vouch"``, ``html`` and ``source_url``. Every document/URL field
+must be a string (empty strings are allowed); missing, extra or non-string
+fields and unsupported operations fail before analysis. Invalid request
+errors report only the exception type, without echoing request data.
+
+Run the focused protocol and RSS watchdog contracts with::
+
+    uv run pytest tests/test_parse_worker_protocol.py tests/test_memory_watchdog.py --no-cov
+
+The protocol suite fakes resource-limit setup and exercises ``main`` with
+synthetic JSON. The watchdog suite drives the actual loop with fake RSS,
+thread startup, sleep and exit boundaries, including below/equal/above-limit
+samples. It never starts a real watchdog thread, sleeps, exhausts memory,
+changes OS limits or exits the test process. The existing isolation suite
+continues to exercise real child processes.
+
 Running Tox
 -----------
 

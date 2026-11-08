@@ -4844,3 +4844,15 @@ bundle.
 - Documentation: supported tags/attributes in `docs/webmention.rst` and focused
   test command in `docs/development.rst`.
 - Changelog: `docs/changelog.rst` Unreleased. No matching backlog item existed.
+
+### Parse child protocol and RSS backstop (round 77, I4)
+
+- Require exact operation-specific string fields before source/Vouch analysis;
+  reject missing, extra and non-string fields with type-only diagnostics.
+- Add direct main/protocol and deterministic watchdog-loop contracts with fake
+  limits/RSS/time/thread/exit boundaries, plus a settings-free import check.
+- Validation: invalid request regressions fail on old coercion (32 failures);
+  full pytest/coverage, mypy, Ruff, hooks and warning-strict Sphinx pass.
+- Documentation: protocol/testing in `docs/development.rst` and cooperative
+  C-call/watchdog limits in `docs/webmention.rst`.
+- Changelog: `docs/changelog.rst` Unreleased. No matching backlog item existed.

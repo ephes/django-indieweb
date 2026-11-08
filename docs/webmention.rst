@@ -323,8 +323,11 @@ Platform notes:
 * **Linux:** all limits are enforced by the kernel.
 * **macOS:** the kernel refuses the memory limits. The child then watches its
   own peak resident set size and exits when it is over the limit. This is a
-  backstop that can overshoot; CPU, wall-clock and size limits are enforced as
-  on Linux. Use macOS for development, not for a public receiver.
+  backstop that can overshoot: the daemon Python thread runs only between
+  interpreter switches, so a long C call holding the GIL can delay its next
+  check. It samples peak RSS every 20 milliseconds and exits only above the
+  configured limit. CPU, parent-enforced wall-clock and size limits are
+  enforced as on Linux. Use macOS for development, not for a public receiver.
 * **Windows** and other platforms without POSIX ``fcntl`` locks: parsing is
   rejected even when ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS=False``.
 
