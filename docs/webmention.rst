@@ -845,7 +845,10 @@ child rows from the failed source. A later verified reprocessing updates the
 same snapshot row rather than creating a second submitted ``Webmention`` row.
 If a source snapshot cannot be stored after otherwise successful verification,
 the processor logs the snapshot failure and leaves the parent Webmention
-verified.
+verified. Child synchronization may already have committed while the snapshot
+still describes the earlier source. Retrying a successful receive rewrites the
+snapshot and upserts every current child, retaining stable identities and
+retiring children absent from the latest source.
 
 Because snapshots store the raw HTML from the last successful source fetch,
 database storage grows with the size of those source documents. Operators that
@@ -865,8 +868,11 @@ after the parent ``Webmention`` has been saved as ``verified``.
 Child writes follow the same non-destructive failure stance as source
 snapshots. If child response synchronization fails after otherwise successful
 parent verification, the processor logs the child sync failure and leaves the
-parent Webmention verified. The failed child sync does not clear the previous
-source snapshot or any previously stored child rows.
+parent Webmention verified. All writes from that child-sync attempt roll back
+together, preserving the previous complete child set. Snapshot persistence is
+independent and may advance even when child sync failed. A subsequent successful
+receive reconciles all current children and retirements, including when the
+snapshot already contains the latest identities.
 
 When a stable child is seen again, its stored display fields are refreshed from
 the latest parsed nested ``h-entry``. If the latest verified parse omits

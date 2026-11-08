@@ -5,6 +5,9 @@ Changelog
 
 Unreleased
 ----------
+* Add committed receive recovery journeys for snapshot-write failure and partial
+  child constraint failure, including connection reopen and clean retry.
+  Document independent snapshot/child progress and eventual reconciliation.
 * Validate parser slot descriptors before locking or inheritance: only private,
   owned regular files with one link are admitted; unsafe objects fail closed.
 * Cover parser admission across actual spawning-parent death, ensuring the
