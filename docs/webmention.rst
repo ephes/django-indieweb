@@ -976,8 +976,13 @@ Supported matching variants:
 * URL scheme and host case are ignored, while path case remains significant.
 * A leading ``www.`` hostname is treated as equivalent to the bare hostname.
 * One trailing slash on non-root paths is treated as equivalent.
-* Query parameters are compared independent of order. Duplicate query
-  key/value pairs are preserved and must still match.
+* Distinct query keys are compared independent of order. Values for each
+  repeated key (including blank keys and values) keep their original order;
+  duplicates must still match. Encoded separators remain part of their value.
+* Valid UTF-8 query escapes are decoded strictly, so percent-encoded Unicode
+  and its literal spelling can match. If query decoding fails, only exact URL
+  equality is accepted; malformed byte sequences never collapse through
+  replacement decoding.
 
 Relative, root-relative and protocol-relative source links are resolved against
 the final fetched source URL (after redirects) before matching, both for the

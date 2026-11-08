@@ -4822,3 +4822,15 @@ bundle.
   on SQLite and migrated PostgreSQL. All 12 tox environments passed.
 - Documentation: `docs/webmention.rst`, `docs/websub.rst`; changelog: Unreleased.
   No corresponding pending BACKLOG items existed.
+
+## 2026-11-08
+
+### Conservative Webmention query identity (round 77, I1)
+
+- Strict UTF-8 query decoding falls back to exact URL equality; stable key-only
+  ordering preserves repeated values while allowing distinct-key reordering.
+- Validation: new source/content/classification regressions fail on the old
+  matcher (21 failures); full pytest/coverage, mypy, Ruff, hooks and warning-strict
+  Sphinx build pass. Fixtures are synthetic and independent of platform.
+- Documentation: target matching policy in `docs/webmention.rst`.
+- Changelog: `docs/changelog.rst` Unreleased. No matching backlog item existed.
