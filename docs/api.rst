@@ -998,7 +998,7 @@ array advertising the query names django-indieweb implements
 ``media-endpoint``, ``post-types``), plus default empty ``syndicate-to``,
 ``categories``, and ``channels`` arrays from the bundled handler.
 
-The default in-memory handler advertises these post types:
+The bundled handler configuration advertises these post types:
 
 - ``note`` - ``content``
 - ``article`` - ``name``, ``content``

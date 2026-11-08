@@ -130,3 +130,6 @@ TEMPLATES[0]["OPTIONS"]["loaders"] = [
 
 # Default auto primary key field (Django 3.2)
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Explicit opt-in to the unsafe in-memory example for protocol unit tests.
+INDIEWEB_MICROPUB_HANDLER = "indieweb.handlers.InMemoryMicropubHandler"

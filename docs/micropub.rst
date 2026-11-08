@@ -27,16 +27,19 @@ legacy alias ``post`` is still accepted), ``POST action=update`` requires
 requires ``update``. The media endpoint is available at ``/indieweb/media/``
 and requires ``media``. See :doc:`api` for the full mapping.
 
-2. Using the Default In-Memory Handler
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. Opting Into the In-Memory Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For testing and development, django-indieweb includes an in-memory
-content handler that stores posts in memory:
+For tests and development only, explicitly configure the in-memory example:
 
 .. code:: python
 
-   # This is the default if no handler is configured
-   # Posts are stored in memory and lost on restart
+   INDIEWEB_MICROPUB_HANDLER = "indieweb.handlers.InMemoryMicropubHandler"
+
+Each operation creates a fresh instance, so entries are lost between requests.
+This example performs no ownership checks and is unsuitable for durable
+publishing. With no handler configured, content writes return empty HTTP
+``500`` responses. Use a persistent custom adapter for real content.
 
 3. Creating a Custom Content Handler
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -857,7 +860,7 @@ absolute URL.
      -H "Authorization: Bearer YOUR_TOKEN"
 
 Returns the configured handler's supported vocabulary under the ``post-types``
-JSON key. The default in-memory handler returns the same post-type objects
+JSON key. The bundled handler configuration returns the same post-type objects
 shown in ``q=config``. Custom handlers remain authoritative: override
 ``MicropubContentHandler.get_config()`` to change the advertised post types,
 names, or property lists. The default audio and video entries advertise only
@@ -887,7 +890,7 @@ submitted properties map to host models.
      -H "Authorization: Bearer YOUR_TOKEN"
 
 Returns the configured handler's ``categories`` list under the ``categories``
-JSON key. The default in-memory handler advertises an empty list. Override
+JSON key. The bundled handler configuration advertises an empty list. Override
 ``MicropubContentHandler.get_config()`` in your handler to expose host-defined
 categories:
 
@@ -1315,3 +1318,15 @@ Next Steps
 
 - Use the existing :doc:`websub` publisher helpers to advertise feeds and notify hubs after host-owned topic changes
 - Use the WebSub subscriber callback support if your host application explicitly subscribes to external topics and has a worker/hook policy for delivered content
+
+Handler setup failures
+----------------------
+
+Set ``INDIEWEB_MICROPUB_HANDLER`` to a persistent content adapter before using
+content writes. Without it, create/update/delete/undelete return empty HTTP
+``500`` responses; create never returns a success ``Location`` and uploaded
+inline files are cleaned up. Discovery remains available. Handler instances
+are created per operation, so store content outside the instance. The bundled
+``InMemoryMicropubHandler`` requires explicit configuration for tests/examples
+and does not preserve content between requests. Configured adapters continue
+to own persistence and authorization.

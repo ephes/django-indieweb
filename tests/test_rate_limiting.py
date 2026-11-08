@@ -518,3 +518,52 @@ def test_fractional_remaining_window_survives_integer_timeout_backend(fixed_wind
         clock.now = 1299.9
         assert check_rate_limit(request, "webmention").allowed
         assert check_rate_limit(request, "webmention").retry_after == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("seam", ["initial_get", "set", "verification_get"])
+@pytest.mark.parametrize("endpoint", ["auth", "token", "token-introspection", "micropub", "media", "webmention"])
+def test_cache_outage_preserves_endpoint_denial_and_recovers(client, settings, monkeypatch, caplog, seam, endpoint):
+    from django.http import HttpResponse
+    from django.urls import resolve
+
+    key = "token_introspection" if endpoint == "token-introspection" else endpoint
+    settings.INDIEWEB_RATE_LIMITS = {key: {"limit": 5, "window": 60}}
+    settings.INDIEWEB_CORS_ALLOWED_ORIGINS = ["https://client.example"]
+    url = reverse(f"indieweb:{endpoint}")
+    work = MagicMock(return_value=HttpResponse(status=204))
+    monkeypatch.setattr(resolve(url).func.view_class, "post", work)
+    original_get, original_set = cache.get, cache.set
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append("get")
+        if seam == "initial_get" or (seam == "verification_get" and calls.count("get") == 2):
+            raise OSError("synthetic-private-cache-address password=synthetic-private-password")
+        return original_get(*args, **kwargs)
+
+    def store(*args, **kwargs):
+        calls.append("set")
+        if seam == "set":
+            raise OSError("synthetic-private-cache-address password=synthetic-private-password")
+        return original_set(*args, **kwargs)
+
+    with monkeypatch.context() as failing_cache:
+        failing_cache.setattr(cache, "get", get)
+        failing_cache.setattr(cache, "set", store)
+        denied = client.post(url, HTTP_ORIGIN="https://client.example")
+    assert calls == {"initial_get": ["get"], "set": ["get", "set"], "verification_get": ["get", "set", "get"]}[seam]
+    assert denied.status_code == 429
+    assert denied.content == b"rate limit exceeded"
+    assert 1 <= int(denied["Retry-After"]) <= 60
+    assert denied["Access-Control-Allow-Origin"] == "https://client.example"
+    work.assert_not_called()
+    assert "synthetic-private" not in caplog.text
+    assert "rejecting request" in caplog.text
+    healthy = client.post(url, HTTP_ORIGIN="https://client.example")
+    # TokenAuthMixin still runs before the protocol method for bearer endpoints.
+    if endpoint in {"micropub", "media"}:
+        assert healthy.status_code == 401
+    else:
+        assert healthy.status_code == 204
+        work.assert_called_once()

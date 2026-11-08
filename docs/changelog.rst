@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Cache read/write failures now fail closed with the usual rate-limit 429,
+  bounded Retry-After and configured CORS headers, without logging backend
+  exception details. Healthy requests resume normal accounting.
+* Micropub content writes without INDIEWEB_MICROPUB_HANDLER now return empty
+  HTTP 500 responses instead of acknowledging entries lost between requests.
+  The in-memory example is an explicit opt-in; discovery remains available.
 * Parse child requests now require the exact operation-specific string fields
   and reject unsupported shapes before analysis, retaining type-only errors.
 * Specify the RSS fallback watchdog's threshold, sampling, daemon startup and

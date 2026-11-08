@@ -164,7 +164,7 @@ Data Flow
    - Token validated (exists, active user, scope matches the requested
      operation)
    - The configured ``MicropubContentHandler`` creates, retrieves, updates,
-     deletes, or undeletes entries (the in-memory handler ships by default;
+     deletes, or undeletes entries (the in-memory example requires explicit opt-in;
      see :doc:`micropub` for custom handlers)
    - For static-site workflows, the handler can map Micropub properties to
      host-owned Markdown files, front matter, public URLs, Django storage

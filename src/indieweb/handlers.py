@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from django.core.exceptions import ImproperlyConfigured
+
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
 
@@ -394,12 +396,31 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         return MicropubEntryList(entries=entries, total=total)
 
 
+class _UnconfiguredMicropubHandler(MicropubContentHandler):
+    """Keep discovery available but never acknowledge unstored content writes."""
+
+    def create_entry(self, properties: dict[str, list[Any]], user: "AbstractBaseUser") -> MicropubEntry:
+        raise ImproperlyConfigured("Configure INDIEWEB_MICROPUB_HANDLER for content writes")
+
+    def update_entry(self, url: str, updates: dict[str, Any], user: "AbstractBaseUser") -> MicropubEntry:
+        raise ImproperlyConfigured("Configure INDIEWEB_MICROPUB_HANDLER for content writes")
+
+    def delete_entry(self, url: str, user: "AbstractBaseUser") -> None:
+        raise ImproperlyConfigured("Configure INDIEWEB_MICROPUB_HANDLER for content writes")
+
+    def undelete_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry:
+        raise ImproperlyConfigured("Configure INDIEWEB_MICROPUB_HANDLER for content writes")
+
+    def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
+        return None
+
+
 def get_micropub_handler() -> MicropubContentHandler:
     """
     Get the configured Micropub content handler.
 
     This function loads the handler specified in Django settings,
-    or returns a default in-memory handler if none is configured.
+    or returns a write-refusing handler if none is configured.
     """
     from django.conf import settings
     from django.utils.module_loading import import_string
@@ -411,5 +432,4 @@ def get_micropub_handler() -> MicropubContentHandler:
         handler_instance: MicropubContentHandler = handler_class()
         return handler_instance
     else:
-        # Return in-memory handler as default
-        return InMemoryMicropubHandler()
+        return _UnconfiguredMicropubHandler()
