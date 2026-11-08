@@ -892,7 +892,11 @@ digest can be stored for change detection, but it should not be the primary
 deduplication key because edits to a nested reply would otherwise create a new
 child response. Entries without a stable identity should not be promoted to
 durable child rows until the implementation defines an operator-visible policy
-for unstable responses.
+for unstable responses. Malformed identity URL candidates (including broken
+IPv6 references) are skipped individually: later values, the other identity
+property, or the HTML ``id`` can still supply an identity. A child with no usable
+identity is skipped without invalidating its verified parent or valid siblings.
+Discarded identity URL candidates are not logged.
 
 Status, spam, and moderation are stored independently for child responses, but
 current displayability still depends on the parent ``Webmention`` remaining

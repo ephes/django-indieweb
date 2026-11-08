@@ -9,6 +9,10 @@ Unreleased
   and reject unsupported shapes before analysis, retaining type-only errors.
 * Specify the RSS fallback watchdog's threshold, sampling, daemon startup and
   exit behavior with deterministic tests; document its cooperative C-call limit.
+* Malformed nested Webmention URL identities are skipped individually,
+  preserving later candidates, valid siblings and parent verification.
+* IndieAuth JSON/form negotiation now admits only bounded HTTP quality values
+  and recognizes uppercase ``Q`` without changing explicit-preference policy.
 * Specify remote HTML sanitizer security, repeated-cleaning stability and
   safe-content preservation with focused adversarial and positive contracts.
 * Webmention source/content proof and mention classification now preserve

@@ -1280,8 +1280,12 @@ class WebmentionProcessor:
                 candidate = candidate.get("value")
             if not isinstance(candidate, str) or not candidate:
                 continue
-            resolved = urljoin(base_url, candidate)
-            parsed = urlparse(resolved)
+            try:
+                resolved = urljoin(base_url, candidate)
+                parsed = urlparse(resolved)
+            except ValueError:
+                # A malformed child URL must not discard its parent or siblings.
+                continue
             if parsed.scheme in ("http", "https") and parsed.netloc:
                 return resolved
         return None

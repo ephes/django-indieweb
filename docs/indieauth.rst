@@ -345,6 +345,13 @@ endpoint return JSON success bodies when the client explicitly prefers
 include ``token_type=Bearer`` in both formats, alongside ``access_token``,
 ``expires_in``, ``scope``, and ``me``.
 
+Explicit JSON/form preferences use HTTP quality values from 0 through 1 with
+at most three decimal places (``q`` is case-insensitive). Malformed qualities,
+including nonfinite numbers, signs, exponents and out-of-range values, make
+that media range ineligible. Higher explicit quality wins; equal qualities
+prefer the earlier explicit media type. Wildcards alone retain the form
+response, and never outrank an explicit eligible JSON preference.
+
 Customizing the Consent Screen
 ------------------------------
 
