@@ -4,6 +4,56 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-08
 
+### Round 81 I4: partial receive persistence recovery
+
+- Added real constraint-failure journeys after snapshot update and after child
+  insert/update, followed by connection reopen and a successful retry. They
+  assert stable IDs, source/child digests, exact child rollback and retirements.
+- Existing production recovery was correct; these coverage gaps needed no
+  implementation changes. Skipping snapshot repair writes or removing the child
+  savepoint fails the corresponding regression; unmutated tests pass first.
+- Validation: file-backed SQLite and disposable local PostgreSQL with migrations,
+  focused recovery tests, mypy, Ruff, hooks and Sphinx. Full coverage and
+  required tox migration/storage lanes are integration gates.
+- Docs: corrected snapshot/child failure contract in `docs/webmention.rst`;
+  changelog: Unreleased. No matching backlog item.
+
+
+### Round 81 I3: parser admission capability
+
+- Validate slot type, owner, exact mode and link count on the opened descriptor;
+  open nonblocking and close descriptors on refusal without mutating objects.
+- Three-process parent-death regression retains admission until worker exit;
+  removing descriptor inheritance fails the regression. Unsafe object tests
+  fail on the old implementation; regular private files remain usable.
+- Validation: pytest with coverage, mypy, Ruff, hooks and Sphinx; synthetic
+  subprocess fixtures only, with capability-based skips on unsupported systems.
+- Docs: `docs/webmention.rst`; changelog: Unreleased. No matching backlog item.
+
+
+### Round 81 I2: safe receive failure boundaries
+
+- Receiver fetch/storage/nested/search and sender byte/fanout/failure counts
+  reject nonfinite, fractional and boolean settings; timers handle overflow.
+- Collection failures log redacted URLs and fixed categories without raw errors.
+- Validation: original-code regressions, pytest with coverage, mypy, Ruff,
+  hooks and Sphinx. Disposable local PostgreSQL checks also passed.
+- Docs: `docs/webmention.rst`; changelog: Unreleased. No matching backlog item.
+
+
+### Round 81 I1: concurrent verified Vouch preservation
+
+- Submission conditionally updates only unverified rows; processor preservation
+  uses the locked row and the exact verified replacement URL.
+- Regressions commit competing verification through independent connections and
+  fail against the original implementation.
+- Validation: pytest with coverage, mypy, Ruff checks, hooks and Sphinx.
+  Transaction regressions passed with migrations on file-backed SQLite and
+  disposable local PostgreSQL (container storage avoids native shared-memory
+  denial in the sandbox).
+- Docs: `docs/webmention.rst`; changelog: Unreleased. No matching backlog item.
+
+
 ### Round 77 I3: nested identity URL isolation and bounded Accept qualities
 
 Completes the backlog item "Round 77 I3 integration".

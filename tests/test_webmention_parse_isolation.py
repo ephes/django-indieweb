@@ -15,7 +15,7 @@ from django.urls import reverse
 
 from indieweb import parse_isolation, webmention_parse_worker
 from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
-from indieweb.parse_isolation import WebmentionSourceRejected
+from indieweb.parse_isolation import WebmentionParseCapacityError, WebmentionSourceRejected
 from indieweb.processors import WebmentionProcessor, _html_links_to_source_domain, _html_links_to_target
 
 SOURCE_URL = "https://example.com/post"
@@ -767,8 +767,9 @@ def test_parse_capacity_is_shared_with_other_processes(settings, tmp_path, monke
     settings.INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT = 1
     settings.INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS = 0.05
     code = (
-        "import fcntl, sys; "
-        "f = open(sys.argv[1], 'w'); fcntl.flock(f, fcntl.LOCK_EX); "
+        "import fcntl, os, sys; "
+        "f = os.fdopen(os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o600), 'w'); "
+        "fcntl.flock(f, fcntl.LOCK_EX); "
         "print('locked', flush=True); sys.stdin.read()"
     )
     holder = subprocess.Popen(
@@ -778,7 +779,7 @@ def test_parse_capacity_is_shared_with_other_processes(settings, tmp_path, monke
         assert holder.stdout.readline().strip() == b"locked"
         monkeypatch.setattr(parse_isolation, "_worker_command", worker_command_running("print('{}')"))
         started = time.monotonic()
-        with pytest.raises(WebmentionSourceRejected, match="parse capacity"):
+        with pytest.raises(WebmentionParseCapacityError):
             parse_isolation.run_parse_worker({})
         assert time.monotonic() - started < 1
     finally:

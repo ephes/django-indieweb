@@ -353,7 +353,7 @@ Required local storage lanes
 ----------------------------
 
 The fast default pytest run uses in-memory SQLite and skips six real contention
-cases. A local validation is complete only after the migration and storage
+cases plus two receive recovery journeys that require connection reopen. A local validation is complete only after the migration and storage
 lanes also pass::
 
     uv run tox -e py313-django52-migrations,storage-sqlite
@@ -367,7 +367,10 @@ and uses only the disposable synthetic instance described above. No workflow
 or hosted matrix jobs are added; these are required local checks.
 
 Both lanes run authorization contention, outgoing-history concurrent writers,
-and fresh/reissued token persistence rollback. The rollback tests inject a
+fresh/reissued token persistence rollback, and receive persistence recovery
+(``tests/test_receive_persistence_recovery.py``). Receive recovery injects real
+constraint failures after snapshot/child writes, reopens the connection and
+retries, checking exact rollback and eventual reconciliation. The rollback tests inject a
 failure after a real token INSERT/UPDATE and after code deletion; code, bearer
 hash, expiry and modification time must roll back together. A healthy retry
 then succeeds once. Moving issuance outside the atomic block fails both tests.

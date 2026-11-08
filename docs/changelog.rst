@@ -5,6 +5,20 @@ Changelog
 
 Unreleased
 ----------
+* Add committed receive recovery journeys for snapshot-write failure and partial
+  child constraint failure, including connection reopen and clean retry.
+  Document independent snapshot/child progress and eventual reconciliation.
+* Validate parser slot descriptors before locking or inheritance: only private,
+  owned regular files with one link are admitted; unsafe objects fail closed.
+* Cover parser admission across actual spawning-parent death, ensuring the
+  orphan worker retains its slot until exit.
+* Validate receiver fetch/storage/nested/search and sender byte/fanout/failure
+  counts, rejecting booleans, fractions and nonfinite values; unrepresentable
+  Salmention timers use defaults.
+* Generic source collection failures respect URL log redaction and report fixed
+  categories without exception text or tracebacks.
+* Preserve concurrently verified Vouch metadata in repeated submissions and
+  failed processor replacements, using current database state.
 * Cache read/write failures now fail closed with the usual rate-limit 429,
   bounded Retry-After and configured CORS headers, without logging backend
   exception details. Healthy requests resume normal accounting.

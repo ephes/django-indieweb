@@ -264,6 +264,17 @@ application limits with endpoint rate limits, worker time limits, and
 deployment-level request/body limits. Parsing of the fetched documents is
 bounded separately; see :ref:`webmention-isolated-parsing`.
 
+Receiver fetch/storage byte caps, nested depth/candidate/search counts, and sender
+byte/fanout/failure counts accept positive integral numbers or integer strings. Booleans, fractions, nonfinite and malformed values use the documented
+default. Only settings documented with ``None`` as a disabling value accept it.
+Salmention integer timers also fall back to defaults when they cannot fit in a
+Python ``timedelta``.
+
+Unexpected source collection errors log only a fixed diagnostic category
+(``transport error`` or ``unexpected error``), never exception text or traceback.
+Source URLs use the existing ``INDIEWEB_LOG_REDACTION`` policy; select ``redact``
+to replace URLs with correlation digests.
+
 .. _webmention-isolated-parsing:
 
 Isolated Parsing of Fetched Documents
@@ -308,7 +319,11 @@ receiver crash keeps that slot occupied until the child exits. Capacity is unava
 platforms without POSIX file locks, even if OS resource limits are disabled.
 
 ``INDIEWEB_WEBMENTION_PARSE_LOCK_DIR`` optionally selects a private directory
-owned by the application user (mode 0700). The default is a directory in the
+owned by the application user (mode 0700). Each slot must be a regular file
+owned by that user, with exactly mode 0600 and a single hard link. Slots are
+opened without following symlinks and nonblocking; suspicious objects are
+refused without changing their permissions or contents. The process umask must
+retain owner read/write bits (for example, 0077). The default is a directory in the
 system temporary directory, scoped by user ID and a digest of ``SECRET_KEY``.
 All workers must share that directory and the same concurrency setting;
 set an explicit shared directory for different ``TMPDIR`` or private temporary
@@ -412,6 +427,11 @@ stores the optional ``vouch`` URL, calls the configured enqueue hook, and
 returns ``202`` without fetching the source or voucher URL. Voucher fetching
 and verification happen only in ``WebmentionProcessor`` or the worker helper
 that calls it.
+
+Repeat submissions preserve any currently verified Vouch URL and timestamp,
+even when verification commits after submission lookup or during source fetching.
+A replacement may supersede verified metadata only when that exact replacement
+URL has successfully verified; source outcome freshness alone is insufficient.
 
 By default, submitted Vouch URLs are stored but not enforced. To verify
 submitted vouchers with the built-in domain allowlist policy, configure
@@ -825,7 +845,10 @@ child rows from the failed source. A later verified reprocessing updates the
 same snapshot row rather than creating a second submitted ``Webmention`` row.
 If a source snapshot cannot be stored after otherwise successful verification,
 the processor logs the snapshot failure and leaves the parent Webmention
-verified.
+verified. Child synchronization may already have committed while the snapshot
+still describes the earlier source. Retrying a successful receive rewrites the
+snapshot and upserts every current child, retaining stable identities and
+retiring children absent from the latest source.
 
 Because snapshots store the raw HTML from the last successful source fetch,
 database storage grows with the size of those source documents. Operators that
@@ -845,8 +868,11 @@ after the parent ``Webmention`` has been saved as ``verified``.
 Child writes follow the same non-destructive failure stance as source
 snapshots. If child response synchronization fails after otherwise successful
 parent verification, the processor logs the child sync failure and leaves the
-parent Webmention verified. The failed child sync does not clear the previous
-source snapshot or any previously stored child rows.
+parent Webmention verified. All writes from that child-sync attempt roll back
+together, preserving the previous complete child set. Snapshot persistence is
+independent and may advance even when child sync failed. A subsequent successful
+receive reconciles all current children and retirements, including when the
+snapshot already contains the latest identities.
 
 When a stable child is seen again, its stored display fields are refreshed from
 the latest parsed nested ``h-entry``. If the latest verified parse omits

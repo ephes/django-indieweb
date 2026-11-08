@@ -121,12 +121,13 @@ ISO8601_OFFSET_WITHOUT_COLON_RE = re.compile(r"([+-]\d{2})(\d{2})$")
 def _positive_int_setting(name: str, default: int) -> int:
     configured = getattr(settings, name, default)
     try:
+        if isinstance(configured, bool):
+            raise ValueError("booleans are not counts")
         parsed = int(configured)
-    except (TypeError, ValueError):
+        if parsed <= 0 or (not isinstance(configured, str) and configured != parsed):
+            raise ValueError("counts must be positive integers")
+    except (TypeError, ValueError, OverflowError):
         logger.warning("Ignoring invalid %s value; using default %s", name, default)
-        return default
-    if parsed <= 0:
-        logger.warning("Ignoring non-positive %s value; using default %s", name, default)
         return default
     return parsed
 
@@ -354,7 +355,6 @@ class WebmentionProcessor:
         # the new URL fails to verify, the verified state is preserved so an
         # unauthenticated repeat submission cannot downgrade it.
         pending_vouch_save = vouch_url is not None and webmention.vouch_url != vouch_url
-        had_prior_verified_vouch = pending_vouch_save and webmention.vouch_verified_at is not None
         if pending_vouch_save:
             assert vouch_url is not None
             webmention.vouch_url = vouch_url
@@ -387,14 +387,11 @@ class WebmentionProcessor:
 
             if pending_vouch_save:
                 assert vouch_url is not None
-                if had_prior_verified_vouch and outcome.vouch_verified_at is None:
-                    # The row had a previously verified Vouch and the newly
-                    # submitted URL did not verify (or no verification was
-                    # performed). Preserve the prior verified metadata: do not
-                    # overwrite ``vouch_url`` and do not clear
-                    # ``vouch_verified_at``. ``locked`` was just reloaded under
-                    # the row lock, so its ``vouch_url`` / ``vouch_verified_at``
-                    # already reflect the prior verified state.
+                replacement_verified = (
+                    outcome.vouch_verified_at is not None and outcome.verified_vouch_url == vouch_url
+                )
+                if locked.vouch_verified_at is not None and not replacement_verified:
+                    # Preserve verification committed while Phase 1 was collecting.
                     logger.info(
                         "Preserving verified Vouch on row %s: submitted vouch_url=%r failed verification",
                         locked.pk,
@@ -554,7 +551,11 @@ class WebmentionProcessor:
             return _WebmentionOutcome(
                 status="failed",
                 received_at=received_at,
-                log=("error", f"Error processing webmention from {source_url}: {e}"),
+                log=(
+                    "error",
+                    f"Error processing webmention from {redact_url(source_url)}: "
+                    + ("transport error" if isinstance(e, httpx.HTTPError) else "unexpected error"),
+                ),
             )
 
     def _over_limit_outcome(self, error: Exception, source_url: str, received_at: datetime) -> _WebmentionOutcome:

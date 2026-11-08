@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -171,8 +172,18 @@ def _exit_reason(returncode: int) -> str:
 
 def _claim_parse_slot(directory_fd: int, maximum: int, locks: Any) -> int | None:
     for index in range(maximum):
-        candidate = os.open(f"{index}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        candidate = os.open(
+            f"{index}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory_fd
+        )
         try:
+            info = os.fstat(candidate)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_nlink != 1
+            ):
+                raise OSError("parse slot must be a private regular file owned by this user with one link")
             locks.flock(candidate, locks.LOCK_EX | locks.LOCK_NB)
         except BlockingIOError:
             os.close(candidate)
