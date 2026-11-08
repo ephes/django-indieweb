@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-08
 
+### Round 81 I2: safe receive failure boundaries
+
+- Receiver fetch/storage/nested/search and sender byte/fanout/failure counts
+  reject nonfinite, fractional and boolean settings; timers handle overflow.
+- Collection failures log redacted URLs and fixed categories without raw errors.
+- Validation: original-code regressions, pytest with coverage, mypy, Ruff,
+  hooks and Sphinx. PostgreSQL initialization remains sandbox-blocked.
+- Docs: `docs/webmention.rst`; changelog: Unreleased. No matching backlog item.
+
+
 ### Round 81 I1: concurrent verified Vouch preservation
 
 - Submission conditionally updates only unverified rows; processor preservation

@@ -264,6 +264,17 @@ application limits with endpoint rate limits, worker time limits, and
 deployment-level request/body limits. Parsing of the fetched documents is
 bounded separately; see :ref:`webmention-isolated-parsing`.
 
+Receiver fetch/storage byte caps, nested depth/candidate/search counts, and sender
+byte/fanout/failure counts accept positive integral numbers or integer strings. Booleans, fractions, nonfinite and malformed values use the documented
+default. Only settings documented with ``None`` as a disabling value accept it.
+Salmention integer timers also fall back to defaults when they cannot fit in a
+Python ``timedelta``.
+
+Unexpected source collection errors log only a fixed diagnostic category
+(``transport error`` or ``unexpected error``), never exception text or traceback.
+Source URLs use the existing ``INDIEWEB_LOG_REDACTION`` policy; select ``redact``
+to replace URLs with correlation digests.
+
 .. _webmention-isolated-parsing:
 
 Isolated Parsing of Fetched Documents

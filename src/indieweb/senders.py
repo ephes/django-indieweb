@@ -71,57 +71,36 @@ def _webmention_strict_redirects() -> bool:
 
 
 def _sender_fetch_max_bytes() -> int | None:
-    configured = getattr(settings, "INDIEWEB_WEBMENTION_FETCH_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES)
-    if configured is None:
-        return None
-    try:
-        parsed = int(configured)
-    except (TypeError, ValueError):
-        return DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
-    return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
+    return _optional_positive_int_setting(
+        "INDIEWEB_WEBMENTION_FETCH_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES
+    )
 
 
 def _sender_response_max_bytes() -> int | None:
-    """Return the decoded byte cap applied to Webmention endpoint POST responses.
-
-    ``None`` is the explicit "disable cap" sentinel. Any malformed value falls
-    back to the default cap so an invalid setting does not silently let a
-    hostile endpoint return an unbounded body.
-    """
-    configured = getattr(
-        settings, "INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
+    """Return the decoded POST response cap; only explicit None disables it."""
+    return _optional_positive_int_setting(
+        "INDIEWEB_WEBMENTION_RESPONSE_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
     )
-    if configured is None:
-        return None
-    try:
-        parsed = int(configured)
-    except (TypeError, ValueError):
-        return DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
-    return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES
 
 
 def _sender_head_max_bytes() -> int | None:
-    configured = getattr(
-        settings,
-        "INDIEWEB_WEBMENTION_HEAD_MAX_BYTES",
-        DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES,
+    return _optional_positive_int_setting(
+        "INDIEWEB_WEBMENTION_HEAD_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES
     )
-    if configured is None:
-        return None
-    try:
-        parsed = int(configured)
-    except (TypeError, ValueError):
-        return DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES
-    return parsed if parsed > 0 else DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES
 
 
 def _positive_int_setting(name: str, default: int) -> int:
     configured = getattr(settings, name, default)
     try:
+        if isinstance(configured, bool):
+            raise ValueError("booleans are not counts")
         parsed = int(configured)
-    except (TypeError, ValueError):
+        if parsed <= 0 or (not isinstance(configured, str) and configured != parsed):
+            raise ValueError("counts must be positive integers")
+    except (TypeError, ValueError, OverflowError):
+        logger.warning("Ignoring invalid %s value; using default %s", name, default)
         return default
-    return parsed if parsed > 0 else default
+    return parsed
 
 
 def _optional_positive_int_setting(name: str, default: int) -> int | None:
@@ -132,22 +111,27 @@ def _optional_positive_int_setting(name: str, default: int) -> int | None:
 
 
 def _salmention_resend_cooldown() -> timedelta:
-    return timedelta(
-        seconds=_positive_int_setting(
-            "INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS",
-            DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS,
-        )
+    seconds = _positive_int_setting(
+        "INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS", DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS
     )
+    try:
+        return timedelta(seconds=seconds)
+    except OverflowError:
+        logger.warning("Ignoring invalid INDIEWEB_SALMENTION_RESEND_COOLDOWN_SECONDS; using default")
+        return timedelta(seconds=DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS)
 
 
 def _salmention_success_cutoff() -> timedelta | None:
     seconds = _optional_positive_int_setting(
-        "INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS",
-        DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS,
+        "INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS", DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS
     )
     if seconds is None:
         return None
-    return timedelta(seconds=seconds)
+    try:
+        return timedelta(seconds=seconds)
+    except OverflowError:
+        logger.warning("Ignoring invalid INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS; using default")
+        return timedelta(seconds=DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS)
 
 
 def _salmention_max_consecutive_failures() -> int:

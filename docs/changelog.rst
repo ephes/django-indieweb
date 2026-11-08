@@ -5,6 +5,11 @@ Changelog
 
 Unreleased
 ----------
+* Validate receiver fetch/storage/nested/search and sender byte/fanout/failure
+  counts, rejecting booleans, fractions and nonfinite values; unrepresentable
+  Salmention timers use defaults.
+* Generic source collection failures respect URL log redaction and report fixed
+  categories without exception text or tracebacks.
 * Preserve concurrently verified Vouch metadata in repeated submissions and
   failed processor replacements, using current database state.
 * Cache read/write failures now fail closed with the usual rate-limit 429,
