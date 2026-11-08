@@ -112,8 +112,14 @@ def _canonicalize_url_for_match(value: str) -> str:
     if path not in ("", "/") and path.endswith("/"):
         path = path[:-1]
 
-    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    query = urlencode(sorted(query_pairs))
+    try:
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=True, errors="strict")
+    except UnicodeError:
+        # Lossy replacement could equate different resources. Only exact URL
+        # equality (checked by _urls_match) is safe for undecodable queries.
+        return value
+    # Stable key-only sorting preserves the order of values for repeated keys.
+    query = urlencode(sorted(query_pairs, key=lambda pair: pair[0]))
 
     return urlunparse((scheme, netloc, path, parsed.params, query, ""))
 

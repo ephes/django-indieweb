@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Webmention source/content proof and mention classification now preserve
+  repeated-query value order and reject lossy query decoding equivalences.
+  Distinct query keys remain order-insensitive; undecodable queries require
+  exact URL equality.
 * Webmention (ordinary/Salmention) and WebSub notification commands now report
   all returned results, then exit nonzero if any attempted delivery failed,
   including failed historical resends dropped after reaching the failure limit.
