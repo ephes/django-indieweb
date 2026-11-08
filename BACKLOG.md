@@ -42,7 +42,29 @@ No current Syndication and Storage Examples items.
 
 ### Webmention and Reader Boundaries
 
-No current Webmention and Reader Boundaries items.
+- [ ] Round 77 I3 integration: malformed nested identity URL isolation and Accept quality
+  admission are implemented with synthetic regressions on this branch. Local
+  SQLite/full pytest, types, lint, hooks and docs must pass before parking.
+  PostgreSQL validation is blocked: disposable PostgreSQL 17 initialization
+  fails because the sandbox denies `shmget` (`Operation not permitted`). Run
+  `DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations
+  --no-cov tests/test_nested_malformed_urls.py tests/test_accept_quality.py`
+  against a disposable synthetic database before merging. References:
+  `src/indieweb/processors.py`, `src/indieweb/views.py`;
+  docs: `docs/webmention.rst`, `docs/indieauth.rst`;
+  release notes: `docs/changelog.rst` Unreleased.
+
+#### Nested author URL parsing isolation
+
+
+- [ ] A nested child with a valid identity but a malformed URL-valued author
+  (for example an unbalanced IPv6 bracket) can still raise before optional
+  author URL sanitization, failing parent processing. Isolate malformed author
+  URL parsing and preserve valid identity/sibling/parent processing with a
+  synthetic regression. References: `WebmentionProcessor._extract_nested_response_author`,
+  `_extract_nested_explicit_author`, `_is_author_url_reference`, and
+  `_extract_author_properties` in `src/indieweb/processors.py`. Round 77 I3
+  handles only `uid`/`url` identity candidates; it does not cover author URLs.
 
 ## Agent Workflow Improvements
 

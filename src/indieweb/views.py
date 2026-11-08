@@ -1417,11 +1417,12 @@ def _accept_media_ranges(request: HttpRequest) -> list[tuple[str, float, int]]:
         media_range, *parameters = (segment.strip() for segment in item.split(";"))
         q = 1.0
         for parameter in parameters:
-            if parameter.startswith("q="):
-                try:
-                    q = float(parameter[2:])
-                except ValueError:
-                    q = 0.0
+            name, _, quality = parameter.partition("=")
+            if name.strip().lower() == "q":
+                quality = quality.strip()
+                # HTTP qvalue: 0..1, at most three fractional digits, no signs
+                # or exponents. Validate before float conversion (also bounds it).
+                q = float(quality) if re.fullmatch(r"(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)", quality) else 0.0
                 break
         parsed.append((media_range.lower(), q, order))
     return parsed
