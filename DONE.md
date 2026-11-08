@@ -4872,3 +4872,19 @@ bundle.
 - Documentation: protocol/testing in `docs/development.rst` and cooperative
   C-call/watchdog limits in `docs/webmention.rst`.
 - Changelog: `docs/changelog.rst` Unreleased. No matching backlog item existed.
+
+## 2026-11-08
+
+### Round 80 B40: cache outage envelope and default content write refusal
+
+- Cache IO exceptions return bounded rate-limit denials with sanitized logging
+  and the endpoint CORS envelope. Missing content handlers refuse all writes;
+  the memory example is explicitly configured in test settings.
+- Regressions cover all cache IO seams across protocol views, recovery, denied
+  handler calls, absent/None handler writes and inline-upload cleanup. A
+  temporary file-backed adapter proves persistence across separate requests.
+  The new outage/missing-handler regressions failed on the original source.
+- Validation: frozen pytest, mypy, read-only Ruff, hooks, Sphinx and local
+  migration/file-SQLite/PostgreSQL storage lanes. No matching BACKLOG item.
+- Docs: README, docs/configuration.rst and docs/micropub.rst;
+  docs/changelog.rst Unreleased.

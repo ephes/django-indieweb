@@ -5,8 +5,10 @@ This tutorial will guide you through integrating django-indieweb into your Djang
 to add IndieAuth authentication, Micropub content creation, and Webmention support.
 
 .. note::
-   Micropub ships with an in-memory handler for quick testing; configure ``INDIEWEB_MICROPUB_HANDLER``
-   to store content in your own models.
+   Configure ``INDIEWEB_MICROPUB_HANDLER`` before creating content; without it,
+   content writes return HTTP 500. Use a persistent adapter to store content in
+   your own models. The in-memory example requires explicit opt-in for testing
+   and loses entries between requests.
 
 Prerequisites
 -------------
@@ -263,9 +265,9 @@ To persist content, configure your own handler:
    INDIEWEB_MICROPUB_HANDLER = "myapp.micropub_handler.BlogPostMicropubHandler"
 
 See :doc:`micropub` for a fuller handler example that implements create,
-source queries, update, and delete. The default in-memory handler implements
-source queries, update, delete, and undelete in process memory only — entries
-do not persist across restarts. The minimal durable-storage example below
+source queries, update, and delete. The explicitly configured
+``InMemoryMicropubHandler`` example implements source queries, update, delete,
+and undelete in instance memory only; entries are lost between requests. The minimal durable-storage example below
 intentionally leaves editing methods as stubs until you map those operations
 to your own content model.
 

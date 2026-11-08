@@ -138,16 +138,25 @@ def check_rate_limit(request: HttpRequest, endpoint_key: str, *, method_bucket: 
     bucket = method_bucket if method_bucket is not None else (request.method or "").upper()
     counter_key = _cache_key(endpoint_key, bucket, _client_identity(request))
 
-    counter = cache.get(counter_key)
-    if counter is None or now >= counter["reset_at"]:
-        counter = {"count": 0, "reset_at": now + config.window}
-    count = counter["count"] + 1
-    reset_at = counter["reset_at"]
-    remaining = reset_at - now
-    cache.set(counter_key, {"count": count, "reset_at": reset_at}, timeout=max(1, math.ceil(remaining)))
-    if cache.get(counter_key) is None:
+    retry_after = config.window
+    try:
+        counter = cache.get(counter_key)
+        if counter is None or now >= counter["reset_at"]:
+            counter = {"count": 0, "reset_at": now + config.window}
+        count = counter["count"] + 1
+        reset_at = counter["reset_at"]
+        remaining = reset_at - now
+        retry_after = max(1, min(config.window, math.ceil(remaining)))
+        cache.set(counter_key, {"count": count, "reset_at": reset_at}, timeout=retry_after)
+        stored = cache.get(counter_key)
+    except Exception:
+        # Cache backends expose different exception types. Never log their
+        # messages or traceback: connection details can contain credentials.
+        logger.warning("Rate-limit cache unavailable for %r; rejecting request", endpoint_key)
+        return RateLimitResult(allowed=False, retry_after=retry_after)
+    if stored is None:
         logger.warning(f"Rate-limit counter for {endpoint_key!r} could not be stored in the cache; rejecting request")
-        return RateLimitResult(allowed=False, retry_after=max(1, math.ceil(remaining)))
+        return RateLimitResult(allowed=False, retry_after=retry_after)
     if count <= config.limit:
         return RateLimitResult(allowed=True)
     return RateLimitResult(allowed=False, retry_after=max(1, math.ceil(remaining)))

@@ -502,7 +502,13 @@ counts require atomic operations on a shared cache, for example a Redis
 Lua-script-based limiter or a purpose-built reverse proxy limiter. Eviction
 can also start a fresh allowance early. If the cache cannot keep the counter,
 the limiter fails closed with HTTP ``429`` and logs a warning;
-``DummyCache`` is the exception.
+``DummyCache`` is the exception. Cache read/write exceptions produce the same
+denial response before endpoint work, preserving configured CORS headers.
+``Retry-After`` is between 1 and the configured window in seconds (the remaining
+stored window when available). Warnings exclude backend exception messages,
+tracebacks, connection details and request data. The next healthy request can
+proceed under the normal counter rules; outages do not permanently disable the
+limiter.
 
 When a limit is exceeded, the endpoint returns HTTP ``429`` with a plain-text
 ``rate limit exceeded`` body. ``Retry-After`` is the remaining time to the stored
@@ -549,7 +555,21 @@ INDIEWEB_MICROPUB_HANDLER
 Optional dotted path to a ``MicropubContentHandler`` subclass that owns
 Micropub persistence for your host project.
 
-**Default:** ``None`` (use the bundled in-memory development handler)
+**Default:** ``None`` (content writes refused)
+
+Without a configured handler, content create/update/delete/undelete requests
+return an empty HTTP ``500`` and never report successful publication or a
+``Location``. Inline files uploaded during a failed create are cleaned up.
+Configuration discovery remains available, while no source entries are held
+by the default handler. Configure a persistent adapter before enabling content
+writes. The loader creates a new handler instance per operation; persistence
+must live in your database, filesystem or another host-owned store.
+
+``InMemoryMicropubHandler`` is an explicit development/test opt-in only::
+
+   INDIEWEB_MICROPUB_HANDLER = "indieweb.handlers.InMemoryMicropubHandler"
+
+It loses content between requests and must not be used for durable publishing.
 
 **Example:**
 
