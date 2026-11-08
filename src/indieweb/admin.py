@@ -322,7 +322,7 @@ class ProfileAdminForm(ModelForm):
         from .h_card import validate_h_card
 
         if not validate_h_card(h_card):
-            raise ValidationError("Invalid h-card structure. All properties must be lists.")
+            raise ValidationError("Invalid h-card structure. Properties must be lists with unambiguous names.")
 
         # Ensure we return a dict
         return dict(h_card) if h_card else {}

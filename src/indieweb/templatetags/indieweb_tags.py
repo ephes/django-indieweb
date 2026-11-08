@@ -100,7 +100,11 @@ def h_card(user_or_profile: Any, extra_classes: str | None = None) -> str:
     # Normalize h_card data for template usage
     h_card_data = profile.h_card if profile else {}
     if h_card_data:
-        h_card_data = normalize_property_names(h_card_data)
+        try:
+            h_card_data = normalize_property_names(h_card_data)
+        except ValidationError:
+            # Legacy rows can bypass model validation; omit the ambiguous card.
+            return ""
 
     # Render the template manually
     context = {"profile": profile, "user": user, "h_card": h_card_data, "extra_classes": extra_classes or ""}

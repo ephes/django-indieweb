@@ -4872,3 +4872,22 @@ bundle.
 - Documentation: protocol/testing in `docs/development.rst` and cooperative
   C-call/watchdog limits in `docs/webmention.rst`.
 - Changelog: `docs/changelog.rst` Unreleased. No matching backlog item existed.
+
+## 2026-11-08
+
+### Round 80 B39: issued grant saves and h-card collisions
+
+- Preserve rotated Auth/Token credentials when stale issuing instances save
+  unrelated data; retain explicit replacement and one-time delivery support.
+- Reject normalized h-card property collisions recursively without mutating
+  input. No matching planned item remains in BACKLOG.md.
+- Validation: new stale-issuer and collision regressions failed on the original
+  code; focused and full frozen pytest, mypy, read-only Ruff, configured hooks,
+  Sphinx, migration/file-SQLite and synthetic PostgreSQL storage checks.
+- Docs: docs/indieauth.rst and docs/h-card.rst; docs/changelog.rst Unreleased.
+
+- Review status: B39 parked after three Opus reviews did not converge (one
+  warning in each round). Final mechanical guard now skips quick-field syncing
+  for non-mapping h-card data so validation can reject it; expanded regressions
+  pass, but this final guard still requires a passing independent review before
+  integration. No merge or default-branch push for this bundle.

@@ -147,20 +147,34 @@ class Auth(models.Model):
     def save(self, *args: Any, **kwargs: Any) -> None:
         if self.scope is None:
             self.scope = ""
+        if kwargs.get("update_fields") is not None and not kwargs["update_fields"]:
+            return
         key_changed = False
         raw_key = self.raw_key
+        issued_hash = getattr(self, "_raw_key_hash", None)
+        if raw_key is not None and self.key == raw_key and issued_hash is not None:
+            # The raw value retained for issuance is not an explicit replacement.
+            self.key = issued_hash
+            if not self._state.adding:
+                fields = kwargs.get("update_fields")
+                if fields is None:
+                    fields = {
+                        field.name
+                        for field in self._meta.concrete_fields
+                        if not field.primary_key and field.attname in self.__dict__
+                    }
+                kwargs["update_fields"] = set(fields) - {"key"}
         if not self.key:
             self.set_key()
             key_changed = True
         elif not self.is_hashed_key(self.key):
             self.set_key(self.key)
             key_changed = True
-        if key_changed:
-            raw_key = self.raw_key
+        raw_key = self.raw_key
         if key_changed and kwargs.get("update_fields") is not None:
             kwargs["update_fields"] = set(kwargs["update_fields"]) | {"key"}
         super().save(*args, **kwargs)
-        if raw_key is not None:
+        if raw_key is not None and self.key == getattr(self, "_raw_key_hash", None):
             self.key = raw_key
 
     @classmethod
@@ -212,6 +226,7 @@ class Auth(models.Model):
         raw_key = raw_key or self.make_raw_key()
         self.key = self.hash_key(raw_key)
         self._raw_key = raw_key
+        self._raw_key_hash = self.key
         return raw_key
 
     @property
@@ -262,20 +277,34 @@ class Token(GenKeyMixin):
     def save(self, *args: Any, **kwargs: Any) -> None:
         if self.scope is None:
             self.scope = ""
+        if kwargs.get("update_fields") is not None and not kwargs["update_fields"]:
+            return
         key_changed = False
         raw_key = self.raw_key
+        issued_hash = getattr(self, "_raw_key_hash", None)
+        if raw_key is not None and self.key == raw_key and issued_hash is not None:
+            # The raw value retained for issuance is not an explicit replacement.
+            self.key = issued_hash
+            if not self._state.adding:
+                fields = kwargs.get("update_fields")
+                if fields is None:
+                    fields = {
+                        field.name
+                        for field in self._meta.concrete_fields
+                        if not field.primary_key and field.attname in self.__dict__
+                    }
+                kwargs["update_fields"] = set(fields) - {"key"}
         if not self.key:
             self.set_key()
             key_changed = True
         elif not self.is_hashed_key(self.key):
             self.set_key(self.key)
             key_changed = True
-        if key_changed:
-            raw_key = self.raw_key
+        raw_key = self.raw_key
         if key_changed and kwargs.get("update_fields") is not None:
             kwargs["update_fields"] = set(kwargs["update_fields"]) | {"key"}
         super().save(*args, **kwargs)
-        if raw_key is not None:
+        if raw_key is not None and self.key == getattr(self, "_raw_key_hash", None):
             self.key = raw_key
 
     @classmethod
@@ -330,6 +359,7 @@ class Token(GenKeyMixin):
         raw_key = raw_key or self.make_raw_key()
         self.key = self.hash_key(raw_key)
         self._raw_key = raw_key
+        self._raw_key_hash = self.key
         return raw_key
 
     @property
@@ -885,6 +915,12 @@ class Profile(models.Model):
         super().clean()
         self._validate_quick_access_urls()
         if self.h_card:
+            from .h_card import normalize_property_names
+
+            try:
+                normalize_property_names(self.h_card)
+            except ValidationError as exc:
+                raise ValidationError({"h_card": exc}) from exc
             self._validate_h_card_urls()
             self._validate_h_card_emails()
 
@@ -942,7 +978,7 @@ class Profile(models.Model):
     def _sync_fields_from_h_card(self) -> set[str]:
         """Sync explicitly supplied h-card properties and report derived fields."""
         derived: set[str] = set()
-        if not self.h_card:
+        if not isinstance(self.h_card, dict):
             return derived
         for property_name, field_name in (("name", "name"), ("url", "url"), ("photo", "photo_url")):
             if property_name not in self.h_card:

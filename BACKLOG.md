@@ -10,7 +10,17 @@ No current Priority 1 items.
 
 ## Priority 2
 
-No current Priority 2 items.
+### Round 80 B39 integration
+
+- [ ] Review and integrate parked grant/h-card fixes on `fix/r80-grants-hcard`.
+  The review loop stopped with a recurring non-mapping profile-save warning;
+  the final `_sync_fields_from_h_card` guard and expanded regression inputs
+  address that path but still need a passing review. References:
+  `src/indieweb/models.py`, `src/indieweb/h_card.py`,
+  `src/indieweb/templatetags/indieweb_tags.py`, `tests/test_h_card.py`,
+  `tests/test_models.py`, `docs/h-card.rst`, `docs/indieauth.rst`.
+  Run full local pytest, mypy, Ruff/hooks, docs, migration/storage lanes;
+  fetch/rebase before any merge. No runtime adoption is included.
 
 ## Priority 3
 

@@ -645,3 +645,22 @@ Troubleshooting
 
 **No scopes shown on consent screen**
    This is normal for authentication-only flows. Scopes are only shown when the client requests permissions.
+
+Issued model instances
+----------------------
+
+``Auth`` and ``Token`` retain the raw credential on the issuing instance for
+one-time delivery. Saving that unchanged issuing instance does not write its
+credential back, including full saves and unrelated partial saves. This prevents
+a stale issuer from undoing another instance's rotation and avoids rehashing
+under a changed ``SECRET_KEY``. Empty ``update_fields`` remains a no-op.
+Assign a different raw ``key`` or call ``set_key()`` and save with
+``update_fields=["key"]`` to explicitly replace a credential. Fetch fresh
+instances for other concurrent updates; this protection applies only to the
+unchanged raw issuance value, not arbitrary stale field values.
+
+For an existing issuing instance, full saves become field-specific updates
+excluding ``key`` (also visible as ``update_fields`` in save signals). They
+refuse to recreate a deleted/consumed grant and raise ``DatabaseError`` when
+the row is gone. ``force_insert`` is not supported on an existing issuing
+instance; construct a new instance when inserting a new grant.

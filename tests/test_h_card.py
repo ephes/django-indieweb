@@ -168,3 +168,86 @@ def test_validate_h_card_rejects_non_dict_input(h_card):
 def test_validate_h_card_rejects_non_dict_adr_and_org_items(h_card):
     """Test adr and org list items must be dictionaries."""
     assert validate_h_card(h_card) is False
+
+
+@pytest.mark.parametrize("normalize", [normalize_property_names, normalize_h_card])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("container", ["top", "adr", "org", "extension"])
+def test_normalized_property_collision_is_rejected(normalize, reverse, container):
+    from copy import deepcopy
+
+    from django.core.exceptions import ValidationError
+
+    pairs = [("a-b", ["first"]), ("a_b", ["second"])]
+    data = dict(reversed(pairs) if reverse else pairs)
+    if container != "top":
+        data = {container: [data]}
+    original = deepcopy(data)
+    with pytest.raises(ValidationError, match="collision"):
+        normalize(data)
+    assert data == original
+
+
+def test_parse_h_card_rejects_normalized_property_collision(monkeypatch):
+    from django.core.exceptions import ValidationError
+
+    monkeypatch.setattr(
+        "indieweb.h_card.mf2py.parse",
+        lambda **kwargs: {"items": [{"type": ["h-card"], "properties": {"a-b": ["first"], "a_b": ["second"]}}]},
+    )
+    with pytest.raises(ValidationError, match="collision"):
+        parse_h_card("<div class='h-card'></div>")
+
+
+@pytest.mark.parametrize("container", ["top", "adr", "org"])
+def test_validate_h_card_rejects_collisions(container):
+    data = {"a-b": ["first"], "a_b": ["second"]}
+    if container != "top":
+        data = {container: [data]}
+    assert not validate_h_card(data)
+
+
+@pytest.mark.django_db
+def test_profile_and_admin_reject_collisions_and_legacy_tag_omits_card():
+    import json
+
+    from django.contrib.auth import get_user_model
+    from django.core.exceptions import ValidationError
+
+    from indieweb.admin import ProfileAdminForm
+    from indieweb.models import Profile
+    from indieweb.templatetags.indieweb_tags import h_card
+
+    user = get_user_model().objects.create_user(username="collision-profile")
+    profile = Profile.objects.create(user=user, h_card={"name": ["Synthetic Person"]})
+    collision = {"name": ["Synthetic Person"], "a-b": ["first"], "a_b": ["second"]}
+    profile.h_card = collision
+    with pytest.raises(ValidationError, match="collision"):
+        profile.save()
+    assert Profile.objects.get(pk=profile.pk).h_card == {"name": ["Synthetic Person"]}
+    form = ProfileAdminForm()
+    form.cleaned_data = {"h_card": json.dumps(collision)}
+    with pytest.raises(ValidationError):
+        form.clean_h_card()
+    # Simulate a legacy row written without model validation.
+    Profile.objects.filter(pk=profile.pk).update(h_card=collision)
+    profile.refresh_from_db()
+    assert h_card(profile) == ""
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("data", [["synthetic"], "synthetic", ["name"], "username", 5])
+def test_profile_non_mapping_validation_and_legacy_render(data):
+    from django.contrib.auth import get_user_model
+    from django.core.exceptions import ValidationError
+
+    from indieweb.models import Profile
+    from indieweb.templatetags.indieweb_tags import h_card
+
+    user = get_user_model().objects.create_user(username="nonmapping-profile")
+    profile = Profile(user=user, h_card=data)
+    with pytest.raises(ValidationError, match="mapping"):
+        profile.full_clean()
+    with pytest.raises(ValidationError, match="mapping"):
+        profile.save()
+    assert h_card(profile) == ""

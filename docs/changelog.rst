@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Unchanged raw credentials on issued Auth/Token instances no longer overwrite
+  later rotations during full or unrelated partial saves, including across
+  SECRET_KEY rotation; empty update_fields saves remain no-ops.
+* H-card normalization rejects colliding hyphen/underscore property spellings
+  with ValidationError instead of silently discarding a value, including nested
+  address, organization and extension mappings.
 * Parse child requests now require the exact operation-specific string fields
   and reject unsupported shapes before analysis, retaining type-only errors.
 * Specify the RSS fallback watchdog's threshold, sampling, daemon startup and
