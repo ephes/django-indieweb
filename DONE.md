@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-08
 
+### Round 81 I1: concurrent verified Vouch preservation
+
+- Submission conditionally updates only unverified rows; processor preservation
+  uses the locked row and the exact verified replacement URL.
+- Regressions commit competing verification through independent connections and
+  fail against the original implementation.
+- Validation: pytest with coverage, mypy, Ruff checks, hooks and Sphinx.
+  PostgreSQL initialization is unavailable in the sandbox (shared memory denied);
+  transaction regressions also run against file-backed SQLite.
+- Docs: `docs/webmention.rst`; changelog: Unreleased. No matching backlog item.
+
+
 ### Round 77 I3: nested identity URL isolation and bounded Accept qualities
 
 Completes the backlog item "Round 77 I3 integration".

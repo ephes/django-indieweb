@@ -413,6 +413,11 @@ returns ``202`` without fetching the source or voucher URL. Voucher fetching
 and verification happen only in ``WebmentionProcessor`` or the worker helper
 that calls it.
 
+Repeat submissions preserve any currently verified Vouch URL and timestamp,
+even when verification commits after submission lookup or during source fetching.
+A replacement may supersede verified metadata only when that exact replacement
+URL has successfully verified; source outcome freshness alone is insufficient.
+
 By default, submitted Vouch URLs are stored but not enforced. To verify
 submitted vouchers with the built-in domain allowlist policy, configure
 ``INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS``:

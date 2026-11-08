@@ -5,6 +5,8 @@ Changelog
 
 Unreleased
 ----------
+* Preserve concurrently verified Vouch metadata in repeated submissions and
+  failed processor replacements, using current database state.
 * Cache read/write failures now fail closed with the usual rate-limit 429,
   bounded Retry-After and configured CORS headers, without logging backend
   exception details. Healthy requests resume normal accounting.

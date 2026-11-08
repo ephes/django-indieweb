@@ -1046,15 +1046,15 @@ def _store_webmention_submission(source: str, target: str, vouch: str | None) ->
         source_url=canonical_source,
         target_url=canonical_target,
     )
-    if vouch is not None and webmention.vouch_url != vouch:
-        if webmention.vouch_verified_at is not None:
-            # Preserve the previously verified Vouch metadata. Stash the
-            # submitted URL on a non-persisted attribute for in-memory callers.
+    if vouch is not None:
+        # The lookup can be stale by the time a processor verifies this row.
+        # Conditional SQL keeps that verification authoritative on every backend.
+        Webmention.objects.filter(pk=webmention.pk, vouch_verified_at__isnull=True).exclude(vouch_url=vouch).update(
+            vouch_url=vouch, vouch_verified_at=None, modified=timezone.now()
+        )
+        webmention.refresh_from_db()
+        if webmention.vouch_verified_at is not None and webmention.vouch_url != vouch:
             webmention._submitted_vouch_url = vouch  # type: ignore[attr-defined]
-        else:
-            webmention.vouch_url = vouch
-            webmention.vouch_verified_at = None
-            webmention.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
     return webmention
 
 
