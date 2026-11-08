@@ -357,11 +357,18 @@ def analyze_vouch(html_content: str, source_url: str) -> dict[str, Any]:
 def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     """Run one analysis request and return its JSON-serializable result."""
     operation = request.get("operation")
+    fields_by_operation = {
+        "source": {"html", "base_url", "target_url"},
+        "vouch": {"html", "source_url"},
+    }
+    if not isinstance(operation, str) or operation not in fields_by_operation:
+        raise ValueError("unsupported operation")
+    fields = fields_by_operation[operation]
+    if set(request) != fields | {"operation"} or any(not isinstance(request[field], str) for field in fields):
+        raise ValueError("invalid request fields")
     if operation == "source":
-        return analyze_source(str(request["html"]), str(request["base_url"]), str(request["target_url"]))
-    if operation == "vouch":
-        return analyze_vouch(str(request["html"]), str(request["source_url"]))
-    raise ValueError(f"Unknown operation: {operation!r}")
+        return analyze_source(request["html"], request["base_url"], request["target_url"])
+    return analyze_vouch(request["html"], request["source_url"])
 
 
 class LimitsUnavailable(RuntimeError):
@@ -432,7 +439,7 @@ def start_memory_watchdog(memory_bytes: int) -> threading.Thread:
     long call into C code can overshoot before the thread runs again.
     """
 
-    def watch() -> None:  # pragma: no cover - ends the process it runs in
+    def watch() -> None:
         while True:
             if peak_resident_bytes() > memory_bytes:
                 os._exit(EXIT_MEMORY_LIMIT)
