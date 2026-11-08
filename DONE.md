@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-08
 
+### Round 81 I3: parser admission capability
+
+- Validate slot type, owner, exact mode and link count on the opened descriptor;
+  open nonblocking and close descriptors on refusal without mutating objects.
+- Three-process parent-death regression retains admission until worker exit;
+  removing descriptor inheritance fails the regression. Unsafe object tests
+  fail on the old implementation; regular private files remain usable.
+- Validation: pytest with coverage, mypy, Ruff, hooks and Sphinx; synthetic
+  subprocess fixtures only, with capability-based skips on unsupported systems.
+- Docs: `docs/webmention.rst`; changelog: Unreleased. No matching backlog item.
+
+
 ### Round 81 I2: safe receive failure boundaries
 
 - Receiver fetch/storage/nested/search and sender byte/fanout/failure counts

@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Validate parser slot descriptors before locking or inheritance: only private,
+  owned regular files with one link are admitted; unsafe objects fail closed.
+* Cover parser admission across actual spawning-parent death, ensuring the
+  orphan worker retains its slot until exit.
 * Validate receiver fetch/storage/nested/search and sender byte/fanout/failure
   counts, rejecting booleans, fractions and nonfinite values; unrepresentable
   Salmention timers use defaults.

@@ -319,7 +319,11 @@ receiver crash keeps that slot occupied until the child exits. Capacity is unava
 platforms without POSIX file locks, even if OS resource limits are disabled.
 
 ``INDIEWEB_WEBMENTION_PARSE_LOCK_DIR`` optionally selects a private directory
-owned by the application user (mode 0700). The default is a directory in the
+owned by the application user (mode 0700). Each slot must be a regular file
+owned by that user, with exactly mode 0600 and a single hard link. Slots are
+opened without following symlinks and nonblocking; suspicious objects are
+refused without changing their permissions or contents. The process umask must
+retain owner read/write bits (for example, 0077). The default is a directory in the
 system temporary directory, scoped by user ID and a digest of ``SECRET_KEY``.
 All workers must share that directory and the same concurrency setting;
 set an explicit shared directory for different ``TMPDIR`` or private temporary
