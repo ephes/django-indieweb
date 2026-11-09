@@ -1,5 +1,6 @@
 import logging
 
+import httpx
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -454,30 +455,168 @@ def raising_client_id_validator(client_id):
 
 
 @pytest.mark.django_db
-def test_client_id_validator_failure_log_is_redacted_in_redact_mode(client, settings, caplog):
-    """Neither the client_id nor a validator message that embeds it may reach the log."""
-    from indieweb.log_redaction import redact_text
-
-    settings.INDIEWEB_LOG_REDACTION = "redact"
+@pytest.mark.parametrize("mode", ["redact", "passthrough"])
+def test_client_id_validator_failure_logs_the_exception_class_only(client, settings, caplog, mode):
+    """A validator message that embeds the client_id never reaches the log, in either mode."""
+    settings.INDIEWEB_LOG_REDACTION = mode
     settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.test_log_redaction.raising_client_id_validator"
 
     with caplog.at_level(logging.INFO, logger="indieweb.views"):
         _exchange_unknown_code(client)
 
-    assert "INDIEWEB_CLIENT_ID_VALIDATOR raised" in caplog.text
-    assert "client-marker" not in caplog.text
-    assert redact_text(f"Policy lookup failed for {CLIENT_MARKER}") in caplog.text
+    assert "Policy lookup failed" not in caplog.text
+    if mode == "redact":
+        assert "client-marker" not in caplog.text
+        assert "INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id=" in caplog.text
+    else:
+        assert f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={CLIENT_MARKER!r}: (ValueError)" in caplog.text
 
 
-@pytest.mark.django_db
-def test_client_id_validator_failure_log_keeps_values_in_passthrough_mode(client, settings, caplog):
-    settings.INDIEWEB_LOG_REDACTION = "passthrough"
-    settings.INDIEWEB_CLIENT_ID_VALIDATOR = "tests.test_log_redaction.raising_client_id_validator"
+# ----------------------------------------------------------------------------
+# Free text is never logged: URLs keep scheme, host, port and path; exceptions
+# are logged by class; remote bodies and worker output as length and digest.
+# ----------------------------------------------------------------------------
 
-    with caplog.at_level(logging.INFO, logger="indieweb.views"):
-        _exchange_unknown_code(client)
 
-    assert (
-        f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={CLIENT_MARKER!r}: "
-        f"(ValueError): Policy lookup failed for {CLIENT_MARKER}"
-    ) in caplog.text
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://user:hunter2@Example.COM:8443/cb;jsessionid=s1/x?code=c#frag", "https://example.com:8443/cb/x"),
+        ("https://example.com", "https://example.com"),
+        ("http://[::1]:8080/p?q", "http://[::1]:8080/p"),
+        ("//user:pw@host.example/p", "//host.example/p"),
+        ("/entry/1?token=t#f", "/entry/1"),
+        ("https://mastodon.example/@alice", "https://mastodon.example/@alice"),
+        ("https://example.com/a b\\x\x1b[31m\u202e\u00e9", "https://example.com/a%20b%5Cx%1B%5B31m%E2%80%AE%C3%A9"),
+        ("https://exa mple.com/", "https://exa%20mple.com/"),
+        ("mailto:alice@example.com", "mailto:"),
+        ("user:password@example.com", "user:"),
+        ("password@example.com/x", "<relative URL>"),
+        ("http://user:pass/word@example.com/", "<invalid URL>"),
+        ("http://[::1/x", "<invalid URL>"),
+        ("http://example.com:99999/", "<invalid URL>"),
+        ("", ""),
+        ("/entry/\ud800", "/entry/%ED%A0%80"),
+        ("https://h\udc00.example/p\ud800", "https://h%ED%B0%80.example/p%ED%A0%80"),
+    ],
+)
+def test_safe_url_keeps_scheme_host_port_and_path_only(url, expected):
+    from indieweb.log_redaction import safe_url
+
+    assert safe_url(url) == expected
+
+
+def test_safe_url_accepts_any_object():
+    from indieweb.log_redaction import safe_url
+
+    class Unprintable:
+        def __str__(self):
+            raise RuntimeError("no")
+
+    assert safe_url(None) == "<relative URL>"
+    assert safe_url(Unprintable()) == ""
+
+
+@pytest.mark.parametrize("mode", ["passthrough", "redact"])
+def test_redact_url_never_returns_userinfo_query_or_fragment(mode):
+    url = "https://user:hunter2@example.com/cb?state=s&code=private-code#frag"
+
+    out = redact_url(url, mode=mode)
+    origin = redact_url_origin(url, mode=mode)
+
+    for secret in ("hunter2", "private-code", "frag"):
+        assert secret not in out
+        assert secret not in origin
+    if mode == "passthrough":
+        assert out == origin == "https://example.com/cb"
+
+
+def test_redact_url_origin_tolerates_unparseable_url_in_redact_mode():
+    out = redact_url_origin("http://[::1/x", mode="redact")
+
+    assert len(out) == 12
+
+
+def test_text_fingerprint_reports_length_and_keyed_digest(settings):
+    from indieweb.log_redaction import text_fingerprint
+
+    fingerprint = text_fingerprint("secret body é")
+
+    assert fingerprint.startswith("14 bytes, digest ")
+    assert "secret" not in fingerprint
+    assert text_fingerprint(b"secret body \xc3\xa9") == fingerprint
+    settings.SECRET_KEY = "another-key"
+    assert text_fingerprint("secret body é") != fingerprint
+
+
+def _format_exc_info(exc_info):
+    record = logging.LogRecord("t", logging.ERROR, __file__, 1, "message", None, exc_info)
+    return logging.Formatter().format(record)
+
+
+def test_exc_info_without_messages_keeps_stack_and_classes_but_no_text():
+    from indieweb.log_redaction import exc_info_without_messages
+
+    # Build values at runtime so traceback source lines do not contain them.
+    cause_secret, top_secret, note_secret = ("-".join((name, "value")) for name in ("cause", "top", "note"))
+
+    def fail():
+        try:
+            raise OSError(f"cause {cause_secret}")
+        except OSError as cause:
+            error = RuntimeError(f"top\nFORGED line {top_secret}")
+            error.add_note(f"note {note_secret}")
+            raise error from cause
+
+    try:
+        fail()
+    except RuntimeError:
+        exc_info = exc_info_without_messages()
+
+    formatted = _format_exc_info(exc_info)
+
+    for secret in (cause_secret, top_secret, note_secret, "FORGED"):
+        assert secret not in formatted
+    assert formatted.endswith("\nRuntimeError")
+    assert "\nOSError\n" in formatted
+    assert "The above exception was the direct cause" in formatted
+    assert "in fail" in formatted
+
+
+def test_exc_info_without_messages_keeps_qualified_class_names():
+    from indieweb.log_redaction import exc_info_without_messages
+
+    message = "connect to https://user:" + "private-pw@hub.example/ failed"
+    try:
+        raise httpx.ConnectError(message)
+    except httpx.ConnectError as exc:
+        formatted = _format_exc_info(exc_info_without_messages(exc))
+
+    assert formatted.endswith("\nhttpx.ConnectError")
+    assert "private-pw" not in formatted
+
+
+def test_exc_info_without_messages_without_active_exception_is_false():
+    from indieweb.log_redaction import exc_info_without_messages
+
+    assert exc_info_without_messages() is False
+
+
+def test_exception_without_messages_handles_unprintable_exceptions_and_cycles():
+    from indieweb.log_redaction import exception_without_messages
+
+    class Unprintable(Exception):
+        def __str__(self):
+            raise RuntimeError("no")
+
+    first = Unprintable()
+    second = ValueError("second")
+    first.__context__ = second
+    second.__context__ = first
+
+    copy = exception_without_messages(first)
+
+    assert str(copy) == ""
+    assert str(copy.__context__) == ""
+    assert type(copy.__context__).__name__ == "ValueError"
+    assert copy.__context__.__context__ is copy

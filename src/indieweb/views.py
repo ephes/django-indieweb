@@ -41,10 +41,12 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.vary import vary_on_headers
 from django.views.generic import View
 
+from . import micropub_urls
 from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
 from .log_redaction import (
     configured_mode,
+    exc_info_without_messages,
     redact_state,
     redact_text,
     redact_token,
@@ -58,6 +60,7 @@ from .rate_limit import RateLimitMixin
 from .websub import (
     WebSubDeliveryEnqueueError,
     WebSubDeliveryHookError,
+    WebSubRejection,
     accept_websub_delivery,
     confirm_websub_verification,
     delivery_body_too_large,
@@ -356,17 +359,19 @@ def _micropub_query_page(request: HttpRequest) -> tuple[int, int]:
 
 
 def _log_micropub_handler_error(operation: str, context: str, exc: Exception) -> None:
-    """Keep adapter exception messages and tracebacks private in redact mode."""
+    """Log a handler failure by exception class; adapter exception messages are never logged.
+
+    Unexpected errors keep a message-free traceback in passthrough mode only.
+    """
     rejected = isinstance(exc, ValueError)
     prefix = f"{operation} rejected" if rejected else f"Unexpected error in {operation}"
     logger.log(
         logging.WARNING if rejected else logging.ERROR,
-        "%s %s (%s): %s",
+        "%s %s (%s)",
         prefix,
         context[:512],
         type(exc).__name__[:80],
-        redact_text(str(exc))[:512],
-        exc_info=not rejected and configured_mode() == "passthrough",
+        exc_info=exc_info_without_messages(exc) if not rejected and configured_mode() == "passthrough" else False,
     )
 
 
@@ -431,29 +436,13 @@ def _normalized_micropub_host_port(netloc: str, scheme: str) -> tuple[str, int |
 
 
 def _micropub_absolute_url_is_same_request_host(request: HttpRequest, url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return False
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"} or not parsed.netloc:
-        return False
-    if parsed.username is not None or parsed.password is not None:
-        return False
-    submitted = _normalized_micropub_host_port(parsed.netloc, scheme)
-    request_host = _normalized_micropub_host_port(request.get_host(), request.scheme or scheme)
-    return submitted is not None and submitted == request_host
+    """Return whether absolute ``url`` uses a canonical origin, or the request host when none is configured."""
+    return micropub_urls.absolute_url_is_local(request, url)
 
 
 def _micropub_action_url_is_same_host(request: HttpRequest, url: str) -> bool:
-    """Return whether a Micropub action URL is local to the current request host."""
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return False
-    if parsed.scheme or parsed.netloc:
-        return _micropub_absolute_url_is_same_request_host(request, url)
-    return True
+    """Return whether a Micropub action URL is local to the site (see ``indieweb.micropub_urls``)."""
+    return micropub_urls.action_url_is_local(request, url)
 
 
 @dataclass(frozen=True)
@@ -642,7 +631,7 @@ def _save_micropub_media_upload(validated_upload: _ValidatedMicropubMediaUpload)
             validated_upload.upload,
         )
     except OSError as exc:
-        logger.exception("Unexpected error storing Micropub media upload")
+        logger.error("Unexpected error storing Micropub media upload", exc_info=exc_info_without_messages())
         raise _MicropubMediaUploadError(500) from exc
 
 
@@ -652,7 +641,10 @@ def _cleanup_micropub_media_uploads(stored_names: list[str]) -> None:
         try:
             default_storage.delete(stored_name)
         except Exception:
-            logger.exception(f"Failed to clean up stored Micropub media upload {stored_name!r}")
+            logger.error(
+                f"Failed to clean up stored Micropub media upload {stored_name!r}",
+                exc_info=exc_info_without_messages(),
+            )
 
 
 def _store_micropub_media_upload(request: HttpRequest, upload: UploadedFile) -> str:
@@ -680,7 +672,7 @@ def _store_micropub_media_uploads(
         _cleanup_micropub_media_uploads(stored_names)
         if isinstance(exc, _MicropubMediaUploadError):
             raise
-        logger.exception("Unexpected error publishing Micropub media upload")
+        logger.error("Unexpected error publishing Micropub media upload", exc_info=exc_info_without_messages())
         raise _MicropubMediaUploadError(500) from exc
 
 
@@ -860,8 +852,7 @@ def _client_id_allowed(client_id: str) -> bool:
         validator = import_string(validator_path)
     except Exception as exc:
         logger.error(
-            f"Failed to load INDIEWEB_CLIENT_ID_VALIDATOR {redact_state(str(validator_path))} "
-            f"({type(exc).__name__}): {redact_text(str(exc))}"
+            f"Failed to load INDIEWEB_CLIENT_ID_VALIDATOR {redact_state(str(validator_path))} ({type(exc).__name__})"
         )
         return False
     try:
@@ -869,7 +860,7 @@ def _client_id_allowed(client_id: str) -> bool:
     except Exception as exc:
         logger.error(
             f"INDIEWEB_CLIENT_ID_VALIDATOR raised for client_id={_log_client_id(normalized_client_id)!r}: "
-            f"({type(exc).__name__}): {redact_text(str(exc))}"
+            f"({type(exc).__name__})"
         )
         return False
 
@@ -895,7 +886,7 @@ def _introspection_authorizer_allows(caller_token: Token, target_token: Token) -
         except Exception as exc:
             logger.error(
                 f"Failed to load INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER {redact_state(str(authorizer_path))!r} "
-                f"({type(exc).__name__}): {redact_text(str(exc))}"
+                f"({type(exc).__name__})"
             )
             return False
         if not callable(authorizer):
@@ -906,9 +897,7 @@ def _introspection_authorizer_allows(caller_token: Token, target_token: Token) -
         try:
             result = authorizer(caller_token, target_token)
         except Exception as exc:
-            logger.error(
-                f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER raised ({type(exc).__name__}): {redact_text(str(exc))}"
-            )
+            logger.error(f"INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER raised ({type(exc).__name__})")
             return False
         # Strict identity check: the docs and security guarantee promise that
         # only an explicit ``True`` permits introspection. Truthy non-bool
@@ -941,7 +930,7 @@ def _resolve_micropub_url_policy() -> Callable[[str, str, HttpRequest], bool] | 
     try:
         policy = import_string(path)
     except Exception as exc:
-        logger.error(f"Failed to load INDIEWEB_MICROPUB_URL_POLICY {path!r}: {exc}")
+        logger.error(f"Failed to load INDIEWEB_MICROPUB_URL_POLICY {path!r}: {type(exc).__name__}")
         return _policy_unavailable
     if not callable(policy):
         logger.error(f"INDIEWEB_MICROPUB_URL_POLICY {path!r} is not callable")
@@ -966,7 +955,10 @@ def _enforce_micropub_url_policy(url: str, kind: str, request: HttpRequest) -> H
     try:
         allowed = policy(url, kind, request)
     except Exception:
-        logger.exception(f"INDIEWEB_MICROPUB_URL_POLICY raised for url={url!r} kind={kind!r}")
+        logger.error(
+            f"INDIEWEB_MICROPUB_URL_POLICY raised for url={redact_url(url)!r} kind={kind!r}",
+            exc_info=exc_info_without_messages(),
+        )
         return HttpResponse("internal error", status=500)
     if allowed is not True:
         return HttpResponse("invalid_request: url not permitted by policy", status=400)
@@ -981,7 +973,9 @@ def _get_webmention_enqueue() -> Callable[[int], None] | None:
     try:
         enqueue = import_string(enqueue_path)
     except Exception as exc:
-        logger.exception(f"Failed to load INDIEWEB_WEBMENTION_ENQUEUE {enqueue_path!r}")
+        logger.error(
+            f"Failed to load INDIEWEB_WEBMENTION_ENQUEUE {enqueue_path!r}", exc_info=exc_info_without_messages()
+        )
         raise _WebmentionEnqueueError from exc
     if not callable(enqueue):
         logger.error(f"INDIEWEB_WEBMENTION_ENQUEUE {enqueue_path!r} is not callable")
@@ -1239,7 +1233,7 @@ def _redirect_uri_allowed(client_id: str, redirect_uri: str) -> bool:
         except Exception as exc:
             logger.error(
                 f"Failed to load INDIEWEB_REDIRECT_URI_VALIDATOR {redact_state(str(validator_path))} "
-                f"({type(exc).__name__}): {redact_text(str(exc))}"
+                f"({type(exc).__name__})"
             )
             return False
         if not callable(validator):
@@ -1248,7 +1242,7 @@ def _redirect_uri_allowed(client_id: str, redirect_uri: str) -> bool:
         try:
             result = validator(client_id, redirect_uri)
         except Exception as exc:
-            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR raised ({type(exc).__name__}): {redact_text(str(exc))}")
+            logger.error(f"INDIEWEB_REDIRECT_URI_VALIDATOR raised ({type(exc).__name__})")
             return False
         if not isinstance(result, bool):
             return False
@@ -1804,7 +1798,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMix
         return _no_store_no_referrer(response)
 
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
-        logger.info(f"auth view post: {request}, {args}, {kwargs}")
+        logger.info(f"auth view post: {request.method} {redact_url(request.path)}, {args}, {kwargs}")
 
         action = request.POST.get("action")
         if action in ["approve", "deny"]:
@@ -2749,6 +2743,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         url = self._action_url(request)
         if not url or not self._action_url_is_same_host(request, url):
             return self._invalid_request()
+        policy_response = _enforce_micropub_url_policy(url, "entry", request)
+        if policy_response is not None:
+            return policy_response
         payload = self._action_payload(request)
         if payload is None:
             return self._invalid_request()
@@ -2775,6 +2772,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         url = self._action_url(request)
         if not url or not self._action_url_is_same_host(request, url):
             return self._invalid_request()
+        policy_response = _enforce_micropub_url_policy(url, "entry", request)
+        if policy_response is not None:
+            return policy_response
         handler = get_micropub_handler()
         try:
             handler.delete_entry(url, self.token.owner)
@@ -2791,6 +2791,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         url = self._action_url(request)
         if not url or not self._action_url_is_same_host(request, url):
             return self._invalid_request()
+        policy_response = _enforce_micropub_url_policy(url, "entry", request)
+        if policy_response is not None:
+            return policy_response
         handler = get_micropub_handler()
         try:
             entry = handler.undelete_entry(url, self.token.owner)
@@ -3284,6 +3287,11 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         return response
 
 
+def _websub_rejection(exc: Exception) -> str:
+    """Return the loggable reason for a rejected WebSub callback: a fixed message or the exception class."""
+    return str(exc) if isinstance(exc, WebSubRejection) else type(exc).__name__
+
+
 class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
     """WebSub subscriber callback for verification and content distribution."""
 
@@ -3319,7 +3327,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
                     reason=request.GET.get("hub.reason", ""),
                 )
             except ValueError as exc:
-                logger.warning(f"Rejected WebSub denial for subscription {subscription.pk}: {exc}")
+                logger.warning(f"Rejected WebSub denial for subscription {subscription.pk}: {_websub_rejection(exc)}")
                 return HttpResponse(status=404)
             return HttpResponse(status=204)
 
@@ -3336,7 +3344,9 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
                 lease_seconds=request.GET.get("hub.lease_seconds"),
             )
         except ValueError as exc:
-            logger.warning(f"Rejected WebSub verification for subscription {subscription.pk}: {exc}")
+            logger.warning(
+                f"Rejected WebSub verification for subscription {subscription.pk}: {_websub_rejection(exc)}"
+            )
             return HttpResponse(status=404)
 
         return HttpResponse(challenge, status=200, content_type="text/plain")
@@ -3369,7 +3379,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
         try:
             signature_algorithm = validate_websub_delivery_signature(subscription, body, request.headers)
         except WebSubSecretDecryptionError as exc:
-            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {exc}")
+            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {_websub_rejection(exc)}")
             record_websub_delivery(
                 subscription,
                 body,
@@ -3379,7 +3389,7 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             )
             return HttpResponse(status=403)
         except ValueError as exc:
-            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {exc}")
+            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {_websub_rejection(exc)}")
             record_websub_delivery(
                 subscription,
                 body,
@@ -3576,7 +3586,7 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             try:
                 enqueue_webmention(webmention.pk)
             except Exception:
-                logger.exception(f"Failed to enqueue webmention {webmention.pk}")
+                logger.error(f"Failed to enqueue webmention {webmention.pk}", exc_info=exc_info_without_messages())
                 return HttpResponse(status=500)
 
             response = HttpResponse(status=202)  # Accepted for queued processing
@@ -3599,7 +3609,7 @@ class WebmentionEndpoint(CSRFExemptMixin, CorsMixin, RateLimitMixin, View):
             response["Retry-After"] = "1"
             return response
         except Exception as e:
-            logger.error(f"Failed to process webmention: {e}")
+            logger.error(f"Failed to process webmention: {type(e).__name__}")
             return HttpResponse(status=400)
 
     def _webmention_cooldown_short_circuit(

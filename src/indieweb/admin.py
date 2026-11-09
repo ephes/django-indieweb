@@ -4,6 +4,7 @@ from typing import Any
 from django.contrib import admin
 from django.contrib.admin.widgets import AdminTextareaWidget
 from django.core.exceptions import ValidationError
+from django.db.models import QuerySet
 from django.forms import CharField, ModelForm
 from django.http import HttpRequest
 
@@ -61,18 +62,36 @@ class WebmentionAdmin(admin.ModelAdmin):
     )
 
 
+class WebSubSecretListFilter(admin.SimpleListFilter):
+    """Filter subscriptions by whether they store a secret for signed deliveries."""
+
+    title = "signed deliveries"
+    parameter_name = "has_secret"
+
+    def lookups(self, request: HttpRequest, model_admin: admin.ModelAdmin) -> list[tuple[str, str]]:
+        return [("yes", "With secret"), ("no", "Without secret")]
+
+    def queryset(self, request: HttpRequest, queryset: QuerySet[WebSubSubscription]) -> QuerySet[WebSubSubscription]:
+        if self.value() == "yes":
+            return queryset.exclude(secret="")
+        if self.value() == "no":
+            return queryset.filter(secret="")
+        return queryset
+
+
 @admin.register(WebSubSubscription)
 class WebSubSubscriptionAdmin(admin.ModelAdmin):
     list_display = (
         "topic_url",
         "hub_url",
         "state",
+        "has_secret",
         "lease_expires_at",
         "last_denied_at",
         "last_delivery_at",
         "created",
     )
-    list_filter = ("state", "created", "last_denied_at", "last_delivery_at")
+    list_filter = ("state", WebSubSecretListFilter, "created", "last_denied_at", "last_delivery_at")
     search_fields = ("topic_url", "hub_url")
     readonly_fields = (
         "masked_callback_token",
@@ -104,6 +123,11 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
     @admin.display(description="Callback token")
     def masked_callback_token(self, obj: WebSubSubscription) -> str:
         return obj.masked_callback_token()
+
+    @admin.display(description="Signed deliveries", boolean=True)
+    def has_secret(self, obj: WebSubSubscription) -> bool:
+        """Whether the subscription stores a secret, so hub deliveries can be signature-checked."""
+        return bool(obj.secret)
 
     @admin.display(description="Active secret")
     def masked_secret(self, obj: WebSubSubscription) -> str:

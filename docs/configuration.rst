@@ -765,10 +765,15 @@ INDIEWEB_MICROPUB_URL_POLICY
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Optional dotted path to a callable that gates submitted URLs for the Micropub
-entry source query (``GET /indieweb/micropub/?q=source&url=...``), the media
-source-by-URL query (``GET /indieweb/media/?q=source&url=...``), and the media
-delete action (``POST /indieweb/media/`` with ``action=delete``). The callable
-runs *before* the URL is forwarded to the configured handler.
+entry source query (``GET /indieweb/micropub/?q=source&url=...``), the entry
+``update``, ``delete`` and ``undelete`` actions (``POST /indieweb/micropub/``),
+the media source-by-URL query (``GET /indieweb/media/?q=source&url=...``), and
+the media delete action (``POST /indieweb/media/`` with ``action=delete``). The
+callable runs *before* the URL is forwarded to the configured handler and after
+the built-in action-URL locality check (see
+:ref:`micropub-canonical-origins`). Entry source queries and entry actions pass
+``kind="entry"``; media queries and media delete pass ``kind="media"``. A
+policy that needs to tell reads from writes can inspect ``request.method``.
 
 **Default:** ``None`` (no view-level URL gate; submitted URLs are passed
 unchanged to the handler, preserving the historical compatibility default)
@@ -799,6 +804,48 @@ allowlist of public origin and storage hosts).
 The callable is the host-owned authorization boundary for cross-origin or
 storage-external URL submissions; it complements (not replaces) the
 ownership checks the configured ``INDIEWEB_MICROPUB_HANDLER`` performs.
+
+.. _micropub-canonical-origins:
+
+INDIEWEB_MICROPUB_CANONICAL_ORIGINS
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Optional origin string, or iterable of origin strings, that Micropub action
+URLs must use. It applies to the ``url`` of entry ``update``, ``delete`` and
+``undelete`` actions and of the media ``delete`` action, and to the fallback
+check for URL-valued create/update properties that Django's ``URLValidator``
+rejects (such as ``http://localhost/...``).
+
+**Default:** ``None`` (compare against the host of the current request)
+
+.. code-block:: python
+
+   INDIEWEB_MICROPUB_CANONICAL_ORIGINS = ["https://example.com"]
+
+Each entry must be an ``http``/``https`` origin without userinfo, path, query
+or fragment, and an empty string or list is invalid. Scheme, host and port are compared; default ports are ignored
+and hosts are compared case-insensitively. An invalid value fails closed (every
+absolute action URL is rejected), is logged once, and is reported by the
+``indieweb.E001`` system check.
+
+Without this setting, an absolute action URL must name the host of the current
+request (``request.get_host()``), so the check inherits the project's
+``ALLOWED_HOSTS`` and proxy ``Host`` handling: with a wildcard
+``ALLOWED_HOSTS`` or a proxy that forwards a client-chosen ``Host``, a client
+can make an arbitrary host look local. Set this setting on such deployments.
+
+Independently of the setting, every action URL must also pass these checks
+before the handler is called; anything else returns ``400 invalid_request``:
+
+* a relative reference must be an absolute path such as ``/2026/my-post/``;
+  path-relative references (``my-post/``, ``../my-post``) and network-path
+  references (``//host/...``) are rejected;
+* the path must not contain ``.`` or ``..`` segments, backslashes, whitespace
+  or control characters, including percent-encoded forms such as ``%2e%2e``;
+* absolute URLs must use ``http`` or ``https`` and must not contain userinfo.
+
+Relative paths and absolute URLs are forwarded to the handler unchanged. See
+:ref:`the handler URL contract <micropub-handler-url-contract>` for what a handler must still check.
 
 INDIEWEB_WEBSUB_HUBS
 ~~~~~~~~~~~~~~~~~~~~
@@ -1036,9 +1083,9 @@ with the same derivation. Unrecoverable encrypted secrets abort rollback with
 a value-free error before schema narrowing; the database's stored values remain
 unchanged. Restore the encryption keys before retrying rollback.
 
-For production, subscribe with a strong ``hub.secret`` for every topic. Set
-``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = True`` if unsigned deliveries
-should be rejected even for legacy rows without stored secrets.
+For production, subscribe with a strong ``hub.secret`` for every topic.
+Deliveries for subscriptions without a stored secret are rejected by default;
+see ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` below.
 ``X-Hub-Signature-256`` is preferred over legacy ``X-Hub-Signature`` when both
 headers are present. ``sha1`` signatures are rejected by default; set
 ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True`` only for a hub that cannot
@@ -1092,6 +1139,44 @@ copy-and-adapt delivery hook examples that enqueue a compact payload for a
 host-owned worker. The examples keep feed parsing, entry persistence, queue
 choice, retry behavior, and delivery body storage policy outside
 django-indieweb.
+
+INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Whether WebSub deliveries must carry a valid HMAC signature.
+
+**Default:** ``True``
+
+With the default, a delivery for a subscription that has no stored
+``hub.secret`` is rejected with HTTP ``403`` and recorded as
+``invalid signature``; the delivery hook and enqueue callable are not called.
+Subscriptions with a stored secret are always signature-checked, whatever this
+setting says.
+
+``request_websub_subscription()`` logs a warning when a subscribe request
+carries no ``secret`` and the subscription has no stored secret. The admin
+shows a "Signed deliveries" column and filter for ``WebSubSubscription`` rows,
+so subscriptions without a secret are easy to find.
+
+To keep accepting unsigned deliveries, for example from a hub that only
+supports plain HTTP (``hub.secret`` is only sent to ``https`` hubs), opt out:
+
+.. code-block:: python
+
+   INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False
+
+Anyone who learns a callback URL can then submit content for subscriptions
+without a secret. When the opt-out is combined with
+``INDIEWEB_WEBSUB_DELIVERY_HOOK`` or ``INDIEWEB_WEBSUB_DELIVERY_ENQUEUE``, the
+``indieweb.W001`` system check reports it; silence the check with
+``SILENCED_SYSTEM_CHECKS`` once the risk is accepted.
+
+Before upgrading, check for subscriptions without a secret (admin filter
+"Signed deliveries: Without secret", or
+``WebSubSubscription.objects.filter(secret="")``). Re-subscribe each of them
+with ``request_websub_subscription(topic_url, hub_url, secret=...)`` using a
+random secret of at least 20 bytes; the secret becomes active once the hub
+verifies the request. Otherwise set the opt-out above.
 
 INDIEWEB_WEBSUB_DELIVERY_ATTEMPT_RETENTION_DAYS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2397,7 +2482,9 @@ domain:
        "websub_callback":     {"limit": 120, "window": 60},
    }
    INDIEWEB_MICROPUB_URL_POLICY = "your_project.micropub_policy.allow_only_owned_urls"
+   INDIEWEB_MICROPUB_CANONICAL_ORIGINS = ["https://your-site.example"]
    INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = True
+   INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = True
    INDIEWEB_WEBMENTION_MAX_TARGETS_PER_SOURCE = 50
    INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST = 5
    INDIEWEB_WEBMENTION_STATUS_PUBLIC = True
@@ -2422,15 +2509,21 @@ Notes:
   (exact entries vs trailing-``/`` prefix entries) and for the
   ``INDIEWEB_REDIRECT_URI_VALIDATOR`` policy hook.
 * ``INDIEWEB_MICROPUB_URL_POLICY`` is a host-owned dotted path that gates
-  submitted URLs on the entry source query and media source/delete actions
-  before they reach the configured handler. Replace the placeholder above
+  submitted URLs on the entry source query, the entry update/delete/undelete
+  actions, and the media source/delete actions before they reach the
+  configured handler. Replace the placeholder above
   with a callable that returns ``True`` only for URLs your deployment
   considers safe (e.g. owned post URLs, plus your storage and CDN hosts).
   Returning anything else yields ``400 invalid_request``; raises and import
   failures fail closed with ``500``.
-* ``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = True`` is the default, but keeping it
-  explicit in hardened settings documents that callback deliveries must bind
-  the body to the subscribed topic with ``Link: <topic>; rel="self"``.
+* ``INDIEWEB_MICROPUB_CANONICAL_ORIGINS`` makes Micropub action URLs compare
+  against your site's origin instead of the request ``Host`` header, so the
+  check does not depend on ``ALLOWED_HOSTS`` or proxy configuration.
+* ``INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = True`` and
+  ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = True`` are the defaults, but
+  keeping them explicit in hardened settings documents that callback
+  deliveries must be signed and must bind the body to the subscribed topic
+  with ``Link: <topic>; rel="self"``.
 * The Webmention sender fanout caps bound outbound endpoint discovery and
   delivery when posts may contain user-influenced links. Raise or disable
   them only when the source content is trusted or an external queue supplies
@@ -2465,11 +2558,12 @@ Values are matched case-insensitively after trimming whitespace. Any other
 value, such as a typo, ``True`` or ``"yes"``, is treated as ``"redact"`` and
 logged once as a warning, so a misspelled opt-in never leaks values.
 
-* ``"passthrough"`` (default): URL/state/me values appear verbatim, and
+* ``"passthrough"`` (default): URL/state/me values appear in readable form, and
   bearer tokens are rendered in the ``{value[:4]}...``
   diagnostic form (``redact_token`` truncates even in passthrough so the
-  full credential is never written to logs). Backwards-compatible with
-  existing log pipelines.
+  full credential is never written to logs). Even in this mode URLs are
+  logged without userinfo, query or fragment, and exception text is never
+  logged (see "Free text in logs and stored diagnostics" below).
 * ``"redact"``: URL/state/me/token values are replaced by a 12-character
   hex digest derived from ``SECRET_KEY``. The digest is one-way and
   stable per input, so log consumers can correlate events for the same
@@ -2482,13 +2576,13 @@ logged once as a warning, so a misspelled opt-in never leaks values.
   leading bytes never appear in redacted logs.
 
 For token introspection authorizers, redirect validators, client-ID validators
-and Webmention Vouch trust policies, ERROR diagnostics digest import paths,
-submitted URLs and arbitrary exception messages in redact mode. This guarantee
-covers these four hooks, rather than all host-defined policy hooks. They keep the fixed operation name and exception class
-without traceback details, and continue to deny access on import/call failures
-or invalid callable configuration. Passthrough mode retains raw policy paths,
-URLs and exception messages, which may contain credentials or user data from
-host hooks; use redact mode for privacy-sensitive deployments.
+and Webmention Vouch trust policies, ERROR diagnostics digest import paths and
+submitted URLs in redact mode. This guarantee covers these four hooks, rather
+than all host-defined policy hooks. They keep the fixed operation name and
+exception class without traceback details or exception message, and continue
+to deny access on import/call failures or invalid callable configuration.
+Passthrough mode retains raw policy paths and URLs in the ``safe_url()`` form
+described below; use redact mode for privacy-sensitive deployments.
 
 Three kinds of value are digested in redact mode at every log level,
 including ERROR, because they are credentials or identify a user or client
@@ -2497,29 +2591,81 @@ rather than a failing resource:
 * authorization codes on the token endpoint (passthrough keeps the six
   character diagnostic prefix; redact mode logs the ``redact_token`` digest
   and no leading characters);
-* ``client_id`` URLs on token-exchange and client-validator failure lines,
-  together with the exception message of a raising
-  ``INDIEWEB_CLIENT_ID_VALIDATOR`` (printed as ``<redacted:DIGEST>``, because
-  the message can embed the URL);
+* ``client_id`` URLs on token-exchange and client-validator failure lines;
 * the token owner's username on the "token owner is not active" lines of the
   resource-server and token-introspection checks.
 
 The ``notify_websub`` management command applies the same policy to stdout:
 topic and hub URLs are digested, and a request error without an HTTP status
-(free-form text that can embed a URL) is printed as ``<redacted:DIGEST>``.
+is printed as the exception class name.
 
 Micropub handler failures also honor this policy at WARNING and ERROR:
 ``create_entry``, ``update_entry``, ``delete_entry``, ``undelete_entry``,
 ``get_entry``, ``list_entries``, ``get_media``, ``list_media``, and
-``delete_media`` log the operation and exception class. In redact mode,
-submitted URLs are digested, free-form filters and exception messages are
-rendered as ``<redacted:DIGEST>``, and exception tracebacks (including chained
-messages) are omitted. Passthrough mode retains raw URLs, filters and messages,
-plus tracebacks for unexpected failures. Responses remain ``400 invalid_request``
-for handler ``ValueError`` and empty ``500`` for unexpected exceptions.
-Rendered context and exception-message fields are capped at 512 characters
-and exception-class names at 80. Intentional passthrough tracebacks retain the
-original exception details; redact mode never includes those tracebacks.
+``delete_media`` log the operation and exception class, never the exception
+message. In redact mode, submitted URLs are digested, free-form filters are
+rendered as ``<redacted:DIGEST>``, and exception tracebacks are omitted.
+Passthrough mode retains URLs (in ``safe_url()`` form) and filters, plus
+message-free tracebacks for unexpected failures. Responses remain
+``400 invalid_request`` for handler ``ValueError`` and empty ``500`` for
+unexpected exceptions. Rendered context fields are capped at 512 characters
+and exception-class names at 80.
+
+.. _log-free-text:
+
+Free text in logs and stored diagnostics
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Independent of the mode, the package does not write free text that may carry
+credentials to logs or to stored diagnostic fields, and it does not try to
+scrub secrets out of such text. Exception messages, remote response bodies
+and worker output can hide a credential in too many encodings for a scrubber
+to find reliably, so they are reduced to fixed facts instead:
+
+* **Exceptions** are logged and stored as their class name only
+  (``ConnectError``, ``WebmentionRedirectError``, ``HTTPResponseTooLarge``).
+  Two package exceptions whose messages are fixed sentences written in the
+  package keep their message: ``indieweb.websub.WebSubRejection`` (rejected
+  WebSub verification, denial and delivery-signature callbacks, for example
+  ``WebSub delivery rejected: unsigned, and the subscription has no stored
+  secret``) and ``WebmentionSourceRejected`` (``source too expensive to
+  process (memory limit)``).
+* **Tracebacks** that the package logs (``logger.error(..., exc_info=...)``)
+  keep the stack and the module-qualified exception classes of the whole
+  chain, but no exception message, arguments or ``__notes__``; exception
+  groups lose their member exceptions.
+* **URLs** are logged as ``scheme://host[:port]/path``: userinfo, query,
+  fragment and path parameters (``;jsessionid=...``) are dropped, the host is
+  lower-cased, and control characters, spaces, backslashes and non-ASCII
+  characters are percent-encoded. A URL with a scheme but no authority
+  (``mailto:``, ``data:``) is reduced to its scheme, a relative reference to
+  its absolute path (otherwise ``<relative URL>``), and a value that does not
+  parse, including one with an invalid port, to ``<invalid URL>``. The path is
+  kept, so a secret in a path segment is still visible.
+* **Remote bodies and worker output** are reduced to a length and a keyed
+  digest (HMAC-SHA256 with ``SECRET_KEY``, 12 hex characters): a failed WebSub
+  subscription request or hub notification stores
+  ``HTTP 400; body 37 bytes, digest 1a2b3c4d5e6f``, a hub denial stores
+  ``hub.reason 21 bytes, digest ...``, and a failed parse worker logs
+  ``stderr 812 bytes, digest ...`` (stderr over 256 KiB by size only).
+
+This applies to ``WebSubSubscription.last_request_error`` and
+``last_denial_reason``, ``WebSubNotificationResult.error``,
+``WebSubSubscriptionRequestResult.error``, Webmention send results and
+``WebmentionOutboundTarget.last_error``. For example, an ``httpx.ConnectError``
+whose message reads
+``connection failed for https://user:pw@hub.example/x?code=abc`` is stored as
+``ConnectError`` and logged as::
+
+   WebSub hub notification failed for 'https://hub.example/x': ConnectError
+
+To check whether a known body or reason produced a stored digest, compute
+``indieweb.log_redaction.text_fingerprint(body)`` with the same ``SECRET_KEY``.
+Host code can use the same helpers: ``safe_url()``, ``text_fingerprint()`` and
+``exc_info_without_messages()`` in ``indieweb.log_redaction``;
+``redact_url()`` adds the mode-dependent digest on top of ``safe_url()``.
+``redact_text()`` is only for text known not to carry credentials, such as a
+Micropub query filter.
 
 Other ERROR-level lines are not uniformly redacted. Rotate ``SECRET_KEY`` to
 invalidate previously-emitted digests; values are scoped to the current key.

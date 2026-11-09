@@ -47,10 +47,7 @@ Add these settings to your Django settings:
 
 .. code-block:: python
 
-    # Required: URL resolver to map URLs to content objects
-    INDIEWEB_URL_RESOLVER = 'myproject.webmention_config.MyURLResolver'
-
-    # Required: Spam checker (use default or implement your own)
+    # Optional: Spam checker (unset means no spam classification)
     INDIEWEB_SPAM_CHECKER = 'indieweb.interfaces.NoOpSpamChecker'
 
     # Optional: Queue incoming Webmention processing outside the request path
@@ -67,13 +64,18 @@ Add these settings to your Django settings:
     INDIEWEB_SALMENTION_SUCCESS_CUTOFF_SECONDS = 2592000
     INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
 
-    # Optional: Comment adapter to convert webmentions to comments
-    INDIEWEB_COMMENT_ADAPTER = 'myproject.webmention_config.MyCommentAdapter'
+``INDIEWEB_URL_RESOLVER`` and ``INDIEWEB_COMMENT_ADAPTER`` appeared in older
+versions of this guide, but django-indieweb never reads them: the package does
+not map targets to content objects or create comments. Projects that keep such
+a setting own it themselves and load it from their own code. It can be removed
+from settings when no project code reads it.
 
 Implementing URL Resolution
 ===========================
 
-Create a URL resolver to map target URLs to your content objects:
+``indieweb.interfaces.URLResolver`` is an optional base class for project code
+that maps Webmention target URLs to content objects, for example in a
+``webmention_received`` signal receiver. django-indieweb does not call it.
 
 .. code-block:: python
 
@@ -128,6 +130,33 @@ Create a custom spam checker:
                 'confidence': 0.9 if is_spam else 0.1,
                 'details': 'Keyword-based detection'
             }
+
+Spam checker safety contract
+----------------------------
+
+``INDIEWEB_SPAM_CHECKER`` is imported with ``import_string`` and its ``check()``
+method runs in-process, inside Webmention processing, after the source was
+fetched and parsed and before the result is stored. The ``webmention`` it
+receives carries attacker-controlled data: the source URL, author fields and
+content parsed from a remote page. The package's outbound safeguards (SSRF
+checks, address pinning, size and time limits, parse isolation) cover only the
+package's own requests; a spam checker inherits none of them. A spam checker
+must therefore:
+
+* not fetch URLs from the Webmention itself (source, author or photo URLs, or
+  links in the content). If it must make outbound requests, call a fixed,
+  operator-configured service, and set strict timeouts and response size
+  limits. Use ``indieweb.http_client.validate_safe_http_url()`` and
+  ``request_with_safe_redirects()`` if a remote URL is unavoidable;
+* never pass Webmention data to a shell, ``eval``/``exec``, a template engine,
+  raw SQL, or a filesystem path;
+* return quickly and return a dict with at least ``is_spam``. An exception
+  marks the Webmention ``failed`` (logged as "unexpected error") instead of
+  storing it;
+* treat the data as untrusted in its own logs: log URLs through
+  ``indieweb.log_redaction.safe_url()`` or ``redact_url()``, exceptions by
+  class name, and remote text through ``text_fingerprint()`` (see
+  :ref:`log-free-text`).
 
 Receiving and Queued Processing
 ===============================

@@ -1,5 +1,6 @@
 """Count real rows under default and deliberately permissive DB collations."""
 
+import gc
 import unicodedata
 
 import pytest
@@ -11,8 +12,27 @@ from indieweb.models import Webmention
 from indieweb.templatetags.webmention_tags import prepare_webmention_counts, webmention_count
 
 
+@pytest.fixture
+def collector_paused():
+    """Keep the cyclic garbage collector from running inside a Python collation.
+
+    SQLite calls the collation below while it holds the lock of the shared
+    in-memory test database. Django never closes in-memory connections, so
+    connections of threads from earlier tests linger as cyclic garbage. If the
+    collector finalized one of them inside the collation, closing it would wait
+    for that lock forever. Collect them first and pause the collector until
+    the collation is removed again.
+    """
+    gc.collect()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    yield
+    if was_enabled:
+        gc.enable()
+
+
 @pytest.fixture(params=[False, True], ids=["default-collation", "insensitive-collation"])
-def count_collation(request, transactional_db):
+def count_collation(request, transactional_db, collector_paused):
     if not request.param:
         yield False
         return

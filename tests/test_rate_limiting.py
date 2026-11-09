@@ -290,6 +290,7 @@ def test_websub_callback_endpoint_key_is_limited(client, settings):
         state=models.WebSubSubscription.STATE_ACTIVE,
     )
     settings.INDIEWEB_RATE_LIMITS = {"websub_callback": {"limit": 1, "window": 60}}
+    settings.INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False
     url = reverse("indieweb:websub-callback", args=[subscription.callback_token])
     headers = {"HTTP_LINK": f'<{subscription.topic_url}>; rel="self"'}
 

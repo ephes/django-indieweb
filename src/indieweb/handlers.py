@@ -68,6 +68,13 @@ class MicropubContentHandler(ABC):
     deleting, or undeleting an entry or media item, handlers must verify that
     the authenticated ``user`` is allowed to perform that operation on the
     submitted URL or storage object.
+
+    Submitted URLs are untrusted. The endpoint only forwards absolute paths
+    and absolute URLs on a canonical origin without dot segments, but handlers
+    must still resolve them against the site's canonical origin, look objects
+    up by exact identifiers (never substring matches), and never join them to
+    filesystem or storage paths. See "Handler URL contract" in the Micropub
+    documentation.
     """
 
     @abstractmethod

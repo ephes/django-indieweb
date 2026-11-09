@@ -37,7 +37,7 @@ from .http_client import (
     request_with_safe_redirects,
     validate_safe_http_url,
 )
-from .log_redaction import redact_url
+from .log_redaction import exc_info_without_messages, redact_url, text_fingerprint
 from .models import (
     WEBSUB_SECRET_ENCRYPTED_PREFIX,
     WebSubAcceptedDelivery,
@@ -75,6 +75,15 @@ class WebSubLink:
 
     rel: str
     url: str
+
+
+class WebSubRejection(ValueError):
+    """A rejected WebSub callback or delivery.
+
+    The message is always a fixed sentence written in this module and never
+    contains request data, so callers may log it (other exception text is
+    logged as the class name only, see ``indieweb.log_redaction``).
+    """
 
 
 @dataclass(frozen=True)
@@ -293,6 +302,49 @@ def _delivery_content_type_allowed(content_type: str) -> bool:
 
 def _setting_enabled(name: str, *, default: bool = False) -> bool:
     return bool(getattr(settings, name, default))
+
+
+def hub_response_error(response: httpx.Response) -> str:
+    """Return the stored/logged diagnostic for a failed hub response: status, body length and digest.
+
+    The body itself is never stored or logged; see ``indieweb.log_redaction.text_fingerprint``.
+    """
+    return f"HTTP {response.status_code}; body {text_fingerprint(response.content)}"
+
+
+def websub_signed_deliveries_required() -> bool:
+    """Return whether WebSub deliveries must carry a valid signature.
+
+    ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` defaults to ``True``: a
+    delivery for a subscription without a stored secret is rejected. Set it to
+    ``False`` to accept unsigned deliveries for subscriptions created without a
+    secret.
+    """
+    return _setting_enabled("INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES", default=True)
+
+
+def _warn_unsigned_subscription(subscription: WebSubSubscription) -> None:
+    """Log that a subscribe request carries no ``hub.secret`` and none is stored."""
+    hub = redact_url(subscription.hub_url)
+    topic = redact_url(subscription.topic_url)
+    if websub_signed_deliveries_required():
+        logger.warning(
+            "WebSub subscription for topic=%r hub=%r has no hub.secret. Signed deliveries are required "
+            "(INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES defaults to True), so every delivery for it will be "
+            "rejected with 403. Subscribe again with a secret of at least 20 bytes, or set "
+            "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False to accept unsigned deliveries.",
+            topic,
+            hub,
+        )
+    else:
+        logger.warning(
+            "WebSub subscription for topic=%r hub=%r has no hub.secret and "
+            "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES is False: unsigned deliveries will be accepted and "
+            "passed to the configured delivery hook. Anyone who learns the callback URL can submit content. "
+            "Subscribe with a secret of at least 20 bytes to authenticate deliveries.",
+            topic,
+            hub,
+        )
 
 
 def _configured_positive_int(name: str, *, default: int, label: str) -> int:
@@ -707,6 +759,9 @@ def request_websub_subscription(
         )
         callback_url = build_websub_callback_url(subscription, callback_base_url)
 
+    if validated_mode == WebSubSubscription.MODE_SUBSCRIBE and secret is None and not subscription.secret:
+        _warn_unsigned_subscription(subscription)
+
     close_client = client is None
     http_client = client or disable_client_cookies(
         httpx.Client(
@@ -738,7 +793,10 @@ def request_websub_subscription(
             WebmentionRedirectError,
             HTTPResponseTooLarge,
         ) as exc:
-            logger.warning(f"WebSub subscription request failed for hub={redact_url(subscription.hub_url)!r}: {exc}")
+            request_error = type(exc).__name__
+            logger.warning(
+                f"WebSub subscription request failed for hub={redact_url(subscription.hub_url)!r}: {request_error}"
+            )
             _save_subscription_request_failure(
                 subscription,
                 mode=validated_mode,
@@ -746,13 +804,13 @@ def request_websub_subscription(
                 previous_pending_secret=previous_pending_secret,
                 previous_pending_secret_set=previous_pending_secret_set,
                 status_code=None,
-                error=str(exc),
+                error=request_error,
             )
             return WebSubSubscriptionRequestResult(
                 subscription=subscription,
                 mode=validated_mode,
                 success=False,
-                error=str(exc),
+                error=request_error,
             )
 
         if response.is_success:
@@ -764,7 +822,7 @@ def request_websub_subscription(
                 status_code=response.status_code,
             )
 
-        error = response.text[:500]
+        error = hub_response_error(response)
         _save_subscription_request_failure(
             subscription,
             mode=validated_mode,
@@ -808,7 +866,7 @@ def _lock_current_subscription(subscription: WebSubSubscription, *, using: str) 
             from_queryset=WebSubSubscription.objects.using(using).select_for_update(),
         )
     except WebSubSubscription.DoesNotExist as exc:
-        raise ValueError("WebSub subscription no longer exists") from exc
+        raise WebSubRejection("WebSub subscription no longer exists") from exc
 
 
 def confirm_websub_verification(
@@ -850,18 +908,18 @@ def _apply_websub_verification(
 ) -> None:
     validated_mode = _validate_subscription_mode(mode)
     if not challenge:
-        raise ValueError("WebSub verification challenge is required")
+        raise WebSubRejection("WebSub verification challenge is required")
     if topic_url != subscription.topic_url:
-        raise ValueError("WebSub verification topic does not match subscription")
+        raise WebSubRejection("WebSub verification topic does not match subscription")
     if subscription.pending_mode != validated_mode:
-        raise ValueError("WebSub verification mode does not match pending subscription mode")
+        raise WebSubRejection("WebSub verification mode does not match pending subscription mode")
 
     if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
         if subscription.state not in {
             WebSubSubscription.STATE_PENDING_SUBSCRIBE,
             WebSubSubscription.STATE_ACTIVE,
         }:
-            raise ValueError("WebSub subscription is not pending subscribe verification")
+            raise WebSubRejection("WebSub subscription is not pending subscribe verification")
         confirmed_lease = _positive_int(lease_seconds, label="lease seconds")
         if confirmed_lease is None:
             confirmed_lease = subscription.requested_lease_seconds
@@ -876,7 +934,7 @@ def _apply_websub_verification(
             subscription.set_secret(subscription.get_pending_secret())
     else:
         if subscription.state != WebSubSubscription.STATE_PENDING_UNSUBSCRIBE:
-            raise ValueError("WebSub subscription is not pending unsubscribe verification")
+            raise WebSubRejection("WebSub subscription is not pending unsubscribe verification")
         subscription.state = WebSubSubscription.STATE_UNSUBSCRIBED
         subscription.confirmed_lease_seconds = None
         subscription.lease_expires_at = None
@@ -939,9 +997,9 @@ def _apply_websub_denial(
     reason: str,
 ) -> None:
     if topic_url != subscription.topic_url:
-        raise ValueError("WebSub denial topic does not match subscription")
+        raise WebSubRejection("WebSub denial topic does not match subscription")
     if subscription.pending_mode not in WEBSUB_SUBSCRIPTION_MODES:
-        raise ValueError("WebSub denial does not match a pending subscription request")
+        raise WebSubRejection("WebSub denial does not match a pending subscription request")
 
     now = timezone.now()
     denied_mode = subscription.pending_mode
@@ -950,7 +1008,7 @@ def _apply_websub_denial(
             WebSubSubscription.STATE_PENDING_SUBSCRIBE,
             WebSubSubscription.STATE_ACTIVE,
         }:
-            raise ValueError("WebSub denial does not match pending subscribe verification")
+            raise WebSubRejection("WebSub denial does not match pending subscribe verification")
         was_active_renewal = subscription.state == WebSubSubscription.STATE_ACTIVE
         if not was_active_renewal:
             subscription.state = WebSubSubscription.STATE_DENIED
@@ -958,12 +1016,13 @@ def _apply_websub_denial(
             subscription.lease_expires_at = None
     else:
         if subscription.state != WebSubSubscription.STATE_PENDING_UNSUBSCRIBE:
-            raise ValueError("WebSub denial does not match pending unsubscribe verification")
+            raise WebSubRejection("WebSub denial does not match pending unsubscribe verification")
         subscription.state = WebSubSubscription.STATE_ACTIVE
 
     subscription.last_denied_at = now
     subscription.last_denied_mode = denied_mode
-    subscription.last_denial_reason = reason[:500]
+    # The hub's free text is stored as a fingerprint only, like hub response bodies.
+    subscription.last_denial_reason = f"hub.reason {text_fingerprint(reason)}" if reason else ""
     subscription.pending_mode = ""
     update_fields = [
         "state",
@@ -1270,13 +1329,15 @@ def validate_websub_delivery_signature(
     """Validate a signed WebSub delivery.
 
     Returns the accepted algorithm name, or ``None`` when the subscription has
-    no secret and no validation is required. Raises ``ValueError`` for missing,
-    malformed, unsupported, or mismatched signatures.
+    no secret and ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` is ``False``.
+    Raises ``ValueError`` for missing, malformed, unsupported, or mismatched
+    signatures, and for a subscription without a secret while signed
+    deliveries are required (the default).
     """
     secret = subscription.get_secret()
     if not secret:
-        if _setting_enabled("INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES"):
-            raise ValueError("WebSub delivery signature is required but the subscription has no secret")
+        if websub_signed_deliveries_required():
+            raise WebSubRejection("WebSub delivery rejected: unsigned, and the subscription has no stored secret")
         return None
 
     signatures = _signature_headers(headers)
@@ -1289,7 +1350,7 @@ def validate_websub_delivery_signature(
         if algorithm in allowed_algorithms and algorithm in WEBSUB_SIGNATURE_ALGORITHMS
     ]
     if not supported_signatures:
-        raise ValueError("WebSub delivery signature did not include a supported algorithm")
+        raise WebSubRejection("WebSub delivery rejected: no supported algorithm in the delivery signature")
 
     strongest = max(WEBSUB_SIGNATURE_STRENGTH[algorithm] for algorithm, _received_digest in supported_signatures)
     for algorithm, received_digest in supported_signatures:
@@ -1303,7 +1364,7 @@ def validate_websub_delivery_signature(
             continue
         if hmac.compare_digest(expected, received_digest):
             return algorithm
-    raise ValueError("WebSub delivery signature did not validate")
+    raise WebSubRejection("WebSub delivery rejected: the HMAC did not validate against the stored secret")
 
 
 def delivery_is_replay(
@@ -1502,7 +1563,9 @@ def get_websub_delivery_hook() -> Any | None:
     try:
         hook = import_string(hook_path)
     except Exception as exc:
-        logger.exception(f"Failed to load INDIEWEB_WEBSUB_DELIVERY_HOOK {hook_path!r}")
+        logger.error(
+            f"Failed to load INDIEWEB_WEBSUB_DELIVERY_HOOK {hook_path!r}", exc_info=exc_info_without_messages()
+        )
         raise WebSubDeliveryHookError from exc
     if not callable(hook):
         logger.error(f"INDIEWEB_WEBSUB_DELIVERY_HOOK {hook_path!r} is not callable")
@@ -1540,7 +1603,9 @@ def process_websub_delivery(
     try:
         hook(**hook_kwargs)
     except Exception as exc:
-        logger.exception(f"WebSub delivery hook failed for subscription {subscription.pk}")
+        logger.error(
+            f"WebSub delivery hook failed for subscription {subscription.pk}", exc_info=exc_info_without_messages()
+        )
         raise WebSubDeliveryHookError from exc
 
 
@@ -1552,7 +1617,9 @@ def get_websub_delivery_enqueue() -> Any | None:
     try:
         enqueue = import_string(enqueue_path)
     except Exception as exc:
-        logger.exception(f"Failed to load INDIEWEB_WEBSUB_DELIVERY_ENQUEUE {enqueue_path!r}")
+        logger.error(
+            f"Failed to load INDIEWEB_WEBSUB_DELIVERY_ENQUEUE {enqueue_path!r}", exc_info=exc_info_without_messages()
+        )
         raise WebSubDeliveryEnqueueError from exc
     if not callable(enqueue):
         logger.error(f"INDIEWEB_WEBSUB_DELIVERY_ENQUEUE {enqueue_path!r} is not callable")
@@ -1595,7 +1662,10 @@ def enqueue_websub_delivery(
     try:
         enqueue(**enqueue_kwargs)
     except Exception as exc:
-        logger.exception(f"WebSub delivery enqueue hook failed for subscription {subscription.pk}")
+        logger.error(
+            f"WebSub delivery enqueue hook failed for subscription {subscription.pk}",
+            exc_info=exc_info_without_messages(),
+        )
         raise WebSubDeliveryEnqueueError from exc
     return True
 
@@ -1653,13 +1723,13 @@ def notify_hubs(
                 )
                 response = delivered.response
             except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError, HTTPResponseTooLarge) as exc:
-                logger.warning(f"WebSub hub notification failed for {redact_url(hub_url)!r}: {exc}")
+                logger.warning(f"WebSub hub notification failed for {redact_url(hub_url)!r}: {type(exc).__name__}")
                 results.append(
                     WebSubNotificationResult(
                         hub_url=hub_url,
                         topic_url=validated_topic_url,
                         success=False,
-                        error=str(exc),
+                        error=type(exc).__name__,
                     )
                 )
                 continue
@@ -1671,7 +1741,7 @@ def notify_hubs(
                     topic_url=validated_topic_url,
                     success=success,
                     status_code=response.status_code,
-                    error="" if success else response.text[:500],
+                    error="" if success else hub_response_error(response),
                 )
             )
     finally:

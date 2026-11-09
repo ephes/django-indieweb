@@ -5,6 +5,66 @@ Changelog
 
 Unreleased
 ----------
+* **Behaviour change:** ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` now
+  defaults to ``True``. WebSub deliveries for subscriptions without a stored
+  ``hub.secret`` are rejected with ``403`` (recorded as ``invalid signature``)
+  instead of being accepted unsigned and passed to the delivery hook or queue.
+  Existing subscriptions without a secret need one of two actions before or
+  right after upgrading: subscribe again with
+  ``request_websub_subscription(topic_url, hub_url, secret=...)`` (at least 20
+  bytes, ``https`` hub; the secret is used once the hub verifies the request),
+  or set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False`` to keep
+  accepting unsigned deliveries. Subscribing without a secret now logs a
+  warning, the admin lists and filters subscriptions by "Signed deliveries",
+  and the new ``indieweb.W001`` system check warns when the opt-out is combined
+  with a delivery hook or queue.
+* **Behaviour change:** Micropub ``update``/``delete``/``undelete`` and media
+  ``delete`` action URLs pass a stricter locality check before the handler
+  runs. Relative references must be absolute paths (``/2026/post/``);
+  path-relative (``post/``, ``../post``) and network-path (``//host/``)
+  references, ``.``/``..`` segments (also percent-encoded), backslashes,
+  control characters and userinfo return ``400 invalid_request``. The new
+  ``INDIEWEB_MICROPUB_CANONICAL_ORIGINS`` setting compares absolute action URLs
+  with configured origins (scheme, host, port) instead of the request ``Host``;
+  invalid values fail closed and are reported by the ``indieweb.E001`` system
+  check. Without the setting the check still compares against
+  ``request.get_host()`` and so inherits ``ALLOWED_HOSTS``.
+* ``INDIEWEB_MICROPUB_URL_POLICY`` now also gates entry
+  ``update``/``delete``/``undelete`` action URLs, with ``kind="entry"``.
+  Existing policies that only allow known entry URLs keep working; policies
+  that reject every ``"entry"`` URL now also reject these actions.
+* Document the Micropub handler URL contract (resolve against the canonical
+  origin, exact lookups, no filesystem joins, ownership checks) and a spam
+  checker safety contract.
+* **Behaviour change:** exception text, remote response bodies and
+  parse-worker output are no longer logged or stored, also in the default
+  ``passthrough`` log mode. Log lines and stored diagnostics now hold only:
+  the exception class name (``ConnectError``) instead of its message;
+  ``scheme://host[:port]/path`` instead of a full URL (userinfo, query,
+  fragment and path parameters dropped); ``HTTP <status>; body <N> bytes,
+  digest <hex>`` instead of a failed hub's response body; ``hub.reason <N>
+  bytes, digest <hex>`` instead of a hub's denial reason; and ``stderr <N>
+  bytes, digest <hex>`` instead of parse-worker stderr. The digest is an
+  HMAC-SHA256 keyed with ``SECRET_KEY``. Tracebacks the package logs keep the
+  stack and exception classes but drop every message and note. This affects
+  ``redact_url()``/``redact_url_origin()`` passthrough output,
+  ``WebSubSubscription.last_request_error`` and ``last_denial_reason``,
+  ``WebSubNotificationResult.error``, ``WebSubSubscriptionRequestResult.error``,
+  Webmention send results and ``WebmentionOutboundTarget.last_error``, the
+  ``notify_websub`` command output, and the WebSub, Webmention, Micropub and
+  policy-hook log lines. Rejected WebSub callbacks raise the new
+  ``WebSubRejection`` (a ``ValueError`` subclass) whose fixed messages are
+  still logged, and Webmention source rejections keep their fixed reason.
+  New helpers in ``indieweb.log_redaction``: ``safe_url()``,
+  ``text_fingerprint()`` and ``exc_info_without_messages()``. Code or tests
+  that parse the old message text out of these fields or log lines need
+  updating. See "Free text in logs and stored diagnostics" in the
+  configuration guide.
+* The Webmention guide no longer lists ``INDIEWEB_URL_RESOLVER`` and
+  ``INDIEWEB_COMMENT_ADAPTER`` as settings: the package never read them.
+  Projects that set them can remove them unless their own code reads them.
+* Add an ``IndieWebConfig`` app config, which registers the package's system
+  checks.
 * Validate h-card property containers and supported item shapes before deriving
   profile fields; invalid h-card values report field-scoped validation errors.
   Preserve explicit empty-list clearing and structured photo support.

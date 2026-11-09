@@ -509,16 +509,16 @@ class WebmentionSender:
                 }
 
         except HTTPResponseTooLarge as e:
-            return {"success": False, "status_code": None, "error": f"response too large: {e}"}
+            return {"success": False, "status_code": None, "error": f"response too large ({type(e).__name__})"}
         except httpx.RequestError as e:
             # Handle httpx exceptions (network errors, timeouts, etc.)
             status_code = None
             if hasattr(e, "response") and e.response is not None:
                 status_code = e.response.status_code
-            return {"success": False, "status_code": status_code, "error": str(e)}
+            return {"success": False, "status_code": status_code, "error": type(e).__name__}
         except Exception as e:
             # Handle other exceptions
-            return {"success": False, "status_code": None, "error": str(e)}
+            return {"success": False, "status_code": None, "error": type(e).__name__}
         finally:
             if close_client:
                 http_client.close()

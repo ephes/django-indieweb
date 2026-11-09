@@ -5,7 +5,6 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from indieweb.log_redaction import redact_text
 from indieweb.websub import WebSubNotificationResult
 
 
@@ -102,9 +101,10 @@ def test_notify_websub_command_converts_validation_errors(mock_notify_hubs):
 
 
 @patch("indieweb.management.commands.notify_websub.notify_hubs")
-def test_notify_websub_command_redacts_request_errors_in_redact_mode(mock_notify_hubs, settings):
+def test_notify_websub_command_shows_request_error_class_in_redact_mode(mock_notify_hubs, settings):
     settings.INDIEWEB_LOG_REDACTION = "redact"
-    error = "Redirect to unsafe URL https://internal-marker.example/private-path"
+    # notify_hubs records the exception class name only, never exception text.
+    error = "WebmentionRedirectError"
     mock_notify_hubs.return_value = [
         WebSubNotificationResult(
             hub_url="https://hub.example/",
@@ -119,11 +119,8 @@ def test_notify_websub_command_redacts_request_errors_in_redact_mode(mock_notify
         call_command("notify_websub", "https://example.com/feed", stdout=out)
 
     output = out.getvalue()
-    assert "internal-marker" not in output
-    assert "private-path" not in output
     assert "hub.example" not in output
-    assert f"({redact_text(error)})" in output
-    assert redact_text(error).startswith("<redacted:")
+    assert "(WebmentionRedirectError)" in output
 
 
 @patch("indieweb.management.commands.notify_websub.notify_hubs")

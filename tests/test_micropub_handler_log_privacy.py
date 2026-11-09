@@ -11,6 +11,8 @@ from indieweb.log_redaction import redact_url
 from indieweb.models import Token
 
 PRIVATE_URL = "http://testserver/private/synthetic-item?secret=invented-query-value"
+# Passthrough logs keep scheme, host and path only.
+SAFE_URL = "http://testserver/private/synthetic-item"
 PRIVATE_FILTER = "invented-private-filter"
 EXCEPTION_DETAIL = "invented-exception-detail"
 
@@ -29,7 +31,7 @@ def failing_query(request, client, db, monkeypatch):
             try:
                 raise OSError(f"chained {PRIVATE_URL}")
             except OSError as cause:
-                raise exception_type(f"{PRIVATE_URL} {PRIVATE_FILTER} {EXCEPTION_DETAIL}") from cause
+                raise exception_type(f"{EXCEPTION_DETAIL} {PRIVATE_FILTER} {PRIVATE_URL}") from cause
 
         class BrokenHandler(InMemoryMicropubHandler):
             pass
@@ -82,7 +84,14 @@ def test_handler_errors_preserve_passthrough_diagnostics(failing_query, settings
     response = run(exception_type)
     assert response.status_code == status
     assert operation in caplog.text
-    assert PRIVATE_URL in caplog.text
-    assert EXCEPTION_DETAIL in caplog.text
+    if not operation.startswith("list_"):
+        assert f"url={SAFE_URL!r}" in caplog.text
+    assert exception_type.__name__ in caplog.text
+    # Exception messages never reach the log, not even inside the traceback.
+    for private in ("invented-query-value", EXCEPTION_DETAIL):
+        assert private not in caplog.text
     records = [record for record in caplog.records if record.name == "indieweb.views"]
     assert bool(records[-1].exc_info) is (status == 500)
+    if status == 500:
+        assert "Traceback (most recent call last)" in caplog.text
+        assert "in fail" in caplog.text

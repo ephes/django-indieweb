@@ -38,7 +38,7 @@ from .http_client import (
     response_text_with_limit,
     stream_with_safe_redirects,
 )
-from .log_redaction import redact_state, redact_text, redact_url
+from .log_redaction import exc_info_without_messages, redact_state, redact_url, text_fingerprint
 from .models import Profile, Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from .parse_isolation import (
     SourceAnalysis,
@@ -322,7 +322,7 @@ class WebmentionProcessor:
                 spam_checker_class = import_string(spam_checker_path)
                 return spam_checker_class()  # type: ignore[no-any-return]
             except Exception as e:
-                logger.error(f"Failed to load spam checker {spam_checker_path}: {e}")
+                logger.error(f"Failed to load spam checker {spam_checker_path}: {type(e).__name__}")
         return None
 
     def process_webmention(self, source_url: str, target_url: str, vouch_url: str | None = None) -> Webmention:  # noqa: C901
@@ -561,9 +561,11 @@ class WebmentionProcessor:
     def _over_limit_outcome(self, error: Exception, source_url: str, received_at: datetime) -> _WebmentionOutcome:
         """Return the failed outcome for a source that exceeded a fetch or processing limit."""
         if isinstance(error, HTTPResponseTooLarge):
-            message = f"Fetched Webmention source exceeded size limit for {redact_url(source_url)}: {error}"
+            message = f"Fetched Webmention source exceeded size limit for {redact_url(source_url)}"
         else:
-            message = f"Rejected Webmention from {redact_url(source_url)}: {error}"
+            # WebmentionSourceRejected carries a fixed reason phrase; other exception text is never logged.
+            reason = str(error) if isinstance(error, WebmentionSourceRejected) else type(error).__name__
+            message = f"Rejected Webmention from {redact_url(source_url)}: {reason}"
         return _WebmentionOutcome(status="failed", received_at=received_at, log=("warning", message))
 
     def _apply_webmention_outcome(
@@ -786,7 +788,7 @@ class WebmentionProcessor:
         except Exception as exc:
             logger.error(
                 f"Failed to load INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY {redact_state(str(policy_path))} "
-                f"({type(exc).__name__}): {redact_text(str(exc))}"
+                f"({type(exc).__name__})"
             )
             return cast("Callable[..., bool]", _reject_vouch_policy)
         if not callable(policy):
@@ -817,7 +819,7 @@ class WebmentionProcessor:
             except Exception as exc:
                 logger.error(
                     f"INDIEWEB_WEBMENTION_VOUCH_TRUST_POLICY raised for vouch_url={redact_url(vouch_url)!r} "
-                    f"({type(exc).__name__}): {redact_text(str(exc))}"
+                    f"({type(exc).__name__})"
                 )
                 return False
 
@@ -1004,7 +1006,9 @@ class WebmentionProcessor:
                     h_entry=h_entry,
                 )
         except Exception:
-            logger.exception(f"Failed to store source snapshot for webmention {webmention.pk}")
+            logger.error(
+                f"Failed to store source snapshot for webmention {webmention.pk}", exc_info=exc_info_without_messages()
+            )
 
     def _normalize_snapshot_json(self, value: dict[str, Any]) -> dict[str, Any]:
         """Return a JSON-safe parsed snapshot without mutating the parser result."""
@@ -1119,7 +1123,9 @@ class WebmentionProcessor:
                     seen_at=seen_at,
                 )
         except Exception:
-            logger.exception(f"Failed to sync nested responses for webmention {webmention.pk}")
+            logger.error(
+                f"Failed to sync nested responses for webmention {webmention.pk}", exc_info=exc_info_without_messages()
+            )
 
     def _sync_nested_responses(
         self,
@@ -1643,7 +1649,7 @@ class WebmentionProcessor:
                         published = ISO8601_OFFSET_WITHOUT_COLON_RE.sub(r"\1:\2", published)
                     return datetime.fromisoformat(published)
             except ValueError:
-                logger.warning(f"Failed to parse published date: {published}")
+                logger.warning(f"Failed to parse published date ({text_fingerprint(str(published))})")
 
         return None
 

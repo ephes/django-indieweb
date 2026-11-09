@@ -14,6 +14,7 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from indieweb.log_redaction import text_fingerprint
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
 from indieweb.websub import (
     accept_websub_delivery,
@@ -36,6 +37,16 @@ SHARED_SECRET = "shared-secret-value-20x"
 STORED_SECRET = "stored-secret-value-20x"
 
 
+def _denial_reason(reason: str) -> str:
+    """What is stored for a hub's ``hub.reason``: a fingerprint, never the text."""
+    return f"hub.reason {text_fingerprint(reason)}"
+
+
+def _hub_error(status_code: int | None, body: bytes) -> str:
+    """What is stored for a failed hub response: status and body fingerprint, never the body."""
+    return f"HTTP {status_code}; body {text_fingerprint(body)}"
+
+
 @pytest.fixture(autouse=True)
 def reset_websub_hooks():
     websub_hooks.reset()
@@ -50,6 +61,12 @@ def subscription(db):
         topic_url="https://source.example/feed",
         state=WebSubSubscription.STATE_ACTIVE,
     )
+
+
+@pytest.fixture
+def unsigned_deliveries_allowed(settings):
+    """Opt out of the signed-delivery default for tests about unsigned delivery handling."""
+    settings.INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False
 
 
 def _callback_url(subscription: WebSubSubscription) -> str:
@@ -136,7 +153,7 @@ def test_request_websub_subscription_rejects_private_hub_without_posting():
 
     result.subscription.refresh_from_db()
     assert result.success is False
-    assert "blocked address" in result.error
+    assert result.error == "UnsafeHTTPUrlError"
     assert result.subscription.last_request_status_code is None
     assert requests == []
 
@@ -160,7 +177,7 @@ def test_request_websub_subscription_records_hub_rejection():
     assert result.status_code == 400
     assert result.subscription.state == WebSubSubscription.STATE_DENIED
     assert result.subscription.last_request_status_code == 400
-    assert result.subscription.last_request_error == "bad topic"
+    assert result.subscription.last_request_error == _hub_error(result.status_code, b"bad topic")
 
 
 @pytest.mark.django_db
@@ -190,7 +207,7 @@ def test_request_websub_subscription_preserves_active_subscription_on_renewal_fa
     assert result.subscription.confirmed_lease_seconds == 3600
     assert result.subscription.lease_expires_at is not None
     assert result.subscription.last_request_status_code == 503
-    assert result.subscription.last_request_error == "try later"
+    assert result.subscription.last_request_error == _hub_error(result.status_code, b"try later")
 
 
 @pytest.mark.django_db
@@ -722,7 +739,7 @@ def test_callback_denial_records_pending_subscribe_reason(client):
     assert subscription.lease_expires_at is None
     assert subscription.last_denied_at is not None
     assert subscription.last_denied_mode == WebSubSubscription.MODE_SUBSCRIBE
-    assert subscription.last_denial_reason == "topic no longer available"
+    assert subscription.last_denial_reason == _denial_reason("topic no longer available")
     assert subscription.last_request_error == "previous outbound diagnostic"
 
 
@@ -782,7 +799,7 @@ def test_callback_denial_for_active_renewal_preserves_current_subscription(clien
     assert subscription.confirmed_lease_seconds == 3600
     assert subscription.lease_expires_at == lease_expires_at
     assert subscription.last_denied_mode == WebSubSubscription.MODE_SUBSCRIBE
-    assert subscription.last_denial_reason == "renewal refused"
+    assert subscription.last_denial_reason == _denial_reason("renewal refused")
     assert subscription.pending_mode == ""
 
 
@@ -811,7 +828,7 @@ def test_callback_denial_for_pending_unsubscribe_restores_active_subscription(cl
     assert subscription.confirmed_lease_seconds == 3600
     assert subscription.lease_expires_at == lease_expires_at
     assert subscription.last_denied_mode == WebSubSubscription.MODE_UNSUBSCRIBE
-    assert subscription.last_denial_reason == "unsubscribe not recognized"
+    assert subscription.last_denial_reason == _denial_reason("unsubscribe not recognized")
 
 
 @pytest.mark.django_db
@@ -859,7 +876,7 @@ def test_callback_verification_confirms_unsubscribe(client, subscription):
 
 
 @pytest.mark.django_db
-def test_callback_post_records_delivery_and_calls_hook(client, settings, subscription):
+def test_callback_post_records_delivery_and_calls_hook(client, settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><updated>now</updated></feed>"
 
@@ -885,7 +902,7 @@ def test_callback_post_records_delivery_and_calls_hook(client, settings, subscri
 
 
 @pytest.mark.django_db
-def test_callback_post_is_csrf_exempt(settings, subscription):
+def test_callback_post_is_csrf_exempt(settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     csrf_client = Client(enforce_csrf_checks=True)
 
@@ -896,7 +913,7 @@ def test_callback_post_is_csrf_exempt(settings, subscription):
 
 
 @pytest.mark.django_db
-def test_callback_post_requires_self_topic_link(client, settings, subscription):
+def test_callback_post_requires_self_topic_link(client, settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
     response = client.post(
@@ -914,7 +931,7 @@ def test_callback_post_requires_self_topic_link(client, settings, subscription):
 
 
 @pytest.mark.django_db
-def test_callback_post_topic_link_check_can_be_disabled(client, settings, subscription):
+def test_callback_post_topic_link_check_can_be_disabled(client, settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_REQUIRE_TOPIC_LINK = False
 
     response = client.post(_callback_url(subscription), data=b"<feed/>", content_type="application/atom+xml")
@@ -1053,7 +1070,9 @@ def test_validate_websub_delivery_signature_prefers_strongest_header(settings, s
 
 
 @pytest.mark.django_db
-def test_callback_post_rejects_duplicate_delivery_within_replay_window(client, settings, subscription):
+def test_callback_post_rejects_duplicate_delivery_within_replay_window(
+    client, settings, subscription, unsigned_deliveries_allowed
+):
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><id>1</id></feed>"
 
@@ -1072,7 +1091,9 @@ def test_callback_post_rejects_duplicate_delivery_within_replay_window(client, s
 
 
 @pytest.mark.django_db
-def test_callback_post_rejects_a_b_a_replay_within_replay_window(client, settings, subscription):
+def test_callback_post_rejects_a_b_a_replay_within_replay_window(
+    client, settings, subscription, unsigned_deliveries_allowed
+):
     """A captured payload replayed after a different legitimate payload is still rejected."""
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body_a = b"<feed><id>A</id></feed>"
@@ -1213,7 +1234,9 @@ def test_callback_post_rejects_oversized_content_length_before_body_read(client,
 
 
 @pytest.mark.django_db
-def test_callback_post_invalid_content_length_falls_back_to_body_limit(client, settings, subscription):
+def test_callback_post_invalid_content_length_falls_back_to_body_limit(
+    client, settings, subscription, unsigned_deliveries_allowed
+):
     settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = 4
 
     response = client.post(
@@ -1238,7 +1261,9 @@ def test_callback_post_invalid_content_length_falls_back_to_body_limit(client, s
 
 
 @pytest.mark.django_db
-def test_callback_post_uses_default_delivery_size_limit_when_setting_is_invalid(client, settings, subscription):
+def test_callback_post_uses_default_delivery_size_limit_when_setting_is_invalid(
+    client, settings, subscription, unsigned_deliveries_allowed
+):
     settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = "bad"
 
     response = _post_delivery(client, subscription, data=b"<feed/>", content_type="application/atom+xml")
@@ -1287,7 +1312,9 @@ def test_callback_post_applies_delivery_content_type_allowlist(client, settings,
 
 
 @pytest.mark.django_db
-def test_callback_post_allows_delivery_when_content_type_setting_is_invalid(client, settings, subscription):
+def test_callback_post_allows_delivery_when_content_type_setting_is_invalid(
+    client, settings, subscription, unsigned_deliveries_allowed
+):
     settings.INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES = object()
 
     response = _post_delivery(client, subscription, data=b"{}", content_type="application/json")
@@ -1298,7 +1325,7 @@ def test_callback_post_allows_delivery_when_content_type_setting_is_invalid(clie
 
 
 @pytest.mark.django_db
-def test_callback_post_reports_delivery_hook_failure(client, settings, subscription):
+def test_callback_post_reports_delivery_hook_failure(client, settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.failing_delivery"
 
     response = _post_delivery(client, subscription, data=b"<feed/>", content_type="application/atom+xml")
@@ -1310,7 +1337,9 @@ def test_callback_post_reports_delivery_hook_failure(client, settings, subscript
 
 
 @pytest.mark.django_db
-def test_callback_post_enqueue_records_204_and_skips_sync_hook(client, settings, subscription):
+def test_callback_post_enqueue_records_204_and_skips_sync_hook(
+    client, settings, subscription, unsigned_deliveries_allowed
+):
     settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.capture_enqueue"
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><updated>now</updated></feed>"
@@ -1332,7 +1361,7 @@ def test_callback_post_enqueue_records_204_and_skips_sync_hook(client, settings,
 
 
 @pytest.mark.django_db
-def test_callback_post_reports_enqueue_failure(client, settings, subscription):
+def test_callback_post_reports_enqueue_failure(client, settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.failing_enqueue"
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
@@ -1346,7 +1375,7 @@ def test_callback_post_reports_enqueue_failure(client, settings, subscription):
 
 
 @pytest.mark.django_db
-def test_callback_post_reports_enqueue_import_failure(client, settings, subscription):
+def test_callback_post_reports_enqueue_import_failure(client, settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.does_not_exist"
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
@@ -1360,7 +1389,7 @@ def test_callback_post_reports_enqueue_import_failure(client, settings, subscrip
 
 
 @pytest.mark.django_db
-def test_callback_post_reports_enqueue_non_callable(client, settings, subscription):
+def test_callback_post_reports_enqueue_non_callable(client, settings, subscription, unsigned_deliveries_allowed):
     settings.INDIEWEB_WEBSUB_DELIVERY_ENQUEUE = "tests.websub_hooks.DELIVERIES"
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
@@ -1467,7 +1496,7 @@ def test_subscription_with_secret_rejects_http_hub():
 
 
 @pytest.mark.django_db
-def test_callback_post_replay_does_not_re_invoke_hook(client, settings, subscription):
+def test_callback_post_replay_does_not_re_invoke_hook(client, settings, subscription, unsigned_deliveries_allowed):
     """Replay returns 409 and the hook is invoked exactly once for the body digest.
 
     This proves the at-most-once-per-digest hook contract: the second identical
@@ -1488,7 +1517,7 @@ def test_callback_post_replay_does_not_re_invoke_hook(client, settings, subscrip
 
 
 @pytest.mark.django_db
-def test_callback_post_passes_body_digest_to_kwargs_hook(client, settings, subscription):
+def test_callback_post_passes_body_digest_to_kwargs_hook(client, settings, subscription, unsigned_deliveries_allowed):
     """Hooks accepting ``**kwargs`` (the existing ``capture_delivery``) receive ``body_digest``."""
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
     body = b"<feed><id>digest-via-kwargs</id></feed>"
@@ -1501,7 +1530,9 @@ def test_callback_post_passes_body_digest_to_kwargs_hook(client, settings, subsc
 
 
 @pytest.mark.django_db
-def test_callback_post_passes_body_digest_to_explicit_parameter_hook(client, settings, subscription):
+def test_callback_post_passes_body_digest_to_explicit_parameter_hook(
+    client, settings, subscription, unsigned_deliveries_allowed
+):
     """Hooks with an explicit ``body_digest`` parameter receive it."""
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery_with_digest"
     body = b"<feed><id>digest-explicit</id></feed>"
@@ -1514,7 +1545,7 @@ def test_callback_post_passes_body_digest_to_explicit_parameter_hook(client, set
 
 
 @pytest.mark.django_db
-def test_callback_post_omits_body_digest_for_legacy_hook(client, settings, subscription):
+def test_callback_post_omits_body_digest_for_legacy_hook(client, settings, subscription, unsigned_deliveries_allowed):
     """Hooks with the legacy signature (no ``body_digest``, no ``**kwargs``) are called unchanged."""
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery_legacy"
     body = b"<feed><id>legacy</id></feed>"
@@ -1604,7 +1635,7 @@ def test_accept_websub_delivery_window_disabled_accepts_all_duplicates(settings,
 
 
 @pytest.mark.django_db
-def test_replay_window_disabled_accepts_all_duplicates(client, settings, subscription):
+def test_replay_window_disabled_accepts_all_duplicates(client, settings, subscription, unsigned_deliveries_allowed):
     """When the replay window is disabled, callback POSTs accept duplicates and the hook fires every time."""
     settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 0
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
@@ -1675,7 +1706,7 @@ def test_denied_renewal_preserves_active_secret_and_staged_rotation():
     assert subscription.get_pending_secret() == NEW_SECRET
     assert subscription.pending_mode == ""
     assert subscription.last_denied_mode == WebSubSubscription.MODE_SUBSCRIBE
-    assert subscription.last_denial_reason == "denied by hub"
+    assert subscription.last_denial_reason == _denial_reason("denied by hub")
 
 
 @pytest.mark.django_db
@@ -1702,7 +1733,7 @@ def test_denied_initial_subscribe_clears_pending_secret_state():
     assert subscription.pending_secret_set is False
     assert subscription.pending_secret == ""
     assert subscription.pending_mode == ""
-    assert subscription.last_denial_reason == "not allowed"
+    assert subscription.last_denial_reason == _denial_reason("not allowed")
 
 
 # ----------------------------------------------------------------------------
