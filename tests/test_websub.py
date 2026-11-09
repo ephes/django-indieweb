@@ -110,7 +110,9 @@ def test_notify_hubs_reports_non_success_without_raising():
 
     assert results[0].success is False
     assert results[0].status_code == 503
-    assert results[0].error == "temporarily unavailable"
+    # Only the status and a fingerprint of the hub's body are kept, never the body.
+    assert results[0].error.startswith("HTTP 503; body 23 bytes, digest ")
+    assert "unavailable" not in results[0].error
 
 
 def test_notify_hubs_reports_request_errors_without_raising():
@@ -123,7 +125,7 @@ def test_notify_hubs_reports_request_errors_without_raising():
 
     assert results[0].success is False
     assert results[0].status_code is None
-    assert "connection refused" in results[0].error
+    assert results[0].error == "ConnectError"
 
 
 def test_notify_hubs_rejects_private_hub_without_posting():
@@ -139,7 +141,7 @@ def test_notify_hubs_rejects_private_hub_without_posting():
 
     assert results[0].success is False
     assert results[0].status_code is None
-    assert "blocked address" in results[0].error
+    assert results[0].error == "UnsafeHTTPUrlError"
     assert requests == []
 
 
@@ -157,8 +159,8 @@ def test_notify_hubs_rejects_redirect_to_private_hub():
     assert results[0].success is False
     assert results[0].status_code is None
     # Strict-mode cross-origin check fires before the SSRF redirect-target validation,
-    # so the error reports the cross-origin rejection rather than the private-IP block.
-    assert "cross-origin redirect not permitted" in results[0].error
+    # so the error reports the redirect rejection rather than the private-IP block.
+    assert results[0].error == "WebmentionRedirectError"
     assert len(requests) == 1
 
 
@@ -182,7 +184,7 @@ def test_notify_hubs_rejects_oversized_hub_response(settings):
 
     assert results[0].success is False
     assert results[0].status_code is None
-    assert "exceeded" in results[0].error
+    assert results[0].error == "HTTPResponseTooLarge"
 
 
 def test_notify_hubs_treats_empty_string_max_bytes_as_default(settings):
@@ -204,7 +206,7 @@ def test_notify_hubs_treats_empty_string_max_bytes_as_default(settings):
 
     assert results[0].success is False
     assert results[0].status_code is None
-    assert "exceeded" in results[0].error
+    assert results[0].error == "HTTPResponseTooLarge"
 
 
 def test_notify_hubs_disables_cap_when_setting_is_none(settings):

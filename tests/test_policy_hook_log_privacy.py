@@ -14,7 +14,7 @@ from indieweb.processors import WebmentionProcessor
 PRIVATE_USER = "invented-private-user"
 PRIVATE_BEARER = "invented-private-bearer"
 PRIVATE_URL = "https://voucher.example/private?state=invented-private-state"
-DETAIL = f"{PRIVATE_USER} Bearer {PRIVATE_BEARER} {PRIVATE_URL}"
+DETAIL = f"exception-detail {PRIVATE_USER} Bearer {PRIVATE_BEARER} {PRIVATE_URL}"
 
 
 @pytest.mark.django_db
@@ -94,11 +94,11 @@ def test_policy_failures_deny_access_and_honor_log_mode(
     assert records
     assert setting in records[-1].message
     assert all(not record.exc_info for record in records)
+    expected_class = {"import": "ImportError", "call": "RuntimeError"}.get(failure)
+    assert expected_class is None or f"({expected_class})" in records[-1].message
+    # Exception text never reaches the log, in either mode; redact mode also hides the user and URL.
+    private = ["exception-detail", PRIVATE_BEARER, "invented-private-state"]
     if mode == "redact":
-        for marker in (PRIVATE_USER, PRIVATE_BEARER, PRIVATE_URL, "invented-private-state"):
-            assert marker not in caplog.text
-        if failure != "non_callable":
-            assert ("ImportError" if failure == "import" else "RuntimeError") in records[-1].message
-    else:
-        if failure == "import" or operation != "client_id":
-            assert (PRIVATE_USER if failure == "non_callable" else DETAIL) in caplog.text
+        private += [PRIVATE_USER, PRIVATE_URL]
+    for marker in private:
+        assert marker not in caplog.text

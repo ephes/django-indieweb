@@ -10,6 +10,8 @@ from indieweb.handlers import InMemoryMicropubHandler
 from indieweb.models import Token
 
 PRIVATE_URL = "http://testserver/private/synthetic-item?secret=invented-query-value"
+# Passthrough logs keep scheme, host and path only.
+SAFE_URL = "http://testserver/private/synthetic-item"
 PRIVATE_BODY = "invented-private-body"
 
 
@@ -35,7 +37,7 @@ def test_mutation_diagnostics_respect_privacy(
         try:
             raise OSError(PRIVATE_BODY)
         except OSError as cause:
-            raise error_type(f"{PRIVATE_URL} {PRIVATE_BODY}" * 1000) from cause
+            raise error_type(f"{PRIVATE_BODY} {PRIVATE_URL}" * 1000) from cause
 
     class BrokenHandler(InMemoryMicropubHandler):
         pass
@@ -58,8 +60,11 @@ def test_mutation_diagnostics_respect_privacy(
     records = [r for r in caplog.records if r.name == "indieweb.views"]
     assert records
     if mode == "passthrough":
-        assert PRIVATE_BODY in caplog.text
-        assert PRIVATE_URL in caplog.text
+        # Exception messages are never logged; URLs keep scheme, host and path.
+        assert PRIVATE_BODY not in caplog.text
+        if operation != "create":
+            assert SAFE_URL in caplog.text
+        assert "invented-query-value" not in caplog.text
         assert bool(records[-1].exc_info) is (status == 500)
     else:
         for private in (PRIVATE_URL, "/private/synthetic-item", "invented-query-value", PRIVATE_BODY):

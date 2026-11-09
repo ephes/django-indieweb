@@ -677,15 +677,17 @@ revocation. Each source request rechecks authentication and handler permissions.
 Public IndieAuth metadata and Webmention endpoints keep their separate policies.
 
 The Micropub entry source query (``GET /indieweb/micropub/?q=source&url=...``),
-the media source-by-URL query, and the media delete action accept a submitted
-URL and forward it to the configured handler. Hosts that need to gate those
+the entry ``update``/``delete``/``undelete`` actions, the media source-by-URL
+query, and the media delete action accept a submitted URL and forward it to
+the configured handler. Hosts that need to gate those
 URLs at the view layer — for example to reject cross-origin or storage-external
 URLs that could otherwise be passed unchanged into a substring-keyed handler —
 can set ``INDIEWEB_MICROPUB_URL_POLICY`` to a dotted path to a callable
 ``(url: str, kind: Literal["entry", "media"], request: HttpRequest) -> bool``.
 The ``kind`` argument is ``"entry"`` for the Micropub entry source query and
-``"media"`` for the media endpoint's source and delete actions, so a single
-callable can apply different rules per surface.
+the entry update/delete/undelete actions, and ``"media"`` for the media
+endpoint's source and delete actions, so a single callable can apply different
+rules per surface.
 
 The hook runs *before* the URL is forwarded to the handler. Returning ``True``
 permits the request; any other return value yields ``400 invalid_request``.
@@ -723,11 +725,41 @@ return an entry on delete, so a relocation response is not possible). All
 three return ``400 invalid_request`` when the entry is unknown to the
 handler or ``url`` is missing, and ``500`` when the handler raises an
 unexpected exception.
-Submitted action ``url`` values must be relative/local references or absolute
-HTTP(S) URLs on the same host as the incoming request; cross-host action URLs
-return ``400 invalid_request`` before the handler is called. JSON action
-requests may include parameters such as ``charset`` on the
-``application/json`` content type.
+Submitted action ``url`` values must be absolute paths (``/2026/my-post/``) or
+absolute HTTP(S) URLs on a canonical origin. With
+``INDIEWEB_MICROPUB_CANONICAL_ORIGINS`` set, the origin (scheme, host and port)
+must be one of the configured origins; without it the host must match the
+incoming request's host, which inherits the project's ``ALLOWED_HOSTS`` and
+proxy ``Host`` handling. Path-relative or network-path references, ``.``/``..``
+path segments (also percent-encoded), backslashes, control characters and
+userinfo are rejected. Rejected URLs return ``400 invalid_request`` before the
+handler is called, and ``INDIEWEB_MICROPUB_URL_POLICY`` (``kind="entry"``) runs
+next when it is configured. JSON action requests may include parameters such
+as ``charset`` on the ``application/json`` content type.
+
+.. _micropub-handler-url-contract:
+
+.. rubric:: Handler URL contract
+
+The locality check narrows what reaches the handler, but the handler remains
+the authority for resolving URLs and for ownership. A handler's
+``get_entry``, ``update_entry``, ``delete_entry``, ``undelete_entry``,
+``get_media`` and ``delete_media`` methods must:
+
+* resolve the submitted URL against the site's canonical origin (for example
+  with ``urllib.parse.urljoin(CANONICAL_ORIGIN + "/", url)``) and compare the
+  result with URLs it generated itself, such as ``get_absolute_url()``;
+* look entries and media up by an exact identifier from that comparison (slug,
+  primary key, stored URL), never by substring or prefix matching;
+* never join a submitted URL or path to a filesystem path, storage root or
+  shell command; delete only storage names the handler stored itself;
+* check that the authenticated ``user`` owns, or may change, the resolved
+  object, and raise ``ValueError`` when it is unknown or not owned, so the
+  endpoint answers ``400 invalid_request``;
+* treat the URL as untrusted input in logs and error messages.
+
+Handlers that do not support an operation should raise ``ValueError`` (or not
+override the optional media hooks) rather than accept the request.
 
 **Update (replace, JSON):**
 

@@ -2,6 +2,44 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-09
+
+### Security review hardening: action URLs, signed WebSub, no free text in logs
+
+- Micropub action URLs (entry update/delete/undelete, media delete) now pass a
+  locality check in `indieweb.micropub_urls`: absolute paths only for relative
+  references, no dot segments/backslashes/control characters (also encoded),
+  and optional `INDIEWEB_MICROPUB_CANONICAL_ORIGINS` instead of the request
+  host. `INDIEWEB_MICROPUB_URL_POLICY` also gates the entry actions
+  (`kind="entry"`). Handler URL contract documented. No corresponding backlog
+  item.
+- `INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES` defaults to `True` (owner
+  decision). Unsigned subscribe requests log a warning; admin column/filter and
+  system checks `indieweb.E001`/`indieweb.W001` via the new `IndieWebConfig`.
+- Exception text, hub response bodies, hub denial reasons and parse-worker
+  stderr are no longer logged or stored, in both log modes: exceptions become
+  their class name, URLs `scheme://host[:port]/path` (`safe_url()`), bodies,
+  reasons and stderr a length plus keyed digest (`text_fingerprint()`), and
+  logged tracebacks keep the stack without messages
+  (`exc_info_without_messages()`). Fixed-message exceptions keep their text:
+  the new `WebSubRejection` and `WebmentionSourceRejected`. This replaced a
+  free-text secret scrubber that failed review six times (there was always
+  another encoding to hide a credential in); the scrubber, its decoding layer
+  and its rule tests were removed (coordinator decision).
+- Test suite: the collation regression test now collects garbage and pauses
+  the cyclic collector while its Python collation is installed. Leftover
+  in-memory SQLite connections from threaded tests could otherwise be
+  finalized inside the collation and deadlock the suite.
+- Webmention guide: `INDIEWEB_URL_RESOLVER`/`INDIEWEB_COMMENT_ADAPTER` marked as
+  never read by the package; spam checker safety contract added.
+- Validation: `uv run pytest` with coverage (twice), `uv run mypy`,
+  `uv run prek run --all-files`, strict Sphinx build, `makemigrations
+  --check`, and the downstream homepage test suite against the branch.
+- Docs: `docs/configuration.rst` ("Free text in logs and stored
+  diagnostics"), `docs/micropub.rst`, `docs/websub.rst`, `docs/webmention.rst`,
+  and the SQLite collector lesson in `AGENT_LEARNINGS.md`; changelog:
+  Unreleased in `docs/changelog.rst` (three behaviour-change entries).
+
 ## 2026-11-08
 
 ### Round 83: bounded h-card admission

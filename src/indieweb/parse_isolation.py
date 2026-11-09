@@ -23,12 +23,13 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import IO, Any
 
 from django.conf import settings
 from django.utils.crypto import salted_hmac
 
 from . import webmention_parse_worker
+from .log_redaction import text_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,9 @@ DEFAULT_PARSE_CPU_SECONDS = 20
 DEFAULT_PARSE_WALL_SECONDS = 30
 DEFAULT_PARSE_MAX_RESULT_BYTES = 2 * MIB
 WORKER_MODULE = "indieweb.webmention_parse_worker"
-STDERR_LOG_BYTES = 2000
+# Largest failed-worker stderr that is digested for the log; larger stderr is
+# logged by size only. Stderr content itself is never logged.
+STDERR_DIGEST_BYTES = 256 * 1024
 WORKER_ENVIRONMENT_NAMES = (
     "PATH",
     "PYTHONHOME",
@@ -53,7 +56,11 @@ WORKER_ENVIRONMENT_NAMES = (
 
 
 class WebmentionSourceRejected(Exception):
-    """Fetched HTML was too expensive to process, or its analysis failed."""
+    """Fetched HTML was too expensive to process, or its analysis failed.
+
+    ``reason`` is always a fixed phrase written in this package (never source,
+    worker or exception text), so the message may be logged.
+    """
 
     def __init__(self, reason: str) -> None:
         super().__init__(f"source too expensive to process ({reason})")
@@ -226,7 +233,7 @@ def _parse_slot() -> Iterator[int]:
                         raise WebmentionParseCapacityError("parse capacity")
                     time.sleep(min(0.02, remaining))
         except OSError as exc:
-            logger.error("Webmention parse capacity unavailable: %s", exc)
+            logger.error("Webmention parse capacity unavailable: %s", type(exc).__name__)
             raise WebmentionSourceRejected("parse capacity unavailable") from None
         yield slot
     finally:
@@ -234,6 +241,21 @@ def _parse_slot() -> Iterator[int]:
             os.close(slot)
         if directory_fd is not None:
             os.close(directory_fd)
+
+
+def _log_worker_stderr(reason: str, stderr: IO[bytes]) -> None:
+    """Log the length and keyed digest of a failed worker's stderr, never its content.
+
+    Stderr larger than ``STDERR_DIGEST_BYTES`` is logged by size only.
+    """
+    size = os.fstat(stderr.fileno()).st_size
+    if not size:
+        return
+    if size > STDERR_DIGEST_BYTES:
+        logger.warning("Webmention parse worker: %s: stderr %d bytes", reason, size)
+        return
+    stderr.seek(0)
+    logger.warning("Webmention parse worker: %s: stderr %s", reason, text_fingerprint(stderr.read()))
 
 
 def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
@@ -266,15 +288,12 @@ def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
             # ``subprocess.run`` has killed and reaped the child.
             raise WebmentionSourceRejected("wall-clock limit") from None
         except OSError as exc:
-            logger.error("Webmention parse worker could not be started: %s", exc)
+            logger.error("Webmention parse worker could not be started: %s", type(exc).__name__)
             raise WebmentionSourceRejected("worker could not be started") from None
 
         if completed.returncode != 0:
             reason = _exit_reason(completed.returncode)
-            stderr.seek(0)
-            detail = stderr.read(STDERR_LOG_BYTES).decode("utf-8", "replace").strip()
-            if detail:
-                logger.warning("Webmention parse worker: %s: %s", reason, detail)
+            _log_worker_stderr(reason, stderr)
             raise WebmentionSourceRejected(reason)
 
         if os.fstat(stdout.fileno()).st_size > limits.max_result_bytes:

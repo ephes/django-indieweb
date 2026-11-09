@@ -374,6 +374,7 @@ def test_media_preflight_short_circuits_before_auth_and_storage(client, settings
 @pytest.mark.django_db
 def test_websub_callback_is_excluded_from_cors_even_when_cors_is_configured(client, settings, websub_subscription):
     settings.INDIEWEB_CORS_ALLOWED_ORIGINS = (ALLOWED_ORIGIN,)
+    settings.INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False
     url = reverse("indieweb:websub-callback", args=[websub_subscription.callback_token])
 
     post_response = client.post(

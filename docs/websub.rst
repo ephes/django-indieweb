@@ -125,7 +125,10 @@ stream the response and surface oversized replies as a request failure rather
 than buffering the payload: ``notify_hubs()`` returns the failure on the
 ``WebSubNotificationResult.error`` field for the hub, while
 ``request_websub_subscription()`` additionally persists it on the
-subscription's ``last_request_error`` diagnostics.
+subscription's ``last_request_error`` diagnostics. These fields hold the
+exception class name for a request failure (``HTTPResponseTooLarge``,
+``ConnectError``) and ``HTTP <status>; body <N> bytes, digest <hex>`` for a
+non-2xx hub response, never the hub's body text (see :ref:`log-free-text`).
 
 Set the value to ``None`` to disable the cap when your deployment already
 enforces an equivalent limit. Malformed values, including an empty
@@ -274,8 +277,9 @@ the response does not reveal whether a token exists.
 
 The callback also accepts WebSub denial callbacks with ``hub.mode=denied``
 and a matching ``hub.topic``. ``hub.challenge`` is not required for denial.
-The optional ``hub.reason`` value is stored in bounded denial diagnostics on
-``WebSubSubscription`` and the callback returns ``204 No Content``. A denied
+The optional ``hub.reason`` value is not stored as text: ``last_denial_reason``
+records its length and keyed digest (``hub.reason 21 bytes, digest ...``, see
+:ref:`log-free-text`), and the callback returns ``204 No Content``. A denied
 initial subscribe request moves the row to ``denied`` and clears pending
 lease/secret staging. A denied renewal for an already-active subscription
 keeps the row ``active``, preserves the current lease and secret, and clears
@@ -366,8 +370,9 @@ with a stored secret must include a valid SHA-256-or-stronger HMAC signature.
 ``X-Hub-Signature-256`` is preferred over legacy ``X-Hub-Signature`` when both
 are present. Legacy ``sha1`` signatures are rejected by default; enable
 ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES`` only for hubs that cannot send
-SHA-256. Set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` to reject unsigned
-deliveries for rows that still have no stored secret.
+SHA-256. Deliveries for rows without a stored secret are rejected by default
+(``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = True``); set it to ``False`` only
+if you accept unauthenticated content for those rows.
 
 Delivery ``POST`` requests must also carry a ``Link`` header containing
 ``rel="self"`` for the subscribed topic URL. This default
@@ -585,8 +590,17 @@ signatures are present, the strongest supplied algorithm must validate.
 Missing, malformed, unsupported, or mismatched signatures return HTTP ``403``
 and are recorded without invoking the host hook.
 
-Unsigned deliveries remain accepted for subscriptions without a stored secret.
-Set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` to reject them.
+Signed deliveries are required by default: a delivery for a subscription
+without a stored secret returns ``403`` and is recorded as
+``invalid signature``. ``request_websub_subscription()`` logs a warning when a
+subscribe request has no ``secret`` and none is stored, and the admin's
+"Signed deliveries" column and filter list such subscriptions. To migrate an
+unsigned subscription, subscribe again with a secret; it is used once the hub
+verifies the request. To keep accepting unsigned deliveries instead (for
+example from a hub reachable only over plain HTTP, which never receives a
+``hub.secret``), set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False``; the
+``indieweb.W001`` system check then warns while a delivery hook or queue is
+configured.
 Empty secrets, secrets shorter than 20 bytes, and secrets longer than 200
 bytes when UTF-8 encoded are rejected before a subscription request is sent to
 the hub.

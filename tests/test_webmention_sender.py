@@ -496,7 +496,7 @@ def test_send_webmention_network_error(sender, source_url, target_url):
     result = sender.send_webmention(source_url, target_url, endpoint, client=_make_test_client(handler))
 
     assert result["success"] is False
-    assert "Connection failed" in result["error"]
+    assert result["error"] == "RequestError"
 
 
 @patch("indieweb.senders.request_with_webmention_redirects")
@@ -687,7 +687,7 @@ def test_send_webmention_returns_failure_when_redirect_limit_exceeded(sender, so
 
     assert result["success"] is False
     assert result["status_code"] is None
-    assert "redirects" in result["error"]
+    assert result["error"] == "WebmentionRedirectError"
 
 
 def test_fetch_content_error(sender, source_url, target_url):
@@ -1582,7 +1582,7 @@ def test_send_webmention_total_timeout_cuts_off_slow_redirect_chain(sender, sour
 
     assert result["success"] is False
     assert result["status_code"] is None
-    assert "deadline" in result["error"]
+    assert result["error"] == "HTTPTotalTimeoutExceeded"
     # Hops at t=10, 20 and 30: the third hop's headers arrive after the budget.
     assert len(captured) == 3
     assert clock.now == 30
@@ -1740,7 +1740,7 @@ def test_strict_redirects_refuse_cross_origin_endpoint_redirect(sender, source_u
     )
 
     assert result["success"] is False
-    assert "cross-origin redirect" in result["error"]
+    assert result["error"] == "WebmentionRedirectError"
     assert _request_urls(captured) == ["https://target.com/webmention"]
 
 

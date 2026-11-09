@@ -27,6 +27,14 @@ dump.
 - New tests should use pytest function/fixture style. Do not mix
   `pytest.mark.parametrize` into legacy `django.test.TestCase` classes; convert
   those files in focused maintenance slices.
+- The SQLite test database lives in memory and Django never closes those
+  connections, so threaded tests leave open connections behind as cyclic
+  garbage. If the cyclic collector runs inside a Python callback that SQLite
+  invokes (a collation or function a test registers), finalizing them blocks
+  on the shared-cache lock and the suite hangs. Collect and pause the
+  collector around such callbacks (`collector_paused` in
+  `tests/test_webmention_count_collations.py`), and avoid reference cycles that
+  keep tracebacks or connections alive.
 - Keep host-owned protocol boundaries explicit. Optional integrations and
   examples such as Webmention.io display/import, Microsub or reader behavior,
   WebSub delivery processing, static-site storage, media indexes, and

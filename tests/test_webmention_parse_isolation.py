@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 import subprocess
 import sys
 import time
@@ -14,6 +15,7 @@ from django.test import override_settings
 from django.urls import reverse
 
 from indieweb import parse_isolation, webmention_parse_worker
+from indieweb.log_redaction import text_fingerprint
 from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
 from indieweb.parse_isolation import WebmentionParseCapacityError, WebmentionSourceRejected
 from indieweb.processors import WebmentionProcessor, _html_links_to_source_domain, _html_links_to_target
@@ -444,7 +446,10 @@ def test_worker_error_output_is_logged_without_the_document(caplog):
         parse_isolation.analyze_source(html, SOURCE_URL, TARGET_URL)
 
     assert rejected.value.reason == "worker failed with status 1"
-    assert "analysis failed: RecursionError" in caplog.text
+    # Worker stderr is logged as length and digest only, never as text.
+    expected = text_fingerprint(b"analysis failed: RecursionError\n")
+    assert f"Webmention parse worker: worker failed with status 1: stderr {expected}" in caplog.text
+    assert "analysis failed" not in caplog.text
     assert "secret-marker" not in caplog.text
     assert "Traceback" not in caplog.text
 
@@ -985,3 +990,43 @@ def test_vouch_link_in_head_or_svg_does_not_verify():
         assert webmention_parse_worker.analyze_vouch(hidden, SOURCE_URL) == {"links_to_source_domain": False}
     shown = f'<head><title>t</title></head><body><a href="{SOURCE_URL}">x</a></body>'
     assert webmention_parse_worker.analyze_vouch(shown, SOURCE_URL) == {"links_to_source_domain": True}
+
+
+def _fail_worker_with_stderr(monkeypatch, text):
+    script = f"import sys; sys.stderr.write({text!r}); sys.exit(3)"
+    monkeypatch.setattr(parse_isolation, "_worker_command", lambda limits: [sys.executable, "-c", script])
+
+
+def test_failed_worker_stderr_is_logged_as_a_fingerprint_only(monkeypatch, caplog):
+    stderr = "Traceback: https://user:" + "Vq3z-private" + "@hub.example/x?token=t\nINFO forged\n"
+    _fail_worker_with_stderr(monkeypatch, stderr)
+
+    with caplog.at_level(logging.WARNING, logger="indieweb.parse_isolation"):
+        with pytest.raises(WebmentionSourceRejected):
+            parse_isolation.run_parse_worker({})
+
+    assert f"stderr {text_fingerprint(stderr.encode())}" in caplog.text
+    for private in ("Vq3z", "hub.example", "forged", "Traceback"):
+        assert private not in caplog.text
+
+
+def test_oversized_failed_worker_stderr_is_logged_by_size(monkeypatch, caplog):
+    _fail_worker_with_stderr(monkeypatch, "Vq3z" + "x" * parse_isolation.STDERR_DIGEST_BYTES)
+
+    with caplog.at_level(logging.WARNING, logger="indieweb.parse_isolation"):
+        with pytest.raises(WebmentionSourceRejected):
+            parse_isolation.run_parse_worker({})
+
+    assert f"stderr {parse_isolation.STDERR_DIGEST_BYTES + 4} bytes" in caplog.text
+    assert "digest" not in caplog.text
+    assert "Vq3z" not in caplog.text
+
+
+def test_empty_failed_worker_stderr_is_not_logged(monkeypatch, caplog):
+    _fail_worker_with_stderr(monkeypatch, "")
+
+    with caplog.at_level(logging.WARNING, logger="indieweb.parse_isolation"):
+        with pytest.raises(WebmentionSourceRejected):
+            parse_isolation.run_parse_worker({})
+
+    assert "stderr" not in caplog.text

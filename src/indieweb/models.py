@@ -773,7 +773,7 @@ class WebSubSubscription(models.Model):
         try:
             return _websub_secret_multifernet().decrypt(token.encode("ascii")).decode("utf-8")
         except (InvalidToken, UnicodeDecodeError) as exc:
-            raise WebSubSecretDecryptionError("WebSub secret could not be decrypted") from exc
+            raise WebSubSecretDecryptionError("Could not decrypt the stored WebSub secret") from exc
 
     def get_secret(self) -> str:
         """Return the active raw WebSub shared secret for HMAC validation."""
