@@ -5,6 +5,11 @@ Changelog
 
 Unreleased
 ----------
+* Malformed author URL references, h-card ``url`` and ``photo`` values (for
+  example an unbalanced IPv6 bracket) in received Webmentions no longer fail
+  processing of the whole source. The malformed value is dropped and stored as
+  blank; the remaining author fields, nested responses, their siblings and the
+  parent Webmention are processed normally.
 * **Behaviour change:** ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` now
   defaults to ``True``. WebSub deliveries for subscriptions without a stored
   ``hub.secret`` are rejected with ``403`` (recorded as ``invalid signature``)

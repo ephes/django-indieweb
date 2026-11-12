@@ -2,6 +2,23 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-12
+
+### Nested author URL parsing isolation (round 77 I3 follow-up)
+
+Completes the backlog item "Nested author URL parsing isolation".
+
+- Author URL references, h-card `url`/`photo` values and `rel="author"` links
+  are resolved through `_resolve_author_url` in `src/indieweb/processors.py`;
+  malformed syntax (unbalanced IPv6 bracket, bad port) drops only that value
+  instead of raising. Malformed string authors are no longer used as names.
+  Applies to nested children and the parent author path.
+- Validation: the eight new synthetic regressions in
+  `tests/test_nested_malformed_author_urls.py` all fail against the original
+  code; full `uv run pytest` with coverage, `uv run mypy`,
+  `uv run prek run --all-files`, strict Sphinx build.
+- Docs: `docs/webmention.rst`; changelog: Unreleased in `docs/changelog.rst`.
+
 ## 2026-11-09
 
 ### Security review hardening: action URLs, signed WebSub, no free text in logs

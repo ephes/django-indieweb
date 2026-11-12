@@ -1075,7 +1075,9 @@ class WebmentionProcessor:
         """Extract explicit child author data without document-level h-card fallbacks."""
         if isinstance(author, str):
             if self._is_author_url_reference(author):
-                resolved_author_url = urljoin(base_url, author)
+                resolved_author_url = _resolve_author_url(base_url, author)
+                if not resolved_author_url:
+                    return {}
                 return {"url": resolved_author_url, "name": resolved_author_url, "photo": ""}
             return {"name": author}
 
@@ -1460,7 +1462,9 @@ class WebmentionProcessor:
         self, parsed: dict[str, Any], author_url: str, base_url: str
     ) -> dict[str, Any] | None:
         """Find an h-card referenced by an author URL or same-document fragment."""
-        resolved_url = urljoin(base_url, author_url)
+        resolved_url = _resolve_author_url(base_url, author_url)
+        if not resolved_url:
+            return None
         parsed_url = urlparse(resolved_url)
 
         if parsed_url.fragment:
@@ -1532,7 +1536,9 @@ class WebmentionProcessor:
                     return self._extract_h_card_author(h_card, base_url)
                 # If no h-card found, use URL as both url and name (fallback to previous behavior)
                 # This ensures something is visible to users even when the h-card is missing
-                resolved_author_url = urljoin(base_url, author)
+                resolved_author_url = _resolve_author_url(base_url, author)
+                if not resolved_author_url:
+                    return {}
                 return {"url": resolved_author_url, "name": resolved_author_url, "photo": ""}
             # Otherwise, it's a plain text name
             return {"name": author}
@@ -1552,8 +1558,15 @@ class WebmentionProcessor:
 
     def _is_author_url_reference(self, value: str) -> bool:
         """Return whether a string author value should be treated as a URL reference."""
-        parsed = urlparse(value)
-        return parsed.scheme in ("http", "https") or value.startswith(("/", "./", "../", "#"))
+        if value.startswith(("/", "./", "../", "#")):
+            return True
+        try:
+            parsed = urlparse(value)
+        except ValueError:
+            # Malformed URL syntax (for example an unbalanced IPv6 bracket) is
+            # still a URL reference; it must not become a display name.
+            return True
+        return parsed.scheme in ("http", "https")
 
     def _find_author_from_rel_author(self, parsed: dict[str, Any], base_url: str) -> dict[str, str]:
         """Resolve rel=author links to h-cards already present in the parsed source document."""
@@ -1622,9 +1635,9 @@ class WebmentionProcessor:
         }
 
         if result["url"]:
-            result["url"] = urljoin(base_url, result["url"])
+            result["url"] = _resolve_author_url(base_url, result["url"])
         if result["photo"]:
-            result["photo"] = urljoin(base_url, result["photo"])
+            result["photo"] = _resolve_author_url(base_url, result["photo"])
 
         return result
 
@@ -1714,6 +1727,25 @@ class WebmentionProcessor:
             return None
 
         return _lookup_profile_by_canonical_url(author_url, author_key)
+
+
+def _resolve_author_url(base_url: str, value: str) -> str:
+    """Resolve an author URL or photo against ``base_url``, or return ``""`` if it is malformed.
+
+    Remote author values are attacker-controlled; malformed syntax such as an
+    unbalanced IPv6 bracket makes :func:`urllib.parse.urljoin` raise
+    ``ValueError``. Such a value is dropped so the remaining author fields, the
+    response that carries it and its siblings are still processed.
+    """
+    try:
+        resolved = urljoin(base_url, value)
+        parsed = urlparse(resolved)
+        # Accessing hostname/port validates bracketed hosts and port numbers.
+        _ = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return ""
+    return resolved
 
 
 def _canonical_profile_url(value: str) -> str | None:

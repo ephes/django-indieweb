@@ -42,17 +42,7 @@ No current Syndication and Storage Examples items.
 
 ### Webmention and Reader Boundaries
 
-#### Nested author URL parsing isolation
-
-
-- [ ] A nested child with a valid identity but a malformed URL-valued author
-  (for example an unbalanced IPv6 bracket) can still raise before optional
-  author URL sanitization, failing parent processing. Isolate malformed author
-  URL parsing and preserve valid identity/sibling/parent processing with a
-  synthetic regression. References: `WebmentionProcessor._extract_nested_response_author`,
-  `_extract_nested_explicit_author`, `_is_author_url_reference`, and
-  `_extract_author_properties` in `src/indieweb/processors.py`. Round 77 I3
-  handles only `uid`/`url` identity candidates; it does not cover author URLs.
+No current Webmention and Reader Boundaries items.
 
 ## Agent Workflow Improvements
 

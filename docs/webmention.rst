@@ -951,7 +951,12 @@ for unstable responses. Malformed identity URL candidates (including broken
 IPv6 references) are skipped individually: later values, the other identity
 property, or the HTML ``id`` can still supply an identity. A child with no usable
 identity is skipped without invalidating its verified parent or valid siblings.
-Discarded identity URL candidates are not logged.
+Discarded identity URL candidates are not logged. The same applies to author URLs and
+photos: a malformed ``author`` URL reference, h-card ``url`` or ``photo`` (on a
+child, on the parent, or in a ``rel="author"`` link) is dropped on its own, so
+the remaining author fields, the child, its siblings and the parent are still
+stored. A malformed ``rel="author"`` link falls through to the single page-level
+h-card fallback.
 
 Status, spam, and moderation are stored independently for child responses, but
 current displayability still depends on the parent ``Webmention`` remaining
