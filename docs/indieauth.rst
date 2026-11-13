@@ -434,6 +434,28 @@ Security Considerations
    ``code_challenge``. A mismatch returns HTTP 400 ``invalid_grant`` and
    deletes the code. A successful redemption at either endpoint consumes the
    code, so it proves identity or yields a token at most once.
+   Expiry is rechecked after the consumption DELETE acquires its database
+   lock. A code that expires while waiting is consumed and rejected; it cannot
+   issue or rotate a token. The code remains valid at exactly the configured
+   age and expires once its age exceeds the timeout.
+
+   **Current owner eligibility**: After the DELETE, both redemption paths
+   reload the owner from the authoritative database and require ``is_active``.
+   A disabled or deleted owner yields HTTP 400, consumes any surviving code,
+   and leaves existing tokens unchanged. Cached consent-time owner objects
+   are not trusted. The owner read is the admission boundary: disablement
+   committed before that read is observed; a change after admission does not
+   retroactively cancel an exchange. No owner row lock is introduced, retaining
+   the consent/exchange lock order. Protected resources still check current
+   owner activity on each request.
+
+   **Database routers**: Auth and Token must resolve to the same model-level
+   write alias, and the owner must reside there. Consent replacement, code
+   lookup/consumption, owner eligibility, token creation/rotation and atomic
+   rollback use that alias explicitly, even if reads normally use a replica.
+   Split Auth/Token write aliases or an owner on another database raise
+   ``ImproperlyConfigured`` before writes. A token persistence error rolls
+   back code consumption and any prior token changes on that database.
 3. **Token Expiration and Revocation**: Access tokens expire after 24 hours by
    default; the Micropub endpoint rejects expired tokens with HTTP 401. Users
    can also revoke their own tokens at ``/indieweb/tokens/``; revocation

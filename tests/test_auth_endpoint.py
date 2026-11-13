@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.db.models import QuerySet
 from django.urls import reverse
 from django.utils.http import urlencode
 
@@ -1082,7 +1083,7 @@ def test_post_verify_auth_code_rejects_duplicate_auth_lookup(client, monkeypatch
     def duplicate_auth(*args, **kwargs):
         raise Auth.MultipleObjectsReturned
 
-    monkeypatch.setattr(Auth.objects, "get", duplicate_auth)
+    monkeypatch.setattr(Auth, "get_for_raw_key", duplicate_auth)
 
     response = client.post(
         reverse("indieweb:auth"),
@@ -1372,18 +1373,20 @@ def test_consent_issued_pkce_code_round_trips_through_redemption(client, user):
 def test_concurrent_double_approval_leaves_one_auth_row(client, user, monkeypatch):
     """A concurrent approval that inserts between our delete and create does not surface a 500."""
     client.login(username=user.username, password="password")
-    original_create = Auth.objects.create
+    original_create = QuerySet.create
     calls = {"count": 0}
 
-    def create_after_concurrent_winner(**fields):
+    def create_after_concurrent_winner(queryset, **fields):
+        if queryset.model is not Auth:
+            return original_create(queryset, **fields)
         calls["count"] += 1
         if calls["count"] == 1:
             # Simulate a concurrent approval committing its row in the window
             # between this request's delete and its insert.
-            original_create(**{**fields, "key": None})
-        return original_create(**fields)
+            original_create(queryset, **{**fields, "key": None})
+        return original_create(queryset, **fields)
 
-    monkeypatch.setattr(Auth.objects, "create", create_after_concurrent_winner)
+    monkeypatch.setattr(QuerySet, "create", create_after_concurrent_winner)
 
     response = client.post(
         reverse("indieweb:auth"),
@@ -1397,6 +1400,7 @@ def test_concurrent_double_approval_leaves_one_auth_row(client, user, monkeypatc
         },
     )
 
+    assert calls["count"] == 2
     assert response.status_code == 302
     assert Auth.objects.filter(owner=user, client_id=REDEEM_CLIENT_ID).count() == 1
     issued = parse_qs(urlparse(response["Location"]).query)["code"][0]
@@ -1776,7 +1780,7 @@ def test_consume_auth_code_issues_delete_as_first_statement(user):
     data_statements = [sql for sql in statements if not sql.startswith(("SAVEPOINT", "RELEASE", "BEGIN"))]
     assert data_statements
     assert data_statements[0].startswith("DELETE")
-    assert not any(sql.startswith("SELECT") for sql in data_statements)
+    assert not any("FOR UPDATE" in sql for sql in data_statements)
     assert _consume_auth_code(auth) is False
 
 

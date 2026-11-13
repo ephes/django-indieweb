@@ -5,6 +5,17 @@ Changelog
 
 Unreleased
 ----------
+* IndieAuth code consumption and token issuance/rotation now use one explicit
+  routed write database and transaction. Unsupported split-database grants
+  fail before writes, and token persistence errors restore the code and old
+  credentials on the routed database.
+* Both code redemption endpoints recheck expiry after the consumption lock
+  wait and reload current owner eligibility. Expired codes and inactive owners
+  cannot issue or rotate credentials; rejected codes remain consumed.
+* IndieAuth lifetimes require integer seconds in 1..2,147,483,647 and safe
+  datetime arithmetic. Invalid settings fail security checks and request
+  admission before grant changes. ``INDIEWEB_AUTH_CODE_TIMEOUT`` is supported
+  with precedence over the historical ``INDIWEB_AUTH_CODE_TIMEOUT`` alias.
 * Webmention display applies exact URL/status/type identity even under permissive
   collations, matching count selection. Parents, children and cross-type direct
   sources now share one joined statement snapshot, preventing mixed moderation

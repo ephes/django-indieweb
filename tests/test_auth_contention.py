@@ -191,3 +191,86 @@ def test_consent_and_exchange_lock_order(committed_auth, monkeypatch, first):
     assert replacement.key != auth.key
     new_code = parse_qs(urlsplit(responses["consent"]["Location"]).query)["code"][0]
     assert Auth.get_for_raw_key(new_code).pk == replacement.pk
+
+
+@pytest.mark.parametrize("endpoint", ["token", "auth"])
+@pytest.mark.parametrize("age", [59, 60, 61])
+def test_code_expiry_after_delete_lock_wait(committed_auth, monkeypatch, endpoint, age):
+    """A real writer blocks DELETE while the clock crosses the code deadline."""
+    from datetime import timedelta
+
+    from django.db import transaction
+
+    auth = committed_auth
+    now = auth.created
+    clock = [now]
+    monkeypatch.setattr(views.timezone, "now", lambda: clock[0])
+    old = Token.objects.create(
+        owner_id=auth.owner_id,
+        me=auth.me,
+        client_id=auth.client_id,
+        scope=auth.scope,
+        expires_at=now + timedelta(hours=1),
+    )
+    prior = Token.objects.values().get(pk=old.pk)
+    attempting, deleted = Event(), Event()
+
+    def hook(execute, sql, params, many, context):
+        if sql.lstrip().upper().startswith("DELETE") and Auth._meta.db_table in sql:
+            attempting.set()
+            result = execute(sql, params, many, context)
+            deleted.set()
+            return result
+        return execute(sql, params, many, context)
+
+    results = Queue()
+    threads = []
+    try:
+        with transaction.atomic():
+            Auth.objects.filter(pk=auth.pk).update(state=auth.state)
+            threads.append(start_request(results, "exchange", lambda: redeem(auth, endpoint), hook))
+            assert attempting.wait(10)
+            assert not deleted.wait(0.1), "DELETE did not wait for the independent writer"
+            clock[0] = now + timedelta(seconds=age)
+        response = finish_requests(threads, results)["exchange"]
+    finally:
+        for thread in threads:
+            thread.join(timeout=15)
+    assert deleted.is_set()
+    assert response.status_code == (400 if age > 60 else 200)
+    assert not Auth.objects.filter(pk=auth.pk).exists()
+    if age > 60 or endpoint == "auth":
+        assert Token.objects.values().get(pk=old.pk) == prior
+    else:
+        assert Token.objects.get(pk=old.pk).key != prior["key"]
+
+
+@pytest.mark.parametrize("endpoint", ["token", "auth"])
+def test_disable_owner_before_serialized_exchange(committed_auth, monkeypatch, endpoint):
+    """An independent connection disables the owner after the code was read."""
+    auth = committed_auth
+    looked_up, proceed = Event(), Event()
+    lookup = Auth.get_for_raw_key
+
+    def paused_lookup(*args, **kwargs):
+        matched = lookup(*args, **kwargs)
+        assert matched.owner.is_active
+        looked_up.set()
+        assert proceed.wait(10)
+        return matched
+
+    monkeypatch.setattr(Auth, "get_for_raw_key", paused_lookup)
+    results = Queue()
+    threads = [start_request(results, "exchange", lambda: redeem(auth, endpoint))]
+    try:
+        assert looked_up.wait(10)
+        get_user_model().objects.filter(pk=auth.owner_id).update(is_active=False)
+        proceed.set()
+        response = finish_requests(threads, results)["exchange"]
+    finally:
+        proceed.set()
+        for thread in threads:
+            thread.join(timeout=15)
+    assert response.status_code == 400
+    assert not Token.objects.exists()
+    assert not Auth.objects.exists()
