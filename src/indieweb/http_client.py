@@ -320,7 +320,7 @@ def _build_pinned_request_kwargs(
     new_kwargs["headers"] = headers
     if scheme == "https":
         extensions = dict(new_kwargs.get("extensions") or {})
-        extensions.setdefault("sni_hostname", original_host)
+        extensions["sni_hostname"] = original_host
         new_kwargs["extensions"] = extensions
     return new_kwargs
 

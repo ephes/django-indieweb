@@ -375,3 +375,23 @@ failure after a real token INSERT/UPDATE and after code deletion; code, bearer
 hash, expiry and modification time must roll back together. A healthy retry
 then succeeds once. Moving issuance outside the atomic block fails both tests.
 A broken migration must fail the migration-enabled lane during database setup.
+
+WebSub admission and display snapshots
+--------------------------------------
+
+The required ``storage-sqlite`` and ``storage-postgres`` lanes also run
+``tests/test_websub_delivery_admission.py`` and
+``tests/test_webmention_display_snapshot.py`` with real migrations. Delivery tests
+commit secret rotation or unsubscribe confirmation on a second connection after
+the first lookup, prove the current-authority reload, and hold signature
+validation while a competing writer attempts to change authority. Host dispatch
+must observe a committed acceptance, including with ``ATOMIC_REQUESTS`` enabled.
+Lease tests cover immediately before, exactly at and after expiry, plus denied
+and confirmed renewals and legacy unknown expiry.
+
+The display oracle commits moderation on a second connection after the first
+SELECT starts. It permits only a complete old or new parent/child/direct-source
+generation, with one query for both filtered and unfiltered renders and for 1 or
+20 children. File SQLite uses WAL in this test to allow that concurrent commit;
+PostgreSQL uses its statement snapshot. Both use invented URLs and credentials.
+Run these lanes against a disposable local database only; no hosted CI is needed.

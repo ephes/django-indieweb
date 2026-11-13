@@ -569,7 +569,7 @@ def test_show_webmentions_prefetches_nested_responses(
     create_nested_response(reply, "https://comments.example/query-one")
     create_nested_response(reply, "https://comments.example/query-two")
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(1):
         render_webmentions()
 
 

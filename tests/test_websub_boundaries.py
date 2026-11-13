@@ -160,3 +160,77 @@ def test_routed_callback_failure_rolls_back_preparation(monkeypatch, settings):
         )
     assert not WebSubSubscription.objects.using("other").exists()
     assert not WebSubSubscription.objects.using("default").exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"timeout": True},
+        {"timeout": 10**1000},
+        {"timeout": 86401},
+        {"lease_seconds": True},
+        {"lease_seconds": 1.5},
+        {"lease_seconds": float("inf")},
+        {"lease_seconds": 10**1000},
+    ],
+)
+def test_numeric_subscription_preflight_has_no_effects(existing, kwargs):
+    args = dict(
+        topic_url="https://numeric-topic.example/",
+        hub_url="https://hub.example/",
+        callback_base_url="https://callback.example/",
+    )
+    if existing:
+        WebSubSubscription.objects.create(topic_url=args["topic_url"], hub_url=args["hub_url"], state="active")
+    before = list(WebSubSubscription.objects.values())
+    calls = []
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(202))
+    ) as hub:
+        with pytest.raises(ValueError):
+            request_websub_subscription(**args, **kwargs, client=hub)
+    assert calls == []
+    assert list(WebSubSubscription.objects.values()) == before
+
+
+@pytest.mark.parametrize("timeout", [True, 10**1000, 86401])
+def test_numeric_notification_preflight_has_no_network_effects(timeout):
+    calls = []
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(202))
+    ) as hub:
+        with pytest.raises(ValueError):
+            notify_hubs("https://topic.example/", ["https://hub.example/"], timeout=timeout, client=hub)
+    assert calls == []
+
+
+@pytest.mark.django_db
+def test_numeric_request_strings_remain_supported():
+    calls = []
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(202))
+    ) as hub:
+        result = request_websub_subscription(
+            "https://topic.example/",
+            "https://hub.example/",
+            callback_base_url="https://callback.example/",
+            lease_seconds="600",
+            timeout="2.5",
+            client=hub,
+        )
+        assert result.success
+        assert result.subscription.requested_lease_seconds == 600
+        assert notify_hubs("https://topic.example/", ["https://hub.example/"], timeout="2.5", client=hub)[0].success
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("value", [False, True, 0.5, 1.5, float("inf"), 10**1000])
+def test_malformed_replay_counts_keep_default_protection(settings, value):
+    from indieweb.websub import _delivery_replay_history_max, _delivery_replay_window_seconds
+
+    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = value
+    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = value
+    assert _delivery_replay_history_max() == 64
+    assert _delivery_replay_window_seconds() == 300

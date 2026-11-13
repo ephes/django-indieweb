@@ -80,7 +80,7 @@ def test_display_defers_payloads_without_lazy_template_queries(size, django_asse
             content=kind,
         )
     template = Template("{% load webmention_tags %}{% show_webmentions target %}")
-    with django_assert_num_queries(2) as queries:
+    with django_assert_num_queries(1) as queries:
         output = template.render(Context({"target": target}))
     sql = " ".join(q["sql"] for q in queries.captured_queries).lower()
     for column in ("parsed_h_entry", "content_digest", "spam_check_result", "status_token"):

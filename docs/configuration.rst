@@ -896,7 +896,9 @@ subscriber subscribe/unsubscribe requests to a hub.
    # settings.py
    INDIEWEB_WEBSUB_TIMEOUT = 3.0
 
-The timeout must be a positive number. Hub notification failures, including
+The timeout must be finite, greater than zero and at most 86,400 seconds
+(one day). Numeric strings are accepted; booleans and conversion overflow are
+rejected before database or network effects. Hub notification failures, including
 timeouts and connection errors, are captured in per-hub result objects instead
 of being raised. Malformed topic URLs and malformed hub URLs raise
 ``ValueError`` before any network request is made. Invalid timeout values raise
@@ -936,8 +938,10 @@ latest-delivery diagnostics without invoking the host delivery hook. Set this
 to ``None`` to disable django-indieweb's built-in size check only when your
 server, proxy, or worker queue enforces an equivalent limit.
 Malformed values, including an empty environment variable that resolves to
-``""``, are ignored and logged; the callback falls back to the default 1 MiB
-limit rather than disabling the cap.
+``""`` and floats such as ``5e6`` (use an integer or an integer string), are
+ignored and logged; the callback falls back to the default 1 MiB limit rather
+than disabling the cap. The other integer WebSub settings (hub response cap,
+lease bounds, replay window and history) treat floats the same way.
 The callback rejects an oversized or negative ``Content-Length`` before
 reading the body when the header is present. Also configure a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching reverse-proxy request-body limit

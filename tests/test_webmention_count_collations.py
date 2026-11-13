@@ -143,3 +143,52 @@ def test_counts_use_exact_strings_on_both_backends(count_collation, django_asser
     with django_assert_num_queries(1):
         output = template.render(Context({"urls": list(expected)}))
     assert output.strip() == "".join(f"{sum(kinds.values())},{kinds.get('reply', 0)};" for kinds in expected.values())
+
+
+@pytest.mark.parametrize("kind", [None, "reply"])
+def test_display_uses_exact_target_and_direct_source_identity(count_collation, kind):
+    from django.template.loader import render_to_string
+    from django.utils import timezone
+
+    from indieweb.models import WebmentionNestedResponse
+    from indieweb.templatetags.webmention_tags import show_webmentions
+
+    target = "https://target.example/Case"
+    child_url = "https://source.example/child"
+    parent = Webmention.objects.create(
+        source_url="https://source.example/parent",
+        target_url=target,
+        mention_type="reply",
+        status="verified",
+        content="Exact parent",
+    )
+    other = Webmention.objects.create(
+        source_url=child_url,
+        target_url=target.lower(),
+        mention_type="like",
+        status="verified",
+        content="Other target",
+    )
+    Webmention.objects.create(
+        source_url="https://source.example/moderated",
+        target_url=target,
+        mention_type="reply",
+        status="VERIFIED",
+        content="Different status",
+    )
+    WebmentionNestedResponse.objects.create(
+        webmention=parent,
+        identity=child_url,
+        response_url=child_url,
+        content="Exact child",
+        first_seen_at=timezone.now(),
+        last_seen_at=timezone.now(),
+    )
+    result = show_webmentions(target, kind)
+    assert [row.pk for row in result["webmentions"]] == [parent.pk]
+    assert [row.identity for row in result["webmentions"][0].displayable_nested_responses] == [child_url]
+    output = render_to_string("indieweb/webmentions.html", result)
+    assert "Exact parent" in output and "Exact child" in output
+    assert "Other target" not in output and "Different status" not in output
+    assert [row.pk for row in show_webmentions(target.lower())["webmentions"]] == [other.pk]
+    assert prepare_webmention_counts([target])[target] == {"reply": 1}

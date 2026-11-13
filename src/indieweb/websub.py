@@ -20,8 +20,8 @@ import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
-from django.db import IntegrityError, router, transaction
-from django.db.models import Q, QuerySet
+from django.db import IntegrityError, connections, router, transaction
+from django.db.models import F, Q, QuerySet
 from django.http import HttpResponseBase
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -42,12 +42,15 @@ from .models import (
     WEBSUB_SECRET_ENCRYPTED_PREFIX,
     WebSubAcceptedDelivery,
     WebSubDeliveryAttempt,
+    WebSubSecretDecryptionError,
     WebSubSubscription,
 )
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEBSUB_TIMEOUT = 10.0
+MAX_WEBSUB_TIMEOUT = 24 * 60 * 60
+MAX_WEBSUB_INTEGER = 2**31 - 1
 DEFAULT_WEBSUB_DELIVERY_MAX_BYTES = 1024 * 1024
 DEFAULT_WEBSUB_HUB_RESPONSE_MAX_BYTES = 256 * 1024
 DEFAULT_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS = 300
@@ -84,6 +87,15 @@ class WebSubRejection(ValueError):
     contains request data, so callers may log it (other exception text is
     logged as the class name only, see ``indieweb.log_redaction``).
     """
+
+
+class WebSubDeliveryAdmissionError(WebSubRejection):
+    """A fixed, safe delivery rejection with its HTTP response metadata."""
+
+    def __init__(self, reason: str, status_code: int, signature_algorithm: str | None = None) -> None:
+        super().__init__(reason)
+        self.status_code = status_code
+        self.signature_algorithm = signature_algorithm
 
 
 @dataclass(frozen=True)
@@ -198,11 +210,13 @@ def add_websub_link_header(
 
 def _websub_timeout(timeout: float | None) -> float:
     configured = DEFAULT_WEBSUB_TIMEOUT if timeout is None else timeout
+    if isinstance(configured, bool):
+        raise ValueError("WebSub timeout must be a positive number")
     try:
         parsed = float(configured)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("WebSub timeout must be a positive number") from exc
-    if not math.isfinite(parsed) or parsed <= 0:
+    if not math.isfinite(parsed) or not 0 < parsed <= MAX_WEBSUB_TIMEOUT:
         raise ValueError("WebSub timeout must be a positive number")
     return parsed
 
@@ -210,9 +224,11 @@ def _websub_timeout(timeout: float | None) -> float:
 def _positive_int(value: int | str | None, *, label: str) -> int | None:
     if value is None or value == "":
         return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{label} must be a positive integer")
     try:
         parsed = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{label} must be a positive integer") from exc
     if parsed <= 0:
         raise ValueError(f"{label} must be a positive integer")
@@ -222,11 +238,13 @@ def _positive_int(value: int | str | None, *, label: str) -> int | None:
 def _non_negative_int(value: int | str | None, *, label: str) -> int | None:
     if value is None or value == "":
         return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{label} must be a non-negative integer")
     try:
         parsed = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{label} must be a non-negative integer") from exc
-    if parsed < 0:
+    if not 0 <= parsed <= MAX_WEBSUB_INTEGER:
         raise ValueError(f"{label} must be a non-negative integer")
     return parsed
 
@@ -440,7 +458,7 @@ def _delivery_replay_history_max() -> int | None:
     explicit ``0``: setting ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX`` to
     ``0`` opts into "unbounded by count" semantics so pruning is purely
     time-based by ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_WINDOW_SECONDS``. Any other
-    malformed value — including the empty string that ``_positive_int``
+    malformed value — including the empty string that ``_non_negative_int``
     translates back to ``None`` — falls back to the default so an empty
     environment variable does not silently weaken the protection by allowing
     the cache to grow without bound.
@@ -452,21 +470,15 @@ def _delivery_replay_history_max() -> int | None:
     )
     if configured is None:
         return None
-    # An explicit ``0`` is the documented "disable count-based eviction"
-    # opt-in. Recognize it before ``_positive_int`` rejects it as non-positive.
     try:
-        if int(configured) == 0:
-            return None
-    except (TypeError, ValueError):
-        # Fall through to the standard parser, which logs and uses the default.
-        pass
-    try:
-        parsed = _positive_int(configured, label="WebSub delivery replay history max")
+        parsed = _non_negative_int(configured, label="WebSub delivery replay history max")
     except ValueError:
         logger.warning(
             "Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX value; using the default cap",
         )
         return DEFAULT_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX
+    if parsed == 0:
+        return None
     if parsed is None:
         logger.warning(
             "Ignoring empty INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX value; using the default cap",
@@ -594,6 +606,8 @@ def _prepare_subscription_request(
     validated_hub_url = _validate_url(hub_url, label="hub URL")
     validated_mode = _validate_subscription_mode(mode)
     validated_lease_seconds = _positive_int(lease_seconds, label="lease seconds")
+    if validated_lease_seconds is not None and validated_lease_seconds > MAX_WEBSUB_INTEGER:
+        raise ValueError("requested lease seconds exceeds the supported database integer range")
     validated_secret = _validate_websub_secret(secret) if validated_mode == WebSubSubscription.MODE_SUBSCRIBE else None
 
     if validated_mode == WebSubSubscription.MODE_UNSUBSCRIBE:
@@ -860,6 +874,10 @@ def _lock_current_subscription(subscription: WebSubSubscription, *, using: str) 
     same alias, so a subscription stored in a non-default database is never
     confused with a row of the same primary key in another one.
     """
+    # SQLite has no row locks. Acquire its writer reservation before reading
+    # authority so a competing transition cannot commit between read and write.
+    if connections[using].vendor == "sqlite":
+        WebSubSubscription.objects.using(using).filter(pk=subscription.pk).update(modified=F("modified"))
     try:
         subscription.refresh_from_db(
             using=using,
@@ -1481,11 +1499,45 @@ def accept_websub_delivery(
     return True
 
 
+def admit_websub_delivery(
+    subscription: WebSubSubscription, body: bytes, headers: Mapping[str, str], *, body_digest: str
+) -> str | None:
+    """Validate current authority and commit replay acceptance before host work.
+
+    The caller's instance is refreshed on the subscription's write database.
+    No host callable or network operation runs while this transaction is held.
+    """
+    using = _subscription_write_db(subscription)
+    with transaction.atomic(using=using):
+        try:
+            _lock_current_subscription(subscription, using=using)
+        except WebSubRejection as exc:
+            raise WebSubDeliveryAdmissionError("subscription unavailable", 404) from exc
+        if subscription.state != WebSubSubscription.STATE_ACTIVE or (
+            subscription.lease_expires_at is not None and subscription.lease_expires_at <= timezone.now()
+        ):
+            raise WebSubDeliveryAdmissionError("subscription unavailable", 404)
+        try:
+            algorithm = validate_websub_delivery_signature(subscription, body, headers)
+        except WebSubSecretDecryptionError as exc:
+            raise WebSubDeliveryAdmissionError("secret decryption failed", 403) from exc
+        except ValueError as exc:
+            raise WebSubDeliveryAdmissionError("invalid signature", 403) from exc
+        if not delivery_topic_link_allowed(headers, subscription.topic_url):
+            raise WebSubDeliveryAdmissionError("topic link mismatch", 400, algorithm)
+        # Related replay rows must live on the same database as their FK target.
+        if router.db_for_write(WebSubAcceptedDelivery, instance=subscription) != using:
+            raise ValueError("WebSub delivery admission requires subscription and replay rows on the same database")
+        if not accept_websub_delivery(subscription, body_digest):
+            raise WebSubDeliveryAdmissionError("replay detected", 409, algorithm)
+    return algorithm
+
+
 def _hook_accepts_body_digest(callable_obj: Any) -> bool:
     """Return whether ``callable_obj`` advertises a ``body_digest`` keyword argument.
 
     A hook accepts ``body_digest`` if its signature has either an explicit
-    parameter named ``body_digest`` or a ``**kwargs``-style ``VAR_KEYWORD``
+    keyword-capable parameter named ``body_digest`` or a ``**kwargs``-style ``VAR_KEYWORD``
     parameter. ``inspect.signature`` can raise ``TypeError`` or ``ValueError``
     for some builtins or proxies — in that case we conservatively report
     ``False`` so the hook receives the legacy keyword set unchanged.
@@ -1497,7 +1549,10 @@ def _hook_accepts_body_digest(callable_obj: Any) -> bool:
     for param in sig.parameters.values():
         if param.kind is inspect.Parameter.VAR_KEYWORD:
             return True
-        if param.name == "body_digest":
+        if param.name == "body_digest" and param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
             return True
     return False
 
@@ -1583,7 +1638,7 @@ def process_websub_delivery(
     """Call the optional host hook for an accepted WebSub delivery.
 
     When ``body_digest`` is supplied and the configured hook signature accepts
-    it (an explicit ``body_digest`` parameter or a ``**kwargs`` parameter),
+    it (a keyword-capable ``body_digest`` parameter or a ``**kwargs`` parameter),
     the digest is forwarded so hosts can use it as an idempotency key. Hooks
     with the legacy signature continue to receive the existing keyword set
     unchanged.

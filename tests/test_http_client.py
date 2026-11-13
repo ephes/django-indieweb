@@ -851,3 +851,35 @@ def test_guarded_fetch_requests_identity_on_each_hop_and_retains_byte_limit(enco
     assert len(requests) == 2
     assert all(request.url.host == "93.184.216.34" for request in requests)
     assert all(request.headers["Host"] == "example.com" for request in requests)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_pinned_tls_authority_overrides_supplied_sni_across_redirects(streaming):
+    requests = []
+    extensions = {"sni_hostname": "conflicting.example", "synthetic_extension": "preserved"}
+    headers = {"hOsT": "conflicting.example"}
+
+    def capture(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(302, headers={"Location": "https://next.example:8443/final"})
+        return httpx.Response(200, content=b"ok")
+
+    helper = stream_with_safe_redirects if streaming else request_with_safe_redirects
+    with httpx.Client(transport=httpx.MockTransport(capture)) as client:
+        result = helper(
+            client,
+            "GET",
+            "https://original.example/start",
+            resolver=public_resolver,
+            extensions=extensions,
+            headers=headers,
+            **({"max_bytes": 100} if streaming else {}),
+        )
+    assert result.response.status_code == 200
+    assert [request.url.host for request in requests] == ["93.184.216.34"] * 2
+    assert [request.headers["host"] for request in requests] == ["original.example", "next.example:8443"]
+    assert [request.extensions["sni_hostname"] for request in requests] == ["original.example", "next.example"]
+    assert all(request.extensions["synthetic_extension"] == "preserved" for request in requests)
+    assert extensions["sni_hostname"] == "conflicting.example"
+    assert headers == {"hOsT": "conflicting.example"}

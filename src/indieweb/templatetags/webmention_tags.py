@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from django import template
-from django.db.models import Prefetch
 from django.db.models.functions import Coalesce
 from django.urls import reverse
 from django.utils.html import format_html
@@ -127,50 +126,74 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
     if not target_url:
         return {"webmentions": [], "target_url": target_url}
 
-    nested_responses = (
-        WebmentionNestedResponse.objects.filter(
-            status="verified",
-            webmention__status="verified",
-        )
-        .defer("parsed_h_entry", "content_digest")
-        .order_by(
-            Coalesce("published", "first_seen_at").desc(),
-            "-first_seen_at",
-            "-created",
-            "pk",
-        )
-    )
-
-    # Filter for verified webmentions
-    webmentions = (
-        Webmention.objects.filter(target_url=target_url, status="verified")
-        .defer(
-            "spam_check_result", "status_token", "vouch_url", "verified_at", "vouch_verified_at", "last_received_at"
-        )
-        .prefetch_related(
-            Prefetch("nested_responses", queryset=nested_responses, to_attr="_verified_nested_responses")
-        )
-    )
-
-    if mention_type:
-        webmentions = webmentions.filter(mention_type=mention_type)
-
-    # Order by published date (newest first) or created if published is not set
-    webmentions = webmentions.order_by("-published", "-created")
-    webmention_list = [_prepare_webmention_for_display(webmention) for webmention in webmentions]
-
-    if mention_type:
-        direct_source_urls = set(
-            Webmention.objects.filter(target_url=target_url, status="verified").values_list("source_url", flat=True)
-        )
-    else:
-        direct_source_urls = {webmention.source_url for webmention in webmention_list}
-
+    # All direct sources participate in suppression, even for a type-filtered
+    # render. Load them and their children in the same SQL statement so a
+    # concurrent moderation commit cannot mix read generations.
+    all_webmentions = _display_webmention_snapshot(target_url)
+    direct_source_urls = {row.source_url for row in all_webmentions}
+    webmentions = [
+        _prepare_webmention_for_display(row)
+        for row in all_webmentions
+        if not mention_type or row.mention_type == mention_type
+    ]
     return {
-        "webmentions": _attach_displayable_nested_responses(webmention_list, direct_source_urls),
+        "webmentions": _attach_displayable_nested_responses(webmentions, direct_source_urls),
         "target_url": target_url,
         "mention_type": mention_type,
     }
+
+
+def _display_webmention_snapshot(target_url: str) -> list[Webmention]:
+    """Materialize parents and children from one portable joined SELECT.
+
+    SQL collation equality is only a candidate filter. Exact URL, status and
+    type identity is decided in Python before display preparation. Large
+    ingestion-only payloads stay deferred on the returned model instances.
+    """
+    parent_deferred = {
+        "spam_check_result",
+        "status_token",
+        "vouch_url",
+        "verified_at",
+        "vouch_verified_at",
+        "last_received_at",
+    }
+    parent_fields = [
+        field.attname for field in Webmention._meta.concrete_fields if field.attname not in parent_deferred
+    ]
+    child_fields = [
+        field.attname
+        for field in WebmentionNestedResponse._meta.concrete_fields
+        if field.attname not in {"parsed_h_entry", "content_digest"}
+    ]
+    rows = (
+        Webmention.objects.filter(target_url=target_url, status="verified")
+        .order_by(
+            "-published",
+            "-created",
+            "pk",
+            Coalesce("nested_responses__published", "nested_responses__first_seen_at").desc(),
+            "-nested_responses__first_seen_at",
+            "-nested_responses__created",
+            "nested_responses__pk",
+        )
+        .values(*parent_fields, *(f"nested_responses__{field}" for field in child_fields))
+    )
+    parents: dict[int, Webmention] = {}
+    for row in rows:
+        if row["target_url"] != target_url or row["status"] != "verified":
+            continue
+        parent = parents.get(row["id"])
+        if parent is None:
+            parent = Webmention.from_db(rows.db, parent_fields, [row[field] for field in parent_fields])
+            cast(Any, parent)._verified_nested_responses = []
+            parents[parent.pk] = parent
+        if row["nested_responses__id"] is not None and row["nested_responses__status"] == "verified":
+            child = WebmentionNestedResponse.from_db(
+                rows.db, child_fields, [row[f"nested_responses__{field}"] for field in child_fields]
+            )
+            cast(Any, parent)._verified_nested_responses.append(child)
+    return list(parents.values())
 
 
 @register.simple_tag
