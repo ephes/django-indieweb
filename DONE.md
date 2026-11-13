@@ -2,6 +2,66 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-13
+
+### WebSub current delivery authority and secret recovery (round 87 B08: 24, 21, 22, 23)
+
+- Normalize non-ASCII active/pending ciphertext to the existing decryption error;
+  passive saves preserve it. Callback and admin recovery tests use invented data.
+- Reload current subscription authority and validate signatures, topic and known
+  lease expiry in the replay-acceptance transaction. SQLite reserves its writer
+  before reading; the endpoint opts out of request-wide transactions so host
+  hooks run after commit. Positional-only and variadic positional digest names
+  retain the legacy hook/enqueue call; keyword-capable signatures opt in.
+- Regression proofs failed before fixes for corrupt secrets, committed rotation
+  and unsubscribe on another connection, exact lease expiry and real callable
+  signatures. Tests also cover routed rows, deletion, concurrent writer blocking,
+  denied/confirmed renewal and host dispatch outside transactions.
+- Validation: `just check`, `uv run prek run --all-files`, warning-clean Sphinx
+  build, Django system/migration-drift checks, real-migration focused SQLite run,
+  and `uv run tox -e py313-django52-migrations,storage-sqlite`. Full suite:
+  3,070 passed, 16 skipped, 94.21% coverage (Django 6.1); migration suite:
+  3,070 passed, 16 skipped (Django 5.2); required SQLite storage lane: 52 passed.
+  Focused migration-enabled SQLite admission/recovery/display run: 53 passed.
+- PostgreSQL gate attempted with `INDIEWEB_TEST_POSTGRES_PORT=55487 uv run tox -e
+  storage-postgres`: blocked because the disposable PostgreSQL 17 server cannot
+  initialize in the sandbox (`shmget: Operation not permitted`, also with mmap).
+  Re-run this gate on a disposable PostgreSQL instance before integration.
+- Docs: WebSub callback, lease, recovery and callable contracts in
+  `docs/websub.rst`; local storage lanes in `docs/development.rst` and `tox.ini`.
+  Changelog: Unreleased in `docs/changelog.rst`. No schema/version changes.
+
+### Outbound WebSub numeric and pinned TLS contracts (round 87 B09: 25, 28)
+
+- Reject boolean/fractional lease/count inputs, non-finite/overflowing timeouts,
+  timeouts over one day and requested leases beyond portable database integers
+  before pending state or hub requests. Preserve integer strings and confirmed
+  lease clamping. Invalid replay limits keep default protection.
+- Override conflicting supplied SNI with the validated URL hostname on each
+  pinned HTTPS hop; retain unrelated extensions and caller mappings.
+- Regression proofs failed before the fixes through public subscription,
+  publication and streaming/non-streaming safe HTTP helpers. Validation uses the
+  same full local gates recorded above; targeted WebSub/HTTP tests also pass.
+- Docs: numeric preflight and pinned HTTPS authority in `docs/websub.rst`
+  and timeout bounds in `docs/configuration.rst`.
+  Changelog: Unreleased in `docs/changelog.rst`.
+
+### Exact, coherent Webmention display selection (round 87 B10: 26, 27)
+
+- Apply exact target, status and mention-type identity after SQL candidate
+  filtering. Load parent/child/direct-source presentation data in one joined
+  statement snapshot, retaining ordering, duplicate suppression and deferred
+  ingestion fields; add a primary-key tie-breaker for parent ordering.
+- Real permissive-collation regressions failed before the fix. A separate
+  connection commits moderation after SELECT starts: filtered/unfiltered renders
+  with 1 or 20 children must match a complete generation and use one query.
+  The file SQLite lane uses WAL for this oracle. PostgreSQL remains an explicit
+  blocked gate above, rather than a unit-test substitute.
+- Validation: full local gates above and focused migration-enabled SQLite display
+  regressions. Docs: `docs/webmention.rst` and `docs/development.rst`.
+  Changelog: Unreleased in `docs/changelog.rst`. Existing backlog items are
+  unrelated and remain queued.
+
 ## 2026-11-12
 
 ### Nested author URL parsing isolation (round 77 I3 follow-up)

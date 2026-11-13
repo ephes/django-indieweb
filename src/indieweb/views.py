@@ -53,26 +53,25 @@ from .log_redaction import (
     redact_url,
     redact_url_origin,
 )
-from .models import Auth, Token, Webmention, WebSubSecretDecryptionError, WebSubSubscription
+from .models import Auth, Token, Webmention, WebSubSubscription
 from .parse_isolation import WebmentionParseCapacityError
 from .processors import WebmentionProcessor, canonicalize_webmention_storage_url
 from .rate_limit import RateLimitMixin
 from .websub import (
+    WebSubDeliveryAdmissionError,
     WebSubDeliveryEnqueueError,
     WebSubDeliveryHookError,
     WebSubRejection,
-    accept_websub_delivery,
+    admit_websub_delivery,
     confirm_websub_verification,
     delivery_body_too_large,
     delivery_content_length_too_large,
     delivery_content_type_allowed,
     delivery_max_bytes,
-    delivery_topic_link_allowed,
     enqueue_websub_delivery,
     process_websub_delivery,
     record_websub_delivery,
     record_websub_denial,
-    validate_websub_delivery_signature,
 )
 
 if TYPE_CHECKING:
@@ -3292,6 +3291,7 @@ def _websub_rejection(exc: Exception) -> str:
     return str(exc) if isinstance(exc, WebSubRejection) else type(exc).__name__
 
 
+@method_decorator([transaction.non_atomic_requests(using=alias) for alias in settings.DATABASES], name="dispatch")
 class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
     """WebSub subscriber callback for verification and content distribution."""
 
@@ -3376,65 +3376,27 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
             )
             return HttpResponse(status=415)
 
-        try:
-            signature_algorithm = validate_websub_delivery_signature(subscription, body, request.headers)
-        except WebSubSecretDecryptionError as exc:
-            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {_websub_rejection(exc)}")
-            record_websub_delivery(
-                subscription,
-                body,
-                content_type=content_type,
-                status_code=403,
-                error="secret decryption failed",
-            )
-            return HttpResponse(status=403)
-        except ValueError as exc:
-            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: {_websub_rejection(exc)}")
-            record_websub_delivery(
-                subscription,
-                body,
-                content_type=content_type,
-                status_code=403,
-                error="invalid signature",
-            )
-            return HttpResponse(status=403)
-
-        if not delivery_topic_link_allowed(request.headers, subscription.topic_url):
-            logger.warning(f"Rejected WebSub delivery for subscription {subscription.pk}: topic Link header mismatch")
-            record_websub_delivery(
-                subscription,
-                body,
-                content_type=content_type,
-                status_code=400,
-                error="topic link mismatch",
-                signature_algorithm=signature_algorithm,
-            )
-            return HttpResponse(status=400)
-
         body_digest = hashlib.sha256(body).hexdigest()
-        # Atomic replay-check + acceptance gate. The unique constraint on
-        # ``WebSubAcceptedDelivery(subscription, body_digest)`` guarantees that
-        # two concurrent identical deliveries cannot both record an
-        # acceptance, regardless of backend row-locking semantics. Hook
-        # dispatch happens *after* the gate commits, so a crash between commit
-        # and hook execution leaves an accepted-and-recorded delivery whose
-        # hook may not have run; on retry the unique-constraint conflict
-        # returns the replay response and the hook is not re-invoked. We
-        # trade at-least-once delivery for at-most-once-per-digest hook
-        # invocation. Operators who require at-least-once host-side
-        # processing should make the configured hook a queue producer (cheap,
-        # idempotent on the host side) rather than the side-effecting work
-        # directly.
-        if not accept_websub_delivery(subscription, body_digest):
+        try:
+            signature_algorithm = admit_websub_delivery(subscription, body, request.headers, body_digest=body_digest)
+        except WebSubDeliveryAdmissionError as exc:
+            # Unavailable/deleted subscriptions share the opaque-token response.
+            if exc.status_code == 404:
+                return HttpResponse(status=404)
+            cause = exc.__cause__
+            rejection = cause if isinstance(cause, Exception) else exc
+            logger.warning(
+                f"Rejected WebSub delivery for subscription {subscription.pk}: {_websub_rejection(rejection)}"
+            )
             record_websub_delivery(
                 subscription,
                 body,
                 content_type=content_type,
-                status_code=409,
-                error="replay detected",
-                signature_algorithm=signature_algorithm,
+                status_code=exc.status_code,
+                error=str(exc),
+                signature_algorithm=exc.signature_algorithm,
             )
-            return HttpResponse(status=409)
+            return HttpResponse(status=exc.status_code)
 
         failure = self._dispatch_delivery(
             subscription,

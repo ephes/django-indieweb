@@ -5,6 +5,23 @@ Changelog
 
 Unreleased
 ----------
+* Webmention display applies exact URL/status/type identity even under permissive
+  collations, matching count selection. Parents, children and cross-type direct
+  sources now share one joined statement snapshot, preventing mixed moderation
+  generations while retaining deferred ingestion payloads.
+* WebSub numeric request preflight rejects booleans, fractional lease/count
+  inputs, conversion overflow and timeouts above one day before DB/network
+  effects. Integer and numeric timeout strings remain supported.
+* Pinned HTTPS requests override conflicting supplied SNI with the validated
+  original hostname on each redirect, preserving unrelated extensions.
+* WebSub callback admission reloads current subscription authority and checks
+  known lease expiry in the transaction that accepts the replay digest. Host
+  hooks run after commit, including with ``ATOMIC_REQUESTS`` enabled. SQLite
+  transitions reserve the writer before reading authority.
+* WebSub hook/enqueue signature detection treats only keyword-capable
+  ``body_digest`` parameters (or ``**kwargs``) as digest opt-ins.
+* Malformed non-ASCII WebSub ciphertext follows the decryption-error contract
+  and remains intact on passive saves, including pending secrets.
 * Malformed author URL references, h-card ``url`` and ``photo`` values (for
   example an unbalanced IPv6 bracket) in received Webmentions no longer fail
   processing of the whole source. The malformed value is dropped and stored as

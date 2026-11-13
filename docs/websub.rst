@@ -304,19 +304,30 @@ callback for a row deleted in the meantime is rejected the same way. With
 several databases, the transaction, the locked reload and the save all use the
 database the subscription is written to (``router.db_for_write``).
 
-Row locks need a database that supports them (PostgreSQL, MySQL/MariaDB). On
-SQLite ``select_for_update()`` is a no-op, but the transaction still prevents
-a stale overwrite: when two callbacks overlap, SQLite refuses the second
-writer with ``database is locked``, so that request fails with HTTP ``500``
-instead of overwriting, and the hub can retry. To serialize overlapping
-callbacks on SQLite without that error, set
-``"OPTIONS": {"transaction_mode": "IMMEDIATE"}`` on the database.
+PostgreSQL and MySQL/MariaDB serialize transitions with row locks. On SQLite,
+these transitions reserve the writer before reloading the row (a no-op update
+of ``modified``), since ``select_for_update()`` alone does not lock rows.
+Normal database lock timeouts still apply; hubs can retry a failed request.
 
 Content Distribution
 --------------------
 
-The callback ``POST`` accepts deliveries for active subscriptions only. It
-records latest-delivery metadata including content type, byte size, SHA-256
+The callback ``POST`` accepts deliveries for active subscriptions only. A known
+``lease_expires_at`` must be strictly later than the admission time; an expired
+active row returns ``404`` without accepting a digest or invoking host code.
+Legacy rows without a known expiry retain state-based eligibility. A denied
+renewal keeps the previous lease deadline; operators must arrange renewal.
+
+After body-size and content-type checks, the callback reloads the subscription
+on its write database under the same short transaction that validates the
+current signature/topic and accepts the replay digest. A secret rotation or
+unsubscribe committed before that reload governs the decision. Changes after
+acceptance do not revoke work already admitted. Subscription and replay rows
+must be routed to the same database. The endpoint opts out of ``ATOMIC_REQUESTS``
+for configured databases so its explicit transaction commits before a hook or
+enqueue callable runs; hosts must not wrap the endpoint in another transaction.
+
+The callback records latest-delivery metadata including content type, byte size, SHA-256
 digest, status code, delivery time, signature algorithm, and the latest
 accepted delivery digest. Each accepted delivery is recorded as a
 ``WebSubAcceptedDelivery`` row used for replay detection; each recorded
@@ -398,7 +409,10 @@ The hook is called with keyword arguments ``subscription_id``, ``hub_url``,
 ``topic_url``, raw ``body`` bytes, and request ``headers``. When the hook
 signature advertises a ``body_digest`` keyword argument or accepts
 ``**kwargs``, the SHA-256 hex digest of the delivery body is also passed as
-``body_digest``. Hook failures are logged, recorded on the subscription row,
+``body_digest``. Explicit parameters must be positional-or-keyword or keyword-only;
+a positional-only or ``*body_digest`` parameter uses the legacy call. Decorated
+callables follow the signature exposed by ``inspect.signature``.
+Hook failures are logged, recorded on the subscription row,
 and returned as HTTP ``500`` so the hub can retry. When no hook is configured,
 accepted deliveries return ``204 No Content`` after metadata is recorded.
 
@@ -516,8 +530,8 @@ rotate, or remove delivery secrets according to operator policy.
 Delivery Attempt Retention
 --------------------------
 
-Every callback ``POST`` writes one ``WebSubDeliveryAttempt`` row, accepted or
-rejected. The rows are metadata-only diagnostics, but nothing removes them, so
+Callback deliveries write one ``WebSubDeliveryAttempt`` row, accepted or
+rejected, except opaque ``404`` refusals for unavailable subscriptions. The rows are metadata-only diagnostics, but nothing removes them, so
 a noisy hub or a leaked callback URL can grow the table without bound. Prune
 them with the ``prune_websub_delivery_attempts`` management command:
 
@@ -673,7 +687,7 @@ configuration before committing pending state. Invalid configuration raises
 ``ValueError`` without changing subscriptions or contacting the hub. This also
 applies to a secret submitted to an HTTP hub: earlier versions returned a
 failure result and recorded the rejection instead.
-``INDIEWEB_WEBSUB_TIMEOUT`` must be finite and positive. It also supplies the
+``INDIEWEB_WEBSUB_TIMEOUT`` must be finite, positive and at most 86,400 seconds. It also supplies the
 shared HTTP helper's total budget per hub, across redirects and streamed body
 chunks, for both subscription and publication requests. The budget is checked
 when HTTPX yields control; it does not interrupt a socket read. Inactivity
@@ -697,3 +711,35 @@ count maintenance, and both atomic/savepoint boundaries use that same alias.
 A duplicate insert does not poison an enclosing transaction on that database;
 a later failure rolls back pruning and insertion together. Count caps remain
 best-effort under concurrent distinct deliveries.
+
+Malformed restored ciphertext
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An encrypted-prefixed secret with malformed or non-ASCII ciphertext raises
+``WebSubSecretDecryptionError`` on access. Delivery validation returns ``403``
+with the fixed ``secret decryption failed`` diagnostic. Passive saves retain
+unrecoverable active and pending ciphertext exactly; admin displays only whether
+a secret is configured. Restore the appropriate key or explicitly replace the
+secret through the normal subscription workflow. No secret value is logged.
+
+Numeric request arguments
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Subscription requests and hub notifications require a finite timeout greater
+than zero and at most 86,400 seconds (one day). Numeric strings are accepted;
+booleans, non-finite values and conversion overflow raise ``ValueError`` before
+pending subscription state or network requests are created. Lease/count helpers accept integers and integer strings, rejecting booleans and
+floats (including fractional values). Requested leases and replay window/history
+counts must fit the range through 2,147,483,647. Confirmed hub leases and operator
+lease bounds retain the documented clamping to the supported lease range. Optional empty/``None`` values retain their
+existing default semantics; lease values must be positive and replay-window
+counts may be zero. Configured invalid limits retain their documented fallback.
+
+Pinned HTTPS authority
+~~~~~~~~~~~~~~~~~~~~~~
+
+The safe HTTP request helpers connect to the admitted public IP while setting
+``Host`` and HTTPS ``extensions["sni_hostname"]`` from the validated URL authority.
+A supplied conflicting Host or SNI value is replaced on every redirect hop.
+Other transport extensions are preserved, and the caller's argument mappings
+are left intact. SNI excludes the port; Host includes non-default ports.

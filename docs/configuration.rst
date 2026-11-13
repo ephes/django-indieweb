@@ -896,7 +896,9 @@ subscriber subscribe/unsubscribe requests to a hub.
    # settings.py
    INDIEWEB_WEBSUB_TIMEOUT = 3.0
 
-The timeout must be a positive number. Hub notification failures, including
+The timeout must be finite, greater than zero and at most 86,400 seconds
+(one day). Numeric strings are accepted; booleans and conversion overflow are
+rejected before database or network effects. Hub notification failures, including
 timeouts and connection errors, are captured in per-hub result objects instead
 of being raised. Malformed topic URLs and malformed hub URLs raise
 ``ValueError`` before any network request is made. Invalid timeout values raise

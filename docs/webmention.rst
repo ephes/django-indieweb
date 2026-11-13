@@ -973,8 +973,8 @@ checks, and spam classification.
 For bulk rendering or moderation queries, prefer filtering on both child and
 parent state, for example ``WebmentionNestedResponse.objects.filter(status="verified",
 webmention__status="verified").select_related("webmention")``. The bundled
-``show_webmentions`` path prefetches verified child responses for rendering so
-templates avoid checking parent status one child at a time.
+``show_webmentions`` path loads verified parents and children in one joined
+statement so templates avoid checking parent status one child at a time.
 
 Child spam classification does not call the configured parent
 ``SpamChecker.check(webmention)`` API in this slice. A future implementation
@@ -987,9 +987,9 @@ response embedded inside that source.
 
 Display/query support exposes verified child responses as inline responses under
 their parent reply Webmention. ``show_webmentions`` continues querying verified
-top-level ``Webmention`` rows by ``target_url`` and prefetches verified children
-for those rows. The default top-level ordering remains based on the parent
-Webmention's ``published`` or ``created`` timestamp; child responses render
+top-level ``Webmention`` rows by exact ``target_url`` and loads their verified
+children from the same statement snapshot. The default top-level ordering
+remains based on the parent Webmention's ``published`` or ``created`` timestamp; child responses render
 under their parent ordered by their own ``published`` timestamp, falling back to
 ``first_seen_at``. ``webmention_count`` keeps its current top-level counting
 semantics for backwards compatibility. If nested-inclusive counts are needed,
@@ -1631,10 +1631,15 @@ instances or ingestion payloads. Supply only the current page's target URLs.
 ``show_webmentions`` defers parent ``spam_check_result``, ``status_token``,
 ``vouch_url``, ``verified_at``, ``vouch_verified_at`` and ``last_received_at``,
 and child ``parsed_h_entry`` and ``content_digest``. Bundled templates use only
-loaded presentation fields and render with two queries (three with a type
-filter, for cross-type deduplication). Nested ordering and deduplication are
-unchanged. Custom templates still receive model instances; accessing a deferred
-field lazily issues an extra query per instance. Hosts displaying ingestion
+loaded presentation fields and render with one joined query, including with a
+type filter. All verified direct-source identities for the exact target share
+that statement snapshot with parents and children, so a concurrent moderation
+commit cannot mix generations during duplicate suppression. SQL equality only
+selects candidates: URL, status and requested mention-type strings are compared
+exactly in Python before display preparation, even with case-insensitive database
+collations. Parent ordering uses primary key as a stable tie-breaker; nested
+ordering and duplicate suppression retain their existing rules. Custom templates
+still receive model instances; accessing a deferred field lazily issues an extra query per instance. Hosts displaying ingestion
 metadata should load it explicitly in a host-owned queryset instead.
 
 Nested-response write batches

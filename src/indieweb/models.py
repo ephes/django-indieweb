@@ -740,11 +740,11 @@ class WebSubSubscription(models.Model):
         try:
             _websub_secret_fernet().decrypt(token.encode("ascii"))
             return stored_secret
-        except InvalidToken:
+        except (InvalidToken, UnicodeEncodeError):
             pass
         try:
             plaintext = _websub_secret_multifernet().decrypt(token.encode("ascii")).decode("utf-8")
-        except (InvalidToken, UnicodeDecodeError):
+        except (InvalidToken, UnicodeDecodeError, UnicodeEncodeError):
             # No available key can decrypt the row. Don't lose the existing
             # ciphertext on save — leave it for the documented decrypt
             # failure path to surface as ``WebSubSecretDecryptionError``.
@@ -772,7 +772,7 @@ class WebSubSubscription(models.Model):
         token = stored_secret.removeprefix(WEBSUB_SECRET_ENCRYPTED_PREFIX)
         try:
             return _websub_secret_multifernet().decrypt(token.encode("ascii")).decode("utf-8")
-        except (InvalidToken, UnicodeDecodeError) as exc:
+        except (InvalidToken, UnicodeDecodeError, UnicodeEncodeError) as exc:
             raise WebSubSecretDecryptionError("Could not decrypt the stored WebSub secret") from exc
 
     def get_secret(self) -> str:
