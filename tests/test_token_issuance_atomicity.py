@@ -145,8 +145,43 @@ def test_consent_uses_grant_database(settings):
 def test_cross_database_owner_refused(settings):
     from indieweb.views import AuthView
 
+    class SplitOwnerRouter(GrantRouter):
+        def db_for_write(self, model, **hints):
+            return "default" if model is get_user_model() else "other"
+
     owner = get_user_model().objects.create_user(username="synthetic-owner")
-    settings.DATABASE_ROUTERS = [GrantRouter()]
+    settings.DATABASE_ROUTERS = [SplitOwnerRouter()]
     with pytest.raises(ImproperlyConfigured, match="same database"):
         AuthView._replace_auth_code(owner=owner, client_id="https://client.example/", scope="", state="state")
+    assert not Auth.objects.using("other").exists()
+    assert not Auth.objects.using("default").exists()
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "other"])
+def test_consent_accepts_replica_loaded_owner(settings):
+    """A primary/replica router loads ``request.user`` from the replica; consent must still succeed."""
+    from indieweb.views import AuthView
+
+    class PrimaryReplicaRouter:
+        def db_for_read(self, model, **hints):
+            return "other"
+
+        def db_for_write(self, model, **hints):
+            return "default"
+
+        def allow_relation(self, obj1, obj2, **hints):
+            return True
+
+    user_model = get_user_model()
+    primary = user_model.objects.db_manager("default").create_user(username="synthetic-owner")
+    user_model.objects.db_manager("other").create_user(username="synthetic-owner", id=primary.pk)
+    settings.DATABASE_ROUTERS = [PrimaryReplicaRouter()]
+    owner = user_model.objects.get(pk=primary.pk)  # As the auth middleware loads request.user.
+    assert owner._state.db == "other"
+
+    auth = AuthView._replace_auth_code(
+        owner=owner, client_id="https://client.example/", me="https://owner.example/", scope="", state="state"
+    )
+    assert auth._state.db == "default"
+    assert Auth.objects.using("default").get().owner_id == primary.pk
     assert not Auth.objects.using("other").exists()

@@ -5121,6 +5121,13 @@ bundle.
   with `shmget: Operation not permitted`; the attempted
   `INDIEWEB_TEST_POSTGRES_PORT=58988 uv run tox -e storage-postgres` cannot
   connect to that disposable server. This gate remains for external validation.
+- Merge validation (outside the sandbox): `storage-postgres` against a
+  disposable PostgreSQL 17 (69 passed), the CI PostgreSQL state-transition
+  commands and the auth/token suites on PostgreSQL all passed.
+- Review follow-up: consent compared `request.user._state.db` with the grant
+  alias, so a primary/replica router (user read from the replica) made every
+  approval fail. The owner check now compares the user model's write alias;
+  `test_consent_accepts_replica_loaded_owner` failed before the fix.
 - Documentation: auth/router/redemption contracts in `docs/indieauth.rst` and
   storage regression guidance in `docs/development.rst`; changelog: Unreleased.
 

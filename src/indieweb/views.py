@@ -1923,7 +1923,10 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMix
         foreign-key check needs that row) can deadlock.
         """
         using = _auth_grant_database()
-        if fields["owner"]._state.db != using:
+        # Compare the user model's write alias, not ``owner._state.db``: the
+        # consenting ``request.user`` is loaded with a normal (possibly replica)
+        # read, while the grant row must reference the owner's write database.
+        if router.db_for_write(type(fields["owner"])) != using:
             raise ImproperlyConfigured("IndieAuth owner and grants must use the same database")
         fields["scope"] = fields["scope"] or ""
         identity = {key: fields[key] for key in ("owner", "client_id", "scope", "me")}

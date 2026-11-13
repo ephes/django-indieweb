@@ -453,8 +453,10 @@ Security Considerations
    write alias, and the owner must reside there. Consent replacement, code
    lookup/consumption, owner eligibility, token creation/rotation and atomic
    rollback use that alias explicitly, even if reads normally use a replica.
-   Split Auth/Token write aliases or an owner on another database raise
-   ``ImproperlyConfigured`` before writes. A token persistence error rolls
+   Split Auth/Token write aliases or a user model routed to another write
+   database raise ``ImproperlyConfigured`` before writes. A consenting user
+   loaded from a read replica is accepted when the user model's write alias is
+   the grant alias. A token persistence error rolls
    back code consumption and any prior token changes on that database.
 3. **Token Expiration and Revocation**: Access tokens expire after 24 hours by
    default; the Micropub endpoint rejects expired tokens with HTTP 401. Users
