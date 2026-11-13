@@ -11,12 +11,16 @@ Unreleased
   generations while retaining deferred ingestion payloads.
 * WebSub numeric request preflight rejects booleans, fractional lease/count
   inputs, conversion overflow and timeouts above one day before DB/network
-  effects. Integer and numeric timeout strings remain supported.
+  effects. Integer and numeric timeout strings remain supported. The integer
+  WebSub settings parsed by the same helpers (delivery/hub-response byte caps,
+  lease bounds, replay window and history) now also refuse floats such as
+  ``5e6``: they log a warning and use the default, so write them as integers.
 * Pinned HTTPS requests override conflicting supplied SNI with the validated
   original hostname on each redirect, preserving unrelated extensions.
 * WebSub callback admission reloads current subscription authority and checks
   known lease expiry in the transaction that accepts the replay digest. Host
-  hooks run after commit, including with ``ATOMIC_REQUESTS`` enabled. SQLite
+  hooks run after commit, including with ``ATOMIC_REQUESTS`` enabled on any
+  configured database alias. SQLite
   transitions reserve the writer before reading authority.
 * WebSub hook/enqueue signature detection treats only keyword-capable
   ``body_digest`` parameters (or ``**kwargs``) as digest opt-ins.

@@ -3291,7 +3291,26 @@ def _websub_rejection(exc: Exception) -> str:
     return str(exc) if isinstance(exc, WebSubRejection) else type(exc).__name__
 
 
-@method_decorator([transaction.non_atomic_requests(using=alias) for alias in settings.DATABASES], name="dispatch")
+class _EveryDatabaseAlias(set[str]):
+    """``_non_atomic_requests`` marker that matches every database alias.
+
+    Django checks ``alias in view._non_atomic_requests`` for each connection with
+    ``ATOMIC_REQUESTS``. Stacking ``transaction.non_atomic_requests(using=...)``
+    through ``method_decorator`` keeps only one alias, and an import-time alias
+    list misses databases configured later, so the marker contains them all.
+    """
+
+    def __contains__(self, alias: object) -> bool:
+        return True
+
+
+def _non_atomic_requests_for_every_database(view: Any) -> Any:
+    """Opt ``view`` out of ``ATOMIC_REQUESTS`` on every configured database."""
+    view._non_atomic_requests = _EveryDatabaseAlias()
+    return view
+
+
+@method_decorator(_non_atomic_requests_for_every_database, name="dispatch")
 class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
     """WebSub subscriber callback for verification and content distribution."""
 

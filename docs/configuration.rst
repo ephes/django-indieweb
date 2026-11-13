@@ -938,8 +938,10 @@ latest-delivery diagnostics without invoking the host delivery hook. Set this
 to ``None`` to disable django-indieweb's built-in size check only when your
 server, proxy, or worker queue enforces an equivalent limit.
 Malformed values, including an empty environment variable that resolves to
-``""``, are ignored and logged; the callback falls back to the default 1 MiB
-limit rather than disabling the cap.
+``""`` and floats such as ``5e6`` (use an integer or an integer string), are
+ignored and logged; the callback falls back to the default 1 MiB limit rather
+than disabling the cap. The other integer WebSub settings (hub response cap,
+lease bounds, replay window and history) treat floats the same way.
 The callback rejects an oversized or negative ``Content-Length`` before
 reading the body when the header is present. Also configure a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching reverse-proxy request-body limit

@@ -23,10 +23,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   3,070 passed, 16 skipped, 94.21% coverage (Django 6.1); migration suite:
   3,070 passed, 16 skipped (Django 5.2); required SQLite storage lane: 52 passed.
   Focused migration-enabled SQLite admission/recovery/display run: 53 passed.
-- PostgreSQL gate attempted with `INDIEWEB_TEST_POSTGRES_PORT=55487 uv run tox -e
-  storage-postgres`: blocked because the disposable PostgreSQL 17 server cannot
-  initialize in the sandbox (`shmget: Operation not permitted`, also with mmap).
-  Re-run this gate on a disposable PostgreSQL instance before integration.
+- PostgreSQL gate: first blocked in the sandbox (`shmget: Operation not
+  permitted`); re-run before integration on a disposable synthetic PostgreSQL 17
+  instance: `INDIEWEB_TEST_POSTGRES_PORT=55487 uv run tox -e storage-postgres`
+  52 passed, PostgreSQL collation/display tests 15 passed.
+- Integration review: the callback's request-transaction opt-out kept only one
+  database alias when stacked through `method_decorator`, so a routed alias
+  with `ATOMIC_REQUESTS` still wrapped host dispatch. The callback now opts out
+  of every configured alias, including aliases configured after import; a
+  regression with a routed atomic alias failed before the fix.
 - Docs: WebSub callback, lease, recovery and callable contracts in
   `docs/websub.rst`; local storage lanes in `docs/development.rst` and `tox.ini`.
   Changelog: Unreleased in `docs/changelog.rst`. No schema/version changes.
@@ -36,7 +41,9 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Reject boolean/fractional lease/count inputs, non-finite/overflowing timeouts,
   timeouts over one day and requested leases beyond portable database integers
   before pending state or hub requests. Preserve integer strings and confirmed
-  lease clamping. Invalid replay limits keep default protection.
+  lease clamping. Invalid replay limits keep default protection. Integer
+  settings sharing these parsers now also refuse float values (warning plus
+  default), documented in the changelog and configuration docs.
 - Override conflicting supplied SNI with the validated URL hostname on each
   pinned HTTPS hop; retain unrelated extensions and caller mappings.
 - Regression proofs failed before the fixes through public subscription,
@@ -55,8 +62,8 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Real permissive-collation regressions failed before the fix. A separate
   connection commits moderation after SELECT starts: filtered/unfiltered renders
   with 1 or 20 children must match a complete generation and use one query.
-  The file SQLite lane uses WAL for this oracle. PostgreSQL remains an explicit
-  blocked gate above, rather than a unit-test substitute.
+  The file SQLite lane uses WAL for this oracle; the PostgreSQL lane recorded
+  above also passed.
 - Validation: full local gates above and focused migration-enabled SQLite display
   regressions. Docs: `docs/webmention.rst` and `docs/development.rst`.
   Changelog: Unreleased in `docs/changelog.rst`. Existing backlog items are

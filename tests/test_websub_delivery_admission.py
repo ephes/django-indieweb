@@ -276,3 +276,34 @@ def test_transition_waits_for_delivery_admission(active_subscription, concurrent
     assert updated.is_set()
     active_subscription.refresh_from_db()
     assert active_subscription.get_secret() == NEW_SECRET
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "other"])
+def test_admission_commits_before_host_dispatch_on_routed_atomic_alias(client, active_subscription, monkeypatch):
+    """Every alias with ATOMIC_REQUESTS is opted out, not only the first one."""
+    monkeypatch.setitem(connections["default"].settings_dict, "ATOMIC_REQUESTS", True)
+    monkeypatch.setitem(connections["other"].settings_dict, "ATOMIC_REQUESTS", True)
+    row = WebSubSubscription.objects.using("other").create(
+        hub_url="https://other.example/", topic_url=active_subscription.topic_url, state="active", secret=SECRET
+    )
+    routed = WebSubSubscription.objects.using("other").get(pk=row.pk)
+    seen = []
+
+    def hook(**kwargs):
+        seen.append(kwargs["subscription_id"])
+        assert not connections["other"].in_atomic_block
+        assert not connections["default"].in_atomic_block
+        assert WebSubAcceptedDelivery.objects.using("other").filter(subscription_id=row.pk).exists()
+
+    monkeypatch.setattr(websub_hooks, "capture_delivery", hook)
+    with patch.object(WebSubCallbackView, "_get_subscription", return_value=routed):
+        assert deliver(client, row).status_code == 204
+    assert seen == [row.pk]
+
+
+def test_callback_opts_out_of_atomic_requests_for_every_alias(settings):
+    non_atomic = getattr(WebSubCallbackView.as_view(), "_non_atomic_requests", set())
+    assert "default" in non_atomic
+    assert "other" in non_atomic
+    # Aliases configured after import are covered as well.
+    assert "configured-after-import" in non_atomic

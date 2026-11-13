@@ -324,8 +324,9 @@ current signature/topic and accepts the replay digest. A secret rotation or
 unsubscribe committed before that reload governs the decision. Changes after
 acceptance do not revoke work already admitted. Subscription and replay rows
 must be routed to the same database. The endpoint opts out of ``ATOMIC_REQUESTS``
-for configured databases so its explicit transaction commits before a hook or
-enqueue callable runs; hosts must not wrap the endpoint in another transaction.
+for every configured database alias (including aliases added after import) so
+its explicit transaction commits before a hook or enqueue callable runs; hosts
+must not wrap the endpoint in another transaction.
 
 The callback records latest-delivery metadata including content type, byte size, SHA-256
 digest, status code, delivery time, signature algorithm, and the latest
