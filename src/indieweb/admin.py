@@ -1,3 +1,4 @@
+import hashlib
 import json
 from typing import Any
 
@@ -21,49 +22,6 @@ from .models import (
 )
 
 
-@admin.register(Webmention)
-class WebmentionAdmin(admin.ModelAdmin):
-    list_display = ("source_url", "target_url", "status", "mention_type", "author_name", "vouch_url", "created")
-    list_filter = ("status", "mention_type", "created")
-    search_fields = ("source_url", "target_url", "vouch_url", "author_name")
-    readonly_fields = ("verified_at", "vouch_verified_at", "spam_check_result", "created", "modified")
-    ordering = ("-created",)
-    date_hierarchy = "created"
-
-    fieldsets = (
-        (
-            "URLs",
-            {
-                "fields": ("source_url", "target_url", "vouch_url"),
-            },
-        ),
-        (
-            "Status",
-            {
-                "fields": ("status", "mention_type", "verified_at", "vouch_verified_at"),
-            },
-        ),
-        (
-            "Author Information",
-            {
-                "fields": ("author_name", "author_url", "author_photo"),
-            },
-        ),
-        (
-            "Content",
-            {
-                "fields": ("content", "content_html", "published"),
-            },
-        ),
-        (
-            "Metadata",
-            {
-                "fields": ("spam_check_result", "created", "modified"),
-            },
-        ),
-    )
-
-
 class WebSubSecretListFilter(admin.SimpleListFilter):
     """Filter subscriptions by whether they store a secret for signed deliveries."""
 
@@ -81,48 +39,22 @@ class WebSubSecretListFilter(admin.SimpleListFilter):
         return queryset
 
 
-class WebSubSubscriptionAdminForm(ModelForm):
+class CurrentStateAdminForm(ModelForm):
     """Keep the displayed editable values as a signed conflict baseline."""
 
     edit_baseline = CharField(widget=HiddenInput, required=False)
-    editable_fields = (
-        "hub_url",
-        "topic_url",
-        "state",
-        "pending_mode",
-        "requested_lease_seconds",
-        "confirmed_lease_seconds",
-        "lease_expires_at",
-        "pending_secret_set",
-    )
-    transition_fields = (
-        "state",
-        "pending_mode",
-        "confirmed_lease_seconds",
-        "lease_expires_at",
-        "pending_secret_set",
-    )
-    baseline_salt = "indieweb.subscription-admin"
-
-    class Meta:
-        model = WebSubSubscription
-        fields = (
-            "hub_url",
-            "topic_url",
-            "state",
-            "pending_mode",
-            "requested_lease_seconds",
-            "confirmed_lease_seconds",
-            "lease_expires_at",
-            "pending_secret_set",
-        )
+    editable_fields: tuple[str, ...] = ()
+    transition_fields: tuple[str, ...] = ()
+    generation_fields: tuple[str, ...] = ()
+    baseline_salt = ""
+    object_label = "Object"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.baseline: dict[str, str] = {}
         if not self.instance.pk:
             return
-        names = (*self.editable_fields, "request_generation")
+        names = (*self.editable_fields, *self.generation_fields)
         current = {name: self._baseline_value(name) for name in names}
         current["pk"] = str(self.instance.pk)
         self.initial["edit_baseline"] = signing.dumps(current, salt=self.baseline_salt)
@@ -153,13 +85,13 @@ class WebSubSubscriptionAdminForm(ModelForm):
         if not self.instance.pk:
             return cleaned
         if not self.baseline:
-            raise ValidationError("Subscription edit baseline is missing or invalid. Reload the page.")
+            raise ValidationError(f"{self.object_label} edit baseline is missing or invalid. Reload the page.")
         changed = set(self.changed_data).intersection(self.editable_fields)
         checked = changed.copy()
         if changed.intersection(self.transition_fields):
-            checked.update((*self.transition_fields, "request_generation"))
+            checked.update((*self.transition_fields, *self.generation_fields))
         if any(self._baseline_value(name) != self.baseline[name] for name in checked):
-            raise ValidationError("Subscription changed since this form was displayed. Reload the page.")
+            raise ValidationError(f"{self.object_label} changed since this form was displayed. Reload the page.")
         # ModelForm would otherwise copy every posted (possibly stale) field
         # onto the locked current instance during _post_clean.
         for name in set(self.editable_fields) - changed:
@@ -168,19 +100,16 @@ class WebSubSubscriptionAdminForm(ModelForm):
         return cleaned
 
 
-@admin.register(WebSubSubscription)
-class WebSubSubscriptionAdmin(admin.ModelAdmin):
-    form = WebSubSubscriptionAdminForm
+class CurrentRowAdmin(admin.ModelAdmin):
+    """Read current authority and lock change POSTs on the model write database."""
 
-    def get_queryset(self, request: HttpRequest) -> QuerySet[WebSubSubscription]:
+    def get_queryset(self, request: HttpRequest) -> QuerySet[Any]:
         queryset = super().get_queryset(request)
-        if request.method == "POST":
-            return queryset.using(router.db_for_write(WebSubSubscription))
-        return queryset
+        return queryset.using(router.db_for_write(self.model))
 
     def get_object(self, request: HttpRequest, object_id: str, from_field: str | None = None) -> Any:
         # Django wraps change-form POSTs in an atomic block on this same write
-        # database. Reserve SQLite's writer before the first subscription read.
+        # database. Reserve SQLite's writer before the first model read.
         if request.method == "POST":
             field = self.model._meta.get_field(from_field) if from_field else self.model._meta.pk
             try:
@@ -192,6 +121,144 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
                 queryset.update(modified=F("modified"))
             return queryset.select_for_update().first()
         return super().get_object(request, object_id, from_field)
+
+    def save_model(self, request: HttpRequest, obj: Any, form: Any, change: bool) -> None:
+        obj.save(using=router.db_for_write(self.model))
+
+
+class WebSubSubscriptionAdminForm(CurrentStateAdminForm):
+    editable_fields = (
+        "hub_url",
+        "topic_url",
+        "state",
+        "pending_mode",
+        "requested_lease_seconds",
+        "confirmed_lease_seconds",
+        "lease_expires_at",
+        "pending_secret_set",
+    )
+    transition_fields = (
+        "state",
+        "pending_mode",
+        "confirmed_lease_seconds",
+        "lease_expires_at",
+        "pending_secret_set",
+    )
+    baseline_salt = "indieweb.subscription-admin"
+    generation_fields = ("request_generation",)
+    object_label = "Subscription"
+
+    class Meta:
+        model = WebSubSubscription
+        fields = (
+            "hub_url",
+            "topic_url",
+            "state",
+            "pending_mode",
+            "requested_lease_seconds",
+            "confirmed_lease_seconds",
+            "lease_expires_at",
+            "pending_secret_set",
+        )
+
+
+class WebmentionAdminForm(CurrentStateAdminForm):
+    editable_fields = (
+        "source_url",
+        "target_url",
+        "vouch_url",
+        "status",
+        "mention_type",
+        "author_name",
+        "author_url",
+        "author_photo",
+        "content",
+        "content_html",
+        "published",
+    )
+    transition_fields = editable_fields
+    generation_fields = ("last_received_at",)
+    baseline_salt = "indieweb.webmention-admin"
+    object_label = "Webmention"
+
+    class Meta:
+        model = Webmention
+        fields = (
+            "source_url",
+            "target_url",
+            "vouch_url",
+            "status",
+            "mention_type",
+            "author_name",
+            "author_url",
+            "author_photo",
+            "content",
+            "content_html",
+            "published",
+        )
+
+
+@admin.register(Webmention)
+class WebmentionAdmin(CurrentRowAdmin):
+    form = WebmentionAdminForm
+    list_display = ("source_url", "target_url", "status", "mention_type", "author_name", "vouch_url", "created")
+    list_filter = ("status", "mention_type", "created")
+    search_fields = ("source_url", "target_url", "vouch_url", "author_name")
+    readonly_fields = (
+        "verified_at",
+        "vouch_verified_at",
+        "last_received_at",
+        "spam_check_result",
+        "created",
+        "modified",
+    )
+    ordering = ("-created",)
+    date_hierarchy = "created"
+
+    fieldsets = (
+        (
+            "URLs",
+            {
+                "fields": ("source_url", "target_url", "vouch_url", "edit_baseline"),
+            },
+        ),
+        (
+            "Status",
+            {
+                "fields": ("status", "mention_type", "verified_at", "vouch_verified_at"),
+            },
+        ),
+        (
+            "Author Information",
+            {
+                "fields": ("author_name", "author_url", "author_photo"),
+            },
+        ),
+        (
+            "Content",
+            {
+                "fields": ("content", "content_html", "published"),
+            },
+        ),
+        (
+            "Metadata",
+            {
+                "fields": ("spam_check_result", "last_received_at", "created", "modified"),
+            },
+        ),
+    )
+
+    def save_model(self, request: HttpRequest, obj: Webmention, form: Any, change: bool) -> None:
+        if change:
+            fields = set(form.changed_data).intersection(WebmentionAdminForm.editable_fields)
+            obj.save(using=router.db_for_write(Webmention), update_fields=fields | {"modified"})
+        else:
+            super().save_model(request, obj, form, change)
+
+
+@admin.register(WebSubSubscription)
+class WebSubSubscriptionAdmin(CurrentRowAdmin):
+    form = WebSubSubscriptionAdminForm
 
     def save_model(self, request: HttpRequest, obj: WebSubSubscription, form: Any, change: bool) -> None:
         if change:
@@ -361,6 +428,9 @@ class TokenAdmin(admin.ModelAdmin):
     def masked_key(self, obj: Token) -> str:
         return obj.masked_key()
 
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
     def has_add_permission(self, request: HttpRequest) -> bool:
         return False
 
@@ -402,6 +472,9 @@ class AuthAdmin(admin.ModelAdmin):
         fields.append("masked_key")
         return fields
 
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        return False
+
     def has_add_permission(self, request: HttpRequest) -> bool:
         return False
 
@@ -440,7 +513,10 @@ class PrettyJSONWidget(AdminTextareaWidget):
 class ProfileAdminForm(ModelForm):
     """Custom form for Profile admin with pretty JSON editing."""
 
+    edit_revision = CharField(widget=HiddenInput, required=False)
     h_card = CharField(widget=PrettyJSONWidget, required=False, strip=False)
+    revision_fields = ("user_id", "h_card", "name", "photo_url", "url")
+    revision_salt = "indieweb.profile-admin"
 
     class Meta:
         model = Profile
@@ -448,9 +524,37 @@ class ProfileAdminForm(ModelForm):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.initial["edit_revision"] = signing.dumps(self._revision(), salt=self.revision_salt)
         # Convert the h_card dict to JSON string for display
         if self.instance and self.instance.h_card:
             self.initial["h_card"] = json.dumps(self.instance.h_card, indent=2, sort_keys=True, ensure_ascii=False)
+
+    def _revision(self) -> dict[str, Any]:
+        content = {name: getattr(self.instance, name) for name in self.revision_fields}
+        digest = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+        return {"pk": self.instance.pk, "digest": digest}
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        if not self.instance.pk:
+            return cleaned
+        try:
+            revision = signing.loads(self.data.get(self.add_prefix("edit_revision"), ""), salt=self.revision_salt)
+        except signing.BadSignature:
+            raise ValidationError("Profile edit revision is missing or invalid. Reload the page.") from None
+        if revision != self._revision():
+            # Display current values and a fresh revision for explicit resubmission.
+            current_data = dict(self.data.items())
+            for name in ("user", "h_card", "name", "photo_url", "url"):
+                value = self.initial[name]
+                current_data[self.add_prefix(name)] = value if value is not None else ""
+            current_data[self.add_prefix("edit_revision")] = self.initial["edit_revision"]
+            self.data = current_data
+            raise ValidationError(
+                "Profile changed since this form was displayed. Current profile shown; review and resubmit."
+            )
+        return cleaned
 
     def clean_h_card(self) -> dict[str, Any]:
         """Validate and parse h_card JSON structure."""
@@ -478,7 +582,7 @@ class ProfileAdminForm(ModelForm):
 
 
 @admin.register(Profile)
-class ProfileAdmin(admin.ModelAdmin):
+class ProfileAdmin(CurrentRowAdmin):
     form = ProfileAdminForm
     list_display = ("user", "name", "url", "created", "modified")
     list_filter = ("created", "modified")
@@ -503,7 +607,7 @@ class ProfileAdmin(admin.ModelAdmin):
         (
             "H-Card Data",
             {
-                "fields": ("h_card",),
+                "fields": ("h_card", "edit_revision"),
                 "description": "Full h-card data in JSON format (see https://microformats.org/wiki/h-card)",
             },
         ),

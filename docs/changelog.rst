@@ -5,6 +5,20 @@ Changelog
 
 Unreleased
 ----------
+* Make Auth/Token admin inspection view-only; forged change POSTs are denied,
+  with independently authorized deletion still available.
+* Lock current Webmention admin rows and save only deliberate editorial edits;
+  signed baselines reject competing identity, content or status decisions and
+  preserve processor diagnostics and receive state.
+* Fence profile admin saves with signed content revisions under the current-row
+  lock. Stale forms show the current profile for review and explicit resubmission;
+  h-card data and derived quick-access fields remain one atomic change.
+* Ignore nonfinite, fractional, boolean or out-of-range rate-limit settings;
+  limit/window accept exact positive integers up to 2,147,483,647.
+* Read paginated browser token inventory from the authoritative token write
+  database, matching owner-scoped revocation and issuance routing.
+* Stop canonical profile fallback at the second match, retaining constant match
+  state and logging ambiguity without counting all matching identities.
 * Hash WebSub delivery bodies once per admitted strongest signature algorithm,
   preserving multiple-signature and no-downgrade semantics.
 * Redact URL userinfo/query/fragment and terminal controls from lease CLI output.

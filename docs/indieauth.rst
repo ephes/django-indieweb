@@ -264,6 +264,11 @@ Authenticated site users can review and revoke their own issued IndieAuth/
 Micropub access tokens at ``/indieweb/tokens/``. The page lists token metadata
 such as client ID, identity URL, scope, creation/update timestamps, expiration,
 and active/expired status. It does not display full bearer token keys.
+Inventory reads and owner-scoped revocation both use ``router.db_for_write(Token)``
+as their authoritative database, consistent with token issuance. A read router
+pointing at a lagging replica cannot hide live grants or substitute replica
+metadata. Host routing must keep the owning user and issued tokens on the
+supported issuance database; this UI does not reconcile split user identities.
 The inventory uses pages of at most 50 grants, ordered by creation time and
 primary key (both newest first). Previous/Next links use the ``page`` query
 parameter. Missing or non-integer pages select the first page; zero, negative
@@ -712,3 +717,13 @@ refuse to recreate a deleted/consumed grant and raise ``DatabaseError`` when
 the row is gone, including on retries after a failed save. The raw issuance
 value remains available on the instance after failure. ``force_insert`` is not supported on an existing issuing
 instance; construct a new instance when inserting a new grant.
+
+Credential admin inspection
+---------------------------
+
+The Django ``Auth`` and ``Token`` admins allow read-only inspection with masked
+keys. Change/save POSTs are denied even to superusers, so inspecting a consumed,
+revoked or rotated grant cannot save a stale instance. Adding credentials is
+also disabled. Viewing uses the normal view/change permission checks; deleting
+an authorization code or revoking a token by deletion requires its separate
+Django delete permission, including for bulk deletion.

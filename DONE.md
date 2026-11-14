@@ -66,6 +66,59 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   Unreleased notes in `docs/changelog.rst`. Backlog status updated;
   no schema/version changes.
 
+### Admin current-state ownership (round 93 I1: 33–35)
+
+- `indieweb-credential-admin-view-only-write-boundary`: Auth/Token change
+  permission is disabled, including forged superuser save POSTs. Inspection
+  cannot save consumed/revoked/rotated credentials; view and delete permissions
+  remain independent.
+- `indieweb-webmention-admin-background-write-fence`: reuse the signed-baseline
+  and current-row locking mechanism from the WebSub admin. Save only deliberate
+  editorial fields; identity/content/status edits conflict with newer editorial
+  or receive state. No-op forms preserve current processor fields and diagnostics.
+- `indieweb-profile-admin-stale-card-conflict`: signed content revisions fence
+  the locked profile save. Conflicts display current content for explicit review
+  and resubmission; h-card derivation and quick-access fields remain atomic.
+- Regression coverage includes real admin clients, two profile editors,
+  deleted/rotated grants, a real processor failure, invalid/foreign signatures,
+  explicit URL edits and independent-connection writer serialization. Eight
+  original-source regressions failed before the fixes.
+- Validation shared with I2 below. Documentation: README, IndieAuth, Webmention
+  and h-card admin contracts updated. Changelog: Unreleased; no version bump
+  or schema migration. External review/merge remains pending on the parked branch.
+
+### Bounded authoritative lookup (round 93 I2: 36–38)
+
+- `indieweb-rate-config-finite-integer-admission`: reject nonfinite, fractional,
+  boolean and out-of-range settings through the existing ignore-invalid policy.
+  Exact positive integers/string integers remain supported up to 2,147,483,647.
+- `indieweb-browser-token-inventory-database-affinity`: use the token write
+  database for inventory and pagination, matching issuance and owner-fenced
+  revocation. A real two-alias client test uses colliding owner/grant IDs and
+  different replica/authority inventories; replica and foreign grants survive.
+- `indieweb-canonical-profile-lookup-retained-match-bound`: stop canonicalization
+  on the second match with one retained ID and 500-row streaming chunks. Exact
+  precedence and unique/no-match behavior remain intact. Log ambiguity without
+  counting the catalog or enumerating identities.
+- Twelve original-source regressions failed before the fixes. With I1, all 40
+  new focused tests pass on file SQLite. New tests also join the existing local
+  storage lanes; no workflow or matrix changes.
+- Validation: `uv sync --frozen --python 3.13`; `just check` with
+  `DJANGO_INDIEWEB_TEST_SQLITE_PATH` set to a private synthetic file database:
+  3,325 passed, one PostgreSQL-only skip, 94.29% coverage (88% gate), four SQLite
+  ResourceWarnings. `uv run tox -e storage-sqlite`: 257 passed, one PostgreSQL-only
+  skip, with migrations and Django 5.2. `just check` includes Ruff, mypy (66
+  source files) and the full tests. `uv run prek run --all-files`, strict
+  `uv run sphinx-build -W -b html docs docs/_build/html`, Django system checks
+  and `makemigrations --check --dry-run` passed.
+- PostgreSQL local setup was blocked by sandbox `shmget: Operation not permitted`
+  during disposable `initdb`; the PostgreSQL lane could not run. No hosted CI
+  was used as a substitute. Caches were redirected into the workspace.
+- Documentation: rate configuration, authoritative browser routing, canonical
+  fallback and README contracts updated; BACKLOG points to both completed
+  bundles. Changelog: Unreleased; no version bump. External review/merge pending.
+
+
 ## 2026-11-13
 
 ### WebSub current delivery authority and secret recovery (round 87 B08: 24, 21, 22, 23)

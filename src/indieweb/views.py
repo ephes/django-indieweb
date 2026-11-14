@@ -2416,7 +2416,11 @@ class TokenManagementView(UserLoginRequiredMixin, View):
     """List access tokens owned by the authenticated user."""
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
-        tokens = Token.objects.filter(owner_id=request.user.pk).order_by("-created", "-pk")
+        tokens = (
+            Token.objects.using(router.db_for_write(Token))
+            .filter(owner_id=request.user.pk)
+            .order_by("-created", "-pk")
+        )
         paginator = Paginator(tokens, 50)
         page = paginator.get_page(request.GET.get("page"))
         response = render(

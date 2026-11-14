@@ -249,6 +249,17 @@ The Profile model includes a Django admin interface with a pretty-printed JSON e
 
     # Profile admin is automatically registered
 
+Change forms carry a signed revision of the current profile content and owner.
+Both display and save use the profile write database; a POST locks and reloads
+the row until validation and save finish (SQLite reserves its writer first).
+A stale, missing or invalid revision cannot save. On a content conflict the form
+shows the current profile with a fresh revision: review it and explicitly
+resubmit, or reload before reapplying your edits. Changes to separate fields
+also conflict because the h-card and its derived quick-access values belong to
+one revision. The model's normal validation and h-card derivation run inside
+this transaction; no schema migration is required. New profiles use the normal
+add form.
+
 The admin interface provides:
 
 * User-friendly JSON editing with syntax highlighting

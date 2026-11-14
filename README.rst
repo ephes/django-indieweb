@@ -171,8 +171,13 @@ BSD License
 Operator safeguards
 -------------------
 
+Auth/Token admin inspection is view-only, with deletion separately authorized.
+Webmention admin edits save only deliberate fields under a current-row lock;
+competing receive/content decisions require a reload. Profile edits use signed
+content revisions and show the current profile on conflict for explicit review
+and resubmission. Both h-card and derived fields save atomically.
 WebSub admin edits preserve current callback secrets and delivery diagnostics.
-Only deliberately changed editable fields are saved; conflicting lease/state
+Only deliberately changed WebSub fields are saved; conflicting lease/state
 changes require reloading the form. The profile admin JSON editor accepts at
 most 256 KiB of UTF-8 text and reports decoding resource failures as field errors.
 

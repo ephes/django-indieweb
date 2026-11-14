@@ -1790,7 +1790,7 @@ def _lookup_profile_by_canonical_url(author_url: str, author_key: str) -> Profil
 
     A unique exact match wins. Otherwise stored URLs are compared by
     :func:`_canonical_profile_url` in Python, so no migration or indexed field
-    is needed; this reads the ``url`` of every profile that has one. When more
+    is needed; this streams URLs until the second match (or the catalog ends). When more
     than one profile matches, nothing is returned and the parsed author data is
     used instead, so an ambiguous match never picks a profile at random.
     """
@@ -1798,20 +1798,18 @@ def _lookup_profile_by_canonical_url(author_url: str, author_key: str) -> Profil
     if len(exact) == 1:
         return exact[0]
 
-    matches = [
-        pk
-        for pk, url in Profile.objects.exclude(url="").order_by("pk").values_list("pk", "url").iterator()
-        if _canonical_profile_url(url) == author_key
-    ]
-    if len(matches) == 1:
-        return Profile.objects.filter(pk=matches[0]).first()
-    if len(matches) > 1:
-        logger.warning(
-            "Ignoring local profile override: %d profiles match author URL %s",
-            len(matches),
-            redact_url(author_url),
-        )
-    return None
+    match = None
+    candidates = Profile.objects.exclude(url="").order_by("pk").values_list("pk", "url")
+    for pk, url in candidates.iterator(chunk_size=500):
+        if _canonical_profile_url(url) != author_key:
+            continue
+        if match is not None:
+            logger.warning(
+                "Ignoring local profile override: at least 2 profiles match author URL %s", redact_url(author_url)
+            )
+            return None
+        match = pk
+    return Profile.objects.filter(pk=match).first() if match is not None else None
 
 
 def process_queued_webmention(webmention_id: int, *, client: httpx.Client | None = None) -> Webmention:
