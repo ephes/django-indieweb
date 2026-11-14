@@ -289,6 +289,14 @@ preserving the current lease metadata so deliveries can continue. Denials
 without a matching pending request return HTTP ``404`` and do not mutate the
 row.
 
+All callback responses carry private, no-store cache directives and
+``Referrer-Policy: no-referrer``, including successful verification challenges,
+denial acknowledgements, unknown/stale capability refusals and rate-limit
+refusals. Shared caches must not reuse a challenge response in place of the
+current subscription checks, or expose the capability-bearing callback URL
+through a referrer. Status codes and challenge bodies retain their WebSub
+semantics.
+
 Verification and denial callbacks are serialized per subscription.
 ``confirm_websub_verification`` and ``record_websub_denial`` open a
 transaction, reload the row with ``select_for_update()`` and decide on that

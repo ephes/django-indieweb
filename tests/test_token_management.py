@@ -261,3 +261,188 @@ def test_inventory_is_not_replayed_from_shared_cache(client, settings, user, tok
         assert_private_inventory(second)
     finally:
         cache.clear()
+
+
+@pytest.mark.django_db
+def test_revoke_checks_owner_in_delete_statement(client, user, other_user):
+    """Transfer just before SQL DELETE; a previously fetched instance is stale."""
+    from django.db import connection
+
+    token = _make_token(user)
+    client.force_login(user)
+    deletes = []
+
+    def transfer_before_delete(execute, sql, params, many, context):
+        if sql.lstrip().upper().startswith("DELETE") and models.Token._meta.db_table in sql:
+            deletes.append(sql)
+            models.Token.objects.filter(pk=token.pk).update(owner=other_user)
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(transfer_before_delete):
+        response = client.post(reverse("indieweb:token-revoke", args=[token.pk]))
+
+    assert deletes
+    assert response.status_code == 404
+    assert_private_inventory(response)
+    assert models.Token.objects.get(pk=token.pk).owner_id == other_user.pk
+
+
+@pytest.fixture
+def many_grants(user, other_user):
+    owned = [_make_token(user, client_id=f"https://client-{i}.example/") for i in range(113)]
+    foreign = _make_token(other_user, client_id="https://foreign.example/")
+    # A timestamp tie must not duplicate or omit rows across adjacent pages.
+    models.Token.objects.all().update(created=timezone.now())
+    return owned, foreign
+
+
+@pytest.mark.django_db
+def test_inventory_paginates_tied_grants_with_bounded_queries(client, user, tokens_url, many_grants):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    owned, foreign = many_grants
+    client.force_login(user)
+    seen = []
+    for number, expected_size in [(1, 50), (2, 50), (3, 13)]:
+        with CaptureQueriesContext(connection) as queries:
+            response = client.get(tokens_url, {"page": number})
+        assert response.status_code == 200
+        rows = list(response.context["tokens"])
+        assert len(rows) == expected_size
+        assert response.context["page_obj"].number == number
+        assert response.context["paginator"].num_pages == 3
+        seen.extend(token.pk for token in rows)
+        assert_private_inventory(response)
+        body = response.content.decode()
+        assert body.count('<form method="post"') == expected_size
+        assert "https://foreign.example/" not in body
+        assert foreign.key not in body
+        assert all(token.key not in body for token in owned)
+        assert (f"?page={number - 1}" in body) == (number > 1)
+        assert (f"?page={number + 1}" in body) == (number < 3)
+        token_queries = [q["sql"] for q in queries if '"indieweb_token"' in q["sql"]]
+        assert len(token_queries) == 2  # COUNT plus one bounded row SELECT.
+        assert "COUNT(" in token_queries[0]
+        assert f"LIMIT {expected_size}" in token_queries[1]
+    assert seen == sorted((token.pk for token in owned), reverse=True)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("page, expected", [("invalid", 1), ("1.5", 1), ("0", 3), ("-1", 3), ("999999999", 3)])
+def test_inventory_invalid_pages_are_private(client, user, tokens_url, many_grants, page, expected):
+    client.force_login(user)
+    response = client.get(tokens_url, {"page": page})
+    assert response.status_code == 200
+    assert response.context["page_obj"].number == expected
+    assert len(response.context["tokens"]) <= 50
+    assert_private_inventory(response)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_revoke_cannot_delete_grant_transferred_on_another_connection(client, user, other_user, concurrent_database):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from django.db import close_old_connections, connection
+
+    token = _make_token(user)
+    client.force_login(user)
+    entered, release = Event(), Event()
+    request_connections = []
+
+    def pause_delete(execute, sql, params, many, context):
+        # Pause at the first statement touching the grant (the locking SELECT
+        # with the fix, the DELETE before it) and transfer the row meanwhile.
+        if models.Token._meta.db_table in sql and not request_connections:
+            request_connections.append(connection.connection)
+            entered.set()
+            assert release.wait(10)
+        return execute(sql, params, many, context)
+
+    def request():
+        close_old_connections()
+        try:
+            with connection.execute_wrapper(pause_delete):
+                return client.post(reverse("indieweb:token-revoke", args=[token.pk]))
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(request)
+        try:
+            assert entered.wait(10)
+            models.Token.objects.filter(pk=token.pk).update(owner=other_user)
+            assert request_connections[0] is not connection.connection
+        finally:
+            release.set()
+        response = pending.result(timeout=15)
+    assert response.status_code == 404
+    assert_private_inventory(response)
+    assert models.Token.objects.get(pk=token.pk).owner_id == other_user.pk
+
+
+def _collector_receiver(sender, instance, **kwargs):
+    """Host-style delete signal that disables Django's fast-delete path."""
+
+
+@pytest.mark.django_db(transaction=True)
+def test_revoke_locks_grant_on_collector_delete_path(client, user, other_user, concurrent_database):
+    """A Token delete receiver makes Django SELECT then ``DELETE ... WHERE id IN``.
+
+    Without a row lock, an owner transfer committed between those statements is
+    deleted by the former owner. With the lock, the transfer waits for the
+    revocation and then finds no row to move.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from django.db import close_old_connections, connection
+    from django.db.models.signals import pre_delete
+
+    if connection.vendor != "postgresql":
+        pytest.skip("Row locks need PostgreSQL; SQLite serializes writers instead")
+
+    token = _make_token(user)
+    client.force_login(user)
+    entered, release = Event(), Event()
+
+    def pause_delete(execute, sql, params, many, context):
+        if sql.lstrip().upper().startswith("DELETE") and models.Token._meta.db_table in sql:
+            entered.set()
+            assert release.wait(10)
+        return execute(sql, params, many, context)
+
+    def request():
+        close_old_connections()
+        try:
+            with connection.execute_wrapper(pause_delete):
+                return client.post(reverse("indieweb:token-revoke", args=[token.pk]))
+        finally:
+            close_old_connections()
+
+    def transfer():
+        close_old_connections()
+        try:
+            return models.Token.objects.filter(pk=token.pk).update(owner=other_user)
+        finally:
+            close_old_connections()
+
+    pre_delete.connect(_collector_receiver, sender=models.Token)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = pool.submit(request)
+            try:
+                assert entered.wait(10)
+                moved = pool.submit(transfer)
+                with pytest.raises(TimeoutError):
+                    moved.result(timeout=0.5)
+            finally:
+                release.set()
+            response = pending.result(timeout=15)
+            assert moved.result(timeout=15) == 0
+    finally:
+        pre_delete.disconnect(_collector_receiver, sender=models.Token)
+    assert response.status_code == 302
+    assert_private_inventory(response)
+    assert not models.Token.objects.filter(pk=token.pk).exists()

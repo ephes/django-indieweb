@@ -6,6 +6,8 @@ When adding or completing items, keep each entry specific enough for an agent or
 
 Round 90 media ownership, mutation authority, outbound work limits, resend
 reservations and bounded grant reconciliation are recorded in `DONE.md`.
+Round 91 current token authority, owner-fenced revocation, bounded inventory
+pages and private WebSub callback responses are also recorded there.
 
 ## Priority 1
 
