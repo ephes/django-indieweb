@@ -5357,3 +5357,34 @@ bundle.
   SQLite storage passed 217 tests with one PostgreSQL-only skip. Ruff/mypy,
   all configured hooks, strict Sphinx, Django system/schema checks and diff
   whitespace checks passed. PostgreSQL remains blocked as recorded above.
+
+
+### Patched Soup Sieve runtime dependency
+
+- Updated the lock with `uv lock --upgrade-package soupsieve --upgrade-package
+  beautifulsoup4`: Soup Sieve 2.9.2 to 4.1 and Beautiful Soup 4.14.2 to 4.15.0.
+  Published `soupsieve>=4.1` and `beautifulsoup4>=4.15.0` runtime floors so
+  downstream installations receive the CVE-2026-126190 fix as well.
+- Raised `requires-python` from `>=3.11` to `>=3.11.5`: Soup Sieve is used at
+  runtime through Beautiful Soup, not only by development tools. Wheel metadata
+  and a Beautiful Soup CSS-selector smoke check confirmed the combination.
+- Three metadata/security regressions failed before the fix. Final locked
+  `uv run pytest`: 3,222 passed, 66 skipped, 94.05% coverage (88% gate).
+  The full local tox matrix (Python 3.11–3.14 / Django 5.2, 6.0, 6.1) passed
+  all ten environments, each with 3,222 passed and 66 skipped. The migrations
+  lane also passed 3,222 tests; `storage-sqlite` passed 217 with one
+  PostgreSQL-only skip. Tox coverage output was isolated per environment.
+- Local gates passed: frozen uv sync, mypy, Ruff lint/format, all prek hooks,
+  strict Sphinx, Django system check, `makemigrations --check --dry-run`, package
+  build and wheel metadata validation. `pip-audit` on the exported full lock
+  with both Python 3.11 and 3.13 reported no known vulnerabilities.
+- PostgreSQL remains BLOCKED: disposable PostgreSQL 17 `initdb` failed with
+  `shmget: Operation not permitted`. The separate `storage-postgres` tox attempt
+  on synthetic localhost port 55499 failed at database setup (connection
+  refused: 215 errors, 3 non-database tests passed). Run this lane and the
+  PostgreSQL state-transition workflow commands outside the sandbox before
+  integration; this is not a passing PostgreSQL gate.
+- Docs: README, contributor Python requirement in `AGENTS.md`, and
+  `docs/development.rst`; Unreleased entry in `docs/changelog.rst`.
+  No existing backlog item applied; no schema or package-version change.
+  Parked for external cross-family review; no Claude/hosted Actions run or merge.

@@ -38,6 +38,9 @@ Features
 Installation
 ------------
 
+Requires Python 3.11.5 or newer. The runtime HTML parsing dependencies are
+Beautiful Soup 4.15.0 or newer and Soup Sieve 4.1 or newer.
+
 Install django-indieweb using pip::
 
     pip install django-indieweb

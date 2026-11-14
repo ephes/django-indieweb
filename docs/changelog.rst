@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Require Soup Sieve 4.1 or newer to address CVE-2026-126190 and update the
+  locked Beautiful Soup to 4.15.0. Raise the Python minimum from 3.11 to
+  3.11.5 because the patched selector is a runtime dependency; publish both
+  parsing dependency floors for downstream installations.
 * Hash WebSub delivery bodies once per admitted strongest signature algorithm,
   preserving multiple-signature and no-downgrade semantics.
 * Redact URL userinfo/query/fragment and terminal controls from lease CLI output.

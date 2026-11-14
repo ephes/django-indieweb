@@ -3,6 +3,11 @@ Development
 
 This section covers development workflows for django-indieweb.
 
+Python 3.11.5 or newer is required for the patched Soup Sieve runtime dependency
+(``soupsieve>=4.1``), used through Beautiful Soup (``beautifulsoup4>=4.15.0``).
+These floors are published as package metadata, so downstream installations
+also receive the security fix instead of relying on this repository's lockfile.
+
 Setting Up Development Environment
 ----------------------------------
 
