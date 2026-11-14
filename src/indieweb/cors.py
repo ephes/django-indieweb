@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -29,14 +30,14 @@ class CorsConfig:
 
 def _string_tuple(value: Any, *, setting_name: str) -> tuple[str, ...] | None:
     if isinstance(value, str):
-        return (value,)
+        value = (value,)
     if not isinstance(value, Iterable):
         logger.warning(f"Ignoring invalid {setting_name} value; expected a string or iterable of strings")
         return None
     parsed: list[str] = []
     for item in value:
-        if not isinstance(item, str) or not item:
-            logger.warning(f"Ignoring invalid {setting_name} entry; expected non-empty strings")
+        if not isinstance(item, str) or not item or any(not 32 <= ord(char) <= 126 for char in item):
+            logger.warning(f"Ignoring invalid {setting_name} entry; expected non-empty ASCII header values")
             return None
         parsed.append(item)
     return tuple(parsed)
@@ -50,10 +51,10 @@ def _max_age(value: Any) -> int | None:
         return None
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         logger.warning("Ignoring invalid INDIEWEB_CORS_MAX_AGE value; expected a non-negative integer")
         return None
-    if parsed < 0:
+    if parsed < 0 or (not isinstance(value, str) and parsed != value):
         logger.warning("Ignoring invalid INDIEWEB_CORS_MAX_AGE value; expected a non-negative integer")
         return None
     return parsed
@@ -76,10 +77,18 @@ def get_cors_config() -> CorsConfig | None:
 
     configured_headers = getattr(settings, "INDIEWEB_CORS_ALLOWED_HEADERS", DEFAULT_CORS_ALLOWED_HEADERS)
     allowed_headers = _string_tuple(configured_headers, setting_name="INDIEWEB_CORS_ALLOWED_HEADERS")
+    if allowed_headers is not None and any(
+        re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", header) is None for header in allowed_headers
+    ):
+        logger.warning("Ignoring invalid INDIEWEB_CORS_ALLOWED_HEADERS; expected HTTP header names")
+        allowed_headers = None
     if allowed_headers is None:
         allowed_headers = DEFAULT_CORS_ALLOWED_HEADERS
 
-    allow_credentials = bool(getattr(settings, "INDIEWEB_CORS_ALLOW_CREDENTIALS", False))
+    allow_credentials = getattr(settings, "INDIEWEB_CORS_ALLOW_CREDENTIALS", False)
+    if not isinstance(allow_credentials, bool):
+        logger.warning("Ignoring invalid INDIEWEB_CORS_ALLOW_CREDENTIALS; expected a boolean")
+        allow_credentials = False
     if allow_all_origins and allow_credentials:
         logger.warning(
             "Ignoring INDIEWEB_CORS_ALLOW_CREDENTIALS=True because "

@@ -11,10 +11,12 @@ import math
 import re
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import Message
 from pathlib import PurePath
+from tempfile import SpooledTemporaryFile
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import parse_qsl, unquote, urlparse, urlunparse
 from urllib.parse import urlencode as urllib_urlencode
@@ -26,6 +28,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.contrib.sites.models import Site
 from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import UploadedFile
 from django.core.paginator import Paginator
 from django.core.validators import URLValidator
 from django.db import IntegrityError, router, transaction
@@ -79,7 +82,6 @@ from .websub import (
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
-    from django.core.files.uploadedfile import UploadedFile
 
     from .handlers import MicropubEntry, MicropubMediaItem
 
@@ -487,6 +489,16 @@ _MICROPUB_JSON_UNSET = object()
 _MICROPUB_JSON_INVALID = object()
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous JSON members at every object depth."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON member")
+        result[key] = value
+    return result
+
+
 def _load_micropub_json_object(request: HttpRequest) -> dict[str, Any] | object | None:
     """Parse the JSON body of a Micropub or Micropub-media request once per request.
 
@@ -494,8 +506,8 @@ def _load_micropub_json_object(request: HttpRequest) -> dict[str, Any] | object 
         - The parsed ``dict`` when the body is a valid JSON object.
         - ``None`` when the request is not ``application/json``.
         - The ``_MICROPUB_JSON_INVALID`` sentinel when the body is malformed
-          (syntax error, invalid UTF-8, excessive integer digits, or recursion-limited) or decodes to a
-          non-object value.
+          (syntax error, duplicate members, invalid UTF-8, excessive integer
+          digits, or recursion-limited) or decodes to a non-object value.
 
     The parsed result is cached on the request so each authenticated body is
     parsed at most once, regardless of how many helpers consume it.
@@ -508,7 +520,7 @@ def _load_micropub_json_object(request: HttpRequest) -> dict[str, Any] | object 
     if cached is not _MICROPUB_JSON_UNSET:
         return cached
     try:
-        payload = json.loads(request.body)
+        payload = json.loads(request.body, object_pairs_hook=_unique_json_object)
     except (ValueError, AttributeError, RecursionError):
         result: dict[str, Any] | object = _MICROPUB_JSON_INVALID
     else:
@@ -618,10 +630,47 @@ def _validate_micropub_media_upload(upload: UploadedFile) -> _ValidatedMicropubM
     )
 
 
-def _validate_micropub_media_uploads(uploads: list[UploadedFile]) -> list[_ValidatedMicropubMediaUpload]:
+def _snapshot_micropub_media_upload(upload: UploadedFile, stack: ExitStack, remaining: int | None) -> UploadedFile:
+    """Copy once with actual-byte limits; sniffing and storage share this owned file."""
+    per_file = getattr(settings, "INDIEWEB_MEDIA_MAX_UPLOAD_BYTES", DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_BYTES)
+    limits = [int(value) for value in (per_file, remaining) if value is not None]
+    limit = min(limits) if limits else None
+    snapshot = stack.enter_context(
+        SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b", dir=settings.FILE_UPLOAD_TEMP_DIR)
+    )
+    upload.seek(0)
+    size = 0
+    while True:
+        read_size = 64 * 1024 if limit is None else min(64 * 1024, limit - size + 1)
+        chunk = upload.read(read_size)
+        if not chunk:
+            break
+        size += len(chunk)
+        if limit is not None and size > limit:
+            raise _MicropubMediaUploadError(413)
+        snapshot.write(chunk)
+    snapshot.seek(0)
+    return UploadedFile(file=snapshot, name=upload.name, content_type=upload.content_type, size=size)
+
+
+def _validate_micropub_media_uploads(
+    uploads: list[UploadedFile], stack: ExitStack
+) -> list[_ValidatedMicropubMediaUpload]:
     if not _upload_count_allowed(uploads) or not _upload_total_size_allowed(uploads):
         raise _MicropubMediaUploadError(413)
-    return [_validate_micropub_media_upload(upload) for upload in uploads]
+    total_limit = getattr(
+        settings, "INDIEWEB_MEDIA_MAX_UPLOAD_TOTAL_BYTES", DEFAULT_MICROPUB_MEDIA_MAX_UPLOAD_TOTAL_BYTES
+    )
+    remaining = None if total_limit is None else int(total_limit)
+    validated = []
+    for upload in uploads:
+        if not _upload_size_allowed(upload):
+            raise _MicropubMediaUploadError(413)
+        snapshot = _snapshot_micropub_media_upload(upload, stack, remaining)
+        if remaining is not None:
+            remaining -= snapshot.size or 0
+        validated.append(_validate_micropub_media_upload(snapshot))
+    return validated
 
 
 def _save_micropub_media_upload(validated_upload: _ValidatedMicropubMediaUpload, owned_names: list[str]) -> str:
@@ -668,22 +717,23 @@ def _store_micropub_media_uploads(
     owned_names: list[str] | None = None,
 ) -> list[str]:
     """Own newly stored files until every URL is ready, then transfer ownership."""
-    validated_uploads = _validate_micropub_media_uploads(uploads)
     stored_names: list[str] = []
     cleanup_names: list[str] = []
-    try:
-        for validated_upload in validated_uploads:
-            stored_names.append(_save_micropub_media_upload(validated_upload, cleanup_names))
-        urls = [_absolute_storage_url(request, stored_name) for stored_name in stored_names]
-        if owned_names is not None:
-            owned_names.extend(stored_names)
-        return urls
-    except Exception as exc:
-        _cleanup_micropub_media_uploads(cleanup_names)
-        if isinstance(exc, _MicropubMediaUploadError):
-            raise
-        logger.error("Unexpected error publishing Micropub media upload", exc_info=exc_info_without_messages())
-        raise _MicropubMediaUploadError(500) from exc
+    with ExitStack() as stack:
+        try:
+            validated_uploads = _validate_micropub_media_uploads(uploads, stack)
+            for validated_upload in validated_uploads:
+                stored_names.append(_save_micropub_media_upload(validated_upload, cleanup_names))
+            urls = [_absolute_storage_url(request, stored_name) for stored_name in stored_names]
+            if owned_names is not None:
+                owned_names.extend(stored_names)
+            return urls
+        except Exception as exc:
+            _cleanup_micropub_media_uploads(cleanup_names)
+            if isinstance(exc, _MicropubMediaUploadError):
+                raise
+            logger.error("Unexpected error publishing Micropub media upload", exc_info=exc_info_without_messages())
+            raise _MicropubMediaUploadError(500) from exc
 
 
 def _micropub_media_upload_error_response(exc: _MicropubMediaUploadError) -> HttpResponse:

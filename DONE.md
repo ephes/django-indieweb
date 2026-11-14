@@ -5441,3 +5441,69 @@ bundle.
   `docs/development.rst`; Unreleased entry in `docs/changelog.rst`.
   No existing backlog item applied; no schema or package-version change.
   Parked for external cross-family review; no Claude/hosted Actions run or merge.
+
+
+### Replay integrity and retention scale (round 96 B16: 27, 28)
+
+- Confirmed both defects on fresh `origin/develop` 0fa246a. Replay acceptance
+  checks for a retained matching digest on the write alias after savepoint
+  rollback; unrelated integrity failures propagate and roll back pruning.
+  Count retention uses the ordered, sliced queryset as a subquery.
+- Before the fix, the synthetic and real NOT NULL failures were swallowed,
+  and retaining 1,100 digests exceeded a lowered SQLite 999-variable ceiling.
+  Regressions cover missing foreign keys, true duplicates, usable enclosing
+  transactions, authoritative alias, ties and inclusive time/count boundaries.
+- Added replay regressions to the required SQLite/PostgreSQL storage lanes.
+- Documentation: `docs/websub.rst`; release notes: `docs/changelog.rst` Unreleased.
+
+### WebSub Link and Micropub wire grammar (round 96 B17: 29, 30)
+
+- Link splitting respects angle-bracket targets as well as quoted parameters,
+  rejects unbalanced delimiters and preserves exact subscribed-topic identity.
+- The once-per-request JSON decoder rejects duplicate keys at every depth,
+  before content handlers or media storage; repeated array values still work.
+- Before the fixes, delimiter-bearing topic URLs were refused and raw duplicate
+  action/URL/properties/text/html members reached host processing. Regression
+  tests cover both endpoints, malformed Links and decode caching.
+- Documentation: `docs/websub.rst`, `docs/micropub.rst`; release notes:
+  `docs/changelog.rst` Unreleased.
+
+### CORS configuration and media snapshots (round 96 B18: 31, 32)
+
+- Credentials require explicit booleans; nonfinite/fractional max-age values
+  omit the header safely. Configured response values require printable ASCII;
+  advertised request-header names require token grammar, with safe fallback.
+- Media uploads are copied once into owned spooled files. Actual per-file and
+  aggregate byte limits apply while copying; validation and storage consume
+  that same snapshot. All snapshots close on every exit, with existing owned
+  storage-key compensation retained.
+- Before the fixes, invalid settings enabled credentials or raised, declared
+  sizes bypassed byte limits, and a rewound stream published changed bytes.
+  Regressions also cover short reads, exact limits, disk spooling, later-file
+  refusal and read/storage failure cleanup.
+- Documentation: `docs/configuration.rst`, `docs/micropub.rst`; release notes:
+  `docs/changelog.rst` Unreleased. No version bump or migration.
+
+### Round 96 shared validation and handoff
+
+- `uv sync --locked --python 3.13`; `just check` passed. Final `just check`
+  with `DJANGO_INDIEWEB_TEST_SQLITE_PATH` pointing to a private workspace file:
+  3,381 passed, one PostgreSQL-only skip, 94.53% coverage (88% required), four
+  existing SQLite ResourceWarnings. Focused round-96 regressions: 54 passed.
+- Full local tox matrix passed: Django 5.2 on Python 3.11/3.12/3.13/3.14,
+  Django 6.0 and 6.1 on Python 3.12/3.13/3.14, each 3,314 passed with 68
+  in-memory storage skips. `py313-django52-migrations`: 3,314 passed, 68
+  skips. `storage-sqlite` with migrations and required storage tests:
+  262 passed, one PostgreSQL-only row-lock skip.
+- `uv run mypy`, Ruff lint/format, configured `uv run prek run --all-files`,
+  `uv run sphinx-build -W -b html docs docs/_build/html`, Django system check
+  and `makemigrations --check --dry-run` passed. Caches were directed into
+  the workspace where needed; check output is retained in the round-96
+  worker's private coordination log directory.
+- PostgreSQL setup is blocked by sandbox `shmget: Operation not permitted`:
+  `/opt/homebrew/opt/postgresql@17/bin/initdb -D /Users/jochen/workspaces/ws-cx-cx-r96-django-indieweb/.cache/postgres96 -U synthetic -A trust`.
+  Consequently `uv run tox -e storage-postgres` and the PostgreSQL commands in
+  `.github/workflows/state-transitions.yml` require an external disposable DB.
+- Park on `codex-q/r96-django-indieweb` for external Claude review and merge.
+  No Claude CLI/review loop, Actions, PR, trunk push or merge was invoked.
+  No owner policy decisions are required. No additional agents were used.
