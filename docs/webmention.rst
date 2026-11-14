@@ -1185,6 +1185,12 @@ resulting author URL matches a local ``Profile`` URL on the configured Django
 source-page author fields. Only source pages on the ``Site`` domain get this
 override.
 
+A unique exact stored profile URL takes precedence. The canonical fallback
+streams only profile IDs/URLs in chunks of 500, retaining at most one matching
+ID and stopping as soon as a second match proves ambiguity. Ambiguity keeps the
+remote parsed author data; diagnostics do not count or list matching profiles.
+A unique match or no match can still require a complete catalog scan.
+
 The match ignores the case of the scheme and host, IDNA versus Unicode host
 spelling, a default port (``:443`` for ``https``, ``:80`` for ``http``) and a
 trailing slash, so ``https://Example.COM:443/me/`` matches a profile stored as
@@ -1712,3 +1718,21 @@ of at most 100 duplicate identities on the migration database alias, within the
 migration transaction. A later failure rolls back earlier deletions. Existing
 installations that already applied 0029 need no data repair; migration 0030's
 non-null uniqueness boundary remains unchanged.
+
+Webmention admin edits
+----------------------
+
+The editorial form includes a signed baseline of editable values and the latest
+receive timestamp. Display and change POSTs use the Webmention write database;
+POSTs lock/reload the current row until validation and save complete (SQLite
+reserves its writer first). Only deliberately changed editable fields and the
+modification timestamp are saved. Unchanged submitted fields retain their
+current values, and processor-owned verification, spam diagnostics, status tokens
+and receive timestamps cannot be restored from an old instance. Processor
+snapshots and nested results are left intact.
+
+Any deliberate identity, content or status edit conflicts with changes to those
+fields or a newer receive timestamp since display. Reload and review before
+retrying; missing/invalid baselines also require a reload. A no-op submission
+preserves current processor state. Source, target and Vouch URL changes must be
+explicit edits, and use the same conflict check. New rows use the normal add form.

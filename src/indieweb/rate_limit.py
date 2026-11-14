@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Counter bucket shared by every HTTP method the endpoint does not implement.
 UNSUPPORTED_METHOD_BUCKET = "OTHER"
 
+# Fit signed 32-bit counter/timeout domains used by common cache backends.
+MAX_RATE_LIMIT_INTEGER = 2_147_483_647
+
 
 @dataclass(frozen=True)
 class RateLimitConfig:
@@ -44,9 +47,11 @@ def _positive_int(value: Any) -> int | None:
         return None
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    if parsed <= 0:
+    if parsed <= 0 or parsed > MAX_RATE_LIMIT_INTEGER:
+        return None
+    if not isinstance(value, str) and parsed != value:
         return None
     return parsed
 

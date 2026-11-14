@@ -451,6 +451,13 @@ Each configured endpoint key accepts a mapping with:
 - ``limit`` - Maximum number of requests allowed during the window.
 - ``window`` - Window length in seconds.
 
+Both values must be exact positive integers from 1 through 2,147,483,647
+(the signed 32-bit counter/timeout domain). Integer strings and integral
+numeric values such as ``"60"`` and ``60.0`` are accepted. Booleans,
+nonfinite values, fractional numbers and larger values are invalid: the
+endpoint's optional rate limit is ignored with a warning, rather than
+truncating the allowance or raising an endpoint error.
+
 **Example:**
 
 The following is a hardened production starting point. Tune it for your

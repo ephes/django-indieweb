@@ -12,6 +12,9 @@ pages and private WebSub callback responses are also recorded there.
 Round 92 admin, delivery verification and lease maintenance safeguards are
 tracked in `DONE.md` as their bundles complete.
 
+Round 93 credential/Webmention/profile admin ownership and bounded,
+authoritative rate/inventory/profile lookup work are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.
