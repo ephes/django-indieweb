@@ -1926,7 +1926,9 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMix
         # Compare the user model's write alias, not ``owner._state.db``: the
         # consenting ``request.user`` is loaded with a normal (possibly replica)
         # read, while the grant row must reference the owner's write database.
-        if router.db_for_write(type(fields["owner"])) != using:
+        # ``_meta.model`` (not ``type()``) sees through the middleware's
+        # ``SimpleLazyObject``; no instance hint, whose fallback is the read alias.
+        if router.db_for_write(fields["owner"]._meta.model) != using:
             raise ImproperlyConfigured("IndieAuth owner and grants must use the same database")
         fields["scope"] = fields["scope"] or ""
         identity = {key: fields[key] for key in ("owner", "client_id", "scope", "me")}

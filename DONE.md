@@ -5127,7 +5127,11 @@ bundle.
 - Review follow-up: consent compared `request.user._state.db` with the grant
   alias, so a primary/replica router (user read from the replica) made every
   approval fail. The owner check now compares the user model's write alias;
-  `test_consent_accepts_replica_loaded_owner` failed before the fix.
+  `test_consent_accepts_replica_loaded_owner` failed before the fix. The
+  model is taken from `owner._meta.model`, so the middleware's lazy
+  `request.user` reaches app-label routers as the real user model
+  (`test_consent_routes_lazy_request_user_by_concrete_model` failed with
+  `type()`).
 - Documentation: auth/router/redemption contracts in `docs/indieauth.rst` and
   storage regression guidance in `docs/development.rst`; changelog: Unreleased.
 

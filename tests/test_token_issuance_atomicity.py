@@ -185,3 +185,33 @@ def test_consent_accepts_replica_loaded_owner(settings):
     assert auth._state.db == "default"
     assert Auth.objects.using("default").get().owner_id == primary.pk
     assert not Auth.objects.using("other").exists()
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "other"])
+def test_consent_routes_lazy_request_user_by_concrete_model(settings):
+    """``request.user`` is a ``SimpleLazyObject``; app-label routers must see the real user model."""
+    from django.utils.functional import SimpleLazyObject
+
+    from indieweb.views import AuthView
+
+    class AppLabelRouter:
+        def db_for_read(self, model, **hints):
+            return "other" if model._meta.app_label == "auth" else None
+
+        def db_for_write(self, model, **hints):
+            return "default" if model._meta.app_label == "auth" else None
+
+        def allow_relation(self, obj1, obj2, **hints):
+            return True
+
+    user_model = get_user_model()
+    primary = user_model.objects.db_manager("default").create_user(username="synthetic-owner")
+    user_model.objects.db_manager("other").create_user(username="synthetic-owner", id=primary.pk)
+    settings.DATABASE_ROUTERS = [AppLabelRouter()]
+    owner = SimpleLazyObject(lambda: user_model.objects.get(pk=primary.pk))
+
+    auth = AuthView._replace_auth_code(
+        owner=owner, client_id="https://client.example/", me="https://owner.example/", scope="", state="state"
+    )
+    assert auth._state.db == "default"
+    assert Auth.objects.using("default").get().owner_id == primary.pk
