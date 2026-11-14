@@ -48,7 +48,8 @@ class TokenReplicaRouter:
 def test_browser_inventory_and_revoke_share_authority(client, settings):
     user = get_user_model().objects.create_user(username="synthetic-owner")
     get_user_model().objects.using("other").create(pk=user.pk, username="synthetic-authority-owner")
-    foreign = get_user_model().objects.using("other").create(username="synthetic-foreign")
+    # Explicit keys: PostgreSQL sequences do not advance for explicit primary keys.
+    foreign = get_user_model().objects.using("other").create(pk=user.pk + 1, username="synthetic-foreign")
     replica = Token.objects.using("default").create(
         pk=1, owner_id=user.pk, client_id="https://replica.example/", me="https://owner.example/"
     )
@@ -59,7 +60,7 @@ def test_browser_inventory_and_revoke_share_authority(client, settings):
         for index in range(53)
     ]
     unowned = Token.objects.using("other").create(
-        owner_id=foreign.pk, client_id="https://foreign.example/", me="https://foreign.example/"
+        pk=1000, owner_id=foreign.pk, client_id="https://foreign.example/", me="https://foreign.example/"
     )
     client.force_login(user)
     settings.DATABASE_ROUTERS = [TokenReplicaRouter()]
