@@ -125,7 +125,9 @@ def test_profile_admin_refuses_resource_inputs_without_saving(staff_client, payl
     )
     assert response.status_code == 200
     errors = str(response.context["adminform"].form.errors["h_card"])
-    assert "Invalid JSON" in errors
+    # Interpreters with stack-based recursion limits (3.14+) may decode deep nesting;
+    # the h-card validator's 32-level tree bound then refuses it instead.
+    assert "Invalid JSON" in errors or "Invalid h-card structure" in errors
     assert "synthetic" not in errors
     profile.refresh_from_db()
     assert profile.h_card == {"name": ["Before"]}

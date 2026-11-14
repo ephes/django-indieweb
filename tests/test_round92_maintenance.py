@@ -106,7 +106,9 @@ def test_cli_streams_projected_lease_metadata(monkeypatch):
     with patch.object(QuerySet, "iterator", iterator), CaptureQueriesContext(connection) as queries:
         call_command("websub_subscriptions", stdout=out)
     assert chunks == [500]
-    selects = [q["sql"] for q in queries if q["sql"].lstrip().upper().startswith("SELECT")]
+    # PostgreSQL streams .iterator() through a server-side cursor (DECLARE ... FOR SELECT, then
+    # FETCH); SQLite issues the SELECT directly. Either way exactly one projected query runs.
+    selects = [q["sql"] for q in queries if q["sql"].lstrip().upper().startswith(("SELECT", "DECLARE"))]
     assert len(selects) == 1
     selected = selects[0].split(" FROM ")[0]
     for private in ("secret", "last_delivery", "callback_token", "request_generation"):
