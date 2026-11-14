@@ -10,7 +10,7 @@ import math
 import string
 import uuid
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -1111,7 +1111,8 @@ def prune_websub_delivery_attempts(
 
     The cutoff is ``now`` minus the retention days; attempts received exactly
     at the cutoff are kept. Rows are deleted in primary-key batches of
-    ``batch_size`` until none is left, so one run drains the backlog without
+    at most ``batch_size`` (capped at 1,000 and the write backend's public
+    parameter limit) until none is left, so one run drains the backlog without
     one unbounded ``DELETE``. ``dry_run`` only counts. Subscriptions, their
     ``last_delivery_*`` summary fields and the ``WebSubAcceptedDelivery``
     replay-protection rows are never touched. Every query runs on the
@@ -1128,15 +1129,19 @@ def prune_websub_delivery_attempts(
         raise ValueError("WebSub delivery-attempt retention exceeds the supported datetime range") from exc
     # Count, select and delete on the write database. Batches selected from a
     # lagging read replica would keep returning rows that are already deleted.
-    attempts = WebSubDeliveryAttempt.objects.using(router.db_for_write(WebSubDeliveryAttempt))
+    alias = router.db_for_write(WebSubDeliveryAttempt)
+    parameter_limit = connections[alias].features.max_query_params
+    batch_size = min(batch_size, parameter_limit or 1000, 1000)
+    attempts = WebSubDeliveryAttempt.objects.using(alias)
     expired = attempts.filter(received_at__lt=cutoff)
     matched = expired.count()
     deleted = 0
     while not dry_run:
-        batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
-        if not batch:
-            break
-        deleted += attempts.filter(pk__in=batch).delete()[0]
+        with transaction.atomic(using=alias):
+            batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
+            if not batch:
+                break
+            deleted += attempts.filter(pk__in=batch).delete()[0]
     return WebSubDeliveryAttemptPruneResult(
         retention_days=days,
         cutoff=cutoff,
@@ -1179,29 +1184,41 @@ def get_websub_renewal_candidates(
     ).order_by("lease_expires_at", "pk")
 
 
+def iter_websub_lease_summaries(
+    *,
+    within: timedelta = timedelta(days=1),
+    now: datetime | None = None,
+) -> Iterator[WebSubLeaseSummary]:
+    """Stream lease metadata in expiry/primary-key order, fetching 500 rows at a time.
+
+    Window validation is eager so invalid ranges fail before iteration/output.
+    No secret, callback token or diagnostic columns are selected.
+    """
+    reference_time = now or timezone.now()
+    subscriptions = get_websub_renewal_candidates(within=within, now=reference_time)
+    rows = subscriptions.values_list("pk", "hub_url", "topic_url", "state", "lease_expires_at").iterator(
+        chunk_size=500
+    )
+    return (
+        WebSubLeaseSummary(
+            subscription_id=pk,
+            hub_url=hub_url,
+            topic_url=topic_url,
+            state=state,
+            lease_expires_at=expires,
+            expired=expires is not None and expires <= reference_time,
+        )
+        for pk, hub_url, topic_url, state, expires in rows
+    )
+
+
 def summarize_websub_leases(
     *,
     within: timedelta = timedelta(days=1),
     now: datetime | None = None,
 ) -> list[WebSubLeaseSummary]:
-    """Return metadata-only lease status summaries for operator inspection."""
-    reference_time = now or timezone.now()
-    subscriptions = get_websub_renewal_candidates(within=within, now=reference_time)
-    summaries: list[WebSubLeaseSummary] = []
-    for subscription in subscriptions:
-        lease_expires_at = subscription.lease_expires_at
-        expired = lease_expires_at is not None and lease_expires_at <= reference_time
-        summaries.append(
-            WebSubLeaseSummary(
-                subscription_id=subscription.pk,
-                hub_url=subscription.hub_url,
-                topic_url=subscription.topic_url,
-                state=subscription.state,
-                lease_expires_at=lease_expires_at,
-                expired=expired,
-            )
-        )
-    return summaries
+    """Return the compatible list form of :func:`iter_websub_lease_summaries`."""
+    return list(iter_websub_lease_summaries(within=within, now=now))
 
 
 def delivery_body_too_large(body: bytes) -> bool:
@@ -1371,13 +1388,16 @@ def validate_websub_delivery_signature(
         raise WebSubRejection("WebSub delivery rejected: no supported algorithm in the delivery signature")
 
     strongest = max(WEBSUB_SIGNATURE_STRENGTH[algorithm] for algorithm, _received_digest in supported_signatures)
+    expected_digests: dict[str, str] = {}
     for algorithm, received_digest in supported_signatures:
         if WEBSUB_SIGNATURE_STRENGTH[algorithm] != strongest:
             continue
         # Multiple signatures for the strongest algorithm are allowed; any valid
         # digest for that strongest algorithm authenticates the delivery.
-        digestmod = WEBSUB_SIGNATURE_ALGORITHMS[algorithm]
-        expected = hmac.new(secret.encode("utf-8"), body, digestmod).hexdigest()
+        if algorithm not in expected_digests:
+            digestmod = WEBSUB_SIGNATURE_ALGORITHMS[algorithm]
+            expected_digests[algorithm] = hmac.new(secret.encode("utf-8"), body, digestmod).hexdigest()
+        expected = expected_digests[algorithm]
         if len(received_digest) != len(expected) or any(char not in string.hexdigits for char in received_digest):
             continue
         if hmac.compare_digest(expected, received_digest):

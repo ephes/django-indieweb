@@ -426,3 +426,17 @@ use independent connections, barriers and synthetic history; normal in-memory
 runs intentionally skip connection-race tests. Migration 0029 tests additionally
 exercise the real migration graph in an isolated process. Run the migrations
 lane to cover migrations explicitly before integration.
+
+Round 92 admin and maintenance regressions
+------------------------------------------
+
+Both storage lanes include ``tests/test_round92_admin.py`` and
+``tests/test_round92_maintenance.py``. Synthetic admin GET/POST journeys commit
+renewal/secret rotation and delivery diagnostics on another connection, reject
+conflicting state edits, and hold an admin POST while a competing renewal waits
+for its lock. File SQLite uses its writer reservation; PostgreSQL uses row locks.
+The pruning oracle lowers SQLite's actual variable limit (and the advertised
+capability on older Django versions), preserves current/replay rows, injects a
+failure after a real DELETE and checks current-batch rollback plus retry.
+The CLI projection oracle checks one metadata-only SELECT, stable ordering and
+500-row fetch chunks over 1,105 synthetic subscriptions.

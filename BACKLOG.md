@@ -9,6 +9,9 @@ reservations and bounded grant reconciliation are recorded in `DONE.md`.
 Round 91 current token authority, owner-fenced revocation, bounded inventory
 pages and private WebSub callback responses are also recorded there.
 
+Round 92 admin, delivery verification and lease maintenance safeguards are
+tracked in `DONE.md` as their bundles complete.
+
 ## Priority 1
 
 No current Priority 1 items.

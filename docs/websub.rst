@@ -174,8 +174,13 @@ lease has expired or expires within a configurable renewal window:
    python manage.py websub_subscriptions
    python manage.py websub_subscriptions --renewal-window-hours 6
 
-The command prints metadata only: subscription id, topic URL, hub URL, status,
-and ``lease_expires_at``. It does not send renewal or unsubscribe requests.
+The command streams metadata only: subscription id, topic/hub origin and path,
+status, and ``lease_expires_at``. URL userinfo, query strings and fragments are
+omitted independently of logging settings. URLs containing terminal controls
+or invalid authorities are replaced with ``[invalid URL]``; full URLs remain
+available in authenticated admin/data surfaces. It selects only lease metadata
+in chunks of 500 rows, ordered by lease expiry then primary key, without loading
+secrets, callback tokens or delivery diagnostics. It does not send renewal or unsubscribe requests.
 Applications that want to renew a listed subscription should make an explicit
 call to ``request_websub_subscription()`` from their own operator workflow.
 Use ``--renewal-window-hours 0`` to list expired subscriptions only. The window
@@ -185,7 +190,11 @@ windows raise ``CommandError`` before any database query.
 
 The same lease-inspection behavior is available through
 ``get_websub_expired_subscriptions()``, ``get_websub_renewal_candidates()``,
-and ``summarize_websub_leases()`` in ``indieweb.websub``. Renewal candidates
+and ``summarize_websub_leases()`` in ``indieweb.websub``. The latter remains a
+list-returning compatibility wrapper over ``iter_websub_lease_summaries()``,
+which streams the same summaries and eagerly validates the window. These Python
+APIs retain complete URLs for callers; apply the CLI's privacy policy when
+rendering them in operator logs. Renewal candidates
 include already-expired active subscriptions, so callers do not need to union
 the candidate set with ``get_websub_expired_subscriptions()``.
 
@@ -752,3 +761,33 @@ The safe HTTP request helpers connect to the admitted public IP while setting
 A supplied conflicting Host or SNI value is replaced on every redirect hop.
 Other transport extensions are preserved, and the caller's argument mappings
 are left intact. SNI excludes the port; Host includes non-default ports.
+
+Subscription admin edits
+------------------------
+
+The change form includes a signed baseline of editable values and request
+generation (no secrets). A POST locks/reloads the current subscription on its
+write database until validation and saving finish; SQLite reserves its writer
+before reading. Unchanged submitted fields retain current values, and saves
+write only deliberately edited fields plus the modification timestamp. Callback
+secrets, request generations and delivery diagnostics cannot be restored from a
+stale form. Concurrent edits of the same field, or lease/state edits following a
+changed lease/state/request generation, return a form error: reload and retry.
+Unrelated URL or requested-lease edits can proceed after a renewal. Old forms
+without a valid signed baseline must also be reloaded. Creating subscriptions
+continues to use the ordinary add form.
+
+Maintenance work limits
+-----------------------
+
+Delivery HMAC verification hashes the body once for each admitted strongest
+algorithm, then compares candidate digests using constant-time comparisons.
+Multiple signatures and strongest-algorithm/no-downgrade behavior are unchanged.
+
+``prune_websub_delivery_attempts(batch_size=...)`` treats the positive requested
+batch size as an upper bound, additionally capped at 1,000 and the selected
+write connection's public ``features.max_query_params`` capability when set.
+Every select/delete batch is transactional; a failed batch rolls back while
+previous batches remain committed (unless enclosed in a host transaction).
+Retrying drains the remaining expired attempts. The cutoff, dry-run count,
+subscription summaries and replay rows are unchanged.

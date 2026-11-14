@@ -167,3 +167,16 @@ License
 -------
 
 BSD License
+
+Operator safeguards
+-------------------
+
+WebSub admin edits preserve current callback secrets and delivery diagnostics.
+Only deliberately changed editable fields are saved; conflicting lease/state
+changes require reloading the form. The profile admin JSON editor accepts at
+most 256 KiB of UTF-8 text and reports decoding resource failures as field errors.
+
+Lease inspection streams metadata in chunks of 500 rows and prints URL
+origin/path descriptions without credentials, queries, fragments or terminal
+controls. Delivery-attempt pruning caps each transaction at 1,000 IDs and the
+write database's SQL parameter limit; a failed batch rolls back and can be retried.
