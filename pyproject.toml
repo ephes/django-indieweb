@@ -10,7 +10,7 @@ authors = [
 version = "0.6.2"
 description = "includes indieauth, micropub, and webmention endpoints"
 readme = "README.rst"
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 keywords = [
     "indieweb",
     "indieauth",
@@ -43,7 +43,8 @@ classifiers = [
 dependencies = [
     "Django>=5.2.13,<6.2",
     "mf2py>=2.0.1",
-    "beautifulsoup4>=4.14.2",
+    "beautifulsoup4>=4.15.0",
+    "soupsieve>=4.1",
     "httpx>=0.28.1",
     "nh3>=0.3.5",
     "filetype>=1.2.0",
