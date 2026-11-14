@@ -5095,3 +5095,62 @@ bundle.
 - Regression evidence: current develop fails the stale-issuer, collision and
   malformed-input tests; the rebased parked fix fails seven expanded cases
   covering empty malformed values and failed-save instance state.
+
+## 2026-11-13
+
+### Round 88 B23: database-affine serialized code redemption
+
+- Completed `indieweb-code-issue-transaction-database-affinity` and
+  `indieweb-code-expiry-after-consumption-lock-wait`, in that order. No matching
+  pending BACKLOG item existed.
+- Resolve one Auth/Token write alias, reject split-database grants/owners, and
+  bind consent replacement, lookup, consumption, issuance and rotation to it.
+  Routed second-database rollback tests preserve both the code and prior token
+  after an injected real persistence failure; replica routing cannot hide the
+  authoritative code or owner.
+- Recheck expiry after the consumption DELETE waits for its lock, retaining
+  DELETE as the first transaction statement. Independent connections and a
+  controlled clock cover ages 59, 60 and 61 seconds on both redemption paths,
+  including preservation of an existing token on refusal.
+- Regression proof: original code failed both routed rollback cases and the
+  cross-database refusal; the pre-expiry fix failed both post-wait expiry cases.
+- Validation: focused pytest, full pytest/coverage, mypy, Ruff, configured hooks,
+  supported tox matrix, migrations and required file-SQLite storage lane.
+  Full pytest: 3,139 passed, 24 expected skips, coverage gate met. All 12
+  configured tox environments passed. PostgreSQL validation is blocked by the sandbox: disposable `initdb` fails
+  with `shmget: Operation not permitted`; the attempted
+  `INDIEWEB_TEST_POSTGRES_PORT=58988 uv run tox -e storage-postgres` cannot
+  connect to that disposable server. This gate remains for external validation.
+- Merge validation (outside the sandbox): `storage-postgres` against a
+  disposable PostgreSQL 17 (69 passed), the CI PostgreSQL state-transition
+  commands and the auth/token suites on PostgreSQL all passed.
+- Review follow-up: consent compared `request.user._state.db` with the grant
+  alias, so a primary/replica router (user read from the replica) made every
+  approval fail. The owner check now compares the user model's write alias;
+  `test_consent_accepts_replica_loaded_owner` failed before the fix. The
+  model is taken from `owner._meta.model`, so the middleware's lazy
+  `request.user` reaches app-label routers as the real user model
+  (`test_consent_routes_lazy_request_user_by_concrete_model` failed with
+  `type()`).
+- Documentation: auth/router/redemption contracts in `docs/indieauth.rst` and
+  storage regression guidance in `docs/development.rst`; changelog: Unreleased.
+
+### Round 88 B24: current credential issuance eligibility
+
+- Completed `indieweb-auth-lifetime-config-domain` and
+  `indieweb-code-exchange-current-owner-eligibility`, in that order. No matching
+  pending BACKLOG item existed.
+- Admit only integer lifetimes in 1..2,147,483,647 seconds with safe datetime
+  arithmetic, before grant mutation. Add security checks and the correctly
+  spelled timeout setting while retaining the historical alias.
+- Reload current owner eligibility after serialized code consumption on both
+  paths; never trust a cached consent-time owner. Keep owner reads unlocked and
+  document their admission boundary so consent/exchange lock order is retained.
+- Regression proof: original lifetime admission failed the invalid-setting
+  corpus; disabled-owner tests failed for both paths, including disablement
+  committed on an independent connection after code lookup. Deleted-owner and
+  stale-owner-cache controls also cover refusal without token rotation.
+- Validation: focused pytest and shared B23 full local gates; PostgreSQL remains
+  blocked as recorded above. No external review or merge was performed.
+- Documentation: `docs/configuration.rst`, `docs/indieauth.rst` and
+  `docs/development.rst`; changelog: `docs/changelog.rst` Unreleased.

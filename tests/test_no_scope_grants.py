@@ -125,17 +125,17 @@ def test_consent_replaces_the_pending_no_scope_code(user):
 
 def test_consent_retries_when_a_concurrent_no_scope_approval_wins_the_insert(user, monkeypatch):
     """The loser of the insert race retries and replaces the winner's code: one row remains."""
-    original_create = Auth.objects.create
+    original_create = QuerySet.create
     raced = False
 
-    def create_after_concurrent_winner(**fields):
+    def create_after_concurrent_winner(queryset, **fields):
         nonlocal raced
-        if not raced:
+        if queryset.model is Auth and not raced:
             raced = True
-            original_create(**{**fields, "state": "winner"})
-        return original_create(**fields)
+            original_create(queryset, **{**fields, "state": "winner"})
+        return original_create(queryset, **fields)
 
-    monkeypatch.setattr(Auth.objects, "create", create_after_concurrent_winner)
+    monkeypatch.setattr(QuerySet, "create", create_after_concurrent_winner)
 
     auth = AuthView._replace_auth_code(
         owner=user,

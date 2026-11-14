@@ -92,10 +92,24 @@ frame protection.
 Django Settings
 ---------------
 
-INDIWEB_AUTH_CODE_TIMEOUT
-~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _indiweb-auth-code-timeout:
+.. _indieweb-auth-code-timeout:
+
+INDIEWEB_AUTH_CODE_TIMEOUT / INDIWEB_AUTH_CODE_TIMEOUT
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Controls how long authorization codes remain valid before they must be exchanged for tokens.
+The correctly spelled ``INDIEWEB_AUTH_CODE_TIMEOUT`` takes precedence; the
+historical ``INDIWEB_AUTH_CODE_TIMEOUT`` name remains supported.
+
+Both this setting and ``INDIEWEB_TOKEN_EXPIRES_IN`` require an actual Python
+integer from 1 through 2,147,483,647 seconds. Booleans, floats (including NaN
+and infinity), strings and nonpositive values are configuration errors. The
+chosen lifetime must also fit the current datetime range. Django security
+checks report ``indieweb.E002`` (code timeout) or ``indieweb.E003`` (token
+lifetime). Consent and both redemption endpoints validate both lifetimes
+before changing code or token rows; invalid configuration raises
+``ImproperlyConfigured`` rather than consuming a code or rotating a token.
 
 **Default:** ``60`` (seconds)
 

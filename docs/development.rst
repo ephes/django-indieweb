@@ -333,7 +333,15 @@ auth/token redemption of a scoped code, plus consent/exchange in both write
 orders. Events pause a completed DELETE until the competing request reaches its
 DELETE call; they do not assert scheduler-level lock-wait overlap. Every worker
 result or exception is collected and connections are closed. PostgreSQL statement/lock timeouts and
-bounded event waits prevent a deadlock from hanging the suite.
+bounded event waits prevent a deadlock from hanging the suite. Expiry cases
+hold an independent writer across the consumption DELETE, then advance a
+controlled clock to ages 59, 60 and 61 seconds before releasing it. Both
+redemption endpoints must reject the expired code without changing an existing
+token. Owner cases commit disablement after lookup on a separate connection.
+``tests/test_auth_owner_eligibility.py`` also exercises stale related-object
+caches and deletion; ``tests/test_auth_lifetime_settings.py`` checks strict
+configuration admission and system checks. Routed issuance rollback and
+replica-read fixtures live in ``tests/test_token_issuance_atomicity.py``.
 
 Use a fresh temporary directory for file-backed SQLite::
 

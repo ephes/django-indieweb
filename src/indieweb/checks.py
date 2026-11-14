@@ -9,7 +9,9 @@ from typing import Any
 
 from django.conf import settings
 from django.core.checks import CheckMessage, Error, Tags, Warning, register
+from django.core.exceptions import ImproperlyConfigured
 
+from .auth_settings import DEFAULT_TOKEN_EXPIRES_IN, auth_code_timeout_setting, auth_lifetime
 from .micropub_urls import CANONICAL_ORIGINS_SETTING, parse_canonical_origins
 
 
@@ -54,3 +56,18 @@ def check_websub_unsigned_deliveries(app_configs: Any = None, **kwargs: Any) -> 
             id="indieweb.W001",
         )
     ]
+
+
+@register(Tags.security)
+def check_auth_lifetimes(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """Reject invalid lifetimes at configuration admission without database IO."""
+    errors: list[CheckMessage] = []
+    for name, default, error_id in (
+        (auth_code_timeout_setting(), 60, "indieweb.E002"),
+        ("INDIEWEB_TOKEN_EXPIRES_IN", DEFAULT_TOKEN_EXPIRES_IN, "indieweb.E003"),
+    ):
+        try:
+            auth_lifetime(name, default)
+        except ImproperlyConfigured as exc:
+            errors.append(Error(str(exc), obj=name, id=error_id))
+    return errors

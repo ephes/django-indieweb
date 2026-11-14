@@ -21,12 +21,13 @@ from urllib.parse import urlencode as urllib_urlencode
 
 import filetype
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth.views import redirect_to_login
 from django.contrib.sites.models import Site
 from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import URLValidator
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, router, transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 from django.shortcuts import get_object_or_404, redirect, render
@@ -42,6 +43,7 @@ from django.views.decorators.vary import vary_on_headers
 from django.views.generic import View
 
 from . import micropub_urls
+from .auth_settings import auth_lifetimes
 from .cors import CorsMixin
 from .handlers import MicropubContentHandler, get_micropub_handler
 from .log_redaction import (
@@ -250,7 +252,6 @@ def indieauth_body_limit_response(request: HttpRequest) -> HttpResponse | None:
     return response
 
 
-DEFAULT_TOKEN_EXPIRES_IN = 86400
 ALLOWED_REDIRECT_URI_SCHEMES = ("http", "https")
 ALLOWED_PKCE_METHODS = ("plain", "S256")
 INDIEAUTH_METADATA_SCOPES_SUPPORTED = ("create", "update", "delete", "undelete", "media")
@@ -1616,13 +1617,12 @@ class TokenAuthMixin(View):
 
 
 def _auth_code_is_expired(auth: Auth) -> bool:
-    """Return ``True`` if ``auth`` has aged past ``INDIWEB_AUTH_CODE_TIMEOUT``.
+    """Return whether the code exceeds the configured timeout (default 60s).
 
-    Centralizes the expiry window so the token-exchange path and the legacy
-    code-verification POST stay in sync. The historical setting name retains
-    the ``INDIWEB`` typo for backward compatibility (default 60 seconds).
+    Token exchange and legacy verification share the validated lifetime,
+    including the historical ``INDIWEB_AUTH_CODE_TIMEOUT`` alias.
     """
-    timeout = getattr(settings, "INDIWEB_AUTH_CODE_TIMEOUT", 60)
+    timeout, _ = auth_lifetimes()
     return (timezone.now() - auth.created).total_seconds() > timeout
 
 
@@ -1663,8 +1663,16 @@ def _auth_code_pkce_error(auth: Auth, code_verifier: str | None) -> str | None:
     return None
 
 
+def _auth_grant_database() -> str:
+    """Resolve a single write authority; cross-database grants cannot be atomic."""
+    using = router.db_for_write(Auth)
+    if router.db_for_write(Token) != using:
+        raise ImproperlyConfigured("IndieAuth Auth and Token writes must use the same database")
+    return using
+
+
 def _consume_auth_code(auth: Auth) -> bool:
-    """Delete ``auth``; return ``False`` if another request already consumed it.
+    """Consume ``auth`` and admit only a still-valid code with an active owner.
 
     The delete count is the single-use gate on every backend: a concurrent
     ``DELETE`` of the same row blocks on the row lock (PostgreSQL/MySQL) or the
@@ -1676,9 +1684,21 @@ def _consume_auth_code(auth: Auth) -> bool:
     consumed code keep that work inside their own enclosing
     ``transaction.atomic()`` block.
     """
-    with transaction.atomic():
-        deleted, _ = Auth.objects.filter(pk=auth.pk).delete()
-    return deleted > 0
+    with transaction.atomic(using=auth._state.db):
+        deleted, _ = Auth.objects.using(auth._state.db).filter(pk=auth.pk).delete()
+        # DELETE may have waited for a row/writer lock. Only the clock after
+        # that serialization point can authorize redemption; expired rows
+        # remain consumed, without issuing or rotating any credential.
+        if not deleted or _auth_code_is_expired(auth):
+            return False
+        # Admission observes the current account on the authoritative database,
+        # never a consent-time/cached relation. Do not lock the owner: consent
+        # and Token foreign-key checks must retain their established lock order.
+        owner = get_user_model()._default_manager.using(auth._state.db).filter(pk=auth.owner_id).first()
+        if owner is None or not owner.is_active:
+            return False
+        auth.owner = owner
+        return True
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1861,6 +1881,7 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMix
             logger.info("auth view consent denied")
             return _no_store_no_referrer(redirect(target))
 
+        auth_lifetimes()
         auth = self._replace_auth_code(
             owner=request.user,
             client_id=client_id,
@@ -1901,13 +1922,21 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMix
         it while a token exchange for the same owner inserts a ``Token`` (whose
         foreign-key check needs that row) can deadlock.
         """
+        using = _auth_grant_database()
+        # Compare the user model's write alias, not ``owner._state.db``: the
+        # consenting ``request.user`` is loaded with a normal (possibly replica)
+        # read, while the grant row must reference the owner's write database.
+        # ``_meta.model`` (not ``type()``) sees through the middleware's
+        # ``SimpleLazyObject``; no instance hint, whose fallback is the read alias.
+        if router.db_for_write(fields["owner"]._meta.model) != using:
+            raise ImproperlyConfigured("IndieAuth owner and grants must use the same database")
         fields["scope"] = fields["scope"] or ""
         identity = {key: fields[key] for key in ("owner", "client_id", "scope", "me")}
         for attempt in range(2):
             try:
-                with transaction.atomic():
-                    Auth.objects.filter(**identity).delete()
-                    return Auth.objects.create(**fields)
+                with transaction.atomic(using=using):
+                    Auth.objects.using(using).filter(**identity).delete()
+                    return Auth.objects.using(using).create(**fields)
             except IntegrityError:
                 if attempt:
                     raise
@@ -1960,9 +1989,10 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMix
         if request_error is not None:
             return request_error
 
+        auth_lifetimes()
         logger.info(f"auth view post verification: {redact_url(client_id)}")
         try:
-            auth = Auth.get_for_raw_key(auth_code, client_id=client_id)
+            auth = Auth.get_for_raw_key(auth_code, using=_auth_grant_database(), client_id=client_id)
         except (Auth.DoesNotExist, Auth.MultipleObjectsReturned):
             return HttpResponse("Invalid authorization code", status=400)
         if _auth_code_is_expired(auth):
@@ -1970,16 +2000,16 @@ class AuthView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMix
             # never reusable, and the row must not linger past its window
             # because a future verifier could otherwise observe the same
             # ``me`` for a long-stale code.
-            auth.delete()
+            auth.delete(using=auth._state.db)
             logger.info(f"rejected expired auth code on code verification: {redact_url(client_id)!r}")
             return HttpResponse("Invalid authorization code", status=400)
         reason = _auth_code_redirect_uri_error(auth, redirect_uri) or _auth_code_pkce_error(auth, code_verifier)
         if reason is not None:
-            auth.delete()
+            auth.delete(using=auth._state.db)
             logger.info(f"rejected auth code on code verification ({reason}): {redact_url(client_id)!r}")
             return HttpResponse("invalid_grant", status=400)
         if not _consume_auth_code(auth):
-            logger.info(f"rejected already-consumed auth code on code verification: {redact_url(client_id)!r}")
+            logger.info(f"rejected unavailable auth code on code verification: {redact_url(client_id)!r}")
             return HttpResponse("Invalid authorization code", status=400)
         response_values = {"me": auth.me}
         if _prefers_json_response(request):
@@ -2005,13 +2035,16 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMi
         client_id: str,
         scope: str | None,
         owner: AbstractBaseUser,
+        *,
+        using: str | None = None,
     ) -> HttpResponse:
-        lifetime = int(getattr(settings, "INDIEWEB_TOKEN_EXPIRES_IN", DEFAULT_TOKEN_EXPIRES_IN))
+        using = using or _auth_grant_database()
+        _, lifetime = auth_lifetimes()
         expires_at = timezone.now() + timedelta(seconds=lifetime)
         # No scope is stored as "" so the unique grant identity applies and a
         # concurrent first issuance cannot create a second no-scope token:
         # ``get_or_create`` then returns the row the other request created.
-        token, created = Token.objects.get_or_create(
+        token, created = Token.objects.using(using).get_or_create(
             me=me,
             client_id=client_id,
             scope=scope or "",
@@ -2024,10 +2057,10 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMi
             # save. ``select_for_update`` is a no-op on SQLite, but the
             # outer ``transaction.atomic()`` plus the auth-code delete-count
             # gate still serialize entry to this branch on every backend.
-            Token.objects.select_for_update().filter(pk=token.pk).first()
+            Token.objects.using(using).select_for_update().filter(pk=token.pk).first()
             token.set_key()
             token.expires_at = expires_at
-            token.save(update_fields=["key", "expires_at", "modified"])
+            token.save(using=using, update_fields=["key", "expires_at", "modified"])
         raw_key = token.raw_key
         if raw_key is None:
             raise RuntimeError("token issuance did not produce a raw bearer key")
@@ -2051,7 +2084,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMi
     def _consume_invalid_grant(self, auth: Auth, message: str) -> HttpResponse:
         """Delete a matched auth code and return the token endpoint's invalid_grant response."""
         logger.error(message)
-        auth.delete()
+        auth.delete(using=auth._state.db)
         return self._invalid_grant_response()
 
     def _check_pkce(self, auth: Auth, code_verifier: str | None) -> HttpResponse | None:
@@ -2064,7 +2097,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMi
     def _get_auth_for_exchange(self, code: str, client_id: str) -> Auth | HttpResponse:
         """Return the matched auth code or the existing invalid_grant response."""
         try:
-            return Auth.get_for_raw_key(code, client_id=client_id)
+            return Auth.get_for_raw_key(code, using=_auth_grant_database(), client_id=client_id)
         except Auth.DoesNotExist:
             logger.error(f"Auth not found for code={_redact_auth_code(code)}, client_id={_log_client_id(client_id)}")
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
@@ -2074,7 +2107,7 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMi
                 f"client_id={_log_client_id(client_id)}; rejecting"
             )
             hashed = Auth.hash_key(code) if not Auth.is_hashed_key(code) else code
-            Auth.objects.filter(key__in=(hashed, code), client_id=client_id).delete()
+            Auth.objects.using(_auth_grant_database()).filter(key__in=(hashed, code), client_id=client_id).delete()
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
     def _check_redirect_uri(self, auth: Auth, redirect_uri: str | None) -> HttpResponse | None:
@@ -2140,6 +2173,8 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMi
             logger.error("Rejected invalid redirect_uri on token exchange")
             return HttpResponse("invalid_grant", status=400, content_type="application/x-www-form-urlencoded")
 
+        auth_lifetimes()
+
         # Find auth by code and client_id
         auth = self._get_auth_for_exchange(code, client_id)
         if isinstance(auth, HttpResponse):
@@ -2183,17 +2218,17 @@ class TokenView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAuthBodyLimitMi
         # every backend: a ``False`` return means another exchange or
         # redemption already consumed the code, and we must return
         # ``invalid_grant`` without issuing a token.
-        with transaction.atomic():
+        with transaction.atomic(using=auth._state.db):
             if not _consume_auth_code(auth):
                 logger.error(
-                    f"Auth code already consumed by concurrent exchange for client_id={_log_client_id(client_id)}"
+                    f"Auth code unavailable after serialized redemption for client_id={_log_client_id(client_id)}"
                 )
                 return self._invalid_grant_response()
 
             # Token issue/reissue stays inside the atomic block so the
             # existing-row reissue path can lock the ``Token`` row before
             # rotating its key on Postgres/MySQL.
-            return self.send_token(request, me, client_id, scope, auth.owner)
+            return self.send_token(request, me, client_id, scope, auth.owner, using=auth._state.db)
 
 
 def _authorization_bearer_token(request: HttpRequest) -> str | None:

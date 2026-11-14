@@ -200,7 +200,7 @@ class Auth(models.Model):
         return value.startswith(TOKEN_KEY_HASH_PREFIX)
 
     @classmethod
-    def get_for_raw_key(cls, raw_key: str, **filters: Any) -> Auth:
+    def get_for_raw_key(cls, raw_key: str, *, using: str | None = None, **filters: Any) -> Auth:
         """Return the authorization row matching ``raw_key`` without storing the raw value.
 
         The submitted value is hashed under every active Django secret key
@@ -211,11 +211,11 @@ class Auth(models.Model):
             raise cls.DoesNotExist
         candidate_hashes = _candidate_token_hashes(raw_key)
         try:
-            auth = cls.objects.get(key__in=candidate_hashes, **filters)
+            auth = cls.objects.using(using).get(key__in=candidate_hashes, **filters)
         except cls.DoesNotExist:
             if not _legacy_plaintext_lookup_enabled():
                 raise
-            auth = cls.objects.get(key=raw_key, **filters)
+            auth = cls.objects.using(using).get(key=raw_key, **filters)
         for candidate in candidate_hashes:
             if hmac.compare_digest(auth.key, candidate):
                 return auth

@@ -1610,7 +1610,7 @@ def test_token_exchange_rejects_duplicate_auth_code_lookup_without_issuing_token
     def duplicate_auth(*args, **kwargs):
         raise models.Auth.MultipleObjectsReturned
 
-    monkeypatch.setattr(models.Auth.objects, "get", duplicate_auth)
+    monkeypatch.setattr(models.Auth, "get_for_raw_key", duplicate_auth)
 
     response = client.post(token_endpoint_url, data=token_payload)
 
