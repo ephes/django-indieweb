@@ -13,7 +13,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 MINIMUM_RUNTIME_FLOORS = {
     "django": Version("5.2.13"),
     "httpx": Version("0.28.1"),
-    "beautifulsoup4": Version("4.14.2"),
+    "beautifulsoup4": Version("4.15.0"),
+    "soupsieve": Version("4.1"),
     "mf2py": Version("2.0.1"),
     "cryptography": Version("50.0.0"),
 }
@@ -48,6 +49,22 @@ def test_uv_lockfile_is_tracked_for_reproducible_releases() -> None:
         capture_output=True,
         text=True,
     )
+
+
+def test_python_floor_supports_patched_runtime_selector() -> None:
+    pyproject = tomllib.loads((ROOT_DIR / "pyproject.toml").read_text())
+    supported = SpecifierSet(pyproject["project"]["requires-python"])
+
+    assert Version("3.11.4") not in supported
+    assert Version("3.11.5") in supported
+
+
+def test_locked_selector_includes_security_fix() -> None:
+    lock = tomllib.loads((ROOT_DIR / "uv.lock").read_text())
+    selectors = [package for package in lock["package"] if package["name"] == "soupsieve"]
+
+    assert selectors
+    assert all(Version(package["version"]) >= Version("4.1") for package in selectors)
 
 
 def test_readthedocs_installs_project_runtime_dependencies() -> None:
