@@ -14,7 +14,7 @@ Prerequisites
 -------------
 
 - Django project up and running
-- Python 3.11 or higher
+- Python 3.11.5 or higher
 - Basic understanding of OAuth-like flows
 
 Installation
