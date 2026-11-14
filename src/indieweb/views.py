@@ -26,6 +26,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.contrib.sites.models import Site
 from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist, ValidationError
 from django.core.files.storage import default_storage
+from django.core.paginator import Paginator
 from django.core.validators import URLValidator
 from django.db import IntegrityError, router, transaction
 from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
@@ -1506,7 +1507,7 @@ def _no_store(response: _ResponseT) -> _ResponseT:
 
 
 def _no_store_no_referrer(response: _ResponseT) -> _ResponseT:
-    """Mark a consent response non-cacheable and keep its URL out of ``Referer``."""
+    """Mark a capability response non-cacheable and keep its URL out of ``Referer``."""
     _no_store(response)
     response["Referrer-Policy"] = "no-referrer"
     return response
@@ -2337,6 +2338,28 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAu
             response_values["exp"] = _token_timestamp(token.expires_at)
         return _no_store(JsonResponse(response_values))
 
+    @staticmethod
+    def _authority(token: Token) -> tuple[object, ...]:
+        """Capture immutable authority before passing mutable instances to host code."""
+        return (
+            token.pk,
+            token.key,
+            token.owner_id,
+            token.client_id,
+            token.me,
+            token.scope,
+            token.created,
+            token.expires_at,
+        )
+
+    def _unchanged_authority(self, token: Token | None, expected: tuple[object, ...]) -> bool:
+        return (
+            token is not None
+            and self._authority(token) == expected
+            and token.owner.is_active
+            and not token.is_expired()
+        )
+
     def post(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponse:
         caller_token = self._caller_token(request)
         if isinstance(caller_token, HttpResponse):
@@ -2349,10 +2372,32 @@ class TokenIntrospectionView(CSRFExemptMixin, CorsMixin, RateLimitMixin, IndieAu
         if token.owner_id != caller_token.owner_id:
             logger.info("introspection rejected target token owned by a different user")
             return self._inactive_response()
+        caller_pk, target_pk = caller_token.pk, token.pk
+        caller_authority = self._authority(caller_token)
+        target_authority = self._authority(token)
         if not _introspection_authorizer_allows(caller_token, token):
             logger.info("introspection rejected target token under configured authorizer policy")
             return self._inactive_response()
-        return self._active_response(token)
+        # Client policy can also execute host code. Finish all hooks before a
+        # single joined read from the authoritative write database; do not hold
+        # locks across host code or call the authorizer a second time.
+        if not _client_id_allowed(caller_token.client_id):
+            return _bearer_authentication_error_response()
+        if not _client_id_allowed(token.client_id):
+            return self._inactive_response()
+        current = {
+            grant.pk: grant
+            for grant in Token.objects.using(router.db_for_write(Token))
+            .filter(pk__in=[caller_pk, target_pk])
+            .select_related("owner")
+        }
+        if not self._unchanged_authority(current.get(caller_pk), caller_authority):
+            return _bearer_authentication_error_response()
+        target = current.get(target_pk)
+        if not self._unchanged_authority(target, target_authority):
+            return self._inactive_response()
+        assert target is not None
+        return self._active_response(target)
 
 
 class UserLoginRequiredMixin(View):
@@ -2371,8 +2416,14 @@ class TokenManagementView(UserLoginRequiredMixin, View):
     """List access tokens owned by the authenticated user."""
 
     def get(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
-        tokens = Token.objects.filter(owner_id=request.user.pk).order_by("-created")
-        response = render(request, "indieweb/tokens.html", {"tokens": tokens})
+        tokens = Token.objects.filter(owner_id=request.user.pk).order_by("-created", "-pk")
+        paginator = Paginator(tokens, 50)
+        page = paginator.get_page(request.GET.get("page"))
+        response = render(
+            request,
+            "indieweb/tokens.html",
+            {"tokens": page.object_list, "page_obj": page, "paginator": paginator},
+        )
         response["Content-Security-Policy"] = "frame-ancestors 'none'"
         return response
 
@@ -2382,13 +2433,12 @@ class TokenRevokeView(UserLoginRequiredMixin, View):
     """Revoke an access token owned by the authenticated user."""
 
     def post(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponseBase:
-        access_grant = Token.objects.filter(pk=pk, owner_id=request.user.pk).first()
-        if access_grant is None:
+        deleted, _ = Token.objects.filter(pk=pk, owner_id=request.user.pk).delete()
+        if not deleted:
             # Return inside dispatch so missing/foreign IDs get the same
             # private cache and framing policy as successful revocations.
             response = HttpResponse(status=404)
         else:
-            access_grant.delete()
             response = redirect("indieweb:tokens")
         response["Content-Security-Policy"] = "frame-ancestors 'none'"
         return response
@@ -3407,6 +3457,12 @@ class WebSubCallbackView(CSRFExemptMixin, RateLimitMixin, View):
     """WebSub subscriber callback for verification and content distribution."""
 
     rate_limit_key = "websub_callback"
+
+    @method_decorator(csrf_exempt)
+    @method_decorator(never_cache)
+    def dispatch(self, request: HttpRequest, *args: object, **kwargs: object) -> HttpResponseBase:
+        # Include admission refusals as well as verification/denial outcomes.
+        return _no_store_no_referrer(super().dispatch(request, *args, **kwargs))
 
     def _get_subscription(self, token: str) -> WebSubSubscription | None:
         try:

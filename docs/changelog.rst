@@ -5,6 +5,14 @@ Changelog
 
 Unreleased
 ----------
+* Recheck current caller/target grant authority after introspection policy hooks;
+  revoked, rotated, expired, deactivated or reassigned credentials cannot return
+  active metadata from pre-hook instances.
+* Fence browser token revocation by the owner predicate in the SQL deletion.
+* Paginate the private token inventory at 50 grants per page with deterministic
+  creation-time/primary-key ordering and Previous/Next navigation.
+* Mark WebSub callback challenges, denial outcomes and refusals private/no-store
+  and no-referrer, including rate-limit refusals.
 * Compensate partial media writes using the owned requested key, or only the
   returned alternate key when storage picked another name; refuse pre-existing
   keys and redact cleanup diagnostics.

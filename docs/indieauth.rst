@@ -210,6 +210,16 @@ can configure ``INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER`` (see
 caller authentication and target-token validity checks and fails closed on
 import errors, exceptions, non-callable values, and non-bool return values.
 
+After the hook returns, client policy is checked again and both grants and
+owners are reloaded together from the token write database. Revocation, key
+rotation, expiry, owner deactivation/reassignment or changes to the grant
+metadata admitted by the hook fail closed. This also rejects transferring both
+grants together to another owner. Changed caller authority returns ``401``;
+changed target authority returns ``{"active": false}``. The hook is called
+once; no lock is held across host code. The final read defines the response
+snapshot: changes committed after that read apply to subsequent requests.
+Existing no-store and configured CORS headers apply to these refusals too.
+
 Active responses include only the token metadata needed by resource servers:
 
 .. code-block:: json
@@ -254,12 +264,22 @@ Authenticated site users can review and revoke their own issued IndieAuth/
 Micropub access tokens at ``/indieweb/tokens/``. The page lists token metadata
 such as client ID, identity URL, scope, creation/update timestamps, expiration,
 and active/expired status. It does not display full bearer token keys.
+The inventory uses pages of at most 50 grants, ordered by creation time and
+primary key (both newest first). Previous/Next links use the ``page`` query
+parameter. Missing or non-integer pages select the first page; zero, negative
+and out-of-range integers select the last page, following Django's
+``Paginator.get_page()`` behavior. Timestamp ties have deterministic ordering;
+concurrent additions/deletions may shift offset-based page boundaries.
 
 Each token row includes a CSRF-protected revoke form. Revoking a token deletes
 that ``Token`` row, so the bearer credential immediately stops authenticating
 Micropub and other token-protected requests. Users only see and revoke tokens
 owned by their own Django account; tokens for other users are not listed and
-cannot be revoked through this UI.
+cannot be revoked through this UI. The SQL deletion includes the current owner
+predicate, so an owner change committed before deletion prevents a former
+owner from deleting the transferred grant. Foreign and missing IDs both return
+``404``. Every inventory page and revoke outcome remains private and no-store;
+a successful revoke returns to the first inventory page.
 
 When an existing token row is reissued through the IndieAuth token endpoint,
 django-indieweb refreshes its expiration and rotates the bearer key returned

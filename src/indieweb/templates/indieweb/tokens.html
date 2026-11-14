@@ -47,6 +47,17 @@
           {% endfor %}
         </tbody>
       </table>
+      {% if paginator.num_pages > 1 %}
+        <nav aria-label="Access token pages">
+          {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}" rel="prev">Previous</a>
+          {% endif %}
+          <span>Page {{ page_obj.number }} of {{ paginator.num_pages }}</span>
+          {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}" rel="next">Next</a>
+          {% endif %}
+        </nav>
+      {% endif %}
     {% else %}
       <p>No access tokens have been issued for your account.</p>
     {% endif %}

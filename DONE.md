@@ -2,6 +2,58 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-14
+
+### Current token authority (round 91 B21: 54, 55)
+
+- Introspection captures immutable caller/target authority before host policy,
+  rechecks client policy, then reloads both grants with owners in one statement
+  on the token write database. Changed credentials/metadata, owner transfers,
+  inactive owners and expiry fail closed without active metadata. No lock is
+  held across the hook; existing no-store/CORS behavior is retained.
+- Browser revocation includes the current owner predicate in the SQL DELETE;
+  foreign, missing and transferred grants return the same private 404.
+- Pre-fix regressions returned active metadata after hook-time revocation,
+  expiry, rotation, transfer, deactivation or metadata changes, and deleted a
+  transferred grant. Deterministic two-connection hook/DELETE races also prove
+  the old failures and pass with the fix on file SQLite.
+- Validation shared with B22: `uv sync --frozen --python 3.13`; `uv run pytest`
+  with `DJANGO_INDIEWEB_TEST_SQLITE_PATH` pointing to a private file database:
+  3,257 passed, 94.14% coverage (88% gate), four SQLite ResourceWarnings.
+  `uv run tox -e storage-sqlite`: 200 passed with migrations on Django 5.2;
+  main suite used Python 3.13 / Django 6.1. `uv run mypy`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files`, strict
+  `uv run sphinx-build -W -b html docs docs/_build/html`, Django system check
+  and `makemigrations --check --dry-run` passed.
+- PostgreSQL remains unvalidated: disposable local `initdb` failed with
+  `shmget: Operation not permitted` in the sandbox.
+  `INDIEWEB_TEST_POSTGRES_PORT=55491 uv run tox -e storage-postgres` therefore
+  failed during database setup (connection refused). This is not a passed gate.
+- Docs: `docs/indieauth.rst`, concurrency instructions in
+  `docs/development.rst`; Unreleased notes in `docs/changelog.rst`.
+  Backlog status updated; no schema/version changes. Cross-family review and
+  merge are deferred to the external reviewer.
+
+### Bounded private browser protocols (round 91 B22: 56, 57)
+
+- Token inventory renders at most 50 owned grants per page, ordered by descending
+  creation time and primary key. Django pagination supplies invalid-page
+  fallback and accessible Previous/Next links; every page and revoke response
+  retains its private policy.
+- WebSub callback dispatch applies private/no-store and no-referrer headers to
+  challenge/denial success, stale/unknown/malformed refusals and rate limits.
+  Preserve CSRF exemption and all-database request-transaction opt-out.
+- Pre-fix regressions failed for unbounded inventory and reusable/missing-private
+  challenge responses. Timestamp-tied grants now traverse without duplicates
+  or omissions with one COUNT and one bounded SELECT per page. Real Django cache
+  middleware cannot replay a consumed challenge or denial acknowledgement.
+- Validation: shared full gates and blocked PostgreSQL lane recorded under B21;
+  focused authority/browser/WebSub suites: 160 passed on file SQLite.
+  New tests are included in both existing local storage lanes.
+- Docs: `docs/indieauth.rst`, `docs/websub.rst`, `docs/development.rst`;
+  Unreleased notes in `docs/changelog.rst`. Backlog status updated;
+  no schema/version changes.
+
 ## 2026-11-13
 
 ### WebSub current delivery authority and secret recovery (round 87 B08: 24, 21, 22, 23)

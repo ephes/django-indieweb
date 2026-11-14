@@ -63,6 +63,22 @@ samples. It never starts a real watchdog thread, sleeps, exhausts memory,
 changes OS limits or exits the test process. The existing isolation suite
 continues to exercise real child processes.
 
+Current token authority and callback privacy
+--------------------------------------------
+
+Focused regressions cover authority changes during introspection policy hooks,
+owner changes immediately before browser revocation, timestamp-tied inventory
+pages and WebSub callbacks through Django's cache middleware::
+
+    uv run pytest --no-cov tests/test_introspection_current_authority.py tests/test_token_management.py tests/test_websub_callback_privacy.py
+
+The two-connection tests require file SQLite or disposable PostgreSQL. They
+pause a real request at the policy/SQL boundary, commit a synthetic authority
+change on another connection, then resume the request. The required storage
+lanes include these tests; run ``uv run tox -e storage-sqlite`` or the configured
+``storage-postgres`` lane. In-memory SQLite skips these races during ordinary
+runs and does not count as concurrency acceptance.
+
 Running Tox
 -----------
 
