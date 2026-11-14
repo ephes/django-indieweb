@@ -2762,3 +2762,24 @@ migrations to rerun them or rotate already deployed credentials: existing hashes
 and encrypted secrets are preserved on repeated transforms. Already applied
 migrations are not automatically rerun; audit any earlier secondary-database
 migration separately before adopting its credentials.
+
+Outbound source-run and history work limits
+-------------------------------------------
+
+``INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS`` defaults to ``120`` and
+requires positive integer seconds. Ordinary sends, Salmention resends and the
+``send_webmentions`` command share one monotonic budget across source fetch,
+discovery and delivery. This supplements the per-request
+``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` budget. Deadline outcomes
+are explicit and do not count as historical delivery failures.
+
+``INDIEWEB_SALMENTION_HISTORY_SCAN_LIMIT`` defaults to ``1000`` and requires a
+positive integer. Selection inspects at most this many historical rows to fill
+the existing fanout caps. Exhaustion before a complete selection refuses the
+run and preview before HTTP; increase the limit or prune history deliberately.
+Invalid values for either setting log a warning and use their defaults.
+
+Historical-only resends also use finite database claims (migration 0032),
+expiring after the remaining source budget plus 30 seconds. These claims are
+independent of the completed-attempt cooldown setting. See the Webmention guide
+for recovery and the limits of remote delivery deduplication.

@@ -5,6 +5,19 @@ Changelog
 
 Unreleased
 ----------
+* Compensate partial media writes using the owned requested key, or only the
+  returned alternate key when storage picked another name; refuse pre-existing
+  keys and redact cleanup diagnostics.
+* Revalidate exact bearer generation, active owner, expiry, client policy and
+  operation scope at the Micropub mutation handoff after host setup.
+* Bound Salmention history projection, retained rows and scan work; refuse
+  incomplete selections explicitly for sends and previews.
+* Share a monotonic source-run deadline across fetching, discovery and delivery;
+  report deadline outcomes without incrementing historical failures. Genuine
+  delivery responses that finish after the deadline are still recorded.
+* Reserve historical resends atomically before HTTP with expiring, fenced
+  ownership (migration 0032). Reconcile migration 0029 duplicates in bounded
+  batches while preserving keeper identity and transactional rollback.
 * IndieAuth code consumption and token issuance/rotation now use one explicit
   routed write database and transaction. Unsupported split-database grants
   fail before writes, and token persistence errors restore the code and old

@@ -1,5 +1,5 @@
 from io import StringIO
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 from django.core.management import call_command
@@ -56,7 +56,7 @@ def test_command_with_content_provided(mock_sender_class):
     assert "✗ https://target2.com/post" in output
 
     mock_sender.send_webmentions.assert_called_once_with(
-        "https://example.com/my-post", '<a href="https://target1.com/post">Link</a>', vouch_url=None
+        "https://example.com/my-post", '<a href="https://target1.com/post">Link</a>', vouch_url=None, deadline=ANY
     )
     mock_sender.resend_salmentions.assert_not_called()
 
@@ -95,6 +95,7 @@ def test_command_passes_vouch_url(mock_sender_class):
         "https://example.com/my-post",
         '<a href="https://target.com/post">Link</a>',
         vouch_url="https://trusted.example/vouch-for-example",
+        deadline=ANY,
     )
 
 
@@ -123,7 +124,7 @@ def test_command_fetch_content(mock_sender_class):
     assert "Found 1 URLs in content" in output
     assert "Sent 1/1 webmentions successfully" in output
 
-    mock_sender.fetch_content.assert_called_once_with("https://example.com/my-post")
+    mock_sender.fetch_content.assert_called_once_with("https://example.com/my-post", deadline=ANY)
 
 
 @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
@@ -247,7 +248,9 @@ def test_salmention_resend_calls_resend_sender_api(mock_sender_class):
         stdout=out,
     )
 
-    mock_sender.resend_salmentions.assert_called_once_with("https://example.com/my-post", html_content, vouch_url=None)
+    mock_sender.resend_salmentions.assert_called_once_with(
+        "https://example.com/my-post", html_content, vouch_url=None, deadline=ANY
+    )
     mock_sender.send_webmentions.assert_not_called()
 
 
@@ -273,6 +276,7 @@ def test_salmention_resend_passes_vouch_url(mock_sender_class):
         "https://example.com/my-post",
         '<a href="https://target.com/post">Link</a>',
         vouch_url="https://trusted.example/vouch-for-example",
+        deadline=ANY,
     )
 
 
@@ -295,9 +299,7 @@ def test_salmention_resend_stdin_input(mock_sender_class):
     )
 
     mock_sender.resend_salmentions.assert_called_once_with(
-        "https://example.com/my-post",
-        '<a href="https://target.com">Link from stdin</a>',
-        vouch_url=None,
+        "https://example.com/my-post", '<a href="https://target.com">Link from stdin</a>', vouch_url=None, deadline=ANY
     )
 
 
@@ -433,8 +435,7 @@ def test_salmention_resend_dry_run_includes_current_history_and_both(mock_sender
     assert "https://example.com/same-domain" not in output
     assert "/relative" not in output
     mock_sender.preview_salmention_resend_targets.assert_called_once_with(
-        "https://example.com/my-post",
-        '<a href="https://current.example/post">Current</a>',
+        "https://example.com/my-post", '<a href="https://current.example/post">Current</a>', deadline=ANY
     )
     mock_sender.discover_endpoint.assert_not_called()
     mock_sender.send_webmentions.assert_not_called()

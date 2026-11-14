@@ -82,7 +82,7 @@ def test_late_failed_send_preserves_newer_success_and_observation(monkeypatch):
     sender = WebmentionSender()
     old = timezone.now() - timedelta(seconds=10)
     new = timezone.now()
-    monkeypatch.setattr(sender, "discover_endpoint", lambda target: "https://old-endpoint.example/")
+    monkeypatch.setattr(sender, "discover_endpoint", lambda target, **kwargs: "https://old-endpoint.example/")
 
     def send(*args, **kwargs):
         with patch("indieweb.senders.timezone.now", return_value=new):
@@ -143,7 +143,7 @@ def test_failure_drop_cannot_delete_newer_success(monkeypatch, settings, phase):
         WebmentionOutboundTarget.objects.filter(pk=row.pk).update(
             consecutive_failures=0, last_attempted_at=timezone.now() - timedelta(days=2)
         )
-        monkeypatch.setattr(sender, "discover_endpoint", lambda target: "https://endpoint.example/")
+        monkeypatch.setattr(sender, "discover_endpoint", lambda target, **kwargs: "https://endpoint.example/")
         monkeypatch.setattr(sender, "send_webmention", lambda *args, **kwargs: {"success": False, "status_code": 503})
         results = sender.resend_salmentions("https://source.example/", "")
         assert len(results) == 1
@@ -191,7 +191,7 @@ def test_concurrent_failure_drop_never_recreates_history(monkeypatch, settings):
         return original(stale)
 
     monkeypatch.setattr(sender, "_delete_failed_outbound_target", raced)
-    monkeypatch.setattr(sender, "discover_endpoint", lambda target: discoveries.append(target))
+    monkeypatch.setattr(sender, "discover_endpoint", lambda target, **kwargs: discoveries.append(target))
     results = sender.resend_salmentions("https://source.example/", "")
     assert discoveries == []
     assert not WebmentionOutboundTarget.objects.exists()

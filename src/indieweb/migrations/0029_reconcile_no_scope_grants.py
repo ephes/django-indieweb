@@ -22,17 +22,24 @@ def reconcile_no_scope_rows(model, using):
         no_scope.values("me", "client_id", "owner_id")
         .annotate(row_count=Count("pk"))
         .filter(row_count__gt=1)
-        .order_by()
+        .order_by("me", "client_id", "owner_id")
     )
     deleted = 0
-    for identity in list(duplicated):
-        group = no_scope.filter(
-            me=identity["me"], client_id=identity["client_id"], owner_id=identity["owner_id"]
-        ).order_by("-modified", "-pk")
-        keep_pk = group.values_list("pk", flat=True).first()
-        stale = group.exclude(pk=keep_pk)
-        deleted += stale.count()
-        stale.delete()
+    while True:
+        # Reconciled identities leave this queryset, so re-read a bounded first
+        # page instead of retaining the duplicate backlog or an open cursor
+        # while deleting from its table (not safe on every supported backend).
+        batch = list(duplicated[:100])
+        if not batch:
+            break
+        for identity in batch:
+            group = no_scope.filter(
+                me=identity["me"], client_id=identity["client_id"], owner_id=identity["owner_id"]
+            ).order_by("-modified", "-pk")
+            keep_pk = group.values_list("pk", flat=True).first()
+            stale = group.exclude(pk=keep_pk)
+            deleted += stale.count()
+            stale.delete()
     rows.filter(scope__isnull=True).update(scope="")
     return deleted
 

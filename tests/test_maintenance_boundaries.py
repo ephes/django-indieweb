@@ -131,7 +131,7 @@ def test_ordinary_preview_matches_live_target_policy(monkeypatch, settings, sour
     discovered = []
     delivered = []
 
-    def discover(self, target):
+    def discover(self, target, **kwargs):
         discovered.append(target)
         return "https://endpoint.example/"
 
