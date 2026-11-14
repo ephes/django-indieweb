@@ -1380,7 +1380,9 @@ waits before its own database commit must enforce current resource ownership
 and any stronger revocation boundary inside its own transaction.
 
 Media storage retains the randomly allocated requested key before calling
-``save()``, plus any returned alternate key. A write-then-raise failure cleans
+``save()``. When ``save()`` returns an alternate key, the requested key was
+occupied by another writer in the meantime: ownership moves to the returned key
+and the requested key is never deleted. A write-then-raise failure cleans
 that key and earlier batch members best-effort, preserving the original
 request error and suppressing backend exception messages and object names in
 cleanup diagnostics. An already existing requested key is refused without

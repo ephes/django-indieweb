@@ -95,6 +95,32 @@ def _deadline_result(target: str, provenance: str | None = None) -> dict:
     return result
 
 
+_DEADLINE_TIMEOUT_ERRORS = frozenset(
+    {
+        "TimeoutException",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "HTTPTotalTimeoutExceeded",
+    }
+)
+
+
+def _deadline_caused_failure(result: dict, deadline: float) -> bool:
+    """Return whether a failed delivery is the source deadline, not a remote outcome.
+
+    Only a transport timeout without any HTTP response after the deadline is a
+    deadline outcome. A genuine response or other failure is reported and recorded.
+    """
+    return (
+        not result["success"]
+        and result.get("status_code") is None
+        and result.get("error") in _DEADLINE_TIMEOUT_ERRORS
+        and time.monotonic() >= deadline
+    )
+
+
 def _webmention_strict_redirects() -> bool:
     """Return whether endpoint delivery refuses cross-origin redirects."""
     return getattr(settings, "INDIEWEB_WEBMENTION_STRICT_REDIRECTS", False) is True
@@ -649,7 +675,7 @@ class WebmentionSender:
             if endpoint:
                 # Send webmention
                 result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url, deadline=deadline)
-                if not result["success"] and time.monotonic() >= deadline:
+                if _deadline_caused_failure(result, deadline):
                     results.append({**_deadline_result(target_url), "unattempted": False})
                     continue
                 result["target"] = target_url
@@ -716,7 +742,7 @@ class WebmentionSender:
             if endpoint
             else {"success": False, "status_code": None, "error": "No endpoint found"}
         )
-        if not result["success"] and time.monotonic() >= deadline:
+        if _deadline_caused_failure(result, deadline):
             return {**_deadline_result(target, provenance), "unattempted": False}
         return {**result, "target": target, "endpoint": endpoint, "provenance": provenance}
 

@@ -1667,6 +1667,13 @@ of their normal request budget and the remaining monotonic source budget.
 Already accepted results remain recorded. Targets whose delivery cannot start
 before the deadline return ``unattempted=True`` with ``Source deadline
 exceeded``; these outcomes do not increment failure counters or remove history.
+Endpoint discovery that ends after the deadline, whatever its result, also
+returns this unattempted outcome, because no delivery started. A delivery POST
+that started but timed out without an HTTP response once the deadline passed
+returns the same deadline outcome with ``unattempted=False``. Any other
+delivery POST outcome (an HTTP status or a non-timeout transport error) that
+finishes after the deadline is reported and recorded like any other attempt,
+including failure counters and cooldown.
 The optional ``deadline`` keyword on sender methods accepts an absolute
 ``time.monotonic()`` deadline so a host can share one budget across earlier work.
 The existing transport budget is cooperative, not a hard process interrupt.

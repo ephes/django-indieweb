@@ -633,6 +633,9 @@ def _save_micropub_media_upload(validated_upload: _ValidatedMicropubMediaUpload,
     try:
         stored_name = default_storage.save(requested_name, validated_upload.upload)
         if stored_name != requested_name:
+            # Storage chose another key because the requested one became
+            # occupied after the check: that object belongs to another writer.
+            owned_names.remove(requested_name)
             owned_names.append(stored_name)
         return stored_name
     except OSError as exc:

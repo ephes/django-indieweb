@@ -45,6 +45,28 @@ def test_partial_save_compensates_requested_and_previous_alternate(error, monkey
 
 
 @pytest.mark.django_db
+def test_requested_key_taken_during_save_is_not_owned(monkeypatch, rf):
+    objects = {}
+    requested = iter(["owned-one.jpg", "owned-two.jpg"])
+    monkeypatch.setattr(views, "_micropub_media_storage_name", lambda suffix: next(requested))
+    monkeypatch.setattr(views.default_storage, "exists", lambda name: name in objects)
+
+    def save(name, upload):
+        if name == "owned-one.jpg":
+            objects[name] = b"other writer"
+            objects["alternate.jpg"] = b"ours"
+            return "alternate.jpg"
+        raise OSError("storage failed")
+
+    monkeypatch.setattr(views.default_storage, "save", save)
+    monkeypatch.setattr(views.default_storage, "delete", lambda name: objects.pop(name, None))
+    uploads = [SimpleUploadedFile("photo.jpg", b"\xff\xd8\xff\xe0\x00\x10JFIF\x00", "image/jpeg") for _ in range(2)]
+    with pytest.raises(views._MicropubMediaUploadError):
+        views._store_micropub_media_uploads(rf.post("/"), uploads)
+    assert objects == {"owned-one.jpg": b"other writer"}
+
+
+@pytest.mark.django_db
 def test_preexisting_requested_name_is_never_owned(monkeypatch, rf):
     monkeypatch.setattr(views, "_micropub_media_storage_name", lambda suffix: "existing.jpg")
     monkeypatch.setattr(views.default_storage, "exists", lambda name: True)

@@ -78,6 +78,43 @@ def test_source_deadline_does_not_record_unattempted_targets(settings, monkeypat
     assert list(WebmentionOutboundTarget.objects.values_list("target_url", flat=True)) == targets[:1]
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("resend", [False, True])
+@pytest.mark.parametrize(
+    ("outcome", "deadline_outcome"),
+    [
+        ({"success": False, "status_code": 410, "error": "HTTP 410"}, False),
+        ({"success": False, "status_code": None, "error": "ConnectError"}, False),
+        ({"success": False, "status_code": None, "error": "HTTPTotalTimeoutExceeded"}, True),
+        ({"success": False, "status_code": None, "error": "ReadTimeout"}, True),
+    ],
+)
+def test_failure_finishing_after_deadline_keeps_genuine_outcome(
+    settings, monkeypatch, resend, outcome, deadline_outcome
+):
+    settings.INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS = 5
+    clock = [100.0]
+    monkeypatch.setattr(senders.time, "monotonic", lambda: clock[0])
+    sender = WebmentionSender()
+    monkeypatch.setattr(sender, "discover_endpoint", lambda target, **kwargs: "https://endpoint.example/")
+
+    def send(*args, **kwargs):
+        clock[0] += 10
+        return dict(outcome)
+
+    monkeypatch.setattr(sender, "send_webmention", send)
+    operation = sender.resend_salmentions if resend else sender.send_webmentions
+    [result] = operation(SOURCE, '<a href="https://t.example/">link</a>')
+    rows = WebmentionOutboundTarget.objects.filter(target_url="https://t.example/")
+    if deadline_outcome:
+        assert result["error"] == "Source deadline exceeded" and result["unattempted"] is False
+        assert not rows.exists()
+    else:
+        assert result["status_code"] == outcome["status_code"] and result["error"] == outcome["error"]
+        assert result["endpoint"] == "https://endpoint.example/"
+        assert rows.get().consecutive_failures == 1
+
+
 def test_remaining_source_budget_reaches_transport(monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(senders.time, "monotonic", lambda: clock[0])

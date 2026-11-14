@@ -5176,6 +5176,10 @@ bundle.
 - Share one monotonic source-run deadline through fetch/discovery/delivery and
   command prefetch, preserving accepted outcomes and avoiding synthetic failures
   for deadline refusals.
+- Review follow-up: a delivery POST that times out without an HTTP response after
+  the deadline is a deadline outcome; other POST outcomes finishing later are
+  recorded. Discovery past the deadline stays unattempted. Media ownership moves
+  to a returned alternate key.
 - Validation: all six new regressions failed before implementation and passed
   afterward; sender, command and history suites are included in the full gates.
 - Documentation: `docs/webmention.rst` and `docs/configuration.rst` document
