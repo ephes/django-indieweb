@@ -5154,3 +5154,61 @@ bundle.
   blocked as recorded above. No external review or merge was performed.
 - Documentation: `docs/configuration.rst`, `docs/indieauth.rst` and
   `docs/development.rst`; changelog: `docs/changelog.rst` Unreleased.
+
+## 2026-11-14
+
+### Failed media ownership and current mutation authority (round 90 I1)
+
+- Retain requested upload ownership before storage save, compensate partial
+  writes and returned alternate keys, and refuse collisions without deletion.
+- Reload the exact bearer generation, owner, expiry, client policy and required
+  scopes after handler setup at each entry/media mutation handoff.
+- Validation: failing-before/fixed-after regression proofs; 33 new tests passed
+  with independent file-SQLite connections, plus existing Micropub tests.
+- Documentation: `docs/micropub.rst` describes compensation limits and the public
+  mutation authority helper/host transaction boundary.
+- Changelog: recorded under Unreleased; no version bump.
+
+### Bounded outbound history and complete-source work (round 90 I2)
+
+- Project and stream historical policy fields, retain admitted rows only, and
+  refuse incomplete history scans before network work; previews share policy.
+- Share one monotonic source-run deadline through fetch/discovery/delivery and
+  command prefetch, preserving accepted outcomes and avoiding synthetic failures
+  for deadline refusals.
+- Validation: all six new regressions failed before implementation and passed
+  afterward; sender, command and history suites are included in the full gates.
+- Documentation: `docs/webmention.rst` and `docs/configuration.rst` document
+  history scan limits, deadline configuration and incomplete-run outcomes.
+- Changelog: recorded under Unreleased; no version bump.
+
+### Concurrent cooldown and bounded historical reconciliation (round 90 I3)
+
+- Migration 0032 adds expiring historical-resend claims. Policy is rechecked
+  before atomic reservation; completion and release are fenced by owner, with
+  no database lock spanning HTTP and finite recovery after worker death.
+- Migration 0029 reconciles stable batches of 100 duplicate grant identities,
+  retaining newest modified/pk credentials and full transactional rollback.
+- Validation: race, expiry/replacement fence and late-batch rollback regressions
+  failed before implementation; 247 focused tests passed with migrations enabled
+  and independent file-SQLite connections. New tests join `storage-sqlite`.
+- Documentation: configuration/Webmention/development guides cover migrations,
+  lease recovery, non-exactly-once HTTP delivery and bounded reconciliation.
+- Changelog: recorded under Unreleased; no version bump. No related planned
+  backlog item remains; existing unrelated backlog entries are preserved.
+
+### Round 90 shared local validation
+
+- `just check`: 3,152 passed, 55 expected in-memory/optional skips; 93.92%
+  coverage (88% required); Ruff and mypy passed.
+- `just hooks` and `uv run sphinx-build -W -b html docs docs/_build/html`: passed.
+- `uv run python -m django makemigrations --check --dry-run --settings=tests.settings`:
+  no missing migrations.
+- `uv run tox -p 2`: all ten later environments passed, including real
+  migrations and `storage-sqlite` (132 tests). The first Python 3.11/3.12
+  Django 5.2 runs caught two old discovery test doubles lacking the new deadline
+  keyword. After updating those doubles, both complete environments passed via
+  `uv run tox --workdir .tox-recheck -e py311-django52,py312-django52 -p 2`.
+  Thus all twelve supported local tox environments passed on the final files.
+- No local gate was blocked. Cross-family review and integration are external
+  follow-up steps; this change is parked without merging.

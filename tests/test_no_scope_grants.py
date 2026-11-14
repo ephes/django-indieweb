@@ -354,3 +354,39 @@ def test_migrations_normalize_null_scopes_and_enforce_uniqueness():
 
     assert result.returncode == 0, result.stderr
     assert "MIGRATION-PROBE-OK" in result.stdout
+
+
+def test_reconciliation_batches_duplicate_groups_and_rolls_back(legacy_grants, reconcile_no_scope_rows, monkeypatch):
+    owner = get_user_model().objects.create_user(username="batch-legacy")
+    moment = timezone.now()
+    for index in range(205):
+        for member in range(2):
+            _legacy(owner, f"{index}-{member}", None, age_hours=0, modified=moment, me=f"https://m{index:03}.example/")
+    original_iter = QuerySet.__iter__
+    batches = []
+
+    def observe(queryset):
+        if "row_count" in queryset.query.annotations:
+            assert queryset.query.high_mark is not None and queryset.query.high_mark <= 100
+            batches.append(queryset.query.high_mark)
+        return original_iter(queryset)
+
+    monkeypatch.setattr(QuerySet, "__iter__", observe)
+    original_delete = QuerySet.delete
+    deletes = []
+
+    def fail_late(queryset):
+        deletes.append(True)
+        if len(deletes) == 102:
+            raise RuntimeError("synthetic late delete failure")
+        return original_delete(queryset)
+
+    monkeypatch.setattr(QuerySet, "delete", fail_late)
+    with pytest.raises(RuntimeError, match="late delete"), transaction.atomic():
+        reconcile_no_scope_rows(legacy_grants, "default")
+    assert legacy_grants.objects.count() == 410
+    assert legacy_grants.objects.filter(scope__isnull=True).count() == 410
+    monkeypatch.setattr(QuerySet, "delete", original_delete)
+    assert reconcile_no_scope_rows(legacy_grants, "default") == 205
+    assert all(key.endswith("-1") for key in legacy_grants.objects.values_list("key", flat=True))
+    assert len(batches) >= 4

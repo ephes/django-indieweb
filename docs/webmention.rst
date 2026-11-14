@@ -1656,3 +1656,52 @@ The existing parent row lock, freshness check and child-sync savepoint remain
 in place: a failed child batch rolls back all child changes without demoting
 an otherwise verified parent. Bulk writes do not emit per-child save signals;
 notification hooks remain at the parent processing boundary.
+
+Bounded source runs and history selection
+=========================================
+
+``INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS`` (default 120, positive
+integer seconds) limits one ``send_webmentions`` or ``resend_salmentions`` run,
+including its optional source fetch. Discovery and delivery receive the lesser
+of their normal request budget and the remaining monotonic source budget.
+Already accepted results remain recorded. Targets whose delivery cannot start
+before the deadline return ``unattempted=True`` with ``Source deadline
+exceeded``; these outcomes do not increment failure counters or remove history.
+The optional ``deadline`` keyword on sender methods accepts an absolute
+``time.monotonic()`` deadline so a host can share one budget across earlier work.
+The existing transport budget is cooperative, not a hard process interrupt.
+
+Salmention selection reads only policy fields in bounded chunks and keeps only
+admitted historical rows. Current targets retain precedence; historical targets
+retain URL order and both fanout caps. ``INDIEWEB_SALMENTION_HISTORY_SCAN_LIMIT``
+(default 1000, positive integer) limits historical rows inspected to fill the
+remaining slots. Reaching the fanout cap is normal. Exhausting the scan budget
+before selection finishes raises ``ValueError`` with an explicit incomplete
+selection message before network work. Previews use the same selector. Increase
+the limit deliberately or reduce history before retrying; no partial selection
+is silently sent.
+
+Historical resend reservations
+==============================
+
+Apply migration 0032 before starting updated workers. A historical-only target
+is atomically reserved before discovery. The claim reloads cooldown, failure
+and success-cutoff policy on the write database and compares that generation
+when reserving. Other workers return ``skip_reason=claimed`` or
+``history_changed`` without HTTP. No database lock spans network work.
+
+A claim expires after the remaining source budget plus 30 seconds. A crashed
+worker therefore permits a later retry without inventing a delivery failure or
+cooldown timestamp. Completion records history and clears the claim only for
+its live owner. A replacement claim, a current-link observation or deletion
+fences an older completion. Deadline refusals release only their own claim;
+already accepted deliveries retain their outcomes. A worker that continues
+past lease expiry cannot commit history, though the remote HTTP endpoint may
+already have accepted its request; delivery is not exactly once.
+
+Migration 0029 still revokes duplicate no-scope credentials by keeping the
+newest ``modified``/primary-key row unchanged. It now reconciles stable batches
+of at most 100 duplicate identities on the migration database alias, within the
+migration transaction. A later failure rolls back earlier deletions. Existing
+installations that already applied 0029 need no data repair; migration 0030's
+non-null uniqueness boundary remains unchanged.

@@ -1,13 +1,14 @@
 """Django management command to send webmentions."""
 
 import sys
+import time
 from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import URLValidator
 
-from indieweb.senders import WebmentionSender
+from indieweb.senders import WebmentionSender, _source_deadline
 
 
 class Command(BaseCommand):
@@ -36,6 +37,7 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         """Handle the command."""
+        self.source_deadline = _source_deadline()
         source_url = options["source"]
         html_content = options["content"]
         dry_run = options["dry_run"]
@@ -77,7 +79,7 @@ class Command(BaseCommand):
         if html_content:
             return html_content
         self.stdout.write(f"Fetching content from {source_url}...")
-        fetched_content = sender.fetch_content(source_url)
+        fetched_content = sender.fetch_content(source_url, deadline=self.source_deadline)
         if not fetched_content:
             raise CommandError(f"Failed to fetch content from {source_url}")
         return fetched_content
@@ -87,7 +89,9 @@ class Command(BaseCommand):
         targets = sender.select_target_urls(source_url, html_content)
         self.stdout.write(f"Selected {len(targets)} targets after URL, same-host and fanout policy exclusions")
         for url in targets:
-            endpoint = sender.discover_endpoint(url)
+            if time.monotonic() >= self.source_deadline:
+                raise CommandError("Source deadline exceeded; remaining targets unattempted")
+            endpoint = sender.discover_endpoint(url, deadline=self.source_deadline)
             if endpoint:
                 self.stdout.write(f"  - {url} -> {endpoint}")
             else:
@@ -101,7 +105,7 @@ class Command(BaseCommand):
         vouch_url: str | None,
     ) -> None:
         """Send webmentions and display results."""
-        results = sender.send_webmentions(source_url, html_content, vouch_url=vouch_url)
+        results = sender.send_webmentions(source_url, html_content, vouch_url=vouch_url, deadline=self.source_deadline)
 
         if not results:
             self.stdout.write("No webmentions were sent (no valid targets found)")
@@ -130,7 +134,10 @@ class Command(BaseCommand):
 
     def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
         """Show the Salmention resend target union without sending or recording history."""
-        results = sender.preview_salmention_resend_targets(source_url, html_content)
+        try:
+            results = sender.preview_salmention_resend_targets(source_url, html_content, deadline=self.source_deadline)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
         if not results:
             self.stdout.write("No Salmention resends would be sent (no current or historical targets found)")
             return
@@ -151,7 +158,12 @@ class Command(BaseCommand):
         vouch_url: str | None,
     ) -> None:
         """Resend Salmentions and display provenance-aware results."""
-        results = sender.resend_salmentions(source_url, html_content, vouch_url=vouch_url)
+        try:
+            results = sender.resend_salmentions(
+                source_url, html_content, vouch_url=vouch_url, deadline=self.source_deadline
+            )
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
         if not results:
             self.stdout.write("No Salmention resends were sent (no current or historical targets found)")

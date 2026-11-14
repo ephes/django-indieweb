@@ -1362,3 +1362,28 @@ are created per operation, so store content outside the instance. The bundled
 ``InMemoryMicropubHandler`` requires explicit configuration for tests/examples
 and does not preserve content between requests. Configured adapters continue
 to own persistence and authorization.
+
+Current mutation authority and failed media saves
+=================================================
+
+After URL policy and handler construction, every entry mutation and media
+removal reloads the exact bearer credential on the write database. Revoked,
+rotated, expired, reassigned or inactive-owner credentials fail with 401;
+removed scopes fail with 403. Client policy is evaluated again before this
+read. Direct media uploads also refresh authority before storage. Source
+queries keep their existing read policy.
+
+``TokenAuthMixin.mutation_authority_error(request, *scopes)`` exposes this
+handoff check to endpoint subclasses and refreshes ``self.token`` on success.
+The library holds no transaction lock over host handler code. A handler that
+waits before its own database commit must enforce current resource ownership
+and any stronger revocation boundary inside its own transaction.
+
+Media storage retains the randomly allocated requested key before calling
+``save()``, plus any returned alternate key. A write-then-raise failure cleans
+that key and earlier batch members best-effort, preserving the original
+request error and suppressing backend exception messages and object names in
+cleanup diagnostics. An already existing requested key is refused without
+saving or deleting it. Storage backends must preserve non-overwrite semantics;
+backends that write to an undisclosed alternate key and raise cannot provide
+that key for compensation. Cleanup errors require operator reconciliation.

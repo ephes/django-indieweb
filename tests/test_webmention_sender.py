@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from datetime import timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 from urllib.parse import parse_qs
 
 import httpx
@@ -130,7 +130,9 @@ def test_resend_salmentions_applies_fanout_caps_before_discovery(sender, source_
     WebmentionOutboundTarget.objects.create(source_url=source_url, target_url="https://history.example/1")
     WebmentionOutboundTarget.objects.create(source_url=source_url, target_url="https://history.example/2")
 
-    with patch.object(sender, "discover_endpoint", side_effect=lambda target: f"{target}/webmention") as discover:
+    with patch.object(
+        sender, "discover_endpoint", side_effect=lambda target, **kwargs: f"{target}/webmention"
+    ) as discover:
         with patch.object(
             sender,
             "send_webmention",
@@ -715,7 +717,7 @@ def test_send_webmentions_without_html_content(sender, source_url, target_url):
 
                 results = sender.send_webmentions(source_url)
 
-                mock_fetch.assert_called_once_with(source_url)
+                mock_fetch.assert_called_once_with(source_url, deadline=ANY)
                 assert len(results) == 1
                 assert results[0]["target"] == "https://otherdomain.com/link"
 
@@ -735,7 +737,7 @@ def test_send_webmentions_full_flow(sender, source_url, target_url):
     # Mock endpoint discovery
     with patch.object(sender, "discover_endpoint") as mock_discover:
 
-        def discover_side_effect(url):
+        def discover_side_effect(url, **kwargs):
             if "target1.com" in url:
                 return "https://target1.com/webmention"
             elif "target2.com" in url:
@@ -777,6 +779,7 @@ def test_send_webmentions_passes_vouch_to_each_delivery(sender, source_url, targ
         "https://target.com/post",
         "https://target.com/webmention",
         vouch=vouch,
+        deadline=ANY,
     )
 
 
@@ -913,7 +916,7 @@ def test_send_webmentions_skips_relative_and_same_domain_urls_without_history(se
             results = sender.send_webmentions(source_url, html_content)
 
     assert len(results) == 1
-    discover.assert_called_once_with("https://target.com/post")
+    discover.assert_called_once_with("https://target.com/post", deadline=ANY)
     assert list(WebmentionOutboundTarget.objects.values_list("target_url", flat=True)) == ["https://target.com/post"]
 
 
@@ -965,7 +968,7 @@ def test_resend_salmentions_sends_current_history_and_both_for_exact_source(send
         target_url="https://other-history.example/post",
     )
 
-    def discover(target_url):
+    def discover(target_url, **kwargs):
         return f"{target_url}/webmention"
 
     with patch.object(sender, "discover_endpoint", side_effect=discover) as discover_mock:
@@ -1008,6 +1011,7 @@ def test_resend_salmentions_rediscovers_historical_endpoint(sender, source_url, 
         "https://history.example/post",
         "https://history.example/new-webmention",
         vouch=None,
+        deadline=ANY,
     )
     target = WebmentionOutboundTarget.objects.get(source_url=source_url, target_url="https://history.example/post")
     assert target.endpoint_url == "https://history.example/new-webmention"
@@ -1223,7 +1227,7 @@ def test_resend_salmentions_attempts_recent_successful_historical_target(sender,
             results = sender.resend_salmentions(source_url, "<p>No current links</p>")
 
     assert results[0]["success"] is True
-    discover.assert_called_once_with("https://history.example/post")
+    discover.assert_called_once_with("https://history.example/post", deadline=ANY)
     send.assert_called_once()
 
 

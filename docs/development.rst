@@ -403,3 +403,10 @@ generation, with one query for both filtered and unfiltered renders and for 1 or
 20 children. File SQLite uses WAL in this test to allow that concurrent commit;
 PostgreSQL uses its statement snapshot. Both use invented URLs and credentials.
 Run these lanes against a disposable local database only; no hosted CI is needed.
+
+The required ``storage-sqlite`` lane also includes the round 90 mutation and
+outbound claim races and the bounded grant-reconciliation regression. These
+use independent connections, barriers and synthetic history; normal in-memory
+runs intentionally skip connection-race tests. Migration 0029 tests additionally
+exercise the real migration graph in an isolated process. Run the migrations
+lane to cover migrations explicitly before integration.

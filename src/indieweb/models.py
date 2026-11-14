@@ -562,6 +562,8 @@ class WebmentionOutboundTarget(models.Model):
     last_attempted_at = models.DateTimeField(null=True, blank=True)
     last_status_code = models.PositiveIntegerField(null=True, blank=True)
     last_successful_attempt_at = models.DateTimeField(null=True, blank=True)
+    resend_claim = models.UUIDField(null=True, editable=False)
+    resend_claim_expires_at = models.DateTimeField(null=True, blank=True)
     last_success = models.BooleanField(default=False)
     last_error = models.TextField(blank=True)
     consecutive_failures = models.PositiveIntegerField(default=0)

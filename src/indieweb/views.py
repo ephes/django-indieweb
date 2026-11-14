@@ -623,13 +623,18 @@ def _validate_micropub_media_uploads(uploads: list[UploadedFile]) -> list[_Valid
     return [_validate_micropub_media_upload(upload) for upload in uploads]
 
 
-def _save_micropub_media_upload(validated_upload: _ValidatedMicropubMediaUpload) -> str:
+def _save_micropub_media_upload(validated_upload: _ValidatedMicropubMediaUpload, owned_names: list[str]) -> str:
     """Store a Micropub media upload and return the stored name."""
+    requested_name = _micropub_media_storage_name(validated_upload.suffix)
+    # A collision is not ours to compensate. Storage must not overwrite keys.
+    if default_storage.exists(requested_name):
+        raise _MicropubMediaUploadError(500)
+    owned_names.append(requested_name)
     try:
-        return default_storage.save(
-            _micropub_media_storage_name(validated_upload.suffix),
-            validated_upload.upload,
-        )
+        stored_name = default_storage.save(requested_name, validated_upload.upload)
+        if stored_name != requested_name:
+            owned_names.append(stored_name)
+        return stored_name
     except OSError as exc:
         logger.error("Unexpected error storing Micropub media upload", exc_info=exc_info_without_messages())
         raise _MicropubMediaUploadError(500) from exc
@@ -642,7 +647,7 @@ def _cleanup_micropub_media_uploads(stored_names: list[str]) -> None:
             default_storage.delete(stored_name)
         except Exception:
             logger.error(
-                f"Failed to clean up stored Micropub media upload {stored_name!r}",
+                "Failed to clean up owned Micropub media upload",
                 exc_info=exc_info_without_messages(),
             )
 
@@ -661,15 +666,16 @@ def _store_micropub_media_uploads(
     """Own newly stored files until every URL is ready, then transfer ownership."""
     validated_uploads = _validate_micropub_media_uploads(uploads)
     stored_names: list[str] = []
+    cleanup_names: list[str] = []
     try:
         for validated_upload in validated_uploads:
-            stored_names.append(_save_micropub_media_upload(validated_upload))
+            stored_names.append(_save_micropub_media_upload(validated_upload, cleanup_names))
         urls = [_absolute_storage_url(request, stored_name) for stored_name in stored_names]
         if owned_names is not None:
             owned_names.extend(stored_names)
         return urls
     except Exception as exc:
-        _cleanup_micropub_media_uploads(stored_names)
+        _cleanup_micropub_media_uploads(cleanup_names)
         if isinstance(exc, _MicropubMediaUploadError):
             raise
         logger.error("Unexpected error publishing Micropub media upload", exc_info=exc_info_without_messages())
@@ -1578,6 +1584,13 @@ class TokenAuthMixin(View):
                 if self.token.is_expired():
                     logger.warning(f"Token expired: {redact_token(key)}")
                     return False
+                self._bearer_identity = (
+                    self.token.pk,
+                    self.token.key,
+                    self.token.owner_id,
+                    self.token.client_id,
+                    self.token.me,
+                )
                 return True
             except Token.DoesNotExist:
                 logger.warning(f"Token not found: {redact_token(key)}")
@@ -1588,6 +1601,28 @@ class TokenAuthMixin(View):
         else:
             logger.warning("No authorization token provided in request")
             return False
+
+    def mutation_authority_error(self, request: HttpRequest, *scopes: str) -> HttpResponse | None:
+        """Refresh exact bearer authority immediately before handing off a mutation.
+
+        Host handlers own authorization once called; no database lock is held
+        across their code. Subclasses can reuse this check after blocking setup.
+        """
+        # Client policy may execute host code, so resolve it before the final read.
+        if not _client_id_allowed(self.token.client_id):
+            return HttpResponse("invalid_client", status=403)
+        using = router.db_for_write(Token)
+        try:
+            current = Token.objects.using(using).select_related("owner").get(pk=self.token.pk)
+        except Token.DoesNotExist:
+            return _bearer_authentication_error_response()
+        identity = (current.pk, current.key, current.owner_id, current.client_id, current.me)
+        if identity != self._bearer_identity or not current.owner.is_active or current.is_expired():
+            return _bearer_authentication_error_response()
+        self.token = current
+        if scopes and not any(self.authorized(current.client_id, current.scope, scope) for scope in scopes):
+            return HttpResponse("authorization error", status=403)
+        return None
 
     def authorized(self, client_id: str, scope: str | None, required_scope: str | None = None) -> bool:
         """Return whether the token's ``scope`` satisfies ``required_scope``.
@@ -2792,6 +2827,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return self._invalid_request()
         handler = get_micropub_handler()
         try:
+            authority_error = self.mutation_authority_error(request, "update")
+            if authority_error is not None:
+                return authority_error
             entry = handler.update_entry(url, updates, self.token.owner)
         except ValueError as exc:
             _log_micropub_handler_error("update_entry", f"url={redact_url(url)!r}", exc)
@@ -2811,6 +2849,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return policy_response
         handler = get_micropub_handler()
         try:
+            authority_error = self.mutation_authority_error(request, "delete")
+            if authority_error is not None:
+                return authority_error
             handler.delete_entry(url, self.token.owner)
         except ValueError as exc:
             _log_micropub_handler_error("delete_entry", f"url={redact_url(url)!r}", exc)
@@ -2830,6 +2871,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             return policy_response
         handler = get_micropub_handler()
         try:
+            authority_error = self.mutation_authority_error(request, "undelete")
+            if authority_error is not None:
+                return authority_error
             entry = handler.undelete_entry(url, self.token.owner)
         except ValueError as exc:
             _log_micropub_handler_error("undelete_entry", f"url={redact_url(url)!r}", exc)
@@ -3082,6 +3126,10 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
             # Get the content handler and create entry
             handler = get_micropub_handler()
 
+            authority_error = self.mutation_authority_error(request, "create", "post")
+            if authority_error is not None:
+                return authority_error
+
             try:
                 entry = handler.create_entry(properties, self.token.owner)
             except ValueError as exc:
@@ -3275,6 +3323,9 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         handler = get_micropub_handler()
         if not self._handler_overrides(handler, "delete_media"):
             return self._not_implemented()
+        authority_error = self.mutation_authority_error(request, "media")
+        if authority_error is not None:
+            return authority_error
         try:
             deleted = handler.delete_media(url, self.token.owner)
         except Exception as exc:
@@ -3311,6 +3362,9 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         if len(uploads) != 1:
             return _micropub_media_upload_error_response(_MicropubMediaUploadError(413))
         upload = uploads[0]
+        authority_error = self.mutation_authority_error(request, "media")
+        if authority_error is not None:
+            return authority_error
         try:
             location = _store_micropub_media_upload(request, upload)
         except _MicropubMediaUploadError as exc:

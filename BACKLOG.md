@@ -4,6 +4,9 @@ This project no longer uses Beads. Planned work lives here until it is completed
 
 When adding or completing items, keep each entry specific enough for an agent or contributor to implement without needing an external issue database. Include references to affected files, docs, or upstream issues when useful.
 
+Round 90 media ownership, mutation authority, outbound work limits, resend
+reservations and bounded grant reconciliation are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.

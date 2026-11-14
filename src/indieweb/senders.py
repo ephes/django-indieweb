@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
+from uuid import UUID, uuid4
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -43,6 +44,8 @@ DEFAULT_SALMENTION_RESEND_COOLDOWN_SECONDS = 24 * 60 * 60
 DEFAULT_SALMENTION_SUCCESS_CUTOFF_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
 DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS = 30.0
+DEFAULT_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS = 120
+DEFAULT_SALMENTION_HISTORY_SCAN_LIMIT = 1000
 # Per-operation timeouts for endpoint discovery and delivery. Each one only
 # bounds a single connect, read, write or pool wait; the total budget from
 # ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` bounds a whole call.
@@ -63,6 +66,33 @@ def _webmention_send_total_timeout() -> float:
         f"{DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS} seconds"
     )
     return DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
+
+
+def _source_deadline(deadline: float | None = None) -> float:
+    budget = _positive_int_setting(
+        "INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS", DEFAULT_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS
+    )
+    own_deadline = time.monotonic() + budget
+    return min(own_deadline, deadline) if deadline is not None else own_deadline
+
+
+def _request_budget(deadline: float | None) -> float:
+    budget = _webmention_send_total_timeout()
+    return min(budget, deadline - time.monotonic()) if deadline is not None else budget
+
+
+def _deadline_result(target: str, provenance: str | None = None) -> dict:
+    result = {
+        "target": target,
+        "endpoint": None,
+        "success": False,
+        "status_code": None,
+        "error": "Source deadline exceeded",
+        "unattempted": True,
+    }
+    if provenance is not None:
+        result["provenance"] = provenance
+    return result
 
 
 def _webmention_strict_redirects() -> bool:
@@ -263,7 +293,9 @@ class WebmentionSender:
 
         return urls
 
-    def discover_endpoint(self, target_url: str, *, client: httpx.Client | None = None) -> str | None:
+    def discover_endpoint(
+        self, target_url: str, *, client: httpx.Client | None = None, deadline: float | None = None
+    ) -> str | None:
         """Discover the webmention endpoint for a target URL.
 
         Probes HEAD first, then confirms discovery with GET even when HEAD
@@ -301,7 +333,7 @@ class WebmentionSender:
             )
         )
         resolver = default_address_resolver if close_client else None
-        deadline = time.monotonic() + _webmention_send_total_timeout()
+        deadline = time.monotonic() + _request_budget(deadline)
         try:
             validate_safe_http_url(target_url, resolver=resolver)
             # First try HEAD request to check Link headers
@@ -437,6 +469,7 @@ class WebmentionSender:
         vouch: str | None = None,
         *,
         client: httpx.Client | None = None,
+        deadline: float | None = None,
     ) -> dict:
         """Send a webmention to an endpoint.
 
@@ -492,7 +525,7 @@ class WebmentionSender:
                 resolver=resolver,
                 timeout=self.post_timeout,
                 max_bytes=_sender_response_max_bytes(),
-                total_timeout=_webmention_send_total_timeout(),
+                total_timeout=_request_budget(deadline),
                 cross_origin_strip=_webmention_strict_redirects(),
             )
             response = delivered.response
@@ -523,7 +556,9 @@ class WebmentionSender:
             if close_client:
                 http_client.close()
 
-    def fetch_content(self, url: str, *, client: httpx.Client | None = None) -> str | None:
+    def fetch_content(
+        self, url: str, *, client: httpx.Client | None = None, deadline: float | None = None
+    ) -> str | None:
         """Fetch HTML content from a URL.
 
         Args:
@@ -557,7 +592,7 @@ class WebmentionSender:
                 max_bytes=_sender_fetch_max_bytes(),
                 resolver=resolver,
                 timeout=SAFE_HTTP_DEFAULT_TIMEOUT,
-                total_timeout=_webmention_send_total_timeout(),
+                total_timeout=_request_budget(deadline),
             )
             response = fetched.response
             response.raise_for_status()
@@ -574,6 +609,8 @@ class WebmentionSender:
         html_content: str | None = None,
         vouch_url: str | None = None,
         record_history: bool = True,
+        *,
+        deadline: float | None = None,
     ) -> list[dict]:
         """Send webmentions to all URLs found in the content.
 
@@ -586,11 +623,12 @@ class WebmentionSender:
         Returns:
             List of results for each webmention attempt
         """
+        deadline = _source_deadline(deadline)
         # Fetch content if not provided
         if html_content is None:
-            html_content = self.fetch_content(source_url)
+            html_content = self.fetch_content(source_url, deadline=deadline)
             if html_content is None:
-                return []
+                return [_deadline_result(source_url)] if time.monotonic() >= deadline else []
 
         # Extract deliverable target URLs from content
         target_urls = self.select_target_urls(source_url, html_content)
@@ -599,12 +637,21 @@ class WebmentionSender:
         results = []
 
         for target_url in target_urls:
+            if time.monotonic() >= deadline:
+                results.append(_deadline_result(target_url))
+                continue
             attempt_started_at = timezone.now()
             # Discover endpoint
-            endpoint = self.discover_endpoint(target_url)
+            endpoint = self.discover_endpoint(target_url, deadline=deadline)
+            if time.monotonic() >= deadline:
+                results.append(_deadline_result(target_url))
+                continue
             if endpoint:
                 # Send webmention
-                result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url)
+                result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url, deadline=deadline)
+                if not result["success"] and time.monotonic() >= deadline:
+                    results.append({**_deadline_result(target_url), "unattempted": False})
+                    continue
                 result["target"] = target_url
                 result["endpoint"] = endpoint
                 results.append(result)
@@ -627,6 +674,8 @@ class WebmentionSender:
         source_url: str,
         html_content: str | None = None,
         vouch_url: str | None = None,
+        *,
+        deadline: float | None = None,
     ) -> list[dict]:
         """Resend Webmentions to current and historical targets for a source URL.
 
@@ -638,10 +687,11 @@ class WebmentionSender:
         Returns:
             List of results for each current or historical target, including provenance
         """
+        deadline = _source_deadline(deadline)
         if html_content is None:
-            html_content = self.fetch_content(source_url)
+            html_content = self.fetch_content(source_url, deadline=deadline)
             if html_content is None:
-                return []
+                return [_deadline_result(source_url)] if time.monotonic() >= deadline else []
 
         target_urls, current_targets, historical_rows, historical_targets = self._salmention_target_context(
             source_url,
@@ -651,55 +701,82 @@ class WebmentionSender:
         results = []
         for target_url in target_urls:
             provenance = self._target_provenance(target_url, current_targets, historical_targets)
-            historical_only = provenance == "history"
-            if historical_only:
-                row = historical_rows[target_url]
-                skipped = self._salmention_historical_skip_result(row, dry_run=False)
-                if skipped is not None:
-                    results.append(skipped)
-                    continue
-
-            attempt_started_at = timezone.now()
-            endpoint = self.discover_endpoint(target_url)
-            if endpoint:
-                result = self.send_webmention(source_url, target_url, endpoint, vouch=vouch_url)
-            else:
-                result = {
-                    "success": False,
-                    "status_code": None,
-                    "error": "No endpoint found",
-                }
-
-            result["target"] = target_url
-            result["endpoint"] = endpoint
-            result["provenance"] = provenance
-            results.append(result)
-            target = self._record_outbound_target(
-                attempt_started_at=attempt_started_at,
-                source_url=source_url,
-                target_url=target_url,
-                endpoint=endpoint,
-                result=result,
-                vouch_url=vouch_url,
-                seen_in_source=target_url in current_targets,
-                sent=endpoint is not None,
-            )
-            if historical_only and not result["success"] and self._delete_failed_outbound_target(target):
-                # Retain policy flags, but distinguish this failed attempt from a pre-attempt drop.
-                result["attempted"] = True
-                result["dropped"] = True
-                result["skipped"] = True
-                result["skip_reason"] = "failure_drop"
-                result["error"] = f"{result.get('error', 'Delivery failed')}; historical target dropped"
-
+            row = historical_rows.get(target_url) if provenance == "history" else None
+            results.append(self._resend_target(source_url, target_url, provenance, row, vouch_url, deadline))
         return results
+
+    def _deliver_source_target(
+        self, source: str, target: str, vouch: str | None, deadline: float, provenance: str
+    ) -> dict:
+        endpoint = self.discover_endpoint(target, deadline=deadline)
+        if time.monotonic() >= deadline:
+            return _deadline_result(target, provenance)
+        result = (
+            self.send_webmention(source, target, endpoint, vouch=vouch, deadline=deadline)
+            if endpoint
+            else {"success": False, "status_code": None, "error": "No endpoint found"}
+        )
+        if not result["success"] and time.monotonic() >= deadline:
+            return {**_deadline_result(target, provenance), "unattempted": False}
+        return {**result, "target": target, "endpoint": endpoint, "provenance": provenance}
+
+    def _resend_target(
+        self,
+        source: str,
+        target_url: str,
+        provenance: str,
+        row: WebmentionOutboundTarget | None,
+        vouch: str | None,
+        deadline: float,
+    ) -> dict:
+        if time.monotonic() >= deadline:
+            return _deadline_result(target_url, provenance)
+        claim = None
+        if row is not None:
+            claim, skipped = self._claim_historical_target(row, deadline=deadline)
+            if skipped is not None:
+                return skipped
+        started = timezone.now()
+        try:
+            result = self._deliver_source_target(source, target_url, vouch, deadline, provenance)
+        except Exception:
+            if row is not None:
+                self._release_historical_claim(row, claim)
+            raise
+        if "unattempted" in result:
+            if row is not None:
+                self._release_historical_claim(row, claim)
+            return result
+        target = self._record_outbound_target(
+            attempt_started_at=started,
+            source_url=source,
+            target_url=target_url,
+            endpoint=result["endpoint"],
+            result=result,
+            vouch_url=vouch,
+            seen_in_source=provenance != "history",
+            sent=result["endpoint"] is not None,
+            claim=claim,
+        )
+        if (
+            row is not None
+            and target is not None
+            and not result["success"]
+            and self._delete_failed_outbound_target(target)
+        ):
+            result.update(attempted=True, dropped=True, skipped=True, skip_reason="failure_drop")
+            result["error"] = f"{result.get('error', 'Delivery failed')}; historical target dropped"
+        return result
 
     def preview_salmention_resend_targets(
         self,
         source_url: str,
         html_content: str,
+        *,
+        deadline: float | None = None,
     ) -> list[dict]:
         """Return a dry-run Salmention resend preview without sending or recording history."""
+        deadline = _source_deadline(deadline)
         target_urls, current_targets, historical_rows, historical_targets = self._salmention_target_context(
             source_url,
             html_content,
@@ -713,7 +790,13 @@ class WebmentionSender:
                 if skipped is not None:
                     results.append(skipped)
                     continue
-            endpoint = self.discover_endpoint(target_url)
+            if time.monotonic() >= deadline:
+                results.append({**_deadline_result(target_url, provenance), "dry_run": True})
+                continue
+            endpoint = self.discover_endpoint(target_url, deadline=deadline)
+            if time.monotonic() >= deadline:
+                results.append({**_deadline_result(target_url, provenance), "dry_run": True})
+                continue
             results.append(
                 {
                     "target": target_url,
@@ -740,23 +823,47 @@ class WebmentionSender:
         discovery so resend and dry-run paths cannot bypass the ordinary
         sender's amplification guard.
         """
-        current_target_urls = self._extract_external_target_urls(source_url, html_content)
-        current_targets = set(current_target_urls)
-        historical_rows = {
-            row.target_url: row
-            for row in WebmentionOutboundTarget.objects.filter(source_url=source_url).order_by("target_url")
-        }
-        historical_targets = set(historical_rows)
-
-        ordered_targets: list[str] = []
-        seen: set[str] = set()
-        for target_url in [*current_target_urls, *historical_rows]:
-            if target_url in seen:
+        selected = self.select_target_urls(source_url, html_content)
+        current_targets = set(selected)
+        historical_rows: dict[str, WebmentionOutboundTarget] = {}
+        history = WebmentionOutboundTarget.objects.filter(source_url=source_url)
+        historical_targets = set(history.filter(target_url__in=selected).values_list("target_url", flat=True))
+        max_targets = _webmention_max_targets_per_source()
+        max_host = _webmention_max_targets_per_host()
+        scan_limit = _positive_int_setting(
+            "INDIEWEB_SALMENTION_HISTORY_SCAN_LIMIT", DEFAULT_SALMENTION_HISTORY_SCAN_LIMIT
+        )
+        host_counts: dict[str | None, int] = {}
+        for url in selected:
+            host = _canonical_destination_host(url)
+            host_counts[host] = host_counts.get(host, 0) + 1
+        fields = (
+            "target_url",
+            "last_attempted_at",
+            "last_sent_at",
+            "last_success",
+            "consecutive_failures",
+            "last_seen_in_source_at",
+            "first_sent_at",
+            "created",
+        )
+        rows = history.only(*fields).order_by("target_url")[: scan_limit + 1]
+        for index, row in enumerate(rows.iterator(chunk_size=128)):
+            if max_targets is not None and len(selected) >= max_targets:
+                break
+            if index >= scan_limit:
+                raise ValueError("Salmention history scan budget exceeded; selection is incomplete")
+            url = row.target_url
+            if url in current_targets:
                 continue
-            seen.add(target_url)
-            ordered_targets.append(target_url)
-
-        return self._limit_target_urls(ordered_targets), current_targets, historical_rows, historical_targets
+            host = _canonical_destination_host(url)
+            if host is None or (max_host is not None and host_counts.get(host, 0) >= max_host):
+                continue
+            selected.append(url)
+            host_counts[host] = host_counts.get(host, 0) + 1
+            historical_rows[url] = row
+            historical_targets.add(url)
+        return selected, current_targets, historical_rows, historical_targets
 
     def select_target_urls(self, source_url: str, html_content: str) -> list[str]:
         """Return ordered current external targets after URL, same-host and fanout policy.
@@ -820,17 +927,29 @@ class WebmentionSender:
         seen_in_source: bool,
         sent: bool,
         attempt_started_at: datetime | None = None,
-    ) -> WebmentionOutboundTarget:
+        claim: UUID | None = None,
+    ) -> WebmentionOutboundTarget | None:
         """Create or refresh outbound Webmention target history for an attempt."""
         started = attempt_started_at or timezone.now()
-        target, _ = WebmentionOutboundTarget.objects.get_or_create(source_url=source_url, target_url=target_url)
-        using = router.db_for_write(WebmentionOutboundTarget, instance=target)
+        using = router.db_for_write(WebmentionOutboundTarget)
+        rows = WebmentionOutboundTarget.objects.using(using)
+        if claim is None:
+            target, _ = rows.get_or_create(source_url=source_url, target_url=target_url)
+            completion = rows.filter(pk=target.pk)
+        else:
+            claimed_target = rows.filter(source_url=source_url, target_url=target_url, resend_claim=claim).first()
+            if claimed_target is None:
+                return None
+            target = claimed_target
+            completion = rows.filter(pk=target.pk, resend_claim=claim, resend_claim_expires_at__gt=timezone.now())
         current = Q(last_attempted_at__isnull=True) | Q(last_attempted_at__lte=started)
         after_success = Q(last_successful_attempt_at__isnull=True) | Q(last_successful_attempt_at__lte=started)
         success = bool(result.get("success"))
         # Every expression sees the current stored row in one atomic SQL update.
         updates: dict[str, Any] = {
             "modified": timezone.now(),
+            "resend_claim": None,
+            "resend_claim_expires_at": None,
             "last_attempted_at": Case(When(current, then=Value(started)), default=F("last_attempted_at")),
             "last_status_code": Case(
                 When(current, then=Value(result.get("status_code"))), default=F("last_status_code")
@@ -874,7 +993,8 @@ class WebmentionSender:
         for field_name, expression in updates.items():
             if isinstance(expression, Case):
                 expression.output_field = WebmentionOutboundTarget._meta.get_field(field_name)
-        WebmentionOutboundTarget.objects.using(using).filter(pk=target.pk).update(**updates)
+        if not completion.update(**updates):
+            return None
         target.refresh_from_db(using=using)
         return target
 
@@ -885,6 +1005,55 @@ class WebmentionSender:
         if target_url in current_targets:
             return "current"
         return "history"
+
+    def _claim_historical_target(
+        self, row: WebmentionOutboundTarget, *, deadline: float
+    ) -> tuple[UUID | None, dict | None]:
+        """Reserve one current policy generation without a lock across HTTP."""
+        using = router.db_for_write(WebmentionOutboundTarget, instance=row)
+        rows = WebmentionOutboundTarget.objects.using(using)
+        fresh = rows.filter(pk=row.pk).first()
+        reason = "history_changed"
+        if fresh is not None:
+            now = timezone.now()
+            if fresh.resend_claim_expires_at and fresh.resend_claim_expires_at > now:
+                reason = "claimed"
+            else:
+                skipped = self._salmention_historical_skip_result(fresh, dry_run=False)
+                if skipped is not None:
+                    return None, skipped
+                claim = uuid4()
+                # Lease covers remaining source work plus completion overhead;
+                # a dead worker can be replaced after this finite interval.
+                expiry = now + timedelta(seconds=max(0, deadline - time.monotonic()) + 30)
+                unchanged = {
+                    field: getattr(fresh, field)
+                    for field in (
+                        "last_attempted_at",
+                        "last_sent_at",
+                        "last_success",
+                        "consecutive_failures",
+                        "last_seen_in_source_at",
+                        "first_sent_at",
+                        "created",
+                        "resend_claim",
+                        "resend_claim_expires_at",
+                    )
+                }
+                available = Q(resend_claim_expires_at__isnull=True) | Q(resend_claim_expires_at__lte=now)
+                if rows.filter(available, pk=fresh.pk, **unchanged).update(
+                    resend_claim=claim, resend_claim_expires_at=expiry
+                ):
+                    return claim, None
+        return None, self._salmention_skip_result(
+            row.target_url, reason, "Historical resend already claimed or history changed", dry_run=False
+        )
+
+    def _release_historical_claim(self, row: WebmentionOutboundTarget, claim: UUID | None) -> None:
+        using = router.db_for_write(WebmentionOutboundTarget, instance=row)
+        WebmentionOutboundTarget.objects.using(using).filter(pk=row.pk, resend_claim=claim).update(
+            resend_claim=None, resend_claim_expires_at=None
+        )
 
     def _salmention_historical_skip_result(
         self,
@@ -970,6 +1139,7 @@ class WebmentionSender:
                 last_success=False,
                 consecutive_failures__gte=_salmention_max_consecutive_failures(),
             )
+            .filter(Q(resend_claim_expires_at__isnull=True) | Q(resend_claim_expires_at__lte=timezone.now()))
             .delete()
         )
         return bool(deleted)
