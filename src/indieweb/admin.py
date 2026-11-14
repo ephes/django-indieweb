@@ -3,9 +3,11 @@ from typing import Any
 
 from django.contrib import admin
 from django.contrib.admin.widgets import AdminTextareaWidget
+from django.core import signing
 from django.core.exceptions import ValidationError
-from django.db.models import QuerySet
-from django.forms import CharField, ModelForm
+from django.db import connections, router
+from django.db.models import F, QuerySet
+from django.forms import CharField, HiddenInput, ModelForm
 from django.http import HttpRequest
 
 from .models import (
@@ -79,8 +81,125 @@ class WebSubSecretListFilter(admin.SimpleListFilter):
         return queryset
 
 
+class WebSubSubscriptionAdminForm(ModelForm):
+    """Keep the displayed editable values as a signed conflict baseline."""
+
+    edit_baseline = CharField(widget=HiddenInput, required=False)
+    editable_fields = (
+        "hub_url",
+        "topic_url",
+        "state",
+        "pending_mode",
+        "requested_lease_seconds",
+        "confirmed_lease_seconds",
+        "lease_expires_at",
+        "pending_secret_set",
+    )
+    transition_fields = (
+        "state",
+        "pending_mode",
+        "confirmed_lease_seconds",
+        "lease_expires_at",
+        "pending_secret_set",
+    )
+    baseline_salt = "indieweb.subscription-admin"
+
+    class Meta:
+        model = WebSubSubscription
+        fields = (
+            "hub_url",
+            "topic_url",
+            "state",
+            "pending_mode",
+            "requested_lease_seconds",
+            "confirmed_lease_seconds",
+            "lease_expires_at",
+            "pending_secret_set",
+        )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.baseline: dict[str, str] = {}
+        if not self.instance.pk:
+            return
+        names = (*self.editable_fields, "request_generation")
+        current = {name: self._baseline_value(name) for name in names}
+        current["pk"] = str(self.instance.pk)
+        self.initial["edit_baseline"] = signing.dumps(current, salt=self.baseline_salt)
+        if not self.is_bound:
+            return
+        submitted_baseline = self.data.get(self.add_prefix("edit_baseline"), "")
+        self.initial["edit_baseline"] = submitted_baseline
+        try:
+            baseline = signing.loads(submitted_baseline, salt=self.baseline_salt)
+            if not isinstance(baseline, dict) or baseline.keys() != current.keys() or baseline["pk"] != current["pk"]:
+                return
+            self.baseline = baseline
+            for name in self.editable_fields:
+                field = self.instance._meta.get_field(name)
+                self.initial[name] = (
+                    field.to_python(baseline[name] or None) if field.null else field.to_python(baseline[name])
+                )
+        except signing.BadSignature:
+            pass
+
+    def _baseline_value(self, name: str) -> str:
+        if getattr(self.instance, name) is None:
+            return ""
+        return str(self.instance._meta.get_field(name).value_to_string(self.instance))
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        if not self.instance.pk:
+            return cleaned
+        if not self.baseline:
+            raise ValidationError("Subscription edit baseline is missing or invalid. Reload the page.")
+        changed = set(self.changed_data).intersection(self.editable_fields)
+        checked = changed.copy()
+        if changed.intersection(self.transition_fields):
+            checked.update((*self.transition_fields, "request_generation"))
+        if any(self._baseline_value(name) != self.baseline[name] for name in checked):
+            raise ValidationError("Subscription changed since this form was displayed. Reload the page.")
+        # ModelForm would otherwise copy every posted (possibly stale) field
+        # onto the locked current instance during _post_clean.
+        for name in set(self.editable_fields) - changed:
+            if name in cleaned:
+                cleaned[name] = getattr(self.instance, name)
+        return cleaned
+
+
 @admin.register(WebSubSubscription)
 class WebSubSubscriptionAdmin(admin.ModelAdmin):
+    form = WebSubSubscriptionAdminForm
+
+    def get_queryset(self, request: HttpRequest) -> QuerySet[WebSubSubscription]:
+        queryset = super().get_queryset(request)
+        if request.method == "POST":
+            return queryset.using(router.db_for_write(WebSubSubscription))
+        return queryset
+
+    def get_object(self, request: HttpRequest, object_id: str, from_field: str | None = None) -> Any:
+        # Django wraps change-form POSTs in an atomic block on this same write
+        # database. Reserve SQLite's writer before the first subscription read.
+        if request.method == "POST":
+            field = self.model._meta.get_field(from_field) if from_field else self.model._meta.pk
+            try:
+                value = field.to_python(object_id)
+            except (ValidationError, ValueError):
+                return None
+            queryset = self.get_queryset(request).filter(**{field.name: value})
+            if connections[queryset.db].vendor == "sqlite":
+                queryset.update(modified=F("modified"))
+            return queryset.select_for_update().first()
+        return super().get_object(request, object_id, from_field)
+
+    def save_model(self, request: HttpRequest, obj: WebSubSubscription, form: Any, change: bool) -> None:
+        if change:
+            fields = set(form.changed_data).intersection(WebSubSubscriptionAdminForm.editable_fields)
+            obj.save(using=router.db_for_write(WebSubSubscription), update_fields=fields | {"modified"})
+        else:
+            super().save_model(request, obj, form, change)
+
     list_display = (
         "topic_url",
         "hub_url",
@@ -138,7 +257,10 @@ class WebSubSubscriptionAdmin(admin.ModelAdmin):
         return obj.masked_pending_secret()
 
     fieldsets = (
-        ("Subscription", {"fields": ("hub_url", "topic_url", "masked_callback_token", "state", "pending_mode")}),
+        (
+            "Subscription",
+            {"fields": ("hub_url", "topic_url", "masked_callback_token", "state", "pending_mode", "edit_baseline")},
+        ),
         (
             "Lease",
             {"fields": ("requested_lease_seconds", "confirmed_lease_seconds", "lease_expires_at")},
@@ -318,7 +440,7 @@ class PrettyJSONWidget(AdminTextareaWidget):
 class ProfileAdminForm(ModelForm):
     """Custom form for Profile admin with pretty JSON editing."""
 
-    h_card = CharField(widget=PrettyJSONWidget, required=False)
+    h_card = CharField(widget=PrettyJSONWidget, required=False, strip=False)
 
     class Meta:
         model = Profile
@@ -334,13 +456,16 @@ class ProfileAdminForm(ModelForm):
         """Validate and parse h_card JSON structure."""
         h_card_str = self.cleaned_data.get("h_card", "")
 
-        if not h_card_str or h_card_str.strip() == "":
-            return {}
-
+        # Bound decoding work/allocation before parsing; the h-card validator
+        # separately bounds the decoded tree to 32 levels and 10,000 nodes.
         try:
+            if len(h_card_str) > 262_144 or len(h_card_str.encode("utf-8")) > 262_144:
+                raise ValueError("JSON byte budget exceeded")
+            if not h_card_str or not h_card_str.strip():
+                return {}
             h_card = json.loads(h_card_str)
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"Invalid JSON: {e}") from e
+        except (ValueError, RecursionError, OverflowError) as exc:
+            raise ValidationError("Invalid JSON: malformed data or resource limit exceeded.") from exc
 
         # Import validation from h_card module
         from .h_card import validate_h_card

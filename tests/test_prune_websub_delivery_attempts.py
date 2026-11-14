@@ -84,8 +84,9 @@ def test_prune_drains_every_batch(subscription, django_assert_num_queries):
         _attempt(subscription, CUTOFF - timedelta(days=day + 1))
     recent = _attempt(subscription, NOW)
 
-    # 1 count + 4 batch selects (3, 3, 1, 0 rows) + 3 deletes.
-    with django_assert_num_queries(8):
+    # 1 count + 4 batch selects (3, 3, 1, 0 rows) + 3 deletes,
+    # plus a savepoint/release pair for each atomic batch (including empty).
+    with django_assert_num_queries(16):
         result = prune_websub_delivery_attempts(retention_days=30, now=NOW, batch_size=3)
 
     assert (result.matched, result.deleted) == (7, 7)

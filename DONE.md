@@ -5280,3 +5280,80 @@ bundle.
   Thus all twelve supported local tox environments passed on the final files.
 - No local gate was blocked. Cross-family review and integration are external
   follow-up steps; this change is parked without merging.
+
+## 2026-11-14
+
+### Admin saves and JSON admission (round 92 B21: 53, 54)
+
+- Subscription admin POSTs lock/reload the current row on its write database
+  (SQLite reserves its writer before reading). Signed editable-field baselines
+  distinguish intentional edits from unchanged stale values and reject current
+  field/lease/state/request-generation conflicts as form errors. Only edited
+  fields are saved; current secrets and diagnostics survive concurrent renewal.
+- Profile admin JSON decoding admits at most 256 KiB of UTF-8 input, including
+  padding, and normalizes decoder recursion/integer/resource errors without
+  echoing submitted values or saving. Existing 32-level/10,000-node h-card
+  validation remains in force; ordinary profile and subscription edits work.
+- Pre-fix real admin POST regressions failed for stale renewal restoration,
+  conflicting state changes, decoder resource failures and an unprotected
+  concurrent renewal. Tests use synthetic data, two database connections and
+  a paused admin POST; malformed/missing/foreign baselines also fail closed.
+- Validation: shared local gates and the PostgreSQL limitation are recorded
+  below. Docs: README, `docs/websub.rst`, `docs/h-card.rst` and concurrency
+  instructions in `docs/development.rst`; Unreleased in `docs/changelog.rst`.
+  Backlog status updated; no migration or version change.
+
+### Delivery verification and safe inspection (round 92 B22: 55, 56)
+
+- Cache expected HMACs by admitted strongest algorithm for each verification.
+  100 synthetic SHA-256 candidates over a 1-MiB body hash once; strongest-only
+  validation, constant-time comparisons and order-independent success remain.
+- Lease CLI output retains row ID/status/expiry and origin/path descriptions,
+  omitting URL userinfo, query and fragment regardless of logging settings.
+  Invalid authorities or terminal controls produce a value-free placeholder.
+- Pre-fix operation-count and stdout/stderr sentinel regressions failed;
+  valid/invalid candidates, no downgrade, IPv6/ports and malformed URLs are
+  covered. Validation: shared gates below. Docs: README and `docs/websub.rst`;
+  Unreleased in `docs/changelog.rst`; no migration or version change.
+
+### Lease maintenance scaling (round 92 B23: 57, 58)
+
+- Cap prune batches by the write connection's public parameter capability and
+  1,000 IDs. A transaction covers each selected/deleted batch; injected failure
+  after a real DELETE rolls back only its current batch and retry converges.
+  Dry-run counts, cutoff semantics and current/replay rows are preserved.
+- Add `iter_websub_lease_summaries()` with eager window validation and one
+  ordered metadata-only projection, fetched in 500-row chunks. The CLI streams
+  it; `summarize_websub_leases()` remains a compatible list-returning wrapper.
+- Pre-fix regressions produced SQLite "too many SQL variables", lost a failing
+  delete batch and loaded full models without an iterator. The new tests lower
+  SQLite's real variable limit and inspect selection/output over 1,105 rows.
+- Validation: shared gates below. Docs: README, maintenance/API contracts in
+  `docs/websub.rst` and local storage instructions in `docs/development.rst`;
+  Unreleased in `docs/changelog.rst`; no migration or version change.
+
+### Round 92 shared local validation and parked handoff
+
+- `uv sync --frozen --python 3.13`; `just check` (Ruff, mypy, full pytest with
+  the 88% coverage gate); `PREK_HOME=<workspace>/.cache/prek uv run prek run
+  --all-files`; `uv run sphinx-apidoc -o docs/ src/indieweb '**/migrations/*'`
+  and `uv run sphinx-build -W -b html docs docs/_build/html`.
+- Required migration/storage gates: `uv run tox -e
+  py313-django52-migrations,storage-sqlite`; Django system check and
+  `makemigrations --check --dry-run`; no schema/version changes.
+- PostgreSQL BLOCKED in this sandbox: `/opt/homebrew/opt/postgresql@17/bin/initdb
+  --no-locale --encoding=UTF8 -A trust -U synthetic -D
+  /Users/jochen/workspaces/ws-cx-cx-r92-django-indieweb/.cache/pg92` fails with
+  `shmget: Operation not permitted`. Consequently
+  `INDIEWEB_TEST_POSTGRES_PORT=55492 uv run tox -e storage-postgres` fails at DB
+  setup with connection refused. This required gate must run outside the
+  sandbox before integration; it is not a passing storage check.
+- No Claude command, hosted Actions, deployment, release or merge. Changes are
+  parked together for the external cross-family review and integration clerk.
+
+- Final result: `just check` passed on Python 3.13 / Django 6.1 with 3,220
+  passed, 66 skipped and 94.05% coverage (88% gate). The Django 5.2 migrations
+  lane also passed 3,220 tests with 66 in-memory-only skips; required file
+  SQLite storage passed 217 tests with one PostgreSQL-only skip. Ruff/mypy,
+  all configured hooks, strict Sphinx, Django system/schema checks and diff
+  whitespace checks passed. PostgreSQL remains blocked as recorded above.

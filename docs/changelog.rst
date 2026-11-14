@@ -5,6 +5,18 @@ Changelog
 
 Unreleased
 ----------
+* Hash WebSub delivery bodies once per admitted strongest signature algorithm,
+  preserving multiple-signature and no-downgrade semantics.
+* Redact URL userinfo/query/fragment and terminal controls from lease CLI output.
+* Stream lease CLI metadata in 500-row chunks without loading secrets or
+  diagnostics; retain the list-returning summary API as a compatibility wrapper.
+* Cap delivery-attempt prune batches at 1,000 and the write backend's parameter
+  budget, with rollback of a failing batch and retry convergence.
+* Save only deliberately edited WebSub admin fields under a current-row lock;
+  signed form baselines reject conflicting lease/state edits and preserve
+  current secrets, request generations and delivery diagnostics.
+* Bound profile admin JSON decoding to 256 KiB of UTF-8 text and turn decoder
+  resource failures into value-free field errors without saving the profile.
 * Recheck current caller/target grant authority after introspection policy hooks;
   revoked, rotated, expired, deactivated or reassigned credentials cannot return
   active metadata from pre-hook instances.

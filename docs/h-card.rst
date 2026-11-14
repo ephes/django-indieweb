@@ -129,6 +129,10 @@ publishing an ambiguous profile. Correct the stored keys to restore the card.
 
 Normalization admits at most 32 levels below the root mapping and 10,000
 visited values in total, counting the root, every mapping/list and every scalar.
+The admin JSON editor additionally accepts at most 262,144 bytes (256 KiB) of
+UTF-8 text before decoding. This bounds decoder input work; malformed JSON,
+excessive decoder nesting and integer-conversion limits return a value-free
+field error and leave the stored profile unchanged.
 The node budget is shared across all properties and nested lists. Exceeding
 either limit raises ``ValidationError`` with code ``invalid_h_card``;
 ``validate_h_card()`` returns ``False``. Profile validation checks these limits
