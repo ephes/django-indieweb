@@ -2433,7 +2433,16 @@ class TokenRevokeView(UserLoginRequiredMixin, View):
     """Revoke an access token owned by the authenticated user."""
 
     def post(self, request: HttpRequest, pk: int, *args: object, **kwargs: object) -> HttpResponseBase:
-        deleted, _ = Token.objects.filter(pk=pk, owner_id=request.user.pk).delete()
+        using = router.db_for_write(Token)
+        with transaction.atomic(using=using):
+            grants = Token.objects.using(using).filter(pk=pk, owner_id=request.user.pk)
+            # Lock the owned row before Django's deletion collector runs. Host
+            # signal receivers or relations to Token turn ``delete()`` into a
+            # SELECT followed by ``DELETE ... WHERE id IN (...)`` without the
+            # owner predicate; the row lock keeps a concurrent owner transfer
+            # out of that window. The fast path keeps the predicate as well.
+            locked = list(grants.select_for_update().values_list("pk", flat=True))
+            deleted = grants.delete()[0] if locked else 0
         if not deleted:
             # Return inside dispatch so missing/foreign IDs get the same
             # private cache and framing policy as successful revocations.

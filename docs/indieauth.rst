@@ -275,9 +275,12 @@ Each token row includes a CSRF-protected revoke form. Revoking a token deletes
 that ``Token`` row, so the bearer credential immediately stops authenticating
 Micropub and other token-protected requests. Users only see and revoke tokens
 owned by their own Django account; tokens for other users are not listed and
-cannot be revoked through this UI. The SQL deletion includes the current owner
-predicate, so an owner change committed before deletion prevents a former
-owner from deleting the transferred grant. Foreign and missing IDs both return
+cannot be revoked through this UI. Revocation locks the owned row on the
+token write database before deleting it, and the SQL deletion includes the
+current owner predicate, so an owner change committed before deletion prevents
+a former owner from deleting the transferred grant. The lock also covers hosts
+whose ``Token`` delete signal receivers or relations make Django delete by
+primary key after a separate SELECT. Foreign and missing IDs both return
 ``404``. Every inventory page and revoke outcome remains private and no-store;
 a successful revoke returns to the first inventory page.
 

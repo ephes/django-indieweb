@@ -8,7 +8,8 @@ Unreleased
 * Recheck current caller/target grant authority after introspection policy hooks;
   revoked, rotated, expired, deactivated or reassigned credentials cannot return
   active metadata from pre-hook instances.
-* Fence browser token revocation by the owner predicate in the SQL deletion.
+* Fence browser token revocation by locking the owned row and keeping the owner
+  predicate in the SQL deletion.
 * Paginate the private token inventory at 50 grants per page with deterministic
   creation-time/primary-key ordering and Previous/Next navigation.
 * Mark WebSub callback challenges, denial outcomes and refusals private/no-store

@@ -11,8 +11,11 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   on the token write database. Changed credentials/metadata, owner transfers,
   inactive owners and expiry fail closed without active metadata. No lock is
   held across the hook; existing no-store/CORS behavior is retained.
-- Browser revocation includes the current owner predicate in the SQL DELETE;
-  foreign, missing and transferred grants return the same private 404.
+- Browser revocation locks the owned row (`select_for_update`) on the token
+  write database, then deletes with the current owner predicate; the lock also
+  covers non-fast-delete paths caused by host `Token` delete signals or
+  relations. Foreign, missing and transferred grants return the same private
+  404.
 - Pre-fix regressions returned active metadata after hook-time revocation,
   expiry, rotation, transfer, deactivation or metadata changes, and deleted a
   transferred grant. Deterministic two-connection hook/DELETE races also prove
@@ -25,10 +28,19 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   `uv run ruff format --check .`, `uv run prek run --all-files`, strict
   `uv run sphinx-build -W -b html docs docs/_build/html`, Django system check
   and `makemigrations --check --dry-run` passed.
-- PostgreSQL remains unvalidated: disposable local `initdb` failed with
-  `shmget: Operation not permitted` in the sandbox.
-  `INDIEWEB_TEST_POSTGRES_PORT=55491 uv run tox -e storage-postgres` therefore
-  failed during database setup (connection refused). This is not a passed gate.
+- PostgreSQL was first blocked in the sandbox (`shmget: Operation not
+  permitted`), then validated outside it against disposable PostgreSQL 17:
+  `INDIEWEB_TEST_POSTGRES_PORT=55491 uv run tox -e storage-postgres` 203 passed,
+  plus every PostgreSQL step of `.github/workflows/state-transitions.yml`.
+- Review follow-up: revocation now takes the row lock described above;
+  `test_revoke_locks_grant_on_collector_delete_path` (PostgreSQL, also in the
+  state-transitions workflow) connects a `Token` `pre_delete` receiver and
+  proves a concurrent transfer waits for the revocation.
+  `test_introspection_rechecks_client_policy_after_authorizer` covers client
+  policy that starts refusing the caller (401) or target (`active: false`)
+  during the authorizer hook. Both fail on the pre-fix code. Final local run:
+  3,197 passed, 63 skipped, 94.00% coverage; `storage-sqlite` 202 passed,
+  1 PostgreSQL-only skip.
 - Docs: `docs/indieauth.rst`, concurrency instructions in
   `docs/development.rst`; Unreleased notes in `docs/changelog.rst`.
   Backlog status updated; no schema/version changes. Cross-family review and

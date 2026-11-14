@@ -133,3 +133,27 @@ def test_introspection_blocked_policy_observes_committed_authority(
         finally:
             release.set()
         _assert_refused(pending.result(timeout=15))
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("side", ["caller", "target"])
+def test_introspection_rechecks_client_policy_after_authorizer(grants, settings, side):
+    """Policy that starts refusing a client during the hook is applied before metadata."""
+    tokens, _ = grants
+    # Keep the in-memory plaintext bearer key; refresh_from_db would load the stored hash.
+    Token.objects.filter(pk=tokens[1].pk).update(client_id="https://target.example/")
+    settings.INDIEWEB_TOKEN_INTROSPECTION_AUTHORIZER = "tests.test_token_endpoint.allow_any_introspection"
+    kept = "https://target.example/" if side == "caller" else "https://client.example/"
+
+    def authorizer(caller, target):
+        settings.INDIEWEB_ALLOWED_CLIENT_IDS = [kept]
+        return True
+
+    with patch("tests.test_token_endpoint.allow_any_introspection", authorizer):
+        response = _introspect(*tokens)
+    _assert_refused(response)
+    if side == "caller":
+        assert response.status_code == 401
+    else:
+        assert response.status_code == 200
+        assert response.json() == {"active": False}

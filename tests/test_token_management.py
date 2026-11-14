@@ -352,7 +352,9 @@ def test_revoke_cannot_delete_grant_transferred_on_another_connection(client, us
     request_connections = []
 
     def pause_delete(execute, sql, params, many, context):
-        if sql.lstrip().upper().startswith("DELETE") and models.Token._meta.db_table in sql:
+        # Pause at the first statement touching the grant (the locking SELECT
+        # with the fix, the DELETE before it) and transfer the row meanwhile.
+        if models.Token._meta.db_table in sql and not request_connections:
             request_connections.append(connection.connection)
             entered.set()
             assert release.wait(10)
@@ -378,3 +380,69 @@ def test_revoke_cannot_delete_grant_transferred_on_another_connection(client, us
     assert response.status_code == 404
     assert_private_inventory(response)
     assert models.Token.objects.get(pk=token.pk).owner_id == other_user.pk
+
+
+def _collector_receiver(sender, instance, **kwargs):
+    """Host-style delete signal that disables Django's fast-delete path."""
+
+
+@pytest.mark.django_db(transaction=True)
+def test_revoke_locks_grant_on_collector_delete_path(client, user, other_user, concurrent_database):
+    """A Token delete receiver makes Django SELECT then ``DELETE ... WHERE id IN``.
+
+    Without a row lock, an owner transfer committed between those statements is
+    deleted by the former owner. With the lock, the transfer waits for the
+    revocation and then finds no row to move.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from django.db import close_old_connections, connection
+    from django.db.models.signals import pre_delete
+
+    if connection.vendor != "postgresql":
+        pytest.skip("Row locks need PostgreSQL; SQLite serializes writers instead")
+
+    token = _make_token(user)
+    client.force_login(user)
+    entered, release = Event(), Event()
+
+    def pause_delete(execute, sql, params, many, context):
+        if sql.lstrip().upper().startswith("DELETE") and models.Token._meta.db_table in sql:
+            entered.set()
+            assert release.wait(10)
+        return execute(sql, params, many, context)
+
+    def request():
+        close_old_connections()
+        try:
+            with connection.execute_wrapper(pause_delete):
+                return client.post(reverse("indieweb:token-revoke", args=[token.pk]))
+        finally:
+            close_old_connections()
+
+    def transfer():
+        close_old_connections()
+        try:
+            return models.Token.objects.filter(pk=token.pk).update(owner=other_user)
+        finally:
+            close_old_connections()
+
+    pre_delete.connect(_collector_receiver, sender=models.Token)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = pool.submit(request)
+            try:
+                assert entered.wait(10)
+                moved = pool.submit(transfer)
+                with pytest.raises(TimeoutError):
+                    moved.result(timeout=0.5)
+            finally:
+                release.set()
+            response = pending.result(timeout=15)
+            assert moved.result(timeout=15) == 0
+    finally:
+        pre_delete.disconnect(_collector_receiver, sender=models.Token)
+    assert response.status_code == 302
+    assert_private_inventory(response)
+    assert not models.Token.objects.filter(pk=token.pk).exists()

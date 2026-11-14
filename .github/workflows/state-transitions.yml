@@ -52,6 +52,7 @@ jobs:
         run: >-
           uv run pytest --migrations --no-cov
           tests/test_nested_response_queries.py tests/test_delivery_diagnostic_atomicity.py
+          tests/test_token_management.py::test_revoke_locks_grant_on_collector_delete_path
 
       - name: Check exact Webmention counts and display with PostgreSQL
         env:
