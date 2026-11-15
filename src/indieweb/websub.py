@@ -1267,36 +1267,36 @@ def _get_header(headers: Mapping[str, str], name: str) -> str | None:
 
 
 def _split_quoted_header_value(value: str, separator: str) -> list[str]:
-    """Split an HTTP header list while respecting quoted strings."""
+    """Split a Link header outside quoted parameters and angle-bracket targets.
+
+    Unbalanced/nested delimiters invalidate the header rather than inventing
+    a topic identity from a partial entry.
+    """
     parts: list[str] = []
     current: list[str] = []
-    in_quote = False
+    closing = ""
     escaped = False
     for char in value:
-        if escaped:
-            current.append(char)
-            escaped = False
-            continue
-        if in_quote and char == "\\":
-            current.append(char)
-            escaped = True
-            continue
-        if char == '"':
-            current.append(char)
-            in_quote = not in_quote
-            continue
-        if char == separator and not in_quote:
-            part = "".join(current).strip()
-            if part:
-                parts.append(part)
+        if closing:
+            if escaped:
+                escaped = False
+            elif char == "\\" and closing == '"':
+                escaped = True
+            elif char == closing:
+                closing = ""
+        elif char in ('"', "<"):
+            closing = '"' if char == '"' else ">"
+        elif char == ">":
+            return []
+        elif char == separator:
+            parts.append("".join(current).strip())
             current = []
             continue
         current.append(char)
-
-    part = "".join(current).strip()
-    if part:
-        parts.append(part)
-    return parts
+    if closing:
+        return []
+    parts.append("".join(current).strip())
+    return [part for part in parts if part]
 
 
 def _unquote_link_parameter(value: str) -> str:
@@ -1318,6 +1318,8 @@ def _link_targets_for_rel(link_header: str, rel_token: str) -> list[str]:
         if not (target_part.startswith("<") and target_part.endswith(">")):
             continue
         target = target_part[1:-1]
+        if not target or any(char in target for char in '<>"\r\n'):
+            continue
         for param in pieces[1:]:
             name, separator, value = param.partition("=")
             if separator != "=" or name.strip().lower() != "rel":
@@ -1499,22 +1501,35 @@ def accept_websub_delivery(
                     accepted_at=received_at,
                 )
         except IntegrityError:
-            return False
+            # The savepoint has rolled back; only a retained matching digest
+            # establishes a replay. Other constraints are storage failures.
+            if (
+                WebSubAcceptedDelivery.objects.using(alias)
+                .filter(subscription=subscription, body_digest=body_digest, accepted_at__gte=cutoff)
+                .exists()
+            ):
+                return False
+            raise
 
         # ``history_max is None`` covers both the explicit
         # ``INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = None`` opt-out and the
         # ``= 0`` "unbounded by count" opt-in; in either case count-based
         # eviction is skipped and pruning happens purely via the replay window.
         if history_max is not None:
-            keep_ids = list(
+            # Fetch only the first evicted row (newest-first order) and delete it
+            # and everything older. This keeps the work in the database without a
+            # LIMIT inside an IN subquery, which MySQL/MariaDB reject.
+            boundary = list(
                 WebSubAcceptedDelivery.objects.using(alias)
                 .filter(subscription=subscription)
                 .order_by("-accepted_at", "-pk")
-                .values_list("pk", flat=True)[:history_max]
+                .values_list("accepted_at", "pk")[history_max : history_max + 1]
             )
-            WebSubAcceptedDelivery.objects.using(alias).filter(subscription=subscription).exclude(
-                pk__in=keep_ids
-            ).delete()
+            if boundary:
+                boundary_at, boundary_pk = boundary[0]
+                WebSubAcceptedDelivery.objects.using(alias).filter(subscription=subscription).filter(
+                    Q(accepted_at__lt=boundary_at) | Q(accepted_at=boundary_at, pk__lte=boundary_pk)
+                ).delete()
 
     return True
 

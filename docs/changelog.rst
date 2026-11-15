@@ -5,6 +5,17 @@ Changelog
 
 Unreleased
 ----------
+* Classify WebSub integrity conflicts as replays only when an accepted matching
+  digest exists after rollback; preserve other storage failures. Prune large
+  replay histories in the database through one boundary row, without a
+  per-row parameter list or a ``LIMIT`` inside an ``IN`` subquery.
+* Preserve URL commas/semicolons in WebSub Link targets and reject malformed
+  delimiters. Reject duplicate JSON object members at every depth in Micropub
+  and media requests before host work.
+* Fail closed for invalid CORS credential, max-age and response-header settings.
+  Copy media uploads into owned spooled snapshots, enforcing actual per-file
+  and aggregate byte limits; validate and save the same bytes and close all
+  snapshots on every outcome.
 * Require Soup Sieve 4.1 or newer to address CVE-2026-126190 and update the
   locked Beautiful Soup to 4.15.0. Raise the Python minimum from 3.11 to
   3.11.5 because the patched selector is a runtime dependency; publish both

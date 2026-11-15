@@ -15,6 +15,9 @@ tracked in `DONE.md` as their bundles complete.
 Round 93 credential/Webmention/profile admin ownership and bounded,
 authoritative rate/inventory/profile lookup work are recorded in `DONE.md`.
 
+Round 96 replay retention, wire grammar, CORS and media byte ownership
+are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.

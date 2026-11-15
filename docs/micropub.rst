@@ -1389,3 +1389,24 @@ cleanup diagnostics. An already existing requested key is refused without
 saving or deleting it. Storage backends must preserve non-overwrite semantics;
 backends that write to an undisclosed alternate key and raise cannot provide
 that key for compensation. Cleanup errors require operator reconciliation.
+
+JSON member uniqueness and media byte ownership
+-----------------------------------------------
+
+Both Micropub and media JSON requests reject duplicate object member names at
+any depth with ``400 invalid_request``, before handler or storage calls. This
+includes action/URL fields and nested properties such as ``text`` and ``html``.
+Repeated values inside property arrays remain valid. The existing once-per-request
+JSON decode and malformed-body error handling also apply to this refusal.
+
+For both media endpoint and multipart create uploads, declared upload sizes are
+an early check. Each stream is then copied once into a request-owned snapshot,
+checking actual per-file and aggregate bytes as it is read. Short reads are
+supported. Validation and storage consume that same snapshot, so rewinding a
+custom upload stream cannot substitute a later generation after sniffing.
+Snapshots spool to a temporary file above 1 MiB, honoring Django's
+``FILE_UPLOAD_TEMP_DIR``, and close on success, refusal, or storage/URL failure.
+All files pass validation before the first storage write; existing compensation
+of owned storage keys still applies. Setting a byte limit
+to ``None`` disables that limit during copying too; configure equivalent host
+limits before opting out.

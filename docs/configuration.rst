@@ -2412,6 +2412,10 @@ responses.
 
 **Default:** ``False``
 
+Only the Python booleans ``True`` and ``False`` are accepted. Other values,
+including strings such as ``"false"`` and numeric ``1``, log a warning and leave
+credentials disabled.
+
 Enable this only when browser clients need credentialed CORS semantics. Bearer
 token authentication remains unchanged; CORS does not authorize requests and
 does not replace endpoint authentication, authorization, or scope checks.
@@ -2421,7 +2425,11 @@ is ignored for that combination.
 INDIEWEB_CORS_ALLOWED_HEADERS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Headers advertised on successful preflight responses.
+Headers advertised on successful preflight responses. Each entry must be an
+ASCII HTTP header name (token grammar). Invalid entries log a warning and fall
+back to the default header names. Configured origins must contain only printable
+ASCII header characters; invalid origin values disable built-in CORS. In
+particular, CR/LF and other control characters never reach response headers.
 
 **Default:** ``("Authorization", "Content-Type", "Accept")``
 
@@ -2443,7 +2451,10 @@ Value for ``Access-Control-Max-Age`` on successful preflight responses.
 
 **Default:** ``86400``
 
-Set this to ``None`` to omit ``Access-Control-Max-Age``.
+Set this to ``None`` to omit ``Access-Control-Max-Age``. Otherwise use a
+non-negative integer (an integer string or finite integral number is accepted).
+Booleans, fractional numbers, infinities and NaN log a warning and omit the
+header.
 
 Preflight Behavior
 ~~~~~~~~~~~~~~~~~~
