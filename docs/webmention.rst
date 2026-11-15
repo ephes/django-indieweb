@@ -150,13 +150,31 @@ must therefore:
   ``request_with_safe_redirects()`` if a remote URL is unavoidable;
 * never pass Webmention data to a shell, ``eval``/``exec``, a template engine,
   raw SQL, or a filesystem path;
-* return quickly and return a dict with at least ``is_spam``. An exception
-  marks the Webmention ``failed`` (logged as "unexpected error") instead of
-  storing it;
+* return quickly and return a mapping with a required ``is_spam`` value that
+  is exactly ``True`` or ``False``. Strings, integers, missing decisions and
+  non-mapping results are rejected. Optional ``confidence`` must be a finite
+  integer or float between 0 and 1 inclusive; booleans are rejected. Other
+  JSON-serializable metadata (for example ``details``) is retained;
 * treat the data as untrusted in its own logs: log URLs through
   ``indieweb.log_redaction.safe_url()`` or ``redact_url()``, exceptions by
   class name, and remote text through ``text_fingerprint()`` (see
   :ref:`log-free-text`).
+
+No configured checker (``INDIEWEB_SPAM_CHECKER`` unset, ``None`` or the empty
+string) means no spam classification. A configured policy is loaded afresh on
+each processing attempt. Import or construction failures, an unusable checker,
+or malformed results mark the Webmention ``failed`` and clear ``verified_at``.
+They never publish a verified result or emit ``webmention_received``. The
+processor logs a fixed diagnostic without policy exception text or results.
+An exception raised by ``check()`` also fails processing through the existing
+"unexpected error" outcome.
+
+Failure preserves previously stored parsed content, spam diagnostics, source
+snapshots and nested responses; a new row receives none of those values from
+the failed attempt. Correct the configuration or checker result, then explicitly
+reprocess the same source/target pair (or call ``process_queued_webmention(pk)``
+for a worker retry). No automatic retry is scheduled. A successful retry can
+verify the existing row and emit its normal post-commit notification.
 
 Receiving and Queued Processing
 ===============================

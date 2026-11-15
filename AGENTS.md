@@ -281,6 +281,11 @@ Always verify these before considering any implementation complete.
 
 ## Security & Configuration Tips
 
+- Configured Webmention spam screening must fail closed: load/check failures or
+  malformed decisions produce the controlled failed outcome before verified persistence
+  or success notification. Keep the exact boolean/optional finite-confidence
+  contract in `docs/webmention.rst` and `SpamChecker.check` synchronized.
+
 - **Never commit secrets**: Never commit secrets or tokens; rely on environment variables for client IDs, tokens, and target URLs
 - **Input validation**: When adding new endpoints or handlers, validate input early
 - **Clear interfaces**: Keep external HTTP calls behind clear, typed interfaces (see `indieweb` client patterns)

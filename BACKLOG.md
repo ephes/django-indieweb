@@ -18,6 +18,9 @@ authoritative rate/inventory/profile lookup work are recorded in `DONE.md`.
 Round 96 replay retention, wire grammar, CORS and media byte ownership
 are recorded in `DONE.md`.
 
+Round 97 configured spam-policy loading and strict decision validation are
+recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.

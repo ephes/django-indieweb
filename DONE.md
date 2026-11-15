@@ -5507,3 +5507,42 @@ bundle.
 - Park on `codex-q/r96-django-indieweb` for external Claude review and merge.
   No Claude CLI/review loop, Actions, PR, trunk push or merge was invoked.
   No owner policy decisions are required. No additional agents were used.
+
+## 2026-11-15
+
+### Configured spam screening fails closed (round 97 B31: 65, 66)
+
+- Completed `indieweb-configured-spam-policy-load-failure` and
+  `indieweb-spam-decision-strict-result-contract` on fresh `origin/develop`.
+  Both boundaries remained applicable after round 96.
+- Load configured spam policies inside each processing attempt's controlled
+  outcome boundary. Import/constructor failures and unusable checkers fail
+  processing instead of silently disabling screening. Explicit retries reload
+  the policy and can recover on the same row; falsy checker instances still run.
+- Require a mapping with an exact boolean decision and optional finite numeric
+  confidence in [0, 1], excluding booleans. Copy accepted mappings to a dict,
+  retain valid JSON metadata and reject malformed metadata before persistence.
+  Failed attempts clear verification without publishing snapshots/children or
+  success signals, and preserve previous parsed fields and spam diagnostics.
+- Regression proof: six load-failure cases failed before slice 65's fix;
+  62 malformed-decision/mapping cases failed before slice 66's fix.
+  Local HTTP/checker doubles exercise the real processor, outcome persistence,
+  post-commit notification boundary and correction/retry path.
+- Documentation: `docs/webmention.rst` and the `SpamChecker.check` contract;
+  security guidance in `AGENTS.md`, completion pointer in `BACKLOG.md` and
+  pending release notes in `docs/changelog.rst` Unreleased. No version/schema
+  change. Cross-family review and merge remain with the external reviewer;
+  no review agent, Claude CLI, GitHub Actions or work-app writes were invoked.
+- Validation: `uv sync --frozen --python 3.13`; `just check` passed (Ruff,
+  mypy: 66 source files; full pytest: 3,405 passed, 68 configured skips under
+  default in-memory settings, 94.41% coverage against the 88% gate, 10 SQLite
+  ResourceWarnings). `just hooks` and strict
+  `uv run sphinx-build -W -b html docs docs/_build/html` passed.
+- Migration-enabled validation: `uv run pytest --migrations --no-cov
+  tests/test_webmention_spam_policy.py -q`: 90 passed;
+  `uv run tox -e storage-sqlite`: 263 passed, one PostgreSQL-only row-lock skip.
+  `uv run python -m django check --settings=tests.settings` and
+  `uv run python -m django makemigrations --check --dry-run
+  --settings=tests.settings` passed. No required local gate was sandbox-blocked.
+  Check logs remain outside the clone in the worker's private coordination
+  log directory. No additional agents were used.

@@ -8,6 +8,7 @@ without modifying django-indieweb core code.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -52,7 +53,7 @@ class SpamChecker(ABC):
     """Interface for spam checking webmentions."""
 
     @abstractmethod
-    def check(self, webmention: Webmention) -> dict[str, Any]:
+    def check(self, webmention: Webmention) -> Mapping[str, Any]:
         """
         Check if a webmention is spam.
 
@@ -60,10 +61,11 @@ class SpamChecker(ABC):
             webmention: The webmention to check
 
         Returns:
-            Dict with at least:
-            - 'is_spam': bool
-            - 'confidence': float (0.0-1.0)
-            - 'details': Optional explanation
+            Mapping with required 'is_spam': bool (exactly True or False).
+            Optional 'confidence' must be a finite int/float in [0.0, 1.0],
+            excluding booleans. Additional JSON-serializable metadata such as
+            'details' is preserved. Invalid results fail processing without
+            publishing or emitting a success signal.
         """
         pass
 
