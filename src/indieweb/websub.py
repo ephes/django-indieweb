@@ -1516,15 +1516,20 @@ def accept_websub_delivery(
         # ``= 0`` "unbounded by count" opt-in; in either case count-based
         # eviction is skipped and pruning happens purely via the replay window.
         if history_max is not None:
-            keep_ids = (
+            # Fetch only the first evicted row (newest-first order) and delete it
+            # and everything older. This keeps the work in the database without a
+            # LIMIT inside an IN subquery, which MySQL/MariaDB reject.
+            boundary = list(
                 WebSubAcceptedDelivery.objects.using(alias)
                 .filter(subscription=subscription)
                 .order_by("-accepted_at", "-pk")
-                .values_list("pk", flat=True)[:history_max]
+                .values_list("accepted_at", "pk")[history_max : history_max + 1]
             )
-            WebSubAcceptedDelivery.objects.using(alias).filter(subscription=subscription).exclude(
-                pk__in=keep_ids
-            ).delete()
+            if boundary:
+                boundary_at, boundary_pk = boundary[0]
+                WebSubAcceptedDelivery.objects.using(alias).filter(subscription=subscription).filter(
+                    Q(accepted_at__lt=boundary_at) | Q(accepted_at=boundary_at, pk__lte=boundary_pk)
+                ).delete()
 
     return True
 

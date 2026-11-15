@@ -102,3 +102,21 @@ def test_exact_window_and_count_boundaries(settings, routed_subscription):
     assert rows.count() == 2
     assert accept_websub_delivery(routed_subscription, "c" * 64, now=now)
     assert set(rows.values_list("body_digest", flat=True)) == {"b" * 64, "c" * 64}
+
+
+@pytest.mark.django_db(databases=["default", "other"], transaction=True)
+def test_count_pruning_uses_no_sliced_in_subquery(settings, routed_subscription):
+    # MySQL/MariaDB reject ``IN (SELECT ... LIMIT n)``; prune through a boundary row.
+    from django.test.utils import CaptureQueriesContext
+
+    settings.INDIEWEB_WEBSUB_DELIVERY_REPLAY_HISTORY_MAX = 2
+    now = timezone.now()
+    rows = WebSubAcceptedDelivery.objects.using("other")
+    for index, digest in enumerate("abc"):
+        rows.create(
+            subscription=routed_subscription, body_digest=digest * 64, accepted_at=now - timedelta(seconds=3 - index)
+        )
+    with CaptureQueriesContext(connections["other"]) as captured:
+        assert accept_websub_delivery(routed_subscription, "d" * 64, now=now)
+    assert not any("IN (SELECT" in query["sql"].upper() for query in captured.captured_queries)
+    assert sorted(rows.values_list("body_digest", flat=True)) == ["c" * 64, "d" * 64]

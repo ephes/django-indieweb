@@ -798,9 +798,11 @@ Replay integrity and Link target grammar
 An insert integrity error is classified as a duplicate only if the matching
 accepted digest still exists inside the replay window on the selected write
 database after savepoint rollback. Other storage integrity failures propagate;
-they do not authorize delivery hooks. Count retention uses an ordered database
-subquery, including the primary key tie-breaker, so large history caps do not
-expand into one SQL parameter per retained row. The time cutoff is inclusive:
+they do not authorize delivery hooks. Count retention reads the first row beyond
+the cap in newest-first order (accepted time, then primary key as tie-breaker)
+and deletes it and every older row, so large history caps neither expand into
+one SQL parameter per retained row nor need a ``LIMIT`` inside an ``IN``
+subquery (which MySQL and MariaDB reject). The time cutoff is inclusive:
 only rows strictly older than the window are removed.
 
 Topic Link parsing preserves commas and semicolons inside angle-bracket URL

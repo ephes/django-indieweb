@@ -6,8 +6,9 @@ Changelog
 Unreleased
 ----------
 * Classify WebSub integrity conflicts as replays only when an accepted matching
-  digest exists after rollback; preserve other storage failures. Keep large
-  replay-history retention sets in a database subquery.
+  digest exists after rollback; preserve other storage failures. Prune large
+  replay histories in the database through one boundary row, without a
+  per-row parameter list or a ``LIMIT`` inside an ``IN`` subquery.
 * Preserve URL commas/semicolons in WebSub Link targets and reject malformed
   delimiters. Reject duplicate JSON object members at every depth in Micropub
   and media requests before host work.
