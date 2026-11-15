@@ -24,8 +24,17 @@ def _websub_secret_fernet(secret_key: str | None = None) -> Fernet:
 
 
 def _encrypt_secret(value: str) -> str:
-    if not value or value.startswith(WEBSUB_SECRET_ENCRYPTED_PREFIX):
+    if not value:
         return value
+    if value.startswith(WEBSUB_SECRET_ENCRYPTED_PREFIX):
+        try:
+            _decrypt_secret(value)
+        except RuntimeError:
+            # Before 0021 the prefix was ordinary shared-secret text. Only
+            # authenticated ciphertext is safe to leave encrypted already.
+            pass
+        else:
+            return value
     token = _websub_secret_fernet().encrypt(value.encode("utf-8")).decode("ascii")
     return f"{WEBSUB_SECRET_ENCRYPTED_PREFIX}{token}"
 

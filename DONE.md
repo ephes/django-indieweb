@@ -2,6 +2,59 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-15
+
+### WebSub empty field selection (round 101 B17: 34)
+
+- Return before passive encryption when `WebSubSubscription.save` receives
+  explicitly empty `update_fields`. Active/pending ciphertext, in-memory
+  timestamps and the database remain unchanged; real partial saves still
+  migrate both secrets to the primary key. The locked diagnostic path is
+  unchanged.
+- Pre-fix regression: empty set/list/tuple each issued an unexpected UPDATE.
+  Focused persistence/subscriber/diagnostic tests: 124 passed.
+- Shared validation: `uv sync --frozen --python 3.13`; `uv run pytest`
+  (3,464 passed, 68 skipped, 94.43% coverage against the 88% gate);
+  `uv run mypy`; `uv run ruff check .`; `uv run ruff format . --check`;
+  `uv run prek run --all-files` with private `PREK_HOME`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`;
+  `uv run python -m django check --settings=tests.settings` and
+  `uv run python -m django makemigrations --check --dry-run --settings=tests.settings`.
+- Required real-migration/storage lanes:
+  `uv run tox -e py313-django52-migrations,storage-sqlite` passed (3,464 passed,
+  68 skipped in the migration suite; 363 passed and one PostgreSQL-only skip
+  in the file-backed SQLite storage suite).
+- Full `uv run tox` passed all ten supported Python/Django combinations
+  (Python 3.11–3.14 / Django 5.2; Python 3.12–3.14 / Django 6.0 and 6.1),
+  plus the migration and SQLite storage lanes. Each matrix suite passed
+  3,464 tests with 68 skips and exceeded the configured coverage gate.
+- PostgreSQL gate `INDIEWEB_TEST_POSTGRES_PORT=55491 uv run tox -e storage-postgres`
+  could not connect to a disposable server. Local PostgreSQL 17 initialization
+  was blocked by the sandbox (`shmget: Operation not permitted`); this is not
+  a passing PostgreSQL result.
+- Docs: no-op/key-rotation contract in `docs/websub.rst`; Unreleased note in
+  `docs/changelog.rst`; backlog status synchronized. No version/schema bump.
+  Cross-family review and merge are deferred to the external reviewer.
+
+### WebSub historical encryption-prefix collision (round 101 B17: 35)
+
+- Migration 0021 recognizes reserved-prefix ciphertext only after authenticated
+  decryption with the primary/fallback keys. Other prefix-looking legacy text
+  is encrypted intact; reverse migration restores its exact text. Empty values
+  stay empty, authenticated tokens are not encrypted twice, and existing
+  routed/atomic rollback behavior and value-free errors are preserved.
+- Pre-fix historical MigrationExecutor journeys failed on both database aliases:
+  literal-prefix secrets were unreadable after upgrade. The fixed journeys
+  cover active/pending normal, prefix-only, malformed-token, Unicode and empty
+  values, HMAC verification, authenticated fallback tokens, retry idempotence,
+  untouched other databases and real reverse migrations.
+- Focused prefix/database-boundary/security-migration tests: 10 passed.
+  Shared full validation and PostgreSQL restriction are recorded above.
+- Docs: migration semantics, required keys and explicit recovery for already
+  affected rows in `docs/websub.rst`; Unreleased note in `docs/changelog.rst`;
+  backlog status synchronized. Already applied migrations are not rerun;
+  no automatic reinterpretation of unreadable runtime ciphertext or version bump.
+
 ## 2026-11-14
 
 ### Current token authority (round 91 B21: 54, 55)
