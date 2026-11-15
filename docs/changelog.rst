@@ -9,7 +9,8 @@ Unreleased
   constructed, or cannot provide a usable decision. Load policies per attempt
   so explicit retries can recover after correction. Require a mapping with an
   exact boolean ``is_spam`` and optional finite numeric ``confidence`` in
-  [0, 1]; preserve valid JSON metadata. Failed screening clears verification,
+  [0, 1]; preserve valid JSON metadata and refuse NUL characters and lone
+  surrogates that PostgreSQL ``jsonb`` cannot store. Failed screening clears verification,
   preserves earlier content/snapshots/diagnostics, and emits no success signal.
 * Classify WebSub integrity conflicts as replays only when an accepted matching
   digest exists after rollback; preserve other storage failures. Prune large

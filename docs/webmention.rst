@@ -154,7 +154,9 @@ must therefore:
   is exactly ``True`` or ``False``. Strings, integers, missing decisions and
   non-mapping results are rejected. Optional ``confidence`` must be a finite
   integer or float between 0 and 1 inclusive; booleans are rejected. Other
-  JSON-serializable metadata (for example ``details``) is retained;
+  JSON-serializable metadata (for example ``details``) without NUL characters
+  or unpaired UTF-16 surrogates in keys or strings (PostgreSQL ``jsonb`` cannot
+  store either) is retained;
 * treat the data as untrusted in its own logs: log URLs through
   ``indieweb.log_redaction.safe_url()`` or ``redact_url()``, exceptions by
   class name, and remote text through ``text_fingerprint()`` (see

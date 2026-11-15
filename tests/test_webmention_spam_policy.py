@@ -106,6 +106,11 @@ def test_configured_spam_load_failure_refuses_publication(
         "false",
         {"is_spam": False, "extra": object()},
         {"is_spam": True, "extra": float("nan")},
+        {"is_spam": False, "details": "a\x00b"},
+        {"is_spam": True, "details": {"nested\x00key": "value"}},
+        {"is_spam": False, "details": ["ok", ("tuple", "\x00")]},
+        {"is_spam": False, "details": "\ud800"},
+        {"is_spam": True, "details": {"\udfff": "value"}},
         *(
             {"is_spam": decision, "confidence": confidence}
             for decision in (False, True)

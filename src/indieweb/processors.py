@@ -223,7 +223,32 @@ def _validated_spam_result(result: object) -> dict[str, Any]:
         json.dumps(normalized, allow_nan=False)
     except (TypeError, ValueError, OverflowError, RecursionError) as e:
         raise _SpamScreeningError("Spam metadata must be JSON serializable") from e
+    if _contains_unstorable_text(normalized):
+        raise _SpamScreeningError("Spam metadata must not contain NUL characters or lone surrogates")
     return normalized
+
+
+def _is_storable_text(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return "\x00" not in value
+
+
+def _contains_unstorable_text(metadata: object) -> bool:
+    """PostgreSQL jsonb rejects NUL and lone surrogates in strings, which json.dumps accepts."""
+    pending: list[object] = [metadata]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str) and not _is_storable_text(value):
+            return True
+        if isinstance(value, Mapping):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple)):
+            pending.extend(value)
+    return False
 
 
 def canonicalize_webmention_storage_url(value: str) -> str:
