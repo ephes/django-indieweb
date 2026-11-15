@@ -129,12 +129,18 @@ publishing an ambiguous profile. Correct the stored keys to restore the card.
 
 Normalization admits at most 32 levels below the root mapping and 10,000
 visited values in total, counting the root, every mapping/list and every scalar.
+Before copying or normalizing keys, it also admits at most 262,144 aggregate
+UTF-8 bytes across all keys and string scalars, plus the textual sizes of
+numeric, boolean and null scalars. This budget is shared across nested
+properties, counts repeated values each time, and rejects invalid UTF-8 text.
+``parse_h_card()`` additionally limits raw HTML to 1,048,576 UTF-8 bytes before
+calling mf2py, then applies the same property budgets to the extracted card.
 The admin JSON editor additionally accepts at most 262,144 bytes (256 KiB) of
 UTF-8 text before decoding. This bounds decoder input work; malformed JSON,
 excessive decoder nesting and integer-conversion limits return a value-free
 field error and leave the stored profile unchanged.
 The node budget is shared across all properties and nested lists. Exceeding
-either limit raises ``ValidationError`` with code ``invalid_h_card``;
+any resource limit raises ``ValidationError`` with code ``invalid_h_card``;
 ``validate_h_card()`` returns ``False``. Profile validation checks these limits
 before Django serializes the JSON field, and saving checks them before deriving
 quick-access fields. The template tag omits over-limit legacy cards written

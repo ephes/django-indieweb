@@ -5546,3 +5546,45 @@ bundle.
   --settings=tests.settings` passed. No required local gate was sandbox-blocked.
   Check logs remain outside the clone in the worker's private coordination
   log directory. No additional agents were used.
+
+## 2026-11-15
+
+### Micropub decoded paths and exclusive local publication (round 100 B14)
+
+- Recheck local absolute-path shape at every percent-decoding round and use
+  strict UTF-8 decoding before passing update/delete/undelete URLs to handlers.
+  Preserve ordinary encoded characters and the original handler URL.
+- The filesystem example stages, flushes and syncs complete post bytes, then
+  publishes with an exclusive hardlink. Concurrent slug collisions preserve
+  one complete winner; Python interruptions clean only the caller's stage.
+- Before the fixes, 18 endpoint regressions forwarded invalid paths and the
+  synchronized two-writer test reported two successful publications. They
+  pass after the fixes, together with the staged-interruption regression.
+- Documentation: `docs/micropub.rst` explains decoding, hardlink requirements,
+  permissions, trusted-directory assumptions and abandoned-stage recovery.
+  Release notes: `docs/changelog.rst` Unreleased; no version/schema change.
+
+### Storage compensation and h-card byte admission (round 100 B15)
+
+- The storage example deletes only the alternate object named by that call's
+  successful save. A cleanup failure raises an explicit uncertainty error with
+  the returned name and chains the cause, leaving the original target intact.
+  A real local `FileSystemStorage` collision also retains the original bytes.
+- Admit aggregate UTF-8 key/scalar bytes (256 KiB) before normalization and raw
+  HTML bytes (1 MiB) before mf2py. Retain shared depth/node budgets, controlled
+  `invalid_h_card` errors, model admission and unchanged ordinary nested cards.
+- Before the fixes, both storage compensation cases and 12 byte-budget
+  regressions failed. Boundary tests count multibyte keys/values and scalars;
+  oversized values/keys are refused before normalization and HTML before parsing.
+- Documentation: storage ownership/backend requirements in `docs/micropub.rst`,
+  resource budgets in `docs/h-card.rst`, completion pointer in `BACKLOG.md`;
+  release notes in `docs/changelog.rst` Unreleased. No version/schema change.
+- Shared validation: locked dependencies, Python 3.13 / Django 6.1; `just test`
+  passed (3,456 passed, 68 configured skips, 10 SQLite ResourceWarnings;
+  94.43% coverage against 88%). After adding the real-storage regression,
+  `uv run pytest tests/test_static_site_micropub_examples.py --no-cov -q`
+  passed all 16 example tests. `just typecheck`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run prek run --all-files` and strict
+  `uv run sphinx-build -W -b html docs docs/_build/html` passed.
+  No required local gate was sandbox-blocked. Review and merge remain with
+  the external reviewer; no Claude CLI, review agent or GitHub Actions run.

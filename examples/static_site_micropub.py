@@ -8,8 +8,11 @@ media index.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
+import secrets
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -228,10 +231,24 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
 
     def save_document(self, document: StaticPostDocument, user: AbstractBaseUser) -> None:
         target = self._target_path(document)
-        if target.exists():
-            raise FileExistsError(f"Static-site document already exists: {document.path.as_posix()}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(document.render_markdown(), encoding="utf-8")
+        # The hardlink publishes the stage's inode, so create the stage like a plain file
+        # (mode 0o666 filtered by the kernel through the umask) rather than with mkstemp's
+        # private 0600; the process-wide umask is never changed.
+        stage = target.parent / f".micropub-{secrets.token_hex(8)}.tmp"
+        fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
+        try:
+            with os.fdopen(fd, "wb") as staged:
+                staged.write(document.render_markdown().encode("utf-8"))
+                staged.flush()
+                os.fsync(staged.fileno())
+            try:
+                os.link(stage, target)
+            except FileExistsError as exc:
+                raise FileExistsError(f"Static-site document already exists: {document.path.as_posix()}") from exc
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(stage)
 
 
 class DjangoStorageStaticSiteHandler(StaticSiteMicropubHandler):
@@ -245,6 +262,12 @@ class DjangoStorageStaticSiteHandler(StaticSiteMicropubHandler):
         expected_name = document.path.as_posix()
         saved_name = self.storage.save(expected_name, ContentFile(document.render_markdown().encode("utf-8")))
         if saved_name != expected_name:
+            try:
+                self.storage.delete(saved_name)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Storage changed the post path; cleanup is uncertain for {saved_name!r}; inspect storage manually"
+                ) from exc
             raise ValueError("Storage changed the post path; host code should resolve slug collisions explicitly")
 
 

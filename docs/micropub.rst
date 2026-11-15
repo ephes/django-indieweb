@@ -178,6 +178,19 @@ does not run Jekyll, Hugo, Eleventy, Git, or deployment commands:
 site uses a different permalink policy. The filesystem example rejects an
 already-existing target path so hosts must choose their own slug-collision
 policy instead of silently overwriting a post.
+It stages the complete UTF-8 document in the target directory, flushes and
+syncs it, then publishes with ``os.link``. This exclusive operation lets
+exactly one concurrent create win; a collision raises ``FileExistsError``.
+Readers of the final path see a complete document. A ``finally`` block removes
+only that call's temporary file on success, failure, or Python interruption.
+The example needs a local filesystem supporting hardlinks and a trusted content
+directory (no concurrent hostile directory/symlink changes). The stage is created
+exclusively with mode 0666 filtered through the process umask (typically giving
+0644), so the published post has the mode of a plain file create; the example
+never changes the umask. Adapt the umask to your build user.
+It does not promise directory durability after power loss. A process kill can
+leave a hidden ``.micropub-*.tmp`` file; inspect and remove abandoned stages
+only after ensuring the writer has stopped.
 
 If your publication workflow stores source files through Django storage, pass
 an explicit storage instance instead of teaching django-indieweb a new storage
@@ -194,6 +207,18 @@ abstraction:
                storage=storages["static_site_posts"],
                public_base_url="https://example.com/",
            )
+
+Use storage whose ``save`` atomically creates a new object without replacing
+an existing one, and whose returned name identifies the new object owned by
+that call. Backends configured to overwrite are unsuitable. If storage chooses
+an alternate name, the example deletes exactly that returned object and raises
+``ValueError`` so the host can resolve the slug collision. It never deletes the
+requested target. If deletion raises, ``RuntimeError`` reports cleanup as
+uncertain and identifies the returned name for manual inspection; the original
+cleanup error is chained. Publication and compensation are not transactional:
+process death or a backend that fails after writing without returning its name
+requires host recovery. Backends must also provide complete-object visibility
+if readers require it; the generic Django storage API cannot guarantee that.
 
 For Git-backed workflows, keep credentials, commits, pushes, branches, review
 policy, and deployment triggers in a host adapter. The example handler only
@@ -732,8 +757,12 @@ must be one of the configured origins; without it the host must match the
 incoming request's host, which inherits the project's ``ALLOWED_HOSTS`` and
 proxy ``Host`` handling. Path-relative or network-path references, ``.``/``..``
 path segments (also percent-encoded), backslashes, control characters and
-userinfo are rejected. Rejected URLs return ``400 invalid_request`` before the
-handler is called, and ``INDIEWEB_MICROPUB_URL_POLICY`` (``kind="entry"``) runs
+userinfo are rejected. Each percent-decoding round must still yield a local
+absolute path: encoded leading double slashes (including mixed-case and nested
+escapes) and malformed UTF-8 are refused. Valid encoded ordinary path characters
+remain supported and handlers receive the original URL. Rejected URLs return
+``400 invalid_request`` before the handler is called, and
+``INDIEWEB_MICROPUB_URL_POLICY`` (``kind="entry"``) runs
 next when it is configured. JSON action requests may include parameters such
 as ``charset`` on the ``application/json`` content type.
 

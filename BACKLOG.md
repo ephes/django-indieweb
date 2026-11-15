@@ -21,6 +21,9 @@ are recorded in `DONE.md`.
 Round 97 configured spam-policy loading and strict decision validation are
 recorded in `DONE.md`.
 
+Round 100 Micropub decoded-path admission, exclusive local publication,
+storage compensation and h-card byte budgets are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.
