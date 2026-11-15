@@ -11,7 +11,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
@@ -198,6 +198,59 @@ class WebmentionCanonicalizationError(ValueError):
     """Raised when a Webmention URL cannot safely be canonicalized for storage."""
 
 
+class _SpamScreeningError(ValueError):
+    """A configured spam policy could not provide a usable decision."""
+
+
+def _validated_spam_result(result: object) -> dict[str, Any]:
+    """Copy a policy mapping only after validating its decision and JSON metadata."""
+    if not isinstance(result, Mapping):
+        raise _SpamScreeningError("Spam checker must return a mapping")
+    normalized = dict(result)
+    if type(normalized.get("is_spam")) is not bool:
+        raise _SpamScreeningError("Spam decision must be a boolean")
+    if "confidence" in normalized:
+        confidence = normalized["confidence"]
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0 <= confidence <= 1
+            or not math.isfinite(confidence)
+        ):
+            raise _SpamScreeningError("Spam confidence must be finite and between zero and one")
+    # Refuse invalid extra metadata before it reaches JSONField persistence.
+    try:
+        json.dumps(normalized, allow_nan=False)
+    except (TypeError, ValueError, OverflowError, RecursionError) as e:
+        raise _SpamScreeningError("Spam metadata must be JSON serializable") from e
+    if _contains_unstorable_text(normalized):
+        raise _SpamScreeningError("Spam metadata must not contain NUL characters or lone surrogates")
+    return normalized
+
+
+def _is_storable_text(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return "\x00" not in value
+
+
+def _contains_unstorable_text(metadata: object) -> bool:
+    """PostgreSQL jsonb rejects NUL and lone surrogates in strings, which json.dumps accepts."""
+    pending: list[object] = [metadata]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str) and not _is_storable_text(value):
+            return True
+        if isinstance(value, Mapping):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple)):
+            pending.extend(value)
+    return False
+
+
 def canonicalize_webmention_storage_url(value: str) -> str:
     """Return a canonical form of ``value`` for Webmention ``(source, target)`` storage keys.
 
@@ -299,7 +352,7 @@ class WebmentionProcessor:
     """Process webmentions by fetching and parsing source URLs."""
 
     def __init__(self, *, client: httpx.Client | None = None) -> None:
-        """Initialize the processor with configured spam checker.
+        """Initialize the processor with an optional HTTP client.
 
         Args:
             client: Optional injected ``httpx.Client``. When provided, source
@@ -309,21 +362,23 @@ class WebmentionProcessor:
                 network-level safety checks. Production callers should leave
                 this unset.
         """
-        self.spam_checker = self._get_spam_checker()
-        # Force reload of spam checker for tests with override_settings
-        self._spam_checker_loaded = False
+        # Load the policy per processing attempt, inside the controlled outcome
+        # boundary, so configuration failures are persisted and retries can recover.
         self._injected_client = client
 
     def _get_spam_checker(self) -> SpamChecker | None:
         """Load spam checker from settings."""
         spam_checker_path = getattr(settings, "INDIEWEB_SPAM_CHECKER", None)
-        if spam_checker_path:
-            try:
-                spam_checker_class = import_string(spam_checker_path)
-                return spam_checker_class()  # type: ignore[no-any-return]
-            except Exception as e:
-                logger.error(f"Failed to load spam checker {spam_checker_path}: {type(e).__name__}")
-        return None
+        if spam_checker_path is None or spam_checker_path == "":
+            return None
+        try:
+            spam_checker_class = import_string(spam_checker_path)
+            checker = spam_checker_class()
+            if not callable(getattr(checker, "check", None)):
+                raise TypeError("Spam checker must provide check()")
+            return cast("SpamChecker", checker)
+        except Exception as e:
+            raise _SpamScreeningError("Configured spam checker unavailable") from e
 
     def process_webmention(self, source_url: str, target_url: str, vouch_url: str | None = None) -> Webmention:  # noqa: C901
         """
@@ -508,9 +563,9 @@ class WebmentionProcessor:
 
             spam_result: dict[str, Any] | None = None
             spam_checker = self._get_spam_checker()
-            if spam_checker:
-                spam_result = spam_checker.check(webmention)
-                if spam_result.get("is_spam", False):
+            if spam_checker is not None:
+                spam_result = _validated_spam_result(spam_checker.check(webmention))
+                if spam_result["is_spam"]:
                     return _WebmentionOutcome(
                         status="spam",
                         received_at=received_at,
@@ -542,6 +597,12 @@ class WebmentionProcessor:
                 log=("info", f"Successfully processed webmention from {redact_url(source_url)}"),
             )
 
+        except _SpamScreeningError:
+            return _WebmentionOutcome(
+                status="failed",
+                received_at=received_at,
+                log=("error", "Webmention spam screening unavailable or invalid; retry after correcting the policy"),
+            )
         except WebmentionParseCapacityError:
             # A busy host says nothing about the source; preserve any verified row.
             raise
