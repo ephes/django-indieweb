@@ -4,6 +4,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 
+from indieweb import h_card as h_card_module
 from indieweb.h_card import normalize_h_card, normalize_property_names, parse_h_card, validate_h_card
 from indieweb.models import Profile
 from indieweb.templatetags.indieweb_tags import h_card
@@ -16,12 +17,16 @@ def nested_card(depth):
     return data
 
 
-@pytest.fixture(params=["deep", "wide", "nested_lists"])
+@pytest.fixture(params=["deep", "wide", "nested_lists", "large_value", "long_keys"])
 def oversized_card(request):
     if request.param == "deep":
         return nested_card(1500)
     if request.param == "wide":
         return {"extension": ["Synthetic"] * 10001}
+    if request.param == "large_value":
+        return {"extension": ["é" * (2 * 1024 * 1024)]}
+    if request.param == "long_keys":
+        return {f"{i}-" + "k" * 1000: ["Synthetic"] for i in range(2000)}
     data = "Synthetic"
     for _ in range(1500):
         data = [data]
@@ -114,4 +119,60 @@ def test_cyclic_in_memory_input_is_refused():
     data["extension"] = [data]
     with pytest.raises(ValidationError) as caught:
         normalize_property_names(data)
+    assert caught.value.code == "invalid_h_card"
+
+
+def test_oversized_html_is_refused_before_parser(monkeypatch):
+    def unexpected_parse(**kwargs):
+        pytest.fail("Oversized HTML reached mf2py")
+
+    monkeypatch.setattr("indieweb.h_card.mf2py.parse", unexpected_parse)
+    with pytest.raises(ValidationError) as caught:
+        parse_h_card("<div class='h-card'>" + "é" * (2 * 1024 * 1024) + "</div>")
+    assert caught.value.code == "invalid_h_card"
+
+
+def test_byte_admission_precedes_key_normalization():
+    class UncopyableKey(str):
+        def replace(self, *args):
+            pytest.fail("Over-budget input reached key normalization")
+
+    with pytest.raises(ValidationError) as caught:
+        normalize_property_names({UncopyableKey("extension"): ["x" * (2 * 1024 * 1024)]})
+    assert caught.value.code == "invalid_h_card"
+
+
+def test_aggregate_byte_budget_counts_utf8_keys_and_scalar_values(monkeypatch):
+    # 2 key bytes + 4 text bytes + 4 (null) + 4 (True) + 2 (17) = 16.
+    monkeypatch.setattr(h_card_module, "H_CARD_MAX_BYTES", 16)
+    data = {"é": ["éé", None, True, 17]}
+    assert normalize_property_names(data) == data
+    data["é"].append("x")
+    with pytest.raises(ValidationError) as caught:
+        normalize_property_names(data)
+    assert caught.value.code == "invalid_h_card"
+
+
+def test_html_byte_budget_counts_utf8_before_parser(monkeypatch):
+    monkeypatch.setattr(h_card_module, "H_CARD_MAX_HTML_BYTES", 16)
+    parsed = []
+
+    def parse(**kwargs):
+        parsed.append(kwargs["doc"])
+        return {"items": []}
+
+    monkeypatch.setattr(h_card_module.mf2py, "parse", parse)
+    assert parse_h_card("é" * 8) == {}
+    with pytest.raises(ValidationError) as caught:
+        parse_h_card("é" * 9)
+    assert caught.value.code == "invalid_h_card"
+    assert parsed == ["é" * 8]
+
+
+@pytest.mark.parametrize(
+    "operation", [lambda: normalize_property_names({"x": ["\ud800"]}), lambda: parse_h_card("\ud800")]
+)
+def test_invalid_utf8_text_raises_controlled_validation_error(operation):
+    with pytest.raises(ValidationError) as caught:
+        operation()
     assert caught.value.code == "invalid_h_card"

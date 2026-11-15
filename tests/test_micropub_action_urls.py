@@ -69,6 +69,12 @@ def post_action(client, user):
         "entries/1/",
         "./entries/1/",
         "//attacker.example/entries/1/",
+        "/%2f%2fattacker.example/entries/1/",
+        "/%2Fattacker.example/entries/1/",
+        "/%252f%252Fattacker.example/entries/1/",
+        "http://testserver/%2fattacker.example/entries/1/",
+        "/entries/%ff/",
+        "/entries/%c3%28/",
         "/entries/../../secret/",
         "/entries/%2e%2e/%2e%2e/secret/",
         "/entries/%252e%252e/secret/",
@@ -89,7 +95,10 @@ def test_action_rejects_non_local_or_traversal_urls_before_handler(post_action, 
 
 
 @pytest.mark.parametrize("action", ACTIONS)
-@pytest.mark.parametrize("url", ["/entries/1/", "/entries/1/?draft=1", "http://testserver/entries/1/"])
+@pytest.mark.parametrize(
+    "url",
+    ["/entries/1/", "/entries/1/?draft=1", "http://testserver/entries/1/", "/entries/caf%C3%A9%21/"],
+)
 def test_action_accepts_local_urls(post_action, recording_handler, action, url):
     response = post_action(action, url)
 

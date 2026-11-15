@@ -5,6 +5,15 @@ Changelog
 
 Unreleased
 ----------
+* Reject Micropub action paths that decode to network-path references or
+  malformed UTF-8 before invoking content handlers.
+* Publish local static-site example posts from fully written stages using an
+  exclusive hardlink, preserving the winner of concurrent slug collisions.
+  Compensate renamed Django storage objects by deleting only the returned
+  object; report cleanup uncertainty explicitly if deletion fails.
+* Bound h-card aggregate key/scalar text to 256 KiB before normalization and
+  raw HTML to 1 MiB before parsing, retaining depth/node limits and controlled
+  ``invalid_h_card`` validation errors.
 * Fail closed when a configured Webmention spam checker cannot be imported or
   constructed, or cannot provide a usable decision. Load policies per attempt
   so explicit retries can recover after correction. Require a mapping with an

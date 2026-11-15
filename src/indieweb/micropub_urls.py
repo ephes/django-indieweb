@@ -113,7 +113,7 @@ def _has_unsafe_characters(value: str) -> bool:
 
 
 def path_is_safe(path: str) -> bool:
-    """Return whether ``path`` is free of dot segments, backslashes, and control characters.
+    """Return whether ``path`` stays local and free of unsafe characters after decoding.
 
     The path is percent-decoded repeatedly (up to a small bound) so encoded
     forms such as ``%2e%2e%2f`` are caught as well. A path that still
@@ -121,11 +121,16 @@ def path_is_safe(path: str) -> bool:
     """
     current = path
     for _round in range(_MAX_DECODE_ROUNDS):
+        if current and (not current.startswith("/") or current.startswith("//")):
+            return False
         if _has_unsafe_characters(current):
             return False
         if any(segment in (".", "..") for segment in current.split("/")):
             return False
-        decoded = unquote(current)
+        try:
+            decoded = unquote(current, errors="strict")
+        except UnicodeDecodeError:
+            return False
         if decoded == current:
             return True
         current = decoded

@@ -1,11 +1,15 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 
 import pytest
+from django.core.files.storage import FileSystemStorage
 from examples.static_site_micropub import (
     DjangoStorageStaticSiteHandler,
     GitBackedStaticSiteHandler,
     IndexedMediaHooksMixin,
     LocalFilesystemStaticSiteHandler,
+    StaticPostDocument,
     StaticSitePostMapper,
     slugify_micropub_properties,
 )
@@ -137,6 +141,58 @@ def test_local_filesystem_handler_rejects_slug_collisions(tmp_path):
         handler.create_entry(properties, DummyUser())
 
 
+def test_local_filesystem_concurrent_creates_publish_one_complete_post(tmp_path, monkeypatch):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    documents = [
+        handler.mapper.build_document({"mp-slug": ["same"], "published": ["2026-11-15"], "content": [body * 10000]})
+        for body in ("First synthetic body", "Second synthetic body")
+    ]
+    render = StaticPostDocument.render_markdown
+    rendezvous = Barrier(2)
+
+    def synchronized_render(document):
+        rendezvous.wait(timeout=10)
+        return render(document)
+
+    monkeypatch.setattr(StaticPostDocument, "render_markdown", synchronized_render)
+
+    def publish(document):
+        try:
+            handler.save_document(document, DummyUser())
+        except FileExistsError:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(publish, documents))
+
+    assert sorted(outcomes) == [False, True]
+    target = tmp_path / documents[0].path
+    winner = documents[outcomes.index(True)]
+    assert target.read_text(encoding="utf-8") == render(winner)
+    assert list(target.parent.iterdir()) == [target]
+
+
+def test_local_filesystem_interrupted_stage_never_publishes_partial_post(tmp_path, monkeypatch):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["interrupted"], "content": ["Synthetic body"]})
+    target = tmp_path / document.path
+
+    def interrupt_sync(fd):
+        assert not target.exists()
+        staged = list(target.parent.iterdir())
+        assert len(staged) == 1
+        assert staged[0].read_text(encoding="utf-8") == document.render_markdown()
+        raise KeyboardInterrupt("Interrupted before publication")
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", interrupt_sync)
+    with pytest.raises(KeyboardInterrupt, match="Interrupted"):
+        handler.save_document(document, DummyUser())
+
+    assert not target.exists()
+    assert list(target.parent.iterdir()) == []
+
+
 def test_local_filesystem_handler_rejects_paths_outside_configured_root(tmp_path):
     handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
     handler.mapper = StaticSitePostMapper(public_base_url="https://example.org/", content_dir="../outside")
@@ -179,6 +235,60 @@ def test_django_storage_handler_delegates_to_explicit_storage():
     assert entry.url == "https://example.org/posts/2026/05/06/storage-note/"
     assert set(storage.saved) == {"content/posts/2026-05-06-storage-note.md"}
     assert "Storage body" in storage.saved["content/posts/2026-05-06-storage-note.md"]
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_django_storage_renamed_object_is_compensated_without_deleting_target(cleanup_fails):
+    target = "content/posts/2026-11-15-same.md"
+    alternate = "content/posts/2026-11-15-same_owned.md"
+
+    class RenamingStorage(FakeStorage):
+        def __init__(self):
+            super().__init__()
+            self.saved[target] = "Original complete post"
+            self.deleted = []
+
+        def save(self, name, content):
+            assert name == target
+            self.saved[alternate] = content.read().decode("utf-8")
+            return alternate
+
+        def delete(self, name):
+            self.deleted.append(name)
+            if cleanup_fails:
+                raise OSError("Synthetic cleanup failure")
+            del self.saved[name]
+
+    storage = RenamingStorage()
+    handler = DjangoStorageStaticSiteHandler(storage=storage, public_base_url="https://example.org/")
+    error_type = RuntimeError if cleanup_fails else ValueError
+    message = "cleanup.*uncertain" if cleanup_fails else "Storage changed"
+    with pytest.raises(error_type, match=message) as caught:
+        handler.create_entry(
+            {"mp-slug": ["same"], "published": ["2026-11-15"], "content": ["New synthetic post"]},
+            DummyUser(),
+        )
+
+    assert storage.saved[target] == "Original complete post"
+    assert storage.deleted == [alternate]
+    assert (alternate in storage.saved) is cleanup_fails
+    if cleanup_fails:
+        assert alternate in str(caught.value)
+        assert isinstance(caught.value.__cause__, OSError)
+
+
+def test_django_storage_collision_compensation_with_real_local_storage(tmp_path):
+    storage = FileSystemStorage(location=tmp_path)
+    handler = DjangoStorageStaticSiteHandler(storage=storage, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["local-storage"], "content": ["Original synthetic post"]})
+    handler.save_document(document, DummyUser())
+    original = (tmp_path / document.path).read_bytes()
+
+    with pytest.raises(ValueError, match="Storage changed"):
+        handler.create_entry({**document.properties, "content": ["Rejected synthetic post"]}, DummyUser())
+
+    assert (tmp_path / document.path).read_bytes() == original
+    assert list((tmp_path / document.path).parent.iterdir()) == [tmp_path / document.path]
 
 
 class FakeGitStore:
