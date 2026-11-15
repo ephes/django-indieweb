@@ -1,3 +1,5 @@
+import os
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from threading import Barrier
@@ -125,6 +127,22 @@ def test_local_filesystem_handler_writes_under_configured_root(tmp_path):
     assert entry.url == "https://example.org/posts/2026/05/06/filesystem-note/"
     assert stored_file.exists()
     assert "Filesystem body" in stored_file.read_text(encoding="utf-8")
+
+
+def test_local_filesystem_published_post_honours_the_umask(tmp_path):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    previous = os.umask(0o022)
+    try:
+        handler.create_entry(
+            {"content": ["Mode body"], "mp-slug": ["mode-note"], "published": ["2026-05-06T00:00:00+00:00"]},
+            DummyUser(),
+        )
+        assert os.umask(0o022) == 0o022  # the handler never changes the process umask
+    finally:
+        os.umask(previous)
+    stored_file = tmp_path / "content/posts/2026-05-06-mode-note.md"
+    assert stat.S_IMODE(stored_file.stat().st_mode) == 0o644
+    assert not list(stored_file.parent.glob(".micropub-*"))
 
 
 def test_local_filesystem_handler_rejects_slug_collisions(tmp_path):

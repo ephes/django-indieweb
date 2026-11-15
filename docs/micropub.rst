@@ -181,11 +181,13 @@ policy instead of silently overwriting a post.
 It stages the complete UTF-8 document in the target directory, flushes and
 syncs it, then publishes with ``os.link``. This exclusive operation lets
 exactly one concurrent create win; a collision raises ``FileExistsError``.
-Readers of the final path see a complete document. The context manager removes
+Readers of the final path see a complete document. A ``finally`` block removes
 only that call's temporary file on success, failure, or Python interruption.
 The example needs a local filesystem supporting hardlinks and a trusted content
-directory (no concurrent hostile directory/symlink changes). Staged files use
-private temporary-file permissions; adapt permissions to your build user.
+directory (no concurrent hostile directory/symlink changes). The stage is created
+exclusively with mode 0666 filtered through the process umask (typically giving
+0644), so the published post has the mode of a plain file create; the example
+never changes the umask. Adapt the umask to your build user.
 It does not promise directory durability after power loss. A process kill can
 leave a hidden ``.micropub-*.tmp`` file; inspect and remove abandoned stages
 only after ensuring the writer has stopped.
