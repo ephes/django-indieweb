@@ -5780,6 +5780,10 @@ bundle.
   in child-to-parent order, covering newly created roots/post directories.
   Post-link filesystem failures preserve the post and raise a distinct
   `StaticSitePublicationUncertainError` with its path and inspection/retry advice.
+- Merge review follow-up: traverse-only ancestors above the content root (for
+  example a 0711 home directory) are descended with a search-only descriptor
+  (`O_PATH`/`O_SEARCH`) and left unsynced instead of failing every publication;
+  two new traverse-only regressions failed before this follow-up.
 - Regression proof: four durability/cleanup cases failed before this fix.
   The focused example suite now passes 27 tests, including safe pre-link retry,
   post-link leaf/ancestor sync failures, cleanup failure, descriptor closure,

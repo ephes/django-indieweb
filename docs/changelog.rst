@@ -9,6 +9,8 @@ Unreleased
   exclusive publication and stage cleanup, including newly created parents.
   Preserve published posts and raise ``StaticSitePublicationUncertainError``
   on subsequent filesystem errors; document inspection before retrying.
+  Traverse-only ancestors above the content root are descended with a
+  search-only descriptor instead of failing publication, and are not synced.
 * Anchor local static-site publication and stage cleanup to held no-follow
   directory descriptors, preventing directory/symlink swaps from redirecting
   writes; retain exclusive hardlink collision handling and plain-file modes.

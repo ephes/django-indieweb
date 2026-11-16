@@ -234,22 +234,39 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
             raise ValueError("Static-site document path escaped the configured content root")
         # Require POSIX no-follow/dir_fd support; never fall back to pathname writes.
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        # Ancestors above the content root may be traverse-only (for example a 0711 home
+        # directory). Descend through them with a search-only descriptor where the
+        # platform offers one; such a directory cannot be synced by this writer.
+        search_flags = getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0)
+        root_depth = len(self.content_root.parts) - 1
         with contextlib.ExitStack() as opened:
-            directory = os.open(self.content_root.anchor, flags)
-            opened.callback(os.close, directory)
-            directories = [directory]
-            for part in (*self.content_root.parts[1:], *document.path.parts[:-1]):
+
+            def open_directory(path: str, *, ancestor: bool, dir_fd: int | None = None) -> int:
+                try:
+                    fd = os.open(path, flags, dir_fd=dir_fd)
+                except PermissionError:
+                    if not ancestor or not search_flags:
+                        raise
+                    fd = os.open(path, search_flags | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+                    opened.callback(os.close, fd)
+                    return fd
+                opened.callback(os.close, fd)
+                directories.append(fd)
+                return fd
+
+            directories: list[int] = []
+            directory = open_directory(self.content_root.anchor, ancestor=root_depth > 0)
+            parts = (*self.content_root.parts[1:], *document.path.parts[:-1])
+            for depth, part in enumerate(parts, start=1):
                 try:
                     os.mkdir(part, dir_fd=directory)
                 except FileExistsError:
                     pass
-                directory = os.open(part, flags, dir_fd=directory)
-                opened.callback(os.close, directory)
-                directories.append(directory)
+                directory = open_directory(part, ancestor=depth < root_depth, dir_fd=directory)
             yield directory
             # Persist the final entry and stage removal before acknowledging.
-            # Include parents: this call or a concurrent writer may have just
-            # created them. Sync children before the entries naming them.
+            # Include readable parents: this call or a concurrent writer may have
+            # just created them. Sync children before the entries naming them.
             for directory in reversed(directories):
                 os.fsync(directory)
 

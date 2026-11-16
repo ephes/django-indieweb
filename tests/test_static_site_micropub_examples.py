@@ -381,6 +381,33 @@ def test_local_publication_failure_distinguishes_safe_retry_and_uncertainty(tmp_
             os.fstat(fd)
 
 
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX permissions enforced for the user")
+@pytest.mark.parametrize("root_exists", [True, False])
+def test_local_publication_descends_through_traverse_only_ancestor(tmp_path, monkeypatch, root_exists):
+    traverse_only = tmp_path / "home"
+    root = traverse_only / "site"
+    root.mkdir(parents=True) if root_exists else traverse_only.mkdir()
+    handler = LocalFilesystemStaticSiteHandler(content_root=root, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["traverse"], "content": ["Synthetic traverse post"]})
+    sync = os.fsync
+    synced = []
+
+    def track_sync(fd):
+        synced.append(os.fstat(fd).st_ino)
+        sync(fd)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", track_sync)
+    traverse_only.chmod(0o311)
+    try:
+        handler.save_document(document, DummyUser())
+    finally:
+        traverse_only.chmod(0o755)
+    assert (root / document.path).read_text() == document.render_markdown()
+    assert root.stat().st_ino in synced
+    assert (root / document.path).parent.stat().st_ino in synced
+    assert traverse_only.stat().st_ino not in synced
+
+
 class FakeStorage:
     def __init__(self):
         self.saved: dict[str, str] = {}
