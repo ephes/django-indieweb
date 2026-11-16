@@ -10,9 +10,10 @@ Unreleased
   deadline, including stalled pipes. Reject oversized, invalid or late input
   without partial discovery/delivery; accept empty and exact-limit content.
 * Apply URL redaction to all Webmention command diagnostics, including ordinary
-  and Salmention dry runs. Keep delivery counts, HTTP statuses and fixed policy
-  categories; fingerprint other error text and Salmention selection failures
-  instead of exposing credentials, remote messages or terminal controls.
+  and Salmention dry runs. Keep delivery counts, HTTP statuses, fixed policy
+  categories and transport failure class names; fingerprint other error text
+  and Salmention selection failures instead of exposing credentials, remote
+  messages or terminal controls. Omit the endpoint part when none was found.
 * Honor empty ``WebSubSubscription.save(update_fields=...)`` as a no-op before
   passive key rotation, preserving in-memory ciphertext and stored timestamps.
   Real partial saves continue to migrate active and pending secrets.

@@ -1,6 +1,7 @@
 """Django management command to send webmentions."""
 
 import os
+import re
 import select
 import sys
 import time
@@ -23,23 +24,44 @@ CONTENT_CHUNK_SIZE = 16 * 1024
 SAFE_RESULT_ERRORS = frozenset(
     {
         "No endpoint found",
+        "Delivery failed",
         "Source deadline exceeded",
         "Historical target skipped during resend cooldown",
         "Historical target dropped after consecutive failures",
         "Historical target skipped after successful resend cutoff",
+        "Historical target changed during failure pruning",
+        "Historical resend already claimed or history changed",
     }
 )
+DROPPED_SUFFIX = "; historical target dropped"
+# Transport failures are stored as the exception class name (e.g. ConnectError,
+# ReadTimeout) or "response too large (<class name>)"; both are code-defined.
+EXCEPTION_CATEGORY = re.compile(r"[A-Z][A-Za-z0-9]{0,63}|response too large \([A-Z][A-Za-z0-9]{0,63}\)")
+
+
+def _error_category(error: object) -> str:
+    """Return a fixed or code-defined error category, else a keyed fingerprint."""
+    if isinstance(error, str):
+        if error in SAFE_RESULT_ERRORS:
+            return error
+        if EXCEPTION_CATEGORY.fullmatch(error):
+            return error
+    return text_fingerprint(str(error))
 
 
 def _result_detail(result: dict[str, Any]) -> str:
-    """Keep protocol status/fixed categories; fingerprint all other result text."""
+    """Keep protocol status/fixed categories; fingerprint all other result text.
+
+    A trailing historical-drop marker is stripped; callers report drops from the
+    result's ``dropped`` flag.
+    """
     status = result.get("status_code")
     if type(status) is int and 100 <= status <= 599:
         return f"HTTP {status}"
     error = result.get("error", "Unknown error")
-    if isinstance(error, str) and error in SAFE_RESULT_ERRORS:
-        return error
-    return text_fingerprint(str(error))
+    if isinstance(error, str) and error.endswith(DROPPED_SUFFIX):
+        error = error.removesuffix(DROPPED_SUFFIX)
+    return _error_category(error)
 
 
 def _provenance(result: dict[str, Any]) -> str:
@@ -208,13 +230,14 @@ class Command(BaseCommand):
 
         for result in results:
             target = redact_url(result["target"])
-            endpoint = redact_url(result.get("endpoint") or "")
+            # An absent endpoint must not render as a digest of the empty string in redact mode.
+            arrow = f" -> {redact_url(result['endpoint'])}" if result.get("endpoint") else ""
             if result.get("skipped"):
                 self.stdout.write(self.style.WARNING(f"- {target} (skipped by policy)"))
             elif result["success"]:
-                self.stdout.write(self.style.SUCCESS(f"✓ {target} -> {endpoint} ({_result_detail(result)})"))
+                self.stdout.write(self.style.SUCCESS(f"✓ {target}{arrow} ({_result_detail(result)})"))
             else:
-                self.stdout.write(self.style.ERROR(f"✗ {target} -> {endpoint} (Error: {_result_detail(result)})"))
+                self.stdout.write(self.style.ERROR(f"✗ {target}{arrow} (Error: {_result_detail(result)})"))
 
         if success_count < len(sent_results):
             raise CommandError(f"{len(sent_results) - success_count} Webmention deliveries failed")
@@ -231,12 +254,11 @@ class Command(BaseCommand):
 
         for result in results:
             target = redact_url(result["target"])
-            endpoint = redact_url(result.get("endpoint") or "")
             provenance = _provenance(result)
             if result.get("skipped"):
                 self.stdout.write(f"  - {self._format_salmention_result(result)}")
             elif result["endpoint"]:
-                self.stdout.write(f"  - [{provenance}] {target} -> {endpoint}")
+                self.stdout.write(f"  - [{provenance}] {target} -> {redact_url(result['endpoint'])}")
             else:
                 self.stdout.write(f"  - [{provenance}] {target} (no endpoint found)")
 

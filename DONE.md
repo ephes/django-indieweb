@@ -44,8 +44,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Required PostgreSQL gate
   `INDIEWEB_TEST_POSTGRES_PORT=55491 uv run tox -e storage-postgres`
   could not connect to a disposable server. Local `initdb` is blocked by the
-  sandbox (`shmget: Operation not permitted`); PostgreSQL remains unvalidated.
-  Cross-family review and merge are deferred to the external reviewer.
+  sandbox (`shmget: Operation not permitted`). Merge validation then ran it
+  against a disposable PostgreSQL 17 container: 364 passed.
+- Merge review follow-up: transport failure class names (`ConnectError`,
+  `ReadTimeout`, `response too large (...)`) and the remaining fixed
+  Salmention policy strings stay visible instead of being fingerprinted, the
+  historical-drop marker is reported once, and ordinary send rows without an
+  endpoint omit the `->` part instead of printing a digest of an empty URL in
+  redact mode. Regression tests fail on the pre-review code.
 - Docs: command privacy/status contract in `docs/webmention.rst`;
   `docs/changelog.rst` Unreleased updated; backlog synchronized, no version bump.
 

@@ -1467,10 +1467,13 @@ the configured ``INDIEWEB_LOG_REDACTION`` policy. In ``passthrough`` mode,
 userinfo, query, fragment and path parameters are removed and unsafe URL
 characters are percent-encoded. Paths remain visible: use ``redact`` mode if
 paths carry private data. In ``redact`` mode, URLs become keyed digests.
-Delivery counts, HTTP statuses and fixed policy/no-endpoint/deadline categories
-remain visible; other error text is shown only as a byte count and keyed
-digest, including Salmention selection failures. Remote error messages and
-terminal controls are never printed verbatim. These display changes do not
+Delivery counts, HTTP statuses, fixed policy/no-endpoint/deadline categories
+and transport failure classes (such as ``ConnectError``, ``ReadTimeout`` or
+``response too large (HTTPResponseTooLarge)``) remain visible; other error
+text is shown only as a byte count and keyed digest, including Salmention
+selection failures. Results without an endpoint omit the ``->`` endpoint part
+in every redaction mode. Remote error messages and terminal controls are never
+printed verbatim. These display changes do not
 alter the URLs used for delivery or history lookup.
 
 Send webmentions for all links in a post:

@@ -134,3 +134,81 @@ def test_salmention_selection_errors_are_private(private_sender, dry_run):
     assert_private(str(exc.value))
     assert text_fingerprint(ERROR) in str(exc.value)
     assert exc.value.__suppress_context__
+
+
+def test_send_row_without_endpoint_omits_endpoint_digest(private_sender):
+    private_sender.send_webmentions.return_value = [
+        {"target": TARGET, "endpoint": None, "status_code": None, "success": False, "error": "No endpoint found"},
+        {"target": TARGET, "endpoint": "", "status_code": None, "success": False, "error": "Source deadline exceeded"},
+    ]
+    out = StringIO()
+    with pytest.raises(CommandError):
+        call_command("send_webmentions", SOURCE, content="<p>synthetic</p>", stdout=out, no_color=True)
+    output = out.getvalue()
+    assert_private(output)
+    assert f"✗ {redact_url(TARGET)} (Error: No endpoint found)" in output
+    assert f"✗ {redact_url(TARGET)} (Error: Source deadline exceeded)" in output
+    assert " -> " not in output
+    empty_digest = redact_url("")
+    if empty_digest:  # redact mode digests even the empty string
+        assert empty_digest not in output
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "ConnectError",
+        "ReadTimeout",
+        "response too large (HTTPResponseTooLarge)",
+        "Delivery failed",
+        "Historical target changed during failure pruning",
+        "Historical resend already claimed or history changed",
+        "No endpoint found",
+    ],
+)
+def test_code_defined_error_categories_stay_visible(error):
+    assert command._result_detail({"status_code": None, "error": error}) == error
+    dropped = {"status_code": None, "error": f"{error}; historical target dropped", "dropped": True}
+    assert command._result_detail(dropped) == error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ERROR,
+        "ConnectError: REMOTE_SECRET",
+        "connecterror",
+        "response too large (REMOTE SECRET)",
+        "ConnectError)",
+        "A" * 65,
+        "ConnectError\n",
+        "Error\x1b[31m",
+    ],
+)
+def test_other_error_text_is_fingerprinted(error):
+    assert command._result_detail({"status_code": None, "error": error}) == text_fingerprint(error)
+
+
+def test_salmention_drop_reports_category_once(private_sender):
+    private_sender.resend_salmentions.return_value = [
+        {
+            "target": TARGET,
+            "endpoint": ENDPOINT,
+            "provenance": "history",
+            "status_code": None,
+            "success": False,
+            "error": "ReadTimeout; historical target dropped",
+            "skipped": True,
+            "attempted": True,
+            "dropped": True,
+        }
+    ]
+    out = StringIO()
+    with pytest.raises(CommandError):
+        call_command(
+            "send_webmentions", SOURCE, content="<p>synthetic</p>", salmention_resend=True, stdout=out, no_color=True
+        )
+    output = out.getvalue()
+    assert_private(output)
+    assert "(Error: ReadTimeout; historical target dropped)" in output
+    assert output.count("historical target dropped") == 1
