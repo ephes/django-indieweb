@@ -56,7 +56,7 @@ def test_parent_body_transferred_once(size):
 
     def observe(execute, sql, params, many, context):
         result = execute(sql, params, many, context)
-        if sql.lstrip().upper().startswith("SELECT"):
+        if sql.lstrip(" \t\n(").upper().startswith("SELECT"):
             context["cursor"].cursor = ObservedCursor(context["cursor"].cursor)
         return result
 

@@ -56,7 +56,7 @@ def test_render_is_one_statement_snapshot(concurrent_database, kind, size):
 
     def after_select(execute, sql, params, many, context):
         result = execute(sql, params, many, context)
-        if sql.lstrip().upper().startswith("SELECT"):
+        if sql.lstrip(" \t\n(").upper().startswith("SELECT"):
             statements.append(sql)
             if len(statements) == 1:
                 worker = Thread(target=moderate, daemon=True)
