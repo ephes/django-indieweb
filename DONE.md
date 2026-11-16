@@ -5719,6 +5719,12 @@ bundle.
   cannot connect to the disposable server. Both plain `initdb` and explicit
   mmap initialization failed at `shmget` with exhausted shared memory IDs
   (`No space left on device`). The outside clerk must rerun this lane.
+- Merge follow-up: the clerk ran `uv run tox -e storage-postgres` against a
+  disposable Docker PostgreSQL 17 (host SysV shared memory was exhausted).
+  It first failed 6 display tests: PostgreSQL renders the snapshot as
+  `(SELECT ...) UNION ALL (SELECT ...)`, so the SELECT-prefix probes saw no
+  statement. With parenthesis-tolerant probes the lane passed 375 tests
+  (one statement, one parent-body transfer, snapshot consistency).
 - Docs: h-card and Webmention resource/display contracts and development
   test commands updated; Unreleased changelog and backlog synchronized;
   no schema change or version bump. Existing storage lanes include the new
@@ -5743,8 +5749,7 @@ bundle.
   storage lane 374 passed, 1 skipped); configured hooks with private
   `PREK_HOME`; strict `uv run sphinx-build -W -b html docs docs/_build/html`;
   Django system checks and `makemigrations --check --dry-run` (no changes).
-  PostgreSQL remains blocked as recorded under B39; the clerk must run
-  `INDIEWEB_TEST_POSTGRES_PORT=55427 uv run tox -e storage-postgres`.
+  PostgreSQL was blocked in the sandbox; the clerk's merge rerun passed (see B39).
 - Docs: parser admission resource contract and configuration domain updated;
   Unreleased changelog and backlog synchronized; no schema or version change.
 - Final supported matrix: all ten environments passed with
