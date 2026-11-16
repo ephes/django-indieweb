@@ -1446,6 +1446,33 @@ Management Commands
 send_webmentions
 ----------------
 
+``--content`` and ``--content -`` (stdin) are admitted before HTML parsing,
+endpoint discovery or delivery, in ordinary, Salmention and dry-run modes.
+The UTF-8 byte limit uses ``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` (default
+1 MiB). Unlike network fetching, command input always has a finite limit:
+``None`` or an invalid setting falls back to 1 MiB. Exact-limit and empty
+content are accepted. Oversized or invalid UTF-8 content raises
+``CommandError`` without parsing or sending any part of it.
+
+Pipe rendered HTML as UTF-8. The command reads stdin incrementally and waits
+for pipe/terminal input only within the remaining
+``INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS`` budget (default 120
+seconds), which starts before content acquisition. A stalled pipe or input
+that finishes after the deadline fails before parsing or sending. Descriptor
+readiness must be supported by the platform; unsupported stdin streams fail
+with a fixed error (use direct ``--content`` instead).
+
+All command URL output, including fetch errors and both dry-run modes, uses
+the configured ``INDIEWEB_LOG_REDACTION`` policy. In ``passthrough`` mode,
+userinfo, query, fragment and path parameters are removed and unsafe URL
+characters are percent-encoded. Paths remain visible: use ``redact`` mode if
+paths carry private data. In ``redact`` mode, URLs become keyed digests.
+Delivery counts, HTTP statuses and fixed policy/no-endpoint/deadline categories
+remain visible; other error text is shown only as a byte count and keyed
+digest, including Salmention selection failures. Remote error messages and
+terminal controls are never printed verbatim. These display changes do not
+alter the URLs used for delivery or history lookup.
+
 Send webmentions for all links in a post:
 
 .. code-block:: bash

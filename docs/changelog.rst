@@ -5,6 +5,14 @@ Changelog
 
 Unreleased
 ----------
+* Bound ``send_webmentions --content`` and UTF-8 stdin before parsing, using
+  the fetch byte limit (always finite for command input) and the shared source
+  deadline, including stalled pipes. Reject oversized, invalid or late input
+  without partial discovery/delivery; accept empty and exact-limit content.
+* Apply URL redaction to all Webmention command diagnostics, including ordinary
+  and Salmention dry runs. Keep delivery counts, HTTP statuses and fixed policy
+  categories; fingerprint other error text and Salmention selection failures
+  instead of exposing credentials, remote messages or terminal controls.
 * Honor empty ``WebSubSubscription.save(update_fields=...)`` as a no-op before
   passive key rotation, preserving in-memory ciphertext and stored timestamps.
   Real partial saves continue to migrate active and pending secrets.

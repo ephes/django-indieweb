@@ -1,14 +1,50 @@
 """Django management command to send webmentions."""
 
+import os
+import select
 import sys
 import time
+from io import StringIO
 from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import URLValidator
 
-from indieweb.senders import WebmentionSender, _source_deadline
+from indieweb.log_redaction import redact_url, text_fingerprint
+from indieweb.senders import (
+    DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES,
+    WebmentionSender,
+    _positive_int_setting,
+    _source_deadline,
+)
+
+CONTENT_CHUNK_SIZE = 16 * 1024
+SAFE_RESULT_ERRORS = frozenset(
+    {
+        "No endpoint found",
+        "Source deadline exceeded",
+        "Historical target skipped during resend cooldown",
+        "Historical target dropped after consecutive failures",
+        "Historical target skipped after successful resend cutoff",
+    }
+)
+
+
+def _result_detail(result: dict[str, Any]) -> str:
+    """Keep protocol status/fixed categories; fingerprint all other result text."""
+    status = result.get("status_code")
+    if type(status) is int and 100 <= status <= 599:
+        return f"HTTP {status}"
+    error = result.get("error", "Unknown error")
+    if isinstance(error, str) and error in SAFE_RESULT_ERRORS:
+        return error
+    return text_fingerprint(str(error))
+
+
+def _provenance(result: dict[str, Any]) -> str:
+    value = result.get("provenance")
+    return value if value in ("current", "history", "both") else "unknown"
 
 
 class Command(BaseCommand):
@@ -50,8 +86,8 @@ class Command(BaseCommand):
         if vouch_url:
             try:
                 URLValidator(schemes=["http", "https"])(vouch_url)
-            except ValidationError as exc:
-                raise CommandError("Vouch URL must be a valid http:// or https:// URL") from exc
+            except ValidationError:
+                raise CommandError("Vouch URL must be a valid http:// or https:// URL") from None
 
         sender = WebmentionSender()
 
@@ -59,6 +95,7 @@ class Command(BaseCommand):
             self.stdout.write("DRY RUN MODE - No webmentions will be sent\n")
 
         html_content = self._resolve_content(sender, source_url, html_content)
+        self._check_source_deadline()
         urls = sender.extract_urls(html_content)
         self.stdout.write(f"Found {len(urls)} URLs in content\n")
 
@@ -74,15 +111,69 @@ class Command(BaseCommand):
 
     def _resolve_content(self, sender: WebmentionSender, source_url: str, html_content: str | None) -> str:
         """Resolve HTML content from argument, stdin, or by fetching the source URL."""
+        limit = _positive_int_setting("INDIEWEB_WEBMENTION_FETCH_MAX_BYTES", DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES)
         if html_content == "-":
-            return sys.stdin.read()
-        if html_content:
+            return self._read_stdin(limit)
+        if html_content is not None:
+            self._admit_content(html_content, limit)
             return html_content
-        self.stdout.write(f"Fetching content from {source_url}...")
+        self.stdout.write(f"Fetching content from {redact_url(source_url)}...")
         fetched_content = sender.fetch_content(source_url, deadline=self.source_deadline)
         if not fetched_content:
-            raise CommandError(f"Failed to fetch content from {source_url}")
+            raise CommandError(f"Failed to fetch content from {redact_url(source_url)}")
         return fetched_content
+
+    def _check_source_deadline(self) -> None:
+        if time.monotonic() >= self.source_deadline:
+            raise CommandError("Source deadline exceeded; content not parsed or sent")
+
+    def _admit_content(self, content: str, limit: int) -> int:
+        """Count UTF-8 bytes in bounded chunks, including for an already allocated argument."""
+        size = 0
+        for offset in range(0, len(content), CONTENT_CHUNK_SIZE):
+            self._check_source_deadline()
+            try:
+                size += len(content[offset : offset + CONTENT_CHUNK_SIZE].encode("utf-8"))
+            except UnicodeError:
+                raise CommandError("Content must be valid UTF-8") from None
+            if size > limit:
+                raise CommandError("Content exceeds byte limit; content not parsed or sent")
+        self._check_source_deadline()
+        return size
+
+    def _read_stdin(self, limit: int) -> str:
+        """Read at most limit+1 bytes; wait for pipe/terminal input only within the source budget."""
+        if isinstance(sys.stdin, StringIO):
+            # In-memory streams used by call_command need no descriptor readiness wait.
+            chunks: list[str] = []
+            size = 0
+            while True:
+                self._check_source_deadline()
+                chunk = sys.stdin.read(min(CONTENT_CHUNK_SIZE, limit - size + 1))
+                size += self._admit_content(chunk, limit - size)
+                if not chunk:
+                    return "".join(chunks)
+                chunks.append(chunk)
+        try:
+            fd = sys.stdin.fileno()
+            data = bytearray()
+            while True:
+                self._check_source_deadline()
+                ready, _, _ = select.select([fd], [], [], max(0, self.source_deadline - time.monotonic()))
+                self._check_source_deadline()
+                if not ready:
+                    continue
+                chunk_bytes = os.read(fd, min(CONTENT_CHUNK_SIZE, limit - len(data) + 1))
+                self._check_source_deadline()
+                if len(data) + len(chunk_bytes) > limit:
+                    raise CommandError("Content exceeds byte limit; content not parsed or sent")
+                if not chunk_bytes:
+                    return data.decode("utf-8")
+                data.extend(chunk_bytes)
+        except UnicodeError:
+            raise CommandError("Content must be valid UTF-8") from None
+        except (OSError, ValueError):
+            raise CommandError("Unable to read stdin with a bounded wait; provide --content instead") from None
 
     def _handle_dry_run(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
         """Discover only targets admitted by the ordinary sender's policy."""
@@ -93,9 +184,9 @@ class Command(BaseCommand):
                 raise CommandError("Source deadline exceeded; remaining targets unattempted")
             endpoint = sender.discover_endpoint(url, deadline=self.source_deadline)
             if endpoint:
-                self.stdout.write(f"  - {url} -> {endpoint}")
+                self.stdout.write(f"  - {redact_url(url)} -> {redact_url(endpoint)}")
             else:
-                self.stdout.write(f"  - {url} (no endpoint found)")
+                self.stdout.write(f"  - {redact_url(url)} (no endpoint found)")
 
     def _handle_send(
         self,
@@ -116,18 +207,14 @@ class Command(BaseCommand):
         self.stdout.write(f"\nSent {success_count}/{len(sent_results)} webmentions successfully\n")
 
         for result in results:
+            target = redact_url(result["target"])
+            endpoint = redact_url(result.get("endpoint") or "")
             if result.get("skipped"):
-                self.stdout.write(self.style.WARNING(f"- {result['target']} (skipped by policy)"))
+                self.stdout.write(self.style.WARNING(f"- {target} (skipped by policy)"))
             elif result["success"]:
-                self.stdout.write(
-                    self.style.SUCCESS(f"✓ {result['target']} -> {result['endpoint']} (HTTP {result['status_code']})")
-                )
+                self.stdout.write(self.style.SUCCESS(f"✓ {target} -> {endpoint} ({_result_detail(result)})"))
             else:
-                self.stdout.write(
-                    self.style.ERROR(
-                        f"✗ {result['target']} -> {result['endpoint']} (Error: {result.get('error', 'Unknown error')})"
-                    )
-                )
+                self.stdout.write(self.style.ERROR(f"✗ {target} -> {endpoint} (Error: {_result_detail(result)})"))
 
         if success_count < len(sent_results):
             raise CommandError(f"{len(sent_results) - success_count} Webmention deliveries failed")
@@ -137,18 +224,21 @@ class Command(BaseCommand):
         try:
             results = sender.preview_salmention_resend_targets(source_url, html_content, deadline=self.source_deadline)
         except ValueError as exc:
-            raise CommandError(str(exc)) from exc
+            raise CommandError(f"Salmention selection failed ({text_fingerprint(str(exc))})") from None
         if not results:
             self.stdout.write("No Salmention resends would be sent (no current or historical targets found)")
             return
 
         for result in results:
+            target = redact_url(result["target"])
+            endpoint = redact_url(result.get("endpoint") or "")
+            provenance = _provenance(result)
             if result.get("skipped"):
                 self.stdout.write(f"  - {self._format_salmention_result(result)}")
             elif result["endpoint"]:
-                self.stdout.write(f"  - [{result['provenance']}] {result['target']} -> {result['endpoint']}")
+                self.stdout.write(f"  - [{provenance}] {target} -> {endpoint}")
             else:
-                self.stdout.write(f"  - [{result['provenance']}] {result['target']} (no endpoint found)")
+                self.stdout.write(f"  - [{provenance}] {target} (no endpoint found)")
 
     def _handle_salmention_send(
         self,
@@ -163,7 +253,7 @@ class Command(BaseCommand):
                 source_url, html_content, vouch_url=vouch_url, deadline=self.source_deadline
             )
         except ValueError as exc:
-            raise CommandError(str(exc)) from exc
+            raise CommandError(f"Salmention selection failed ({text_fingerprint(str(exc))})") from None
 
         if not results:
             self.stdout.write("No Salmention resends were sent (no current or historical targets found)")
@@ -192,18 +282,20 @@ class Command(BaseCommand):
 
     def _format_salmention_result(self, result: dict[str, Any]) -> str:
         """Format one provenance-aware resend result."""
-        target = result["target"]
-        endpoint = result["endpoint"]
-        provenance = result.get("provenance", "unknown")
+        target = redact_url(result["target"])
+        endpoint = redact_url(result["endpoint"]) if result.get("endpoint") else ""
+        provenance = _provenance(result)
 
         if result.get("skipped") and not result.get("attempted"):
             action = "dropped" if result.get("dropped") else "skipped"
-            return f"- [{provenance}] {target} ({action}: {result.get('error', 'Policy skip')})"
+            return f"- [{provenance}] {target} ({action}: {_result_detail(result)})"
 
         if result["success"]:
-            return f"✓ [{provenance}] {target} -> {endpoint} (HTTP {result['status_code']})"
+            return f"✓ [{provenance}] {target} -> {endpoint} ({_result_detail(result)})"
 
-        error = result.get("error", "Unknown error")
+        error = _result_detail(result)
+        if result.get("dropped"):
+            error += "; historical target dropped"
         if endpoint:
             return f"✗ [{provenance}] {target} -> {endpoint} (Error: {error})"
         return f"✗ [{provenance}] {target} (Error: {error})"
