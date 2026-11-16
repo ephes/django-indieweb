@@ -5723,3 +5723,32 @@ bundle.
   test commands updated; Unreleased changelog and backlog synchronized;
   no schema change or version bump. Existing storage lanes include the new
   display transfer/query regressions; no new matrix entries or workflows.
+
+### Fence parser admission slots (round 107 B40)
+
+- `parse-slot-named-directory-authority`: after nonblocking flock, recheck
+  the directory's named identity and private ownership/type, then the slot's
+  named identity, permissions, ownership, regular type and single link.
+  Refuse displaced ownership before starting a worker and close descriptors.
+  Three pre-fix regressions admitted a worker after directory/slot replacement
+  or permission changes. Existing process-death capacity inheritance passes.
+- `parse-slot-configuration-work-ceiling`: accept only integer concurrency
+  settings from 1 through 64, with a default of 2 for all invalid types/ranges
+  before filesystem work. Charge directory setup, every scan and final
+  acquisition to one monotonic deadline; close even an acquired late slot.
+  Seven new cases failed before this fix; the complete focused parser/slot
+  suite passes 153 tests, including synthetic filesystem cost and contention.
+- Validation: `just check` (3,542 passed, 68 skipped, 94.53% coverage);
+  `uv run tox -e py313-django52-migrations,storage-sqlite` (both passed,
+  storage lane 374 passed, 1 skipped); configured hooks with private
+  `PREK_HOME`; strict `uv run sphinx-build -W -b html docs docs/_build/html`;
+  Django system checks and `makemigrations --check --dry-run` (no changes).
+  PostgreSQL remains blocked as recorded under B39; the clerk must run
+  `INDIEWEB_TEST_POSTGRES_PORT=55427 uv run tox -e storage-postgres`.
+- Docs: parser admission resource contract and configuration domain updated;
+  Unreleased changelog and backlog synchronized; no schema or version change.
+- Final supported matrix: all ten environments passed with
+  `uv run tox -p 2 -e py311-django52,py312-django52,py313-django52,py314-django52,py312-django60,py313-django60,py314-django60,py312-django61,py313-django61,py314-django61`.
+  Each completed 3,542 tests with 68 conditional skips and passed the 88%
+  coverage gate. Together with the migration and storage lanes above, all
+  twelve default tox environments passed. PostgreSQL was not available.

@@ -5,6 +5,11 @@ Changelog
 
 Unreleased
 ----------
+* Recheck parse-slot and lock-directory named identities after locking;
+  refuse displaced or newly unsafe admission descriptors before starting a child.
+* Limit parser concurrency configuration to integers 1–64 (invalid values use
+  2), and charge directory setup and individual slot scans to the same wait
+  deadline. Expired acquisitions release the slot without starting a worker.
 * Extract HTML h-cards through the shared resource-limited parse worker and
   admission slots; worker refusal becomes a value-free ``invalid_h_card``
   validation error before profile data can be replaced.

@@ -1563,8 +1563,10 @@ INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT
 
 **Default:** ``2``
 
-Positive integer cap on parse children sharing the same host-local POSIX lock
-directory. Invalid or zero values fall back to the default.
+Integer cap from 1 through 64 on parse children sharing the same host-local
+POSIX lock directory. Booleans, strings, floats, zero, negative values and
+integers above 64 fall back to 2 before filesystem work. This finite ceiling
+bounds the per-attempt lock inventory; all processes must use the same value.
 
 INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1572,7 +1574,8 @@ INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS
 **Default:** ``1``
 
 Positive seconds to wait for a parse slot. Invalid or zero values fall back
-to the default. Capacity exhaustion preserves stored Webmention state and
+to the default. One monotonic budget includes directory setup, each slot scan
+and the acquired-slot check before starting a child. Capacity exhaustion preserves stored Webmention state and
 raises ``WebmentionParseCapacityError``. Synchronous receives return HTTP 503
 with ``Retry-After: 1``; queued hosts should retry this exception according to
 their task backend's policy.
@@ -1584,7 +1587,9 @@ INDIEWEB_WEBMENTION_PARSE_LOCK_DIR
 scoped by user ID and a deployment digest)
 
 The directory must be owned by the application user with no group/other
-permissions, and its final component must not be a symlink. Keep lock files
+permissions, and its final component must not be a symlink. After locking,
+its named identity and the slot's identity/private descriptor properties are
+rechecked; displaced ownership refuses parsing before the child starts. Keep lock files
 in place while workers run. Set a common directory when workers have different
 ``TMPDIR`` values or private temporary-directory namespaces. All workers
 must share the directory and cap. Platforms without POSIX ``fcntl`` locks

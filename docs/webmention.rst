@@ -356,10 +356,14 @@ verified snapshot of the same source is left as it was. The receive endpoint
 answers as for any other processed Webmention; it never returns details of the
 failure.
 
-At most ``INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT`` children (default 2)
-run concurrently across threads and processes on one host. A receive waits up
-to ``INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS`` (default 1 second)
-for a slot, then raises ``WebmentionParseCapacityError`` with reason
+At most ``INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT`` children (default 2,
+integer range 1–64) run concurrently across threads and processes on one host.
+A receive waits up to ``INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS`` (default 1 second)
+for a slot. Configuration is admitted before filesystem work: booleans,
+strings, floats and integers outside 1–64 use the default of 2. Directory setup,
+every scanned slot and the final acquired slot are charged to one monotonic
+wait budget; an expired attempt starts no child. Exhaustion raises
+``WebmentionParseCapacityError`` with reason
 ``parse capacity`` without changing stored state. Synchronous receives return
 HTTP 503 with ``Retry-After: 1``. Queued hosts should retry the exception using
 their task backend's policy. Slots use POSIX advisory file locks and are released on
@@ -371,8 +375,13 @@ platforms without POSIX file locks, even if OS resource limits are disabled.
 owned by the application user (mode 0700). Each slot must be a regular file
 owned by that user, with exactly mode 0600 and a single hard link. Slots are
 opened without following symlinks and nonblocking; suspicious objects are
-refused without changing their permissions or contents. The process umask must
-retain owner read/write bits (for example, 0077). The default is a directory in the
+refused without changing their permissions or contents. After acquiring a
+lock, admission rechecks the named directory and slot against the open
+descriptors, including private permissions, ownership, type and link count.
+A replaced directory or slot is refused as ``parse capacity unavailable``;
+all descriptors close without starting a worker. This is an admission-time
+fence, not permission to replace live locks: keep names intact for the entire
+worker lifetime. The process umask must retain owner read/write bits (for example, 0077). The default is a directory in the
 system temporary directory, scoped by user ID and a digest of ``SECRET_KEY``.
 All workers must share that directory and the same concurrency setting;
 set an explicit shared directory for different ``TMPDIR`` or private temporary
