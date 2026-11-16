@@ -27,6 +27,9 @@ storage compensation and h-card byte budgets are recorded in `DONE.md`.
 Round 101 WebSub empty-save semantics and legacy encryption-prefix migration
 are recorded in `DONE.md`.
 
+Round 105 bounded Webmention command input and private command diagnostics
+are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.

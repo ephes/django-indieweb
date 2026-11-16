@@ -2,6 +2,59 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-16
+
+### Bounded Webmention command input (round 105 B21: 43)
+
+- Admit direct HTML and incremental UTF-8 stdin before parsing, using the
+  existing fetch byte limit with a finite default and the shared source
+  deadline. Wait for descriptor readiness within that deadline so a stalled
+  pipe cannot hold the command indefinitely. Empty and exact-limit inputs
+  remain valid; oversized, invalid and late inputs never reach discovery/send.
+- Pre-fix regression: 14 failing cases, including oversized/multibyte input,
+  late trickle, stalled pipe, invalid UTF-8 and disabled network byte cap.
+- Shared validation for B21 is recorded below.
+- Docs: command input/admission contract in `docs/webmention.rst`;
+  `docs/changelog.rst` Unreleased updated; backlog synchronized, no version bump.
+
+### Private Webmention command diagnostics (round 105 B21: 44)
+
+- Apply configured URL redaction to fetch messages, ordinary delivery and
+  dry-run output, Salmention results and previews. Display numeric HTTP
+  statuses and fixed categories; fingerprint arbitrary error text and
+  selection exceptions. Allowlist provenance labels and suppress raw
+  exception chains in controlled command errors.
+- Pre-fix regression: 16 failing privacy cases in passthrough/redact modes,
+  with synthetic userinfo/query/fragment/path-parameter credentials and
+  hostile control text. Final command/admission/privacy/maintenance suite:
+  88 passed, including absent endpoints in redact mode and policy-drop labels.
+- Shared validation: `uv sync --frozen --python 3.13`; `uv run pytest`
+  (3,498 passed, 68 skipped, 94.50% coverage against the 88% gate);
+  `uv run mypy`; `uv run ruff check .`; `uv run ruff format --check .`;
+  `uv run prek run --all-files` with private `PREK_HOME`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`;
+  `uv run python -m django check --settings=tests.settings` and
+  `uv run python -m django makemigrations --check --dry-run --settings=tests.settings`.
+- Full configured tox matrix passed all twelve environments: ten supported
+  Python/Django combinations (3.11–3.14 / Django 5.2 and 3.12–3.14 /
+  Django 6.0 and 6.1), the real-migration suite and required SQLite storage.
+  Each full suite passed 3,498 tests with 68 expected skips; SQLite storage
+  passed 363 with one PostgreSQL-only skip. The parallel run used an identical
+  private copy of `tox.ini` with only per-environment coverage paths added.
+- Required PostgreSQL gate
+  `INDIEWEB_TEST_POSTGRES_PORT=55491 uv run tox -e storage-postgres`
+  could not connect to a disposable server. Local `initdb` is blocked by the
+  sandbox (`shmget: Operation not permitted`). Merge validation then ran it
+  against a disposable PostgreSQL 17 container: 364 passed.
+- Merge review follow-up: transport failure class names (`ConnectError`,
+  `ReadTimeout`, `response too large (...)`) and the remaining fixed
+  Salmention policy strings stay visible instead of being fingerprinted, the
+  historical-drop marker is reported once, and ordinary send rows without an
+  endpoint omit the `->` part instead of printing a digest of an empty URL in
+  redact mode. Regression tests fail on the pre-review code.
+- Docs: command privacy/status contract in `docs/webmention.rst`;
+  `docs/changelog.rst` Unreleased updated; backlog synchronized, no version bump.
+
 ## 2026-11-15
 
 ### WebSub empty field selection (round 101 B17: 34)
