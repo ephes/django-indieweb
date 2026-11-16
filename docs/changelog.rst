@@ -5,6 +5,19 @@ Changelog
 
 Unreleased
 ----------
+* Recheck parse-slot and lock-directory named identities after locking;
+  refuse displaced or newly unsafe admission descriptors before starting a child.
+* Limit parser concurrency configuration to integers 1–64 (invalid values use
+  2), and charge directory setup and individual slot scans to the same wait
+  deadline. Expired acquisitions release the slot without starting a worker.
+* Extract HTML h-cards through the shared resource-limited parse worker and
+  admission slots; worker refusal becomes a value-free ``invalid_h_card``
+  validation error before profile data can be replaced. Platforms that cannot
+  run the worker (no POSIX ``fcntl``, or no resource limits while they are
+  required) now refuse HTML h-card extraction instead of parsing in-process.
+* Render Webmention parents and children with a streamed ``UNION ALL``
+  projection: each parent body crosses the database boundary once, retaining
+  one-statement moderation consistency, exact filtering and child ordering.
 * Bound ``send_webmentions --content`` and UTF-8 stdin before parsing, using
   the fetch byte limit (always finite for command input) and the shared source
   deadline, including stalled pipes. Reject oversized, invalid or late input

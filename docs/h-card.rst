@@ -134,7 +134,17 @@ UTF-8 bytes across all keys and string scalars, plus the textual sizes of
 numeric, boolean and null scalars. This budget is shared across nested
 properties, counts repeated values each time, and rejects invalid UTF-8 text.
 ``parse_h_card()`` additionally limits raw HTML to 1,048,576 UTF-8 bytes before
-calling mf2py, then applies the same property budgets to the extracted card.
+starting the shared Webmention parse worker. Extraction runs in that child
+under the configured memory, CPU, wall-clock, result-size and admission-slot
+limits (see :doc:`webmention`), then the same property budgets apply to the
+extracted card. Worker failure, resource refusal or unavailable capacity raises
+``ValidationError`` with code ``invalid_h_card`` and a fixed, value-free message;
+callers should leave existing profile data unchanged on refusal. Platforms
+without POSIX ``fcntl``, or without POSIX resource limits while
+``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS`` is enabled, cannot run the
+worker, so HTML h-card extraction always raises ``invalid_h_card`` there. No parser tree
+is built in the application process. The first top-level card, relative URL
+resolution and normalized property names retain their existing behavior.
 The admin JSON editor additionally accepts at most 262,144 bytes (256 KiB) of
 UTF-8 text before decoding. This bounds decoder input work; malformed JSON,
 excessive decoder nesting and integer-conversion limits return a value-free

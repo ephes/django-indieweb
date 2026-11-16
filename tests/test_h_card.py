@@ -192,7 +192,7 @@ def test_parse_h_card_rejects_normalized_property_collision(monkeypatch):
     from django.core.exceptions import ValidationError
 
     monkeypatch.setattr(
-        "indieweb.h_card.mf2py.parse",
+        "indieweb.webmention_parse_worker.mf2py.parse",
         lambda **kwargs: {"items": [{"type": ["h-card"], "properties": {"a-b": ["first"], "a_b": ["second"]}}]},
     )
     with pytest.raises(ValidationError, match="collision"):

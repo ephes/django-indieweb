@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from django import template
+from django.db.models import DateTimeField, F, Value
 from django.db.models.functions import Coalesce
 from django.urls import reverse
 from django.utils.html import format_html
@@ -144,7 +145,7 @@ def show_webmentions(target_url: str, mention_type: str | None = None) -> dict[s
 
 
 def _display_webmention_snapshot(target_url: str) -> list[Webmention]:
-    """Materialize parents and children from one portable joined SELECT.
+    """Stream separate parent/child projections in one portable UNION ALL SELECT.
 
     SQL collation equality is only a candidate filter. Exact URL, status and
     type identity is decided in Python before display preparation. Large
@@ -158,41 +159,61 @@ def _display_webmention_snapshot(target_url: str) -> list[Webmention]:
         "vouch_verified_at",
         "last_received_at",
     }
-    parent_fields = [
-        field.attname for field in Webmention._meta.concrete_fields if field.attname not in parent_deferred
-    ]
-    child_fields = [
-        field.attname
+    parent_columns = [field for field in Webmention._meta.concrete_fields if field.attname not in parent_deferred]
+    parent_fields = [field.attname for field in parent_columns]
+    child_columns = [
+        field
         for field in WebmentionNestedResponse._meta.concrete_fields
         if field.attname not in {"parsed_h_entry", "content_digest"}
     ]
-    rows = (
-        Webmention.objects.filter(target_url=target_url, status="verified")
-        .order_by(
-            "-published",
-            "-created",
-            "pk",
-            Coalesce("nested_responses__published", "nested_responses__first_seen_at").desc(),
-            "-nested_responses__first_seen_at",
-            "-nested_responses__created",
-            "nested_responses__pk",
+    child_fields = [field.attname for field in child_columns]
+    # A joined parent projection repeats potentially large bodies for every
+    # child. UNION ALL keeps the one-statement moderation snapshot while
+    # transferring each body once. Only small parent ordering keys repeat.
+    parent_projection: dict[str, F | Value] = {f"p_{field}": F(field) for field in parent_fields}
+    parent_projection.update({f"c_{field.attname}": Value(None, output_field=field) for field in child_columns})
+    child_projection = {
+        f"p_{field.attname}": (
+            F(f"webmention__{field.attname}")
+            if field.attname in {"id", "published", "created"}
+            else Value(None, output_field=field)
         )
-        .values(*parent_fields, *(f"nested_responses__{field}" for field in child_fields))
+        for field in parent_columns
+    }
+    child_projection.update({f"c_{field}": F(field) for field in child_fields})
+    fields = [*parent_projection, "child_order"]
+    parent_rows = (
+        Webmention.objects.filter(target_url=target_url, status="verified")
+        .order_by()
+        .annotate(**parent_projection, child_order=Value(None, output_field=DateTimeField()))
+        .values(*fields)
+    )
+    child_rows = (
+        WebmentionNestedResponse.objects.filter(
+            webmention__target_url=target_url, webmention__status="verified", status="verified"
+        )
+        .order_by()
+        .annotate(**child_projection, child_order=Coalesce("published", "first_seen_at"))
+        .values(*fields)
+    )
+    rows = parent_rows.union(child_rows, all=True).order_by(
+        "-p_published", "-p_created", "p_id", "-child_order", "-c_first_seen_at", "-c_created", "c_id"
     )
     parents: dict[int, Webmention] = {}
-    for row in rows:
-        if row["target_url"] != target_url or row["status"] != "verified":
-            continue
-        parent = parents.get(row["id"])
-        if parent is None:
-            parent = Webmention.from_db(rows.db, parent_fields, [row[field] for field in parent_fields])
-            cast(Any, parent)._verified_nested_responses = []
-            parents[parent.pk] = parent
-        if row["nested_responses__id"] is not None and row["nested_responses__status"] == "verified":
-            child = WebmentionNestedResponse.from_db(
-                rows.db, child_fields, [row[f"nested_responses__{field}"] for field in child_fields]
+    children: dict[int, list[WebmentionNestedResponse]] = {}
+    for row in rows.iterator(chunk_size=100):
+        if row["c_id"] is not None:
+            if row["c_status"] == "verified":
+                child = WebmentionNestedResponse.from_db(
+                    rows.db, child_fields, [row[f"c_{field}"] for field in child_fields]
+                )
+                children.setdefault(row["p_id"], []).append(child)
+        elif row["p_target_url"] == target_url and row["p_status"] == "verified":
+            parents[row["p_id"]] = Webmention.from_db(
+                rows.db, parent_fields, [row[f"p_{field}"] for field in parent_fields]
             )
-            cast(Any, parent)._verified_nested_responses.append(child)
+    for pk, parent in parents.items():
+        cast(Any, parent)._verified_nested_responses = children.get(pk, [])
     return list(parents.values())
 
 

@@ -343,7 +343,7 @@ PostgreSQL service. Count tests temporarily apply case/accent/space-insensitive
 collations to real columns and restore them after each test (PostgreSQL requires
 ICU support, provided by the CI image)::
 
-    DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_webmention_count_collations.py tests/test_webmention_display_queries.py
+    DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_webmention_count_collations.py tests/test_webmention_display_queries.py tests/test_webmention_display_memory.py
 
 Authorization contention tests
 ------------------------------

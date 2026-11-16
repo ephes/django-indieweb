@@ -5694,3 +5694,66 @@ bundle.
   `uv run sphinx-build -W -b html docs docs/_build/html` passed.
   No required local gate was sandbox-blocked. Review and merge remain with
   the external reviewer; no Claude CLI, review agent or GitHub Actions run.
+
+## 2026-11-16
+
+### Bound parser and display memory (round 107 B39)
+
+- `hcard-parser-resource-isolation`: extract HTML h-cards in the existing
+  bounded child protocol and share Webmention admission slots. Translate worker
+  refusal to value-free `invalid_h_card`; preserve first-card selection,
+  relative URLs, normalization and existing property admission. Six new tests
+  failed before the fix; the focused h-card suite passes 102 cases, including
+  a real hanging/expanding child and unchanged synthetic stored profile data.
+- `webmention-display-join-amplification-removal`: stream a standard ORM
+  `UNION ALL` of parent/child projections. Transfer each parent body once,
+  preserve one-statement moderation consistency, exact-string admission,
+  ordering, deferred ingestion fields and duplicate suppression. The pre-fix
+  transfer regression observed 40 copies for 40 children; it now observes one.
+- Validation: `just check` (3,525 passed, 68 skipped, 94.52% coverage);
+  `uv run tox -e py313-django52-migrations,storage-sqlite` (both passed;
+  required file-SQLite moderation snapshot races included);
+  `PREK_HOME=/Users/jochen/workspaces/ws-cx-cx-r107-django-indieweb/.cache/prek uv run prek run --all-files`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+- PostgreSQL blocked: `INDIEWEB_TEST_POSTGRES_PORT=55427 uv run tox -e storage-postgres`
+  cannot connect to the disposable server. Both plain `initdb` and explicit
+  mmap initialization failed at `shmget` with exhausted shared memory IDs
+  (`No space left on device`). The outside clerk must rerun this lane.
+- Merge follow-up: the clerk ran `uv run tox -e storage-postgres` against a
+  disposable Docker PostgreSQL 17 (host SysV shared memory was exhausted).
+  It first failed 6 display tests: PostgreSQL renders the snapshot as
+  `(SELECT ...) UNION ALL (SELECT ...)`, so the SELECT-prefix probes saw no
+  statement. With parenthesis-tolerant probes the lane passed 375 tests
+  (one statement, one parent-body transfer, snapshot consistency).
+- Docs: h-card and Webmention resource/display contracts and development
+  test commands updated; Unreleased changelog and backlog synchronized;
+  no schema change or version bump. Existing storage lanes include the new
+  display transfer/query regressions; no new matrix entries or workflows.
+
+### Fence parser admission slots (round 107 B40)
+
+- `parse-slot-named-directory-authority`: after nonblocking flock, recheck
+  the directory's named identity and private ownership/type, then the slot's
+  named identity, permissions, ownership, regular type and single link.
+  Refuse displaced ownership before starting a worker and close descriptors.
+  Three pre-fix regressions admitted a worker after directory/slot replacement
+  or permission changes. Existing process-death capacity inheritance passes.
+- `parse-slot-configuration-work-ceiling`: accept only integer concurrency
+  settings from 1 through 64, with a default of 2 for all invalid types/ranges
+  before filesystem work. Charge directory setup, every scan and final
+  acquisition to one monotonic deadline; close even an acquired late slot.
+  Seven new cases failed before this fix; the complete focused parser/slot
+  suite passes 153 tests, including synthetic filesystem cost and contention.
+- Validation: `just check` (3,542 passed, 68 skipped, 94.53% coverage);
+  `uv run tox -e py313-django52-migrations,storage-sqlite` (both passed,
+  storage lane 374 passed, 1 skipped); configured hooks with private
+  `PREK_HOME`; strict `uv run sphinx-build -W -b html docs docs/_build/html`;
+  Django system checks and `makemigrations --check --dry-run` (no changes).
+  PostgreSQL was blocked in the sandbox; the clerk's merge rerun passed (see B39).
+- Docs: parser admission resource contract and configuration domain updated;
+  Unreleased changelog and backlog synchronized; no schema or version change.
+- Final supported matrix: all ten environments passed with
+  `uv run tox -p 2 -e py311-django52,py312-django52,py313-django52,py314-django52,py312-django60,py313-django60,py314-django60,py312-django61,py313-django61,py314-django61`.
+  Each completed 3,542 tests with 68 conditional skips and passed the 88%
+  coverage gate. Together with the migration and storage lanes above, all
+  twelve default tox environments passed. PostgreSQL was not available.

@@ -1,6 +1,6 @@
-"""Analysis of fetched Webmention HTML, run in a resource-limited child process.
+"""Analysis of Webmention and h-card HTML, run in a resource-limited child process.
 
-Fetched source and Vouch documents are untrusted. Building a tree from them and
+Fetched source, Vouch documents and h-card HTML are untrusted. Building a tree from them and
 extracting microformats can need far more memory and CPU time than the size of
 the document suggests, and that cost is decided by third-party parsers. This
 module therefore does all work on fetched HTML, and
@@ -354,12 +354,22 @@ def analyze_vouch(html_content: str, source_url: str) -> dict[str, Any]:
     return {"links_to_source_domain": _html_links_to_source_domain(html_content, source_url)}
 
 
+def analyze_hcard(html_content: str, base_url: str) -> dict[str, Any]:
+    """Extract only the first top-level h-card inside the worker's resource limits."""
+    parsed = mf2py.parse(doc=html_content, url=base_url)
+    for item in parsed.get("items", []):
+        if "h-card" in item.get("type", []):
+            return {"properties": item.get("properties", {})}
+    return {"properties": {}}
+
+
 def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     """Run one analysis request and return its JSON-serializable result."""
     operation = request.get("operation")
     fields_by_operation = {
         "source": {"html", "base_url", "target_url"},
         "vouch": {"html", "source_url"},
+        "hcard": {"html", "base_url"},
     }
     if not isinstance(operation, str) or operation not in fields_by_operation:
         raise ValueError("unsupported operation")
@@ -368,6 +378,8 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid request fields")
     if operation == "source":
         return analyze_source(request["html"], request["base_url"], request["target_url"])
+    if operation == "hcard":
+        return analyze_hcard(request["html"], request["base_url"])
     return analyze_vouch(request["html"], request["source_url"])
 
 

@@ -1,6 +1,6 @@
-"""Run the analysis of fetched Webmention HTML in a resource-limited child process.
+"""Run the analysis of Webmention and h-card HTML in a resource-limited child process.
 
-The receiver never builds a tree from fetched HTML in its own process. Each
+The caller never builds a tree from this HTML in its own process. Each
 analysis runs :mod:`indieweb.webmention_parse_worker` in a short-lived child
 that limits its own memory and CPU time; this module adds the wall-clock
 timeout and the cap on the size of the result. Whatever goes wrong in the child
@@ -38,6 +38,8 @@ DEFAULT_PARSE_MEMORY_BYTES = 512 * MIB
 DEFAULT_PARSE_CPU_SECONDS = 20
 DEFAULT_PARSE_WALL_SECONDS = 30
 DEFAULT_PARSE_MAX_RESULT_BYTES = 2 * MIB
+DEFAULT_PARSE_MAX_CONCURRENT = 2
+MAX_PARSE_CONCURRENT = 64
 WORKER_MODULE = "indieweb.webmention_parse_worker"
 # Largest failed-worker stderr that is digested for the log; larger stderr is
 # logged by size only. Stderr content itself is never logged.
@@ -115,6 +117,15 @@ def _positive_number_setting(name: str, default: int, *, integer: bool = True) -
     return parsed
 
 
+def _parse_max_concurrent() -> int:
+    name = "INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT"
+    configured = getattr(settings, name, DEFAULT_PARSE_MAX_CONCURRENT)
+    if type(configured) is not int or not 1 <= configured <= MAX_PARSE_CONCURRENT:
+        logger.warning("Ignoring invalid %s value; using default %s", name, DEFAULT_PARSE_MAX_CONCURRENT)
+        return DEFAULT_PARSE_MAX_CONCURRENT
+    return configured
+
+
 def parse_limits() -> ParseLimits:
     """Return the configured limits for one analysis of fetched HTML."""
     return ParseLimits(
@@ -177,21 +188,47 @@ def _exit_reason(returncode: int) -> str:
     return f"worker failed with status {returncode}"
 
 
-def _claim_parse_slot(directory_fd: int, maximum: int, locks: Any) -> int | None:
+def _private_slot_info(candidate: int) -> os.stat_result:
+    info = os.fstat(candidate)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_nlink != 1
+    ):
+        raise OSError("parse slot must be a private regular file owned by this user with one link")
+    return info
+
+
+def _check_parse_directory(directory: str, directory_fd: int) -> None:
+    info = os.fstat(directory_fd)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o077
+        or not os.path.samestat(info, os.stat(directory, follow_symlinks=False))
+    ):
+        raise OSError("parse lock directory must retain its private named identity")
+
+
+def _claim_parse_slot(directory: str, directory_fd: int, maximum: int, locks: Any, deadline: float) -> int | None:
     for index in range(maximum):
-        candidate = os.open(
-            f"{index}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory_fd
-        )
+        if time.monotonic() >= deadline:
+            raise WebmentionParseCapacityError("parse capacity")
+        name = f"{index}.lock"
+        candidate = os.open(name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory_fd)
         try:
-            info = os.fstat(candidate)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) != 0o600
-                or info.st_nlink != 1
-            ):
-                raise OSError("parse slot must be a private regular file owned by this user with one link")
+            _private_slot_info(candidate)
             locks.flock(candidate, locks.LOCK_EX | locks.LOCK_NB)
+            # flock protects the descriptor, not the pathname. A displaced
+            # directory or slot would otherwise create an independent pool.
+            _check_parse_directory(directory, directory_fd)
+            if not os.path.samestat(
+                _private_slot_info(candidate), os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            ):
+                raise OSError("parse slot must retain its locked named identity")
+            if time.monotonic() >= deadline:
+                raise WebmentionParseCapacityError("parse capacity")
         except BlockingIOError:
             os.close(candidate)
         except BaseException:
@@ -209,7 +246,7 @@ def _parse_slot() -> Iterator[int]:
         import fcntl
     except ImportError:
         raise WebmentionSourceRejected("parse capacity unavailable") from None
-    maximum = _positive_number_setting("INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT", 2)
+    maximum = _parse_max_concurrent()
     wait = _positive_number_setting("INDIEWEB_WEBMENTION_PARSE_SLOT_WAIT_SECONDS", 1, integer=False)
     deployment = salted_hmac("indieweb.parse-slots", "deployment", algorithm="sha256").hexdigest()[:16]
     directory = getattr(settings, "INDIEWEB_WEBMENTION_PARSE_LOCK_DIR", None) or os.path.join(
@@ -219,14 +256,12 @@ def _parse_slot() -> Iterator[int]:
     directory_fd = None
     try:
         try:
+            deadline = time.monotonic() + wait
             os.makedirs(directory, mode=0o700, exist_ok=True)
             directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            info = os.fstat(directory_fd)
-            if info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise OSError("parse lock directory must be private and owned by this user")
-            deadline = time.monotonic() + wait
+            _check_parse_directory(directory, directory_fd)
             while slot is None:
-                slot = _claim_parse_slot(directory_fd, maximum, fcntl)
+                slot = _claim_parse_slot(directory, directory_fd, maximum, fcntl, deadline)
                 if slot is None:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
