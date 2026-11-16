@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -216,6 +217,10 @@ class StaticSiteMicropubHandler(MicropubContentHandler):
         raise NotImplementedError("Static-site undeletes require host-owned tombstone or version history")
 
 
+class StaticSitePublicationUncertainError(RuntimeError):
+    """The post was linked, but persistence/cleanup failed; inspect before retrying."""
+
+
 class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
     """Example handler that writes new Markdown files under one configured root."""
 
@@ -223,32 +228,66 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
         super().__init__(mapper=StaticSitePostMapper(public_base_url=public_base_url))
         self.content_root = Path(content_root).resolve()
 
-    def _target_path(self, document: StaticPostDocument) -> Path:
-        target = (self.content_root / document.path.as_posix()).resolve()
-        if not target.is_relative_to(self.content_root):
+    @contextlib.contextmanager
+    def _publication_directory(self, document: StaticPostDocument) -> Iterator[int]:
+        if document.path.is_absolute() or ".." in document.path.parts or not document.path.name:
             raise ValueError("Static-site document path escaped the configured content root")
-        return target
+        # Require POSIX no-follow/dir_fd support; never fall back to pathname writes.
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        with contextlib.ExitStack() as opened:
+            directory = os.open(self.content_root.anchor, flags)
+            opened.callback(os.close, directory)
+            directories = [directory]
+            for part in (*self.content_root.parts[1:], *document.path.parts[:-1]):
+                try:
+                    os.mkdir(part, dir_fd=directory)
+                except FileExistsError:
+                    pass
+                directory = os.open(part, flags, dir_fd=directory)
+                opened.callback(os.close, directory)
+                directories.append(directory)
+            yield directory
+            # Persist the final entry and stage removal before acknowledging.
+            # Include parents: this call or a concurrent writer may have just
+            # created them. Sync children before the entries naming them.
+            for directory in reversed(directories):
+                os.fsync(directory)
 
     def save_document(self, document: StaticPostDocument, user: AbstractBaseUser) -> None:
-        target = self._target_path(document)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # The hardlink publishes the stage's inode, so create the stage like a plain file
-        # (mode 0o666 filtered by the kernel through the umask) rather than with mkstemp's
-        # private 0600; the process-wide umask is never changed.
-        stage = target.parent / f".micropub-{secrets.token_hex(8)}.tmp"
-        fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
+        published = False
         try:
-            with os.fdopen(fd, "wb") as staged:
-                staged.write(document.render_markdown().encode("utf-8"))
-                staged.flush()
-                os.fsync(staged.fileno())
-            try:
-                os.link(stage, target)
-            except FileExistsError as exc:
-                raise FileExistsError(f"Static-site document already exists: {document.path.as_posix()}") from exc
-        finally:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(stage)
+            with self._publication_directory(document) as directory:
+                # The hardlink publishes the stage's inode. Use a plain-file mode
+                # filtered by the kernel through the umask; never change the umask.
+                stage = f".micropub-{secrets.token_hex(8)}.tmp"
+                fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=directory)
+                try:
+                    with os.fdopen(fd, "wb") as staged:
+                        staged.write(document.render_markdown().encode("utf-8"))
+                        staged.flush()
+                        os.fsync(staged.fileno())
+                    try:
+                        os.link(
+                            stage,
+                            document.path.name,
+                            src_dir_fd=directory,
+                            dst_dir_fd=directory,
+                            follow_symlinks=False,
+                        )
+                        published = True
+                    except FileExistsError as exc:
+                        raise FileExistsError(
+                            f"Static-site document already exists: {document.path.as_posix()}"
+                        ) from exc
+                finally:
+                    with contextlib.suppress(FileNotFoundError):
+                        os.unlink(stage, dir_fd=directory)
+        except OSError as exc:
+            if not published:
+                raise
+            raise StaticSitePublicationUncertainError(
+                f"Static-site publication is uncertain for {document.path.as_posix()}; inspect storage before retrying"
+            ) from exc
 
 
 class DjangoStorageStaticSiteHandler(StaticSiteMicropubHandler):

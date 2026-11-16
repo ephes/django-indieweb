@@ -181,16 +181,40 @@ policy instead of silently overwriting a post.
 It stages the complete UTF-8 document in the target directory, flushes and
 syncs it, then publishes with ``os.link``. This exclusive operation lets
 exactly one concurrent create win; a collision raises ``FileExistsError``.
-Readers of the final path see a complete document. A ``finally`` block removes
-only that call's temporary file on success, failure, or Python interruption.
-The example needs a local filesystem supporting hardlinks and a trusted content
-directory (no concurrent hostile directory/symlink changes). The stage is created
-exclusively with mode 0666 filtered through the process umask (typically giving
-0644), so the published post has the mode of a plain file create; the example
+Readers of the final path see a complete document. A ``finally`` block
+attempts to remove only that call's temporary file on success, failure, or
+Python interruption.
+The example requires POSIX directory descriptors, ``O_DIRECTORY``,
+``O_NOFOLLOW`` and a local filesystem supporting hardlinks. Mapper paths must
+be relative and contain no ``..`` segments. It resolves the host-configured
+root once, then opens that root and each post directory without following
+symlinks, and creates, links and removes stages relative to held directory
+descriptors.
+Replacing a named directory with a symlink cannot redirect publication or
+cleanup. A directory renamed after opening remains the publication directory;
+host code must control directory permissions and reconcile such moves before
+serving the returned URL. Unsupported platforms fail rather than falling back
+to pathname writes. The stage is created exclusively with mode 0666 filtered
+through the process umask (typically giving 0644), so the published post has
+the mode of a plain file create; the example
 never changes the umask. Adapt the umask to your build user.
-It does not promise directory durability after power loss. A process kill can
-leave a hidden ``.micropub-*.tmp`` file; inspect and remove abandoned stages
-only after ensuring the writer has stopped.
+After linking and removing the stage, the handler syncs the held publication
+directory and then each ancestor through the root of the filesystem, so new
+root/post directories are also durable before success. This guarantee requires
+a filesystem that supports and honors file and directory ``fsync``.
+
+A failure before the exclusive link creates no final post and may be
+retried after fixing storage (an existing-post collision still requires the
+host's slug policy). If directory syncing or stage cleanup fails after the
+link, ``StaticSitePublicationUncertainError`` retains the published post and
+identifies its relative path; it is an uncertain outcome, not a safe automatic
+retry. Stop the writer, inspect the post and any ``.micropub-*.tmp`` stage,
+reconcile it with the request, repair storage and sync the directory chain
+before deciding whether to acknowledge or retry. A process kill can likewise
+leave a complete post or hidden stage without an acknowledgement; inspect and
+remove abandoned stages only after ensuring the writer has stopped.
+The example does not roll back a published post, which readers may already
+have observed. Hosts must add their own idempotency/recovery policy.
 
 If your publication workflow stores source files through Django storage, pass
 an explicit storage instance instead of teaching django-indieweb a new storage

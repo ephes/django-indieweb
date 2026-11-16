@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* Sync the local static-site publication directory and its ancestors after
+  exclusive publication and stage cleanup, including newly created parents.
+  Preserve published posts and raise ``StaticSitePublicationUncertainError``
+  on subsequent filesystem errors; document inspection before retrying.
+* Anchor local static-site publication and stage cleanup to held no-follow
+  directory descriptors, preventing directory/symlink swaps from redirecting
+  writes; retain exclusive hardlink collision handling and plain-file modes.
 * Recheck parse-slot and lock-directory named identities after locking;
   refuse displaced or newly unsafe admission descriptors before starting a child.
 * Limit parser concurrency configuration to integers 1–64 (invalid values use

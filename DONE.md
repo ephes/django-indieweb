@@ -5757,3 +5757,44 @@ bundle.
   Each completed 3,542 tests with 68 conditional skips and passed the 88%
   coverage gate. Together with the migration and storage lanes above, all
   twelve default tox environments passed. PostgreSQL was not available.
+
+### Hold static-site publication directories (round 113 B26, slice 51)
+
+- `static-site-publication-held-directory-authority`: walk/create the root and
+  post parents with no-follow directory descriptors; stage, exclusively link
+  and clean up relative to the held publication directory. Directory swaps
+  cannot redirect writes or cleanup; ordinary slug collisions remain exclusive.
+- Regression proof: all five new directory-swap tests failed on unchanged
+  develop (root/post-parent swaps at link, successful/failed link cleanup,
+  symlink substitution during descent).
+- Validation: `uv run pytest tests/test_static_site_micropub_examples.py --no-cov -q`;
+  full bundle gates are recorded with slice 52 below.
+- Docs: static-site platform, directory authority and recovery contract in
+  `docs/micropub.rst`; release notes in `docs/changelog.rst` Unreleased.
+  Backlog synchronized; no version or schema change.
+
+### Persist static-site publication directories (round 113 B26, slice 52)
+
+- `static-site-publication-directory-durability`: after file fsync, exclusive
+  link and stage removal, fsync the held publication directory and all parents
+  in child-to-parent order, covering newly created roots/post directories.
+  Post-link filesystem failures preserve the post and raise a distinct
+  `StaticSitePublicationUncertainError` with its path and inspection/retry advice.
+- Regression proof: four durability/cleanup cases failed before this fix.
+  The focused example suite now passes 27 tests, including safe pre-link retry,
+  post-link leaf/ancestor sync failures, cleanup failure, descriptor closure,
+  no-clobber retry and the existing synchronized two-writer collision test.
+- Docs: static-site durability/platform and uncertain-outcome recovery in
+  `docs/micropub.rst`; release notes in `docs/changelog.rst` Unreleased.
+  Backlog synchronized; no version or schema change.
+- Validation: `just check` (3,552 passed, 68 conditional skips, 94.53%
+  coverage against 88%; Ruff and MyPy passed);
+  `MYPYPATH=src uv run mypy examples/static_site_micropub.py`;
+  `uv run ruff format --check .`;
+  `PREK_HOME=/Users/jochen/workspaces/ws-cx-cx-r113-django-indieweb/.cache/prek uv run prek run --all-files`;
+  strict `uv run sphinx-build -W -b html docs docs/_build/html`.
+- Supported matrix: `uv run tox -p 2` passed all twelve default environments
+  (Python 3.11–3.14 / Django 5.2, Python 3.12–3.14 / Django 6.0 and 6.1,
+  real migrations and required file-SQLite storage regressions).
+  No required local gate was sandbox-blocked. PostgreSQL is opt-in and is
+  unrelated to these filesystem-only example changes.
