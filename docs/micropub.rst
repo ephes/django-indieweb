@@ -199,14 +199,19 @@ through the process umask (typically giving 0644), so the published post has
 the mode of a plain file create; the example
 never changes the umask. Adapt the umask to your build user.
 After linking and removing the stage, the handler syncs the held publication
-directory and then each readable ancestor through the root of the filesystem,
-so new root/post directories are also durable before success. The content root
-and its post directories must be readable by the writer. Ancestors above the
-content root may be traverse-only (for example a 0711 home directory); the
-handler descends through them with a search-only descriptor (``O_PATH`` or
-``O_SEARCH``) and cannot sync them, so create the content root ahead of time in
-that layout. This guarantee requires
-a filesystem that supports and honors file and directory ``fsync``.
+directory and each parent up to and including the content root, so new post
+directories are durable before success. Above the content root it syncs only
+the parents of directories this call created; other pre-existing ancestors,
+possibly on other mounts, are left alone. The content root and its post
+directories must be readable by the writer. Ancestors above the content root
+may be traverse-only (for example a 0711 home directory); the handler descends
+through them with a search-only descriptor (``O_PATH`` or ``O_SEARCH``) and
+cannot sync them. Provision the content root ahead of time when an ancestor is
+traverse-only or several writers may start concurrently: a root created by
+another writer is only durable once that writer has synced its parent. This
+guarantee requires a filesystem that supports and honors file and directory
+``fsync`` for the content root tree and the parents of root directories the
+handler creates.
 
 A failure before the exclusive link creates no final post and may be
 retried after fixing storage (an existing-post collision still requires the

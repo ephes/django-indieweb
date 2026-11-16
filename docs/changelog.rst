@@ -5,8 +5,9 @@ Changelog
 
 Unreleased
 ----------
-* Sync the local static-site publication directory and its ancestors after
-  exclusive publication and stage cleanup, including newly created parents.
+* Sync the local static-site publication directory and its parents through the
+  content root after exclusive publication and stage cleanup, plus the parents
+  of root directories the handler creates; leave other ancestors unsynced.
   Preserve published posts and raise ``StaticSitePublicationUncertainError``
   on subsequent filesystem errors; document inspection before retrying.
   Traverse-only ancestors above the content root are descended with a

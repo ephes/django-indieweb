@@ -1,3 +1,4 @@
+import errno
 import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
@@ -311,7 +312,7 @@ def test_local_publication_syncs_file_then_link_cleanup_and_all_directories(tmp_
         if is_directory:
             assert target.read_text() == document.render_markdown()
             assert not list(target.parent.glob(".micropub-*"))
-            synced_directories.append(fd)
+            synced_directories.append(os.fstat(fd).st_ino)
         sync(fd)
 
     def track_link(*args, **kwargs):
@@ -329,7 +330,14 @@ def test_local_publication_syncs_file_then_link_cleanup_and_all_directories(tmp_
     handler.save_document(document, DummyUser())
     assert events[:4] == ["file", "link", "unlink", "directory"]
     assert directories  # includes newly created root and nested post parents
-    assert synced_directories == list(reversed(directories))
+    # Leaf through the content root, then the parents of the created "new/site" (up to tmp_path).
+    expected, path = [], target.parent
+    while True:
+        expected.append(path.stat().st_ino)
+        if path == handler.content_root.parent.parent:
+            break
+        path = path.parent
+    assert synced_directories == expected
     for fd in directories:
         with pytest.raises(OSError):
             os.fstat(fd)
@@ -409,6 +417,27 @@ def test_local_publication_descends_through_traverse_only_ancestor(tmp_path, mon
     assert root.stat().st_ino in synced
     assert (root / document.path).parent.stat().st_ino in synced
     assert traverse_only.stat().st_ino not in synced
+
+
+def test_local_publication_leaves_preexisting_ancestors_above_root_unsynced(tmp_path, monkeypatch):
+    root = tmp_path / "site"
+    root.mkdir()
+    handler = LocalFilesystemStaticSiteHandler(content_root=root, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["mounted"], "content": ["Synthetic mounted post"]})
+    sync = os.fsync
+    synced = []
+
+    def refuse_ancestor_sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and os.fstat(fd).st_ino == handler.content_root.parent.stat().st_ino:
+            raise OSError(errno.EINVAL, "Synthetic unsupported directory fsync")
+        synced.append(os.fstat(fd).st_ino)
+        sync(fd)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", refuse_ancestor_sync)
+    handler.save_document(document, DummyUser())
+    assert (root / document.path).read_text() == document.render_markdown()
+    assert handler.content_root.stat().st_ino in synced
+    assert (root / document.path).parent.stat().st_ino in synced
 
 
 class FakeStorage:

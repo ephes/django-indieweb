@@ -241,34 +241,40 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
         root_depth = len(self.content_root.parts) - 1
         with contextlib.ExitStack() as opened:
 
-            def open_directory(path: str, *, ancestor: bool, dir_fd: int | None = None) -> int:
+            def open_directory(path: str, *, ancestor: bool, dir_fd: int | None = None) -> tuple[int, bool]:
                 try:
                     fd = os.open(path, flags, dir_fd=dir_fd)
+                    readable = True
                 except PermissionError:
                     if not ancestor or not search_flags:
                         raise
                     fd = os.open(path, search_flags | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-                    opened.callback(os.close, fd)
-                    return fd
+                    readable = False
                 opened.callback(os.close, fd)
-                directories.append(fd)
-                return fd
+                return fd, readable
 
-            directories: list[int] = []
-            directory = open_directory(self.content_root.anchor, ancestor=root_depth > 0)
+            directory, readable = open_directory(self.content_root.anchor, ancestor=root_depth > 0)
+            chain = [(directory, readable)]
+            # Sync the content root and everything below it (a concurrent writer may have
+            # just created a post directory), plus the parent of every directory this
+            # call created above the root. Leave other pre-existing ancestors alone.
+            sync_from = root_depth
             parts = (*self.content_root.parts[1:], *document.path.parts[:-1])
             for depth, part in enumerate(parts, start=1):
                 try:
                     os.mkdir(part, dir_fd=directory)
                 except FileExistsError:
                     pass
-                directory = open_directory(part, ancestor=depth < root_depth, dir_fd=directory)
+                else:
+                    sync_from = min(sync_from, depth - 1)
+                directory, readable = open_directory(part, ancestor=depth < root_depth, dir_fd=directory)
+                chain.append((directory, readable))
             yield directory
             # Persist the final entry and stage removal before acknowledging.
-            # Include readable parents: this call or a concurrent writer may have
-            # just created them. Sync children before the entries naming them.
-            for directory in reversed(directories):
-                os.fsync(directory)
+            # Sync children before the entries naming them.
+            for directory, readable in reversed(chain[sync_from:]):
+                if readable:
+                    os.fsync(directory)
 
     def save_document(self, document: StaticPostDocument, user: AbstractBaseUser) -> None:
         published = False

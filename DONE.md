@@ -5784,8 +5784,13 @@ bundle.
   example a 0711 home directory) are descended with a search-only descriptor
   (`O_PATH`/`O_SEARCH`) and left unsynced instead of failing every publication;
   two new traverse-only regressions failed before this follow-up.
+- Merge review follow-up: directory syncing is limited to the content root tree
+  and the parents of root directories the call created, so pre-existing
+  ancestors on other mounts (for example squashfs, which rejects directory
+  fsync) cannot turn every publication uncertain; one new ancestor regression
+  and the updated sync-order test failed before this follow-up.
 - Regression proof: four durability/cleanup cases failed before this fix.
-  The focused example suite passes 29 tests (with the merge review follow-up), including safe pre-link retry,
+  The focused example suite passes 30 tests (with the merge review follow-ups), including safe pre-link retry,
   post-link leaf/ancestor sync failures, cleanup failure, descriptor closure,
   no-clobber retry and the existing synchronized two-writer collision test.
 - Docs: static-site durability/platform and uncertain-outcome recovery in
