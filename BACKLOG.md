@@ -34,6 +34,8 @@ Round 107 bounded h-card extraction, Webmention display projections and parser
 admission authority/work ceilings (B39/B40)
 are recorded in `DONE.md`.
 
+Round 113 held-directory and durable static-site publication is recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.

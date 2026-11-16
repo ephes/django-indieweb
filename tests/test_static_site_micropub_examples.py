@@ -1,7 +1,9 @@
+import errno
 import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Barrier
 
 import pytest
@@ -226,6 +228,216 @@ def test_local_filesystem_handler_rejects_paths_outside_configured_root(tmp_path
         )
 
     assert not (tmp_path.parent / "outside").exists()
+
+
+@pytest.mark.parametrize("swap_root", [False, True])
+@pytest.mark.parametrize("link_fails", [False, True])
+def test_local_publication_and_cleanup_keep_held_directory(tmp_path, monkeypatch, swap_root, link_fails):
+    root = tmp_path / "site"
+    handler = LocalFilesystemStaticSiteHandler(content_root=root, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["held"], "content": ["Synthetic post"]})
+    outside = tmp_path / "outside"
+    outside_posts = outside / document.path.parent if swap_root else outside
+    outside_posts.mkdir(parents=True)
+    displaced = tmp_path / "displaced"
+    named = root if swap_root else root / document.path.parent
+    held_posts = displaced / document.path.parent if swap_root else displaced
+    link = os.link
+    outside_stage = None
+
+    def swap_then_link(source, target, **kwargs):
+        nonlocal outside_stage
+        named.rename(displaced)
+        named.symlink_to(outside, target_is_directory=True)
+        outside_stage = outside_posts / Path(source).name
+        outside_stage.write_text("Outside sentinel")
+        if link_fails:
+            raise OSError("Synthetic link failure")
+        return link(source, target, **kwargs)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.link", swap_then_link)
+    if link_fails:
+        with pytest.raises(OSError, match="Synthetic link failure"):
+            handler.save_document(document, DummyUser())
+    else:
+        handler.save_document(document, DummyUser())
+        assert (held_posts / document.path.name).read_text() == document.render_markdown()
+    assert outside_stage.read_text() == "Outside sentinel"
+    assert list(outside_posts.iterdir()) == [outside_stage]
+    assert not list(held_posts.glob(".micropub-*"))
+
+
+def test_local_publication_refuses_symlink_during_descent(tmp_path, monkeypatch):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path / "site", public_base_url="https://example.org/")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    open_file = os.open
+
+    def swap_before_open(path, flags, *args, **kwargs):
+        if path == "posts":
+            parent = handler.content_root / "content"
+            (parent / "posts").rmdir()
+            (parent / "posts").symlink_to(outside, target_is_directory=True)
+        return open_file(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.open", swap_before_open)
+    with pytest.raises(OSError):
+        handler.create_entry({"content": ["Synthetic post"]}, DummyUser())
+    assert list(outside.iterdir()) == []
+
+
+def test_local_publication_syncs_file_then_link_cleanup_and_all_directories(tmp_path, monkeypatch):
+    handler = LocalFilesystemStaticSiteHandler(
+        content_root=tmp_path / "new/site", public_base_url="https://example.org/"
+    )
+    document = handler.mapper.build_document({"mp-slug": ["durable"], "content": ["Synthetic durable post"]})
+    target = handler.content_root / document.path
+    events = []
+    directories = []
+    synced_directories = []
+    open_file, sync, link, unlink = os.open, os.fsync, os.link, os.unlink
+
+    # Search-only descriptors for traverse-only ancestors of tmp_path are never synced.
+    search_only = (getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0)) & ~os.O_DIRECTORY
+
+    def track_open(path, flags, *args, **kwargs):
+        fd = open_file(path, flags, *args, **kwargs)
+        if flags & os.O_DIRECTORY and not flags & search_only:
+            directories.append(fd)
+        return fd
+
+    def track_sync(fd):
+        is_directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+        events.append("directory" if is_directory else "file")
+        if is_directory:
+            assert target.read_text() == document.render_markdown()
+            assert not list(target.parent.glob(".micropub-*"))
+            synced_directories.append(os.fstat(fd).st_ino)
+        sync(fd)
+
+    def track_link(*args, **kwargs):
+        events.append("link")
+        return link(*args, **kwargs)
+
+    def track_unlink(*args, **kwargs):
+        events.append("unlink")
+        return unlink(*args, **kwargs)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.open", track_open)
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", track_sync)
+    monkeypatch.setattr("examples.static_site_micropub.os.link", track_link)
+    monkeypatch.setattr("examples.static_site_micropub.os.unlink", track_unlink)
+    handler.save_document(document, DummyUser())
+    assert events[:4] == ["file", "link", "unlink", "directory"]
+    assert directories  # includes newly created root and nested post parents
+    # Leaf through the content root, then the parents of the created "new/site" (up to tmp_path).
+    expected, path = [], target.parent
+    while True:
+        expected.append(path.stat().st_ino)
+        if path == handler.content_root.parent.parent:
+            break
+        path = path.parent
+    assert synced_directories == expected
+    for fd in directories:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+@pytest.mark.parametrize("failure", ["file", "leaf", "ancestor", "cleanup"])
+def test_local_publication_failure_distinguishes_safe_retry_and_uncertainty(tmp_path, monkeypatch, failure):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["uncertain"], "content": ["Synthetic retained post"]})
+    target = tmp_path / document.path
+    sync, unlink = os.fsync, os.unlink
+    synced_directories = []
+
+    def fail_sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            synced_directories.append(fd)
+            if failure == "leaf" or (failure == "ancestor" and len(synced_directories) == 2):
+                raise OSError("Synthetic directory sync failure")
+        elif failure == "file":
+            raise OSError("Synthetic file sync failure")
+        sync(fd)
+
+    def fail_cleanup(*args, **kwargs):
+        if failure == "cleanup":
+            raise OSError("Synthetic cleanup failure")
+        return unlink(*args, **kwargs)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", fail_sync)
+    monkeypatch.setattr("examples.static_site_micropub.os.unlink", fail_cleanup)
+    if failure == "file":
+        with pytest.raises(OSError, match="Synthetic file sync failure"):
+            handler.save_document(document, DummyUser())
+        assert not target.exists()
+        # This failure is safe to retry once storage is healthy.
+        monkeypatch.setattr("examples.static_site_micropub.os.fsync", sync)
+        handler.save_document(document, DummyUser())
+    else:
+        with pytest.raises(RuntimeError, match="publication.*uncertain.*inspect.*retry") as caught:
+            handler.save_document(document, DummyUser())
+        assert isinstance(caught.value.__cause__, OSError)
+        assert document.path.as_posix() in str(caught.value)
+        assert target.read_text() == document.render_markdown()
+        monkeypatch.setattr("examples.static_site_micropub.os.fsync", sync)
+        monkeypatch.setattr("examples.static_site_micropub.os.unlink", unlink)
+        with pytest.raises(FileExistsError):
+            handler.save_document(document, DummyUser())
+    assert target.read_text() == document.render_markdown()
+    stages = list(target.parent.glob(".micropub-*"))
+    assert len(stages) == (1 if failure == "cleanup" else 0)
+    for fd in synced_directories:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX permissions enforced for the user")
+@pytest.mark.parametrize("root_exists", [True, False])
+def test_local_publication_descends_through_traverse_only_ancestor(tmp_path, monkeypatch, root_exists):
+    traverse_only = tmp_path / "home"
+    root = traverse_only / "site"
+    root.mkdir(parents=True) if root_exists else traverse_only.mkdir()
+    handler = LocalFilesystemStaticSiteHandler(content_root=root, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["traverse"], "content": ["Synthetic traverse post"]})
+    sync = os.fsync
+    synced = []
+
+    def track_sync(fd):
+        synced.append(os.fstat(fd).st_ino)
+        sync(fd)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", track_sync)
+    traverse_only.chmod(0o311)
+    try:
+        handler.save_document(document, DummyUser())
+    finally:
+        traverse_only.chmod(0o755)
+    assert (root / document.path).read_text() == document.render_markdown()
+    assert root.stat().st_ino in synced
+    assert (root / document.path).parent.stat().st_ino in synced
+    assert traverse_only.stat().st_ino not in synced
+
+
+def test_local_publication_leaves_preexisting_ancestors_above_root_unsynced(tmp_path, monkeypatch):
+    root = tmp_path / "site"
+    root.mkdir()
+    handler = LocalFilesystemStaticSiteHandler(content_root=root, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"mp-slug": ["mounted"], "content": ["Synthetic mounted post"]})
+    sync = os.fsync
+    synced = []
+
+    def refuse_ancestor_sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and os.fstat(fd).st_ino == handler.content_root.parent.stat().st_ino:
+            raise OSError(errno.EINVAL, "Synthetic unsupported directory fsync")
+        synced.append(os.fstat(fd).st_ino)
+        sync(fd)
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", refuse_ancestor_sync)
+    handler.save_document(document, DummyUser())
+    assert (root / document.path).read_text() == document.render_markdown()
+    assert handler.content_root.stat().st_ino in synced
+    assert (root / document.path).parent.stat().st_ino in synced
 
 
 class FakeStorage:
