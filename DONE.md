@@ -5785,7 +5785,7 @@ bundle.
   (`O_PATH`/`O_SEARCH`) and left unsynced instead of failing every publication;
   two new traverse-only regressions failed before this follow-up.
 - Regression proof: four durability/cleanup cases failed before this fix.
-  The focused example suite now passes 27 tests, including safe pre-link retry,
+  The focused example suite passes 29 tests (with the merge review follow-up), including safe pre-link retry,
   post-link leaf/ancestor sync failures, cleanup failure, descriptor closure,
   no-clobber retry and the existing synchronized two-writer collision test.
 - Docs: static-site durability/platform and uncertain-outcome recovery in

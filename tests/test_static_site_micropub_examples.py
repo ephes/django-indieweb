@@ -296,9 +296,12 @@ def test_local_publication_syncs_file_then_link_cleanup_and_all_directories(tmp_
     synced_directories = []
     open_file, sync, link, unlink = os.open, os.fsync, os.link, os.unlink
 
+    # Search-only descriptors for traverse-only ancestors of tmp_path are never synced.
+    search_only = (getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0)) & ~os.O_DIRECTORY
+
     def track_open(path, flags, *args, **kwargs):
         fd = open_file(path, flags, *args, **kwargs)
-        if flags & os.O_DIRECTORY:
+        if flags & os.O_DIRECTORY and not flags & search_only:
             directories.append(fd)
         return fd
 
