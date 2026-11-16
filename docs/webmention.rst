@@ -400,9 +400,10 @@ worker processes that cannot use ``multiprocessing``. Set
 ``INDIEWEB_WEBMENTION_PARSE_PYTHON`` if ``sys.executable`` is not a Python
 interpreter in your deployment.
 
-This isolation covers documents fetched while *receiving* a Webmention.
-``indieweb.h_card.parse_h_card()`` and the private helpers
-``WebmentionProcessor._verify_target_link()`` and
+This isolation covers documents fetched while *receiving* a Webmention and
+HTML passed to ``indieweb.h_card.parse_h_card()``. H-card extraction shares
+these limits and admission slots; refusal raises ``invalid_h_card`` validation
+errors. The private helpers ``WebmentionProcessor._verify_target_link()`` and
 ``_content_links_to_target()`` parse in the calling process; use them only for
 HTML you trust. Stored ``content_html`` is sanitized again when it is
 displayed; that input is bounded by ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES``.
@@ -993,7 +994,7 @@ checks, and spam classification.
 For bulk rendering or moderation queries, prefer filtering on both child and
 parent state, for example ``WebmentionNestedResponse.objects.filter(status="verified",
 webmention__status="verified").select_related("webmention")``. The bundled
-``show_webmentions`` path loads verified parents and children in one joined
+``show_webmentions`` path loads verified parents and children in one ``UNION ALL``
 statement so templates avoid checking parent status one child at a time.
 
 Child spam classification does not call the configured parent
@@ -1687,9 +1688,12 @@ instances or ingestion payloads. Supply only the current page's target URLs.
 ``show_webmentions`` defers parent ``spam_check_result``, ``status_token``,
 ``vouch_url``, ``verified_at``, ``vouch_verified_at`` and ``last_received_at``,
 and child ``parsed_h_entry`` and ``content_digest``. Bundled templates use only
-loaded presentation fields and render with one joined query, including with a
-type filter. All verified direct-source identities for the exact target share
-that statement snapshot with parents and children, so a concurrent moderation
+loaded presentation fields and render with one ``UNION ALL`` query, including
+with a type filter. Separate parent and child projections transfer each large
+parent body once, rather than once per child. The result is consumed in chunks
+of 100 without a QuerySet result cache; the final model lists still scale with
+the displayed parents and children. All verified direct-source identities for
+the exact target share that statement snapshot with parents and children, so a concurrent moderation
 commit cannot mix generations during duplicate suppression. SQL equality only
 selects candidates: URL, status and requested mention-type strings are compared
 exactly in Python before display preparation, even with case-insensitive database

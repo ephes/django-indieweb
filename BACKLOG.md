@@ -30,6 +30,9 @@ are recorded in `DONE.md`.
 Round 105 bounded Webmention command input and private command diagnostics
 are recorded in `DONE.md`.
 
+Round 107 bounded h-card extraction and Webmention display projections (B39)
+are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.

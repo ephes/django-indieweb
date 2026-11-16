@@ -5,6 +5,12 @@ Changelog
 
 Unreleased
 ----------
+* Extract HTML h-cards through the shared resource-limited parse worker and
+  admission slots; worker refusal becomes a value-free ``invalid_h_card``
+  validation error before profile data can be replaced.
+* Render Webmention parents and children with a streamed ``UNION ALL``
+  projection: each parent body crosses the database boundary once, retaining
+  one-statement moderation consistency, exact filtering and child ordering.
 * Bound ``send_webmentions --content`` and UTF-8 stdin before parsing, using
   the fetch byte limit (always finite for command input) and the shared source
   deadline, including stalled pipes. Reject oversized, invalid or late input

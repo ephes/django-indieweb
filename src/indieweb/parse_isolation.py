@@ -1,6 +1,6 @@
-"""Run the analysis of fetched Webmention HTML in a resource-limited child process.
+"""Run the analysis of Webmention and h-card HTML in a resource-limited child process.
 
-The receiver never builds a tree from fetched HTML in its own process. Each
+The caller never builds a tree from this HTML in its own process. Each
 analysis runs :mod:`indieweb.webmention_parse_worker` in a short-lived child
 that limits its own memory and CPU time; this module adds the wall-clock
 timeout and the cap on the size of the result. Whatever goes wrong in the child

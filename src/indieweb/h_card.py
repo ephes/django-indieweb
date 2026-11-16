@@ -2,8 +2,9 @@
 
 from typing import Any
 
-import mf2py
 from django.core.exceptions import ValidationError
+
+from . import parse_isolation
 
 H_CARD_MAX_DEPTH = 32
 H_CARD_MAX_NODES = 10_000
@@ -84,18 +85,16 @@ def normalize_property_names(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_h_card(html: str, url: str = "") -> dict[str, Any]:
-    """Admit raw HTML bytes before parsing and applying the property budgets."""
+    """Extract an h-card in the bounded worker, then admit and normalize properties."""
     _text_byte_size(html, H_CARD_MAX_HTML_BYTES)
-    parsed = mf2py.parse(doc=html, url=url)
-
-    # Find first h-card
-    for item in parsed.get("items", []):
-        if "h-card" in item.get("type", []):
-            properties = item.get("properties", {})
-            # Normalize property names for Django
-            return normalize_property_names(dict(properties))
-
-    return {}
+    try:
+        result = parse_isolation.run_parse_worker({"operation": "hcard", "html": html, "base_url": url})
+    except parse_isolation.WebmentionSourceRejected:
+        raise ValidationError("H-card parsing exceeded resource limits or failed", code="invalid_h_card") from None
+    properties = result.get("properties")
+    if not isinstance(properties, dict):
+        raise ValidationError("Invalid h-card parser result", code="invalid_h_card")
+    return normalize_property_names(properties)
 
 
 def validate_h_card(h_card: dict[str, Any]) -> bool:

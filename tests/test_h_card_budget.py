@@ -1,5 +1,6 @@
 """Normalization work is bounded for model input and bypass-written legacy rows."""
 
+import mf2py
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -65,7 +66,7 @@ def test_legacy_oversized_card_renders_empty(data):
 
 def test_parser_budget_applies_to_extracted_properties(monkeypatch):
     monkeypatch.setattr(
-        "indieweb.h_card.mf2py.parse",
+        "indieweb.webmention_parse_worker.mf2py.parse",
         lambda **kwargs: {"items": [{"type": ["h-card"], "properties": nested_card(100)}]},
     )
     with pytest.raises(ValidationError) as caught:
@@ -126,7 +127,7 @@ def test_oversized_html_is_refused_before_parser(monkeypatch):
     def unexpected_parse(**kwargs):
         pytest.fail("Oversized HTML reached mf2py")
 
-    monkeypatch.setattr("indieweb.h_card.mf2py.parse", unexpected_parse)
+    monkeypatch.setattr("indieweb.webmention_parse_worker.mf2py.parse", unexpected_parse)
     with pytest.raises(ValidationError) as caught:
         parse_h_card("<div class='h-card'>" + "é" * (2 * 1024 * 1024) + "</div>")
     assert caught.value.code == "invalid_h_card"
@@ -161,7 +162,7 @@ def test_html_byte_budget_counts_utf8_before_parser(monkeypatch):
         parsed.append(kwargs["doc"])
         return {"items": []}
 
-    monkeypatch.setattr(h_card_module.mf2py, "parse", parse)
+    monkeypatch.setattr(mf2py, "parse", parse)
     assert parse_h_card("é" * 8) == {}
     with pytest.raises(ValidationError) as caught:
         parse_h_card("é" * 9)

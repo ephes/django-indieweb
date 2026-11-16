@@ -5694,3 +5694,32 @@ bundle.
   `uv run sphinx-build -W -b html docs docs/_build/html` passed.
   No required local gate was sandbox-blocked. Review and merge remain with
   the external reviewer; no Claude CLI, review agent or GitHub Actions run.
+
+## 2026-11-16
+
+### Bound parser and display memory (round 107 B39)
+
+- `hcard-parser-resource-isolation`: extract HTML h-cards in the existing
+  bounded child protocol and share Webmention admission slots. Translate worker
+  refusal to value-free `invalid_h_card`; preserve first-card selection,
+  relative URLs, normalization and existing property admission. Six new tests
+  failed before the fix; the focused h-card suite passes 102 cases, including
+  a real hanging/expanding child and unchanged synthetic stored profile data.
+- `webmention-display-join-amplification-removal`: stream a standard ORM
+  `UNION ALL` of parent/child projections. Transfer each parent body once,
+  preserve one-statement moderation consistency, exact-string admission,
+  ordering, deferred ingestion fields and duplicate suppression. The pre-fix
+  transfer regression observed 40 copies for 40 children; it now observes one.
+- Validation: `just check` (3,525 passed, 68 skipped, 94.52% coverage);
+  `uv run tox -e py313-django52-migrations,storage-sqlite` (both passed;
+  required file-SQLite moderation snapshot races included);
+  `PREK_HOME=/Users/jochen/workspaces/ws-cx-cx-r107-django-indieweb/.cache/prek uv run prek run --all-files`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+- PostgreSQL blocked: `INDIEWEB_TEST_POSTGRES_PORT=55427 uv run tox -e storage-postgres`
+  cannot connect to the disposable server. Both plain `initdb` and explicit
+  mmap initialization failed at `shmget` with exhausted shared memory IDs
+  (`No space left on device`). The outside clerk must rerun this lane.
+- Docs: h-card and Webmention resource/display contracts and development
+  test commands updated; Unreleased changelog and backlog synchronized;
+  no schema change or version bump. Existing storage lanes include the new
+  display transfer/query regressions; no new matrix entries or workflows.
