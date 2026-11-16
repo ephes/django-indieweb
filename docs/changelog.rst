@@ -5,6 +5,13 @@ Changelog
 
 Unreleased
 ----------
+* Honor empty ``WebSubSubscription.save(update_fields=...)`` as a no-op before
+  passive key rotation, preserving in-memory ciphertext and stored timestamps.
+  Real partial saves continue to migrate active and pending secrets.
+* Authenticate the ``fernet$`` prefix in migration 0021 before recognizing
+  ciphertext, preserving literal-prefix legacy secrets through upgrade and
+  rollback. Document explicit recovery for databases that already applied the
+  migration; retain fallback-key recognition and value-free rollback failures.
 * Reject Micropub action paths that decode to network-path references or
   malformed UTF-8 before invoking content handlers.
 * Publish local static-site example posts from fully written stages using an

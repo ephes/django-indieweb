@@ -677,11 +677,15 @@ Django's ``SECRET_KEY``. To rotate ``SECRET_KEY`` without re-subscribing every
 feed, list the previous value in ``SECRET_KEY_FALLBACKS``: WebSub secret
 decryption tries the primary key first and then each fallback in declaration
 order, mirroring how Django itself handles cookie signing and password hashing
-across rotations. New encryption always uses the primary key. Every save of a
+across rotations. New encryption always uses the primary key. Every real save of a
 ``WebSubSubscription`` row also passively re-encrypts a fallback-bound
 ciphertext under the primary, so subscriptions migrate to the new key on the
 next save — including renewals that omit ``secret`` and lease/state
-bookkeeping saves that go through ``update_fields``. Keep the old value in
+bookkeeping saves that go through nonempty ``update_fields``. An explicitly
+empty ``update_fields`` (list, tuple or set) is a no-op: it neither changes
+in-memory ciphertext nor writes secrets or ``modified``. Such calls do not
+advance key rotation. The locked delivery-diagnostic path also does not rotate
+secrets. Keep the old value in
 ``SECRET_KEY_FALLBACKS`` until every active subscription has been saved at
 least once under the new primary (any successful renewal or callback
 verification triggers a save); once removed, ciphertexts still bound to the
@@ -690,6 +694,24 @@ old key can no longer be decrypted. The reverse
 fallback. If any nonempty encrypted secret (including a pending secret) cannot
 be recovered, rollback raises a value-free error before narrowing the columns
 and leaves stored values unchanged. Restore the required keys before retrying.
+
+Migration ``0021`` authenticates values starting with ``fernet$`` using the
+primary and configured fallback keys before recognizing them as existing
+ciphertext. A legacy shared secret that merely starts with this prefix is
+encrypted in full, including the prefix; rollback restores its exact text.
+Empty active and pending secrets remain empty. Configure all required fallback
+keys before running or retrying this migration so genuine ciphertext can be
+recognized.
+
+This correction does not rerun migration ``0021`` for databases that already
+applied it. If an earlier migration left a known literal-prefix secret
+unreadable, recover the original value from a trusted source and explicitly
+stage it through the subscription workflow (``request_websub_subscription``
+with ``secret=...``), then complete hub verification. The existing lease uses
+its old active secret until confirmation. If the original is unavailable,
+subscribe with a new shared secret. Do not strip the prefix or reinterpret
+unreadable stored ciphertext as plaintext: it may instead need a missing key.
+No automatic rewrite of already migrated rows is performed.
 
 django-indieweb does not auto-discover feeds, auto-subscribe to arbitrary
 topics, renew leases in the background, parse delivered feeds, create calendar

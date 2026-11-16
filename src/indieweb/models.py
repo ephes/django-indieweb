@@ -669,6 +669,10 @@ class WebSubSubscription(models.Model):
         return f"WebSub {self.state}: {self.topic_url} via {self.hub_url}"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
+        # Django treats an explicitly empty field selection as a no-op,
+        # including in-memory passive secret rotation.
+        if kwargs.get("update_fields") is not None and not kwargs["update_fields"]:
+            return
         secret_changed = False
         pending_secret_changed = False
         if self.secret:
@@ -724,14 +728,14 @@ class WebSubSubscription(models.Model):
         Fernet decrypt and returns the input unchanged. Only when the
         primary key fails (i.e. a fallback was needed) do we round-trip
         through the multi-fernet to recover the plaintext and re-encrypt
-        under the primary.
+        under the primary. Explicitly empty ``update_fields`` skips this work.
 
         Without this, a renewal that omits ``secret`` (the common case for
         long-lived subscriptions) would never call :meth:`set_secret` and
         the row would remain readable only with the fallback key. Removing
         the fallback after subscriptions had been saved would then break
         HMAC verification for those rows. With this helper in place every
-        successful save migrates the row, so the documented operator story
+        successful nonempty save migrates the row, so the documented operator story
         ("keep the old key in ``SECRET_KEY_FALLBACKS`` until every active
         subscription has been saved at least once under the new
         primary") becomes accurate.
@@ -760,12 +764,12 @@ class WebSubSubscription(models.Model):
         Decryption tries the primary key first and then each entry in
         ``SECRET_KEY_FALLBACKS``, so subscriptions encrypted before a
         ``SECRET_KEY`` rotation continue to verify deliveries. New
-        encryption always uses the primary key. Any save of a
+        encryption always uses the primary key. Any real save of a
         ``WebSubSubscription`` row passively re-encrypts a fallback-bound
         ciphertext under the primary key (see
         :meth:`_maybe_reencrypt_under_primary`), so subscriptions migrate
         to the new key on the next save regardless of whether the
-        renewal supplied a fresh ``secret``.
+        renewal supplied a fresh ``secret``. Empty ``update_fields`` is a no-op.
         """
         if not stored_secret:
             return ""
