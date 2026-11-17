@@ -161,6 +161,10 @@ Run tests once with Django migrations enabled using tox::
 
     tox -e py313-django52-migrations
 
+The local ``client.py`` authentication smoke-test helper and its credential
+origin/redirect restrictions are documented in ``docs/development.rst``.
+Use synthetic credentials against a trusted development server.
+
 Contributing
 ------------
 

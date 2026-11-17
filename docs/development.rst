@@ -19,6 +19,34 @@ Clone the repository and install dependencies using uv::
 
 This will create a virtual environment and install all dependencies including development tools.
 
+Debug authentication helper
+---------------------------
+
+``client.py`` walks a local development server's login, IndieAuth and Micropub
+flow using ``BASE_URL``, ``USERNAME`` and ``PASSWORD`` from the environment::
+
+    BASE_URL=http://localhost:8000/ USERNAME=synthetic PASSWORD=synthetic uv run python client.py
+
+Use only a trusted development server and synthetic credentials. ``BASE_URL``
+must be an absolute HTTP(S) URL without userinfo, query, fragment, whitespace
+or backslashes. HTTP is intended for local development; use HTTPS whenever
+credentials cross a network you do not control. Scheme, hostname and effective
+port define the credential origin (an omitted port equals 80/443).
+
+Every request stays on that origin. Credential-bearing POSTs never follow
+redirects. Login/logout may finish with a same-origin 302/303 without fetching
+the destination; other POST redirects, including 307/308, stop the flow.
+GET navigation validates each redirect before sending the next request and
+stops redirect loops. A different host, port or scheme is refused, including
+an HTTP-to-HTTPS redirect: configure the final trusted URL directly instead.
+On refusal, correct the server route or base URL and start a deliberate new
+flow; no later credential request is made automatically.
+
+The helper prints statuses, parameter names and short one-way fingerprints,
+never cookies, passwords, authorization codes, access tokens or response bodies.
+Redirect/configuration errors use fixed diagnostics without destination values.
+This helper is a smoke-test aid, not a production client or grant-policy example.
+
 Running Tests
 -------------
 

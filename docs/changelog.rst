@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Confine the debug client's credentials to a validated HTTP(S) origin.
+  Disable POST redirects, accept only same-origin login/logout 302/303
+  completion, and validate every GET redirect before navigation. Refused
+  redirects stop the flow with value-free diagnostics.
 * Check nested-response parent verification on the child's database. Keep lazy,
   joined and prefetched display checks equivalent, ignoring same-PK parent
   state from another database and refusing missing parents.

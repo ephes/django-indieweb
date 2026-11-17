@@ -5924,3 +5924,23 @@ bundle.
   real migrations and required file-SQLite storage regressions).
   No required local gate was sandbox-blocked. PostgreSQL is opt-in and is
   unrelated to these filesystem-only example changes.
+
+## 2026-11-17
+
+### Confine debug-client credentials (round 131 B06, slice 12)
+
+- Validate the configured HTTP(S) origin and reject userinfo, query/fragment,
+  malformed ports and ambiguous URL characters. Compare scheme, hostname and
+  effective port before each request and GET redirect. Never follow POST
+  redirects; same-origin login/logout 302/303 completion needs no navigation.
+- Regression proof: 46 cases failed on unchanged develop. The expanded
+  `uv run pytest tests/test_debug_client.py --no-cov -q` passes 54 tests,
+  using real Requests redirect machinery over a socket-free adapter.
+  Cross-host/port/scheme 307/308 cannot replay passwords, codes or tokens;
+  refused login stops the flow and fixed diagnostics contain no canaries.
+- Validation: Ruff, mypy, configured hooks (private `PREK_HOME`) and strict
+  `uv run sphinx-build -W -b html docs docs/_build/html` passed. Shared full
+  suite/matrix results are recorded with the following slice.
+- Docs: debug-helper usage/security in `docs/development.rst`, README pointer,
+  `docs/changelog.rst` Unreleased and BACKLOG completion pointer. No version
+  bump, schema change or owner decision; external review/integration follows.

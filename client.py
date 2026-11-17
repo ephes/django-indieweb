@@ -20,24 +20,88 @@ def fingerprint(secret):
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:12]
 
 
+def credential_origin(url: str) -> tuple[str, str, int]:
+    """Admit a plain HTTP(S) URL and compare scheme, host and effective port."""
+    try:
+        parsed = urlparse(url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or "\\" in url
+            or "%" in parsed.netloc
+            or any(ord(char) <= 32 or ord(char) == 127 for char in url)
+        ):
+            raise ValueError
+        host = parsed.hostname.encode("idna").decode("ascii").lower()
+        port = parsed.port if parsed.port is not None else {"http": 80, "https": 443}[parsed.scheme]
+        return parsed.scheme, host, port
+    except (ValueError, UnicodeError):
+        raise ValueError("Invalid debug client base URL") from None
+
+
 class Client:
     def __init__(self, base_url, username, password):
+        self.origin = credential_origin(base_url)
+        if urlparse(base_url).query or urlparse(base_url).fragment:
+            raise ValueError("Invalid debug client base URL")
         self.base_url = base_url
         self.username = username
         self.password = password
         self.session = requests.Session()
 
+    def _redirect_target(self, response: requests.Response, url: str) -> str:
+        try:
+            target = urljoin(url, response.headers.get("Location", ""))
+            if not response.headers.get("Location") or credential_origin(target) != self.origin:
+                raise ValueError
+        except ValueError:
+            raise ValueError("Debug client refused redirect") from None
+        return target
+
+    def _get(self, url: str) -> requests.Response:
+        # Even GET redirects can carry the session cookie or an auth code.
+        for _ in range(31):
+            if credential_origin(url) != self.origin:
+                raise ValueError("Debug client refused redirect")
+            response = self.session.get(url, allow_redirects=False)
+            if not 300 <= response.status_code < 400:
+                return response
+            try:
+                url = self._redirect_target(response, url)
+            finally:
+                response.close()
+        raise ValueError("Debug client refused redirect")
+
+    def _post(
+        self, url: str, payload: dict[str, str], *, navigation: bool = False, headers: dict[str, str] | None = None
+    ) -> requests.Response:
+        if credential_origin(url) != self.origin:
+            raise ValueError("Debug client refused redirect")
+        response = self.session.post(url, payload, allow_redirects=False, headers=headers)
+        if 300 <= response.status_code < 400:
+            try:
+                self._redirect_target(response, url)
+                # Login/logout commonly finish with a same-origin 302/303.
+                # Their destination need not be fetched; never replay a POST.
+                if not navigation or response.status_code not in {302, 303}:
+                    raise ValueError("Debug client refused redirect")
+            finally:
+                response.close()
+        return response
+
     @property
     def csrftoken(self):
         if not hasattr(self, "_csrftoken"):
             login_url = urljoin(self.base_url, "accounts/login/")
-            r = self.session.get(login_url)
+            r = self._get(login_url)
             print("login page:", r.status_code)
             self._csrftoken = r.cookies["csrftoken"]
         return self._csrftoken
 
     def get_csrftoken(self, url):
-        r = self.session.get(url)
+        r = self._get(url)
         return r.cookies["csrftoken"]
 
     def login(self):
@@ -47,7 +111,7 @@ class Client:
             "password": self.password,
             "csrfmiddlewaretoken": self.csrftoken,
         }
-        r = self.session.post(login_url, payload, headers=dict(Referer=login_url))
+        r = self._post(login_url, payload, navigation=True, headers=dict(Referer=login_url))
         print("login:", r.status_code)
         # Login response HTML is intentionally not persisted: writing it to a
         # fixed filesystem path was a debugging hack that would clobber files
@@ -59,7 +123,7 @@ class Client:
         logout_url = urljoin(self.base_url, "accounts/logout/")
         csrftoken = self.get_csrftoken(logout_url)
         payload = {"csrfmiddlewaretoken": csrftoken}
-        r = self.session.post(logout_url, payload, headers=dict(Referer=logout_url))
+        r = self._post(logout_url, payload, navigation=True, headers=dict(Referer=logout_url))
         print("logout:", r.status_code)
 
     def get_auth(self):
@@ -71,7 +135,7 @@ class Client:
             "scope": "post",
         }
         auth_url = "{}?{}".format(urljoin(self.base_url, "indieweb/auth/"), urlencode(url_params))
-        r = self.session.get(auth_url, allow_redirects=True)
+        r = self._get(auth_url)
         data = parse_qs(urlparse(r.url).query)
         # The redirect query carries the authorization code: print names only.
         print("auth redirect:", r.status_code, "params:", sorted(data))
@@ -84,7 +148,7 @@ class Client:
             "client_id": "testclient",
             "redirect_uri": self.base_url,
         }
-        r = self.session.post(auth_url, payload)
+        r = self._post(auth_url, payload)
         data = parse_qs(unquote(r.content.decode("utf-8")))
         return data
 
@@ -98,7 +162,7 @@ class Client:
             "scope": "post",
             "code": auth_code,
         }
-        r = self.session.post(token_url, payload)
+        r = self._post(token_url, payload)
         print("token:", r.status_code)
         data = parse_qs(unquote(r.content.decode("utf-8")))
         return data["access_token"][0]
@@ -110,7 +174,7 @@ class Client:
             "h": "entry",
             "content": "blub bla",
         }
-        r = self.session.post(micropub_url, payload)
+        r = self._post(micropub_url, payload)
         print("micropub:", r.status_code)
 
 
