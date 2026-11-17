@@ -348,7 +348,10 @@ normalization (scheme, IDNA-encoded host, default-port collapsing). Entries
 with a trailing ``/`` are *prefix* entries — the candidate must share the
 entry's origin and its path must start with the entry's path. Entries without
 a trailing slash are *exact* entries — origin, path, and query string must all
-match. Fragments on either side are rejected. Invalid mapping values
+match. Paths are compared complete, including ``;`` path parameters
+(``/callback;other`` does not match ``/callback``), and candidates with
+``.``/``..`` segments, also as ``..;``, are rejected. Fragments on either side
+are rejected. Invalid mapping values
 (non-list/tuple, non-string entries) fail closed for that client.
 
 **Example:**

@@ -18,7 +18,7 @@ from email.message import Message
 from pathlib import PurePath
 from tempfile import SpooledTemporaryFile
 from typing import TYPE_CHECKING, Any, TypeVar, cast
-from urllib.parse import parse_qsl, unquote, urlparse, urlunparse
+from urllib.parse import parse_qsl, unquote, urlparse, urlsplit, urlunsplit
 from urllib.parse import urlencode as urllib_urlencode
 
 import filetype
@@ -1221,7 +1221,9 @@ def _path_has_dot_segments(raw_path: str) -> bool:
         # decoded result.
         return True
     for segment in candidate.split("/"):
-        if segment in (".", ".."):
+        # ``..;x`` is ``..`` to servers that strip path parameters before
+        # resolving dot segments, so only the part before ``;`` counts.
+        if segment.split(";", 1)[0] in (".", ".."):
             return True
     return False
 
@@ -1233,11 +1235,17 @@ def _redirect_uri_allowlist_match(allowlist_entry: str, candidate: str) -> bool:
     entry's origin and its path must start with the entry's path. Entries
     without a trailing slash are exact entries: origin, path, and query must
     match. Fragments on either side are rejected. Candidates whose path
-    carries any literal or percent-encoded ``.``/``..`` segments are rejected
-    so a prefix entry cannot be escaped via traversal.
+    carries any literal or percent-encoded ``.``/``..`` segments, including
+    ``..;`` with path parameters, are rejected so a prefix entry cannot be
+    escaped via traversal.
+
+    Paths are compared complete, including ``;`` path parameters
+    (``urlsplit``, not ``urlparse``, which moves the last segment's parameters
+    out of ``path``): ``/callback;other`` is a different resource from an
+    exact ``/callback`` entry.
     """
-    entry_parts = urlparse(allowlist_entry)
-    cand_parts = urlparse(candidate)
+    entry_parts = urlsplit(allowlist_entry)
+    cand_parts = urlsplit(candidate)
     if cand_parts.fragment or entry_parts.fragment:
         return False
     entry_origin = _origin_tuple(allowlist_entry)
@@ -1411,16 +1419,37 @@ def _me_binding_error(user: AbstractBaseUser, submitted_me: str) -> HttpResponse
     return None
 
 
+# Every key the authorization endpoint emits in an approval or denial
+# redirect, plus the OAuth error-response companions. Pre-existing instances
+# in a client's ``redirect_uri`` are dropped so each one the client reads
+# carries the server's authoritative value for this outcome only.
+AUTHORIZATION_RESPONSE_RESERVED_KEYS = frozenset(
+    {"code", "state", "me", "iss", "error", "error_description", "error_uri"}
+)
+
+
 def _append_redirect_params(redirect_uri: str, params: dict[str, str]) -> str:
-    """Append ``params`` to ``redirect_uri`` while preserving any existing query.
+    """Add ``params`` to ``redirect_uri`` while preserving the client's other query pairs.
 
     Naive string concatenation with ``?`` corrupts URLs that already have a
     query (the new pairs collapse into the last existing value). This parses,
-    merges, and re-encodes properly.
+    merges, and re-encodes properly. Existing pairs whose decoded key is an
+    authorization response key are removed first, so a callback never sees a
+    stale ``code``/``state``/``error`` beside (or instead of) the real one.
+    Unrelated pairs keep their order, blank values and duplicates.
+
+    ``urlsplit``/``urlunsplit`` keep the path byte-for-byte, including an
+    empty trailing ``;`` that ``urlparse``/``urlunparse`` would drop, so the
+    code goes to exactly the path the redirect policy validated.
     """
-    parsed = urlparse(redirect_uri)
-    merged = parse_qsl(parsed.query, keep_blank_values=True) + list(params.items())
-    return urlunparse(parsed._replace(query=urllib_urlencode(merged)))
+    parsed = urlsplit(redirect_uri)
+    kept = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in AUTHORIZATION_RESPONSE_RESERVED_KEYS
+    ]
+    merged = kept + list(params.items())
+    return urlunsplit(parsed._replace(query=urllib_urlencode(merged)))
 
 
 def _reverse_request_namespace(request: HttpRequest, name: str) -> str:
