@@ -160,7 +160,11 @@ The check has three layers, evaluated in this order:
    *prefix* entries: any candidate whose origin matches and whose path starts
    with the entry's path passes; the trailing slash is the path boundary.
    Entries without a trailing slash are *exact* entries: origin, path, and
-   query string must all match. Fragments on either side are rejected.
+   query string must all match. Fragments on either side are rejected. Paths
+   are compared complete, including ``;`` path parameters, so
+   ``/callback;other`` does not match an exact ``/callback`` entry. Candidates
+   with ``.``/``..`` segments (literal, percent-encoded, or followed by path
+   parameters such as ``..;``) are rejected.
 3. **Policy hook** (``INDIEWEB_REDIRECT_URI_VALIDATOR``). When set, the
    configured callable ``(client_id: str, redirect_uri: str) -> bool``
    short-circuits both the default rule and the allowlist. Import errors,
@@ -365,6 +369,14 @@ issuer. Denial redirects include ``error=access_denied`` and ``state`` only;
 the IndieAuth spec warns clients not to assume error responses originated from
 the intended authorization server.
 
+The response keys ``code``, ``state``, ``me``, ``iss``, ``error``,
+``error_description`` and ``error_uri`` are reserved in both approval and
+denial redirects: any pre-existing query pair in the client's ``redirect_uri``
+whose decoded key is one of them is removed before the server adds its own
+values, so the callback sees each emitted key exactly once and never a stale
+code beside an error. Other query pairs keep their order, blank values and
+duplicates.
+
 The authorization endpoint's profile-code verification POST and the token
 endpoint return JSON success bodies when the client explicitly prefers
 ``Accept: application/json``. Default requests and wildcard-only
@@ -551,7 +563,8 @@ Security Considerations
    significant. Omitted required values and mismatches return
    ``invalid_grant`` and consume the matched auth code. ``redirect_uri`` values
    that already contain a query (e.g. ``?next=/x``) are preserved when
-   ``code`` and ``state`` are appended.
+   ``code`` and ``state`` are appended; reserved response keys already in that
+   query are replaced, not duplicated.
 9. **Scope Issuance Semantics**: The authorization endpoint normalizes scope
    strings before showing them on the consent screen and before storing them on
    the ``Auth`` row. Normalization splits on whitespace, de-duplicates while
