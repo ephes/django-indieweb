@@ -22,8 +22,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   PostgreSQL could not start inside the sandbox (`shmget: Operation not
   permitted`). Attempted routed gate, blocked during DB setup:
   `DJANGO_SETTINGS_MODULE=tests.settings_postgres INDIEWEB_TEST_POSTGRES_PORT=55428 uv run pytest --migrations --no-cov tests/test_webmention_database_authority.py`.
-  The merge clerk must run it against disposable PostgreSQL to exercise the
-  real `pg_blocking_pids` row-lock oracle.
+  Merge validation outside the sandbox against disposable Docker
+  PostgreSQL 17: `INDIEWEB_TEST_POSTGRES_PORT=55428 uv run tox -e storage-postgres`
+  (611 passed, no skips) and the focused routed/nested/processor files on
+  PostgreSQL (256 passed, no skips), so the `pg_blocking_pids` row-lock oracle
+  ran and passed.
+- Merge review follow-up: `process_queued_webmention()` now loads the queued
+  row from the Webmention write database, so a lagging read replica cannot
+  hide it or pass an older stored Vouch URL. Regression
+  `test_queued_processing_loads_row_from_writer_not_read_replica` failed
+  (2 of 2) before the fix.
 - Docs: `docs/webmention.rst` receive routing/failure isolation and
   `docs/development.rst` gate recipe; `docs/changelog.rst` Unreleased and
   `BACKLOG.md` synchronized. No schema or version change.

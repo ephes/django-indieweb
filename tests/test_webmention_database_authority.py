@@ -13,7 +13,7 @@ from django.db import IntegrityError, connections
 from django.utils import timezone
 
 from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
-from indieweb.processors import WebmentionProcessor, _WebmentionOutcome
+from indieweb.processors import WebmentionProcessor, _WebmentionOutcome, process_queued_webmention
 
 SOURCE = "https://source.example/parent"
 TARGET = "https://target.example/post"
@@ -314,3 +314,25 @@ def test_receive_creates_new_parent_and_family_only_on_writer(routed_receive):
     assert WebmentionSourceSnapshot.objects.using("other").get(webmention_id=parent.pk).raw_source_html == NEW
     assert WebmentionNestedResponse.objects.using("other").filter(webmention_id=parent.pk).count() == 2
     assert state("default") == default_before
+
+
+@pytest.mark.parametrize("stale_read_row", [False, True])
+def test_queued_processing_loads_row_from_writer_not_read_replica(routed_receive, stale_read_row):
+    _processor, _current, _router = routed_receive
+    Webmention.objects.using("other").create(
+        pk=202, source_url=SOURCE + "/queued", target_url=TARGET, vouch_url="https://vouch.example/current"
+    )
+    if stale_read_row:
+        # A lagging read database still holds an older generation of the row.
+        Webmention.objects.using("default").create(
+            pk=202, source_url=SOURCE + "/stale", target_url=TARGET, vouch_url="https://vouch.example/stale"
+        )
+    calls = []
+
+    def capture(self, source_url, target_url, vouch_url=None):
+        calls.append((source_url, target_url, vouch_url))
+        return None
+
+    with patch.object(WebmentionProcessor, "process_webmention", capture):
+        process_queued_webmention(202)
+    assert calls == [(SOURCE + "/queued", TARGET, "https://vouch.example/current")]

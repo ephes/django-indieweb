@@ -915,8 +915,11 @@ Receive database routing
 The processor resolves the ``Webmention`` write database once before loading
 or creating the submitted pair. The parent lock, freshness check, Vouch and
 outcome saves, previous-snapshot lookup, child batches and snapshot writes all
-use that alias explicitly. Read-replica routing and later router changes cannot
-redirect part of the receive to another database. Hosts must keep the
+use that alias explicitly. ``process_queued_webmention()`` also loads the
+queued row, including its stored Vouch URL, from that write database, so a
+lagging read replica cannot hide the row or supply an older Vouch URL.
+Read-replica routing and later router changes cannot redirect part of the
+receive to another database. Hosts must keep the
 ``Webmention``, ``WebmentionNestedResponse`` and ``WebmentionSourceSnapshot``
 tables together and permit their model relations on that database.
 

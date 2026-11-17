@@ -1892,7 +1892,9 @@ def process_queued_webmention(webmention_id: int, *, client: httpx.Client | None
     safety semantics (intended for tests).
     """
     # Load by id first so worker integrations get an explicit DoesNotExist for missing queued rows.
-    webmention = Webmention.objects.get(pk=webmention_id)
+    # Read the writer, not a possibly lagging read replica: the processor pins
+    # the same alias, and a stale replica could hide the row or its Vouch URL.
+    webmention = Webmention.objects.using(router.db_for_write(Webmention)).get(pk=webmention_id)
     return WebmentionProcessor(client=client).process_webmention(
         webmention.source_url,
         webmention.target_url,
