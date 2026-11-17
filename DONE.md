@@ -5924,3 +5924,91 @@ bundle.
   real migrations and required file-SQLite storage regressions).
   No required local gate was sandbox-blocked. PostgreSQL is opt-in and is
   unrelated to these filesystem-only example changes.
+
+## 2026-11-17
+
+### Confine debug-client credentials (round 131 B06, slice 12)
+
+- Validate the configured HTTP(S) origin and reject userinfo, query/fragment,
+  malformed ports and ambiguous URL characters. Compare scheme, hostname and
+  effective port before each request and GET redirect. Never follow POST
+  redirects; same-origin login/logout 302/303 completion needs no navigation.
+- Regression proof: 46 cases failed on unchanged develop. The expanded
+  `uv run pytest tests/test_debug_client.py --no-cov -q` passes 54 tests,
+  using real Requests redirect machinery over a socket-free adapter.
+  Cross-host/port/scheme 307/308 cannot replay passwords, codes or tokens;
+  refused login stops the flow and fixed diagnostics contain no canaries.
+- Validation: Ruff, mypy, configured hooks (private `PREK_HOME`) and strict
+  `uv run sphinx-build -W -b html docs docs/_build/html` passed. Shared full
+  suite/matrix results are recorded with the following slice.
+- Docs: debug-helper usage/security in `docs/development.rst`, README pointer,
+  `docs/changelog.rst` Unreleased and BACKLOG completion pointer. No version
+  bump, schema change or owner decision; external review/integration follows.
+
+### Match the debug-client bearer wire contract (round 131 B06, slice 13)
+
+- Send the Micropub token as `Authorization: Bearer ...`, keeping it out of
+  form/content properties. Replace the incorrect form-field assertion and
+  route real Requests-prepared bytes/headers through Django middleware and
+  the real authentication/create view to an isolated host content handler.
+- Regression proof: six assertions failed before the header fix, including
+  the real endpoint returning 401 for the active create-scoped token. The
+  final `uv run pytest tests/test_debug_client.py --no-cov -q` passes 61 tests:
+  valid create reaches the handler with 201; missing/revoked credentials and
+  inactive owners receive 401, wrong scope 403. Stored properties and stdout
+  contain no credential; redirect confinement remains covered after the fix.
+- Also reproduced value-bearing errors in Requests' preparation of a disabled
+  POST redirect (307/308 with a malformed port). Catch transport/preparation
+  errors with fixed diagnostics and suppress their private exception context;
+  two additional regressions cover this boundary without a second request.
+- Shared validation: `just check` passed (Ruff, mypy; 3,863 tests passed,
+  77 conditional skips, 94.61% coverage against the 88% gate; 10 existing
+  SQLite ResourceWarnings). Configured `uv run prek run --all-files` with
+  workspace `PREK_HOME`, strict `uv run sphinx-build -W -b html docs
+  docs/_build/html`, `uv run python -m django check --settings=tests.settings`
+  and `uv run python -m django makemigrations --check --dry-run
+  --settings=tests.settings` passed.
+- Docs: bearer transport and regression command in `docs/development.rst`,
+  release notes in `docs/changelog.rst` Unreleased; BACKLOG synchronized.
+  No version bump, schema change or owner decision. Local branch only;
+  external cross-family review and integration remain with the merge clerk.
+- Supported matrix: all twelve existing environments passed across
+  `uv run tox -p 2` and the final `uv run tox -e py314-django61` retry.
+  The initial Python 3.14/Django 6.1 run collected an intermediate test
+  expectation while the final diagnostics regression was being refined;
+  its clean full rerun passed 3,863 tests with 77 conditional skips.
+  The other full Python/Django lanes and migrations lane passed 3,861 tests
+  with 77 skips; required file-SQLite storage passed 609 with two skips.
+  After the final diagnostics guard, all nine other Python/Django combinations
+  also passed all 61 helper tests using `uv run tox -p 2 -e
+  py311-django52,py312-django52,py313-django52,py314-django52,py312-django60,py313-django60,py314-django60,py312-django61,py313-django61
+  -x 'testenv.commands=pytest tests/test_debug_client.py --no-cov -q'`.
+- Parallel coverage files were temporarily isolated per environment;
+  `tox.ini` is unchanged in the delivered branch. The full retry used
+  `-x 'testenv.setenv+=COVERAGE_FILE=/Users/jochen/workspaces/ws-cx-cx-r131-django-indieweb/django-indieweb/.tox/py314-django61/.coverage'`.
+  Tool caches were private to the workspace where needed. No required local
+  gate was sandbox-blocked; optional PostgreSQL storage is unrelated to this
+  helper-only change. Check receipts are outside the clone in the private
+  coordination log directory. No review agent or remote mutation was run.
+
+### Keep netrc and proxy settings away from the debug client (round 131 B06, merge review)
+
+- Merge review found that Requests' default `trust_env` let a `~/.netrc` /
+  `NETRC` entry for the development host replace the Micropub Bearer header
+  with HTTP Basic auth and send the stored netrc password. The helper session
+  now sets `trust_env = False`, which also ignores proxy environment
+  variables, and keeps HTTPS verification on while still honoring an explicit
+  private CA from `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`.
+- Regression proof: `test_netrc_cannot_replace_bearer_or_leak_its_password`
+  failed without the `trust_env` line; it also asserts that no proxy reaches
+  the transport. Two further tests cover the CA-bundle variables and the
+  verification default. `uv run pytest tests/test_debug_client.py --no-cov -q`
+  now passes 65 tests.
+- Validation after the fix: `just check` passed (3,867 tests, 77 conditional
+  skips, 94.60% coverage); `uv run prek run --all-files` and strict
+  `uv run sphinx-build -W -b html docs ...` passed; the helper tests passed in
+  all ten Python/Django tox environments with
+  `-x 'testenv.commands=pytest tests/test_debug_client.py --no-cov -q'`.
+  The earlier slice 12/13 counts (54/61 helper tests, 3,863 suite tests)
+  describe the state before this follow-up.
+- Docs: `docs/development.rst` and `docs/changelog.rst` Unreleased.

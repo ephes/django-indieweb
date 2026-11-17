@@ -41,6 +41,9 @@ are recorded in `DONE.md`.
 
 Round 128 Webmention receive and nested-display database authority is recorded in `DONE.md`.
 
+Round 131 debug-client credential origin confinement and the Micropub bearer
+wire contract are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.
