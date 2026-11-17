@@ -1426,18 +1426,26 @@ are created per operation, so store content outside the instance. The bundled
 and does not preserve content between requests. Configured adapters continue
 to own persistence and authorization.
 
-Current mutation authority and failed media saves
-=================================================
+Current bearer authority and failed media saves
+===============================================
 
 After URL policy and handler construction, every entry mutation and media
 removal reloads the exact bearer credential on the write database. Revoked,
 rotated, expired, reassigned or inactive-owner credentials fail with 401;
 removed scopes fail with 403. Client policy is evaluated again before this
-read. Direct media uploads also refresh authority before storage. Source
-queries keep their existing read policy.
+read. Direct media uploads also refresh authority before storage.
+
+Entry and media source queries perform the same writer-side refresh immediately
+before calling ``get_entry``, ``list_entries``, ``get_media`` or ``list_media``,
+after handler construction, URL policy (where applicable) and client policy.
+The exact credential, owner, client and ``me`` identity must still match initial
+authentication. The current grant must retain ``update`` for entry source reads
+or ``media`` for media source reads. A stale read replica cannot authorize
+dispatch; successful handlers receive the freshly loaded writer-side owner.
 
 ``TokenAuthMixin.mutation_authority_error(request, *scopes)`` exposes this
 handoff check to endpoint subclasses and refreshes ``self.token`` on success.
+Despite its historical name, it also guards source read dispatch.
 The library holds no transaction lock over host handler code. A handler that
 waits before its own database commit must enforce current resource ownership
 and any stronger revocation boundary inside its own transaction.

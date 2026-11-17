@@ -69,3 +69,45 @@ def test_json_field_widget(logged_admin_client, profile):
     assert response.status_code == 200
     assert "h_card" in response.content.decode()
     # Should use JSONField widget for nice formatting
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"name":["First"],"name":["Last"]}',
+        '{"extension":[{"value":1,"value":2}]}',
+        '{"extension":[{"nested":{"value":1,"value":2}}]}',
+        *['{"extension":[' + value + "]}" for value in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999")],
+    ],
+)
+def test_profile_admin_rejects_ambiguous_or_nonfinite_json(logged_admin_client, profile, raw):
+    url = reverse("admin:indieweb_profile_change", args=[profile.pk])
+    form = logged_admin_client.get(url).context["adminform"].form
+    data = {name: form[name].value() or "" for name in form.fields}
+    data["h_card"] = raw
+    data["name"] = "Must not save"
+    response = logged_admin_client.post(url, data)
+    assert response.status_code == 200
+    errors = response.context["adminform"].form.errors
+    assert "h_card" in errors
+    assert errors["h_card"][0] in {
+        "Invalid JSON: malformed data or resource limit exceeded.",
+        "Invalid h-card structure. Properties must be lists with unambiguous names.",
+    }
+    profile.refresh_from_db()
+    assert profile.h_card == {"name": ["Test User"]}
+    assert profile.name == "Test User"
+
+
+def test_profile_admin_preserves_portable_extension_json(logged_admin_client, profile):
+    import json
+
+    card = {"name": ["Synthetic Üser"], "extension": [None, True, 42, 1.25, {"nested": ["☀", False]}]}
+    url = reverse("admin:indieweb_profile_change", args=[profile.pk])
+    form = logged_admin_client.get(url).context["adminform"].form
+    data = {name: form[name].value() or "" for name in form.fields}
+    data["h_card"] = json.dumps(card, ensure_ascii=False, allow_nan=False)
+    assert logged_admin_client.post(url, data).status_code == 302
+    profile.refresh_from_db()
+    assert profile.h_card == card
+    assert profile.name == "Synthetic Üser"

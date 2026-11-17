@@ -2,6 +2,57 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-17
+
+### Strict profile JSON admission (round 122 B12: 29)
+
+- Reject exact duplicate JSON members at every depth and nonfinite constants
+  in the profile admin decoder. The shared h-card envelope rejects nonfinite
+  floats (including overflowing literals) and non-JSON Python values before
+  normalization, serialization or field derivation. Existing byte/tree limits
+  and normalized-name collision checks remain in force.
+- Pre-fix regression: 22 failures; valid Unicode and nested extension JSON
+  already passed. Admin refusal preserves both the stored card and derived
+  fields. Focused profile/admin/h-card validation: 93 passed, two expected
+  in-memory SQLite concurrency skips.
+- Docs: `README.rst` and `docs/h-card.rst`; `docs/changelog.rst` Unreleased
+  and backlog synchronized, no version bump. Shared validation below.
+
+### Current source-read bearer authority (round 122 B12: 30)
+
+- Reuse the existing exact bearer authority fence immediately before all four
+  entry/media source handlers, after handler construction and URL/client
+  policy hooks. Refresh identity, owner activity, expiry and required scope
+  from the writer; give successful handlers the current writer-side owner.
+  Retain mutation fences and hold no database locks across host code.
+- Pre-fix regression: 148 failures, including stale replica grants and active
+  grants returning the replica owner. Middleware-level regressions cover
+  revocation, rotation, expiry, owner transfer/deactivation, changed client/me
+  identity and removed scope during setup and configured policies. Eight
+  two-connection cases cover a committed change while host setup/policy waits.
+- Include the new regressions in existing SQLite/PostgreSQL storage lanes.
+  Docs: `docs/micropub.rst` and `docs/development.rst`;
+  `docs/changelog.rst` Unreleased and backlog synchronized, no version bump.
+- Shared validation: `uv sync --frozen --python 3.13`; `uv run pytest`
+  (3,740 passed, 76 skipped; 94.60% coverage against the 88% gate);
+  `uv run mypy`; `uv run ruff check .`; `uv run ruff format --check .`;
+  `uv run prek run --all-files` with workspace-local `PREK_HOME`;
+  `uv run sphinx-build -W -b html docs docs/_build/html`;
+  `uv run python -m django check --settings=tests.settings` and
+  `uv run python -m django makemigrations --check --dry-run --settings=tests.settings`.
+- Full configured tox matrix passed all twelve environments: ten supported
+  Python/Django combinations, the real-migration suite and required file
+  SQLite storage. An identical private `tox.ini` added only per-environment
+  coverage paths for parallel execution. Every full suite passed 3,740 tests
+  with 76 expected skips; SQLite storage passed 544 with one PostgreSQL-only
+  skip, including all eight new two-connection source-read cases.
+- Blocked PostgreSQL gate:
+  `INDIEWEB_TEST_POSTGRES_PORT=55492 uv run tox -e storage-postgres`
+  cannot connect to a disposable server. Local
+  `initdb -D /Users/jochen/workspaces/ws-cx-cx-r122-django-indieweb/.cache/postgres -U synthetic -A trust`
+  fails with `shmget: Operation not permitted`; the merge clerk must run the
+  gate outside the sandbox. No live database was used.
+
 ## 2026-11-16
 
 ### Bounded Webmention command input (round 105 B21: 43)

@@ -3,6 +3,17 @@ import pytest
 from indieweb.h_card import normalize_h_card, normalize_property_names, parse_h_card, validate_h_card
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), (1, 2), {1, 2}, b"text", object()])
+@pytest.mark.parametrize("nested", [False, True])
+def test_h_card_envelope_rejects_non_json_scalars(value, nested):
+    from django.core.exceptions import ValidationError
+
+    data = {"extension": [{"nested": value} if nested else value]}
+    assert not validate_h_card(data)
+    with pytest.raises(ValidationError, match="finite JSON"):
+        normalize_property_names(data)
+
+
 def test_normalize_property_names_recurses_through_nested_data():
     """Test hyphenated h-card properties normalize in nested dicts and list items."""
     result = normalize_property_names(

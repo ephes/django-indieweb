@@ -510,6 +510,19 @@ class PrettyJSONWidget(AdminTextareaWidget):
         super().__init__(attrs=default_attrs)
 
 
+def _unique_h_card_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON member")
+        result[key] = value
+    return result
+
+
+def _reject_h_card_json_constant(value: str) -> None:
+    raise ValueError("Nonfinite JSON constant")
+
+
 class ProfileAdminForm(ModelForm):
     """Custom form for Profile admin with pretty JSON editing."""
 
@@ -567,7 +580,11 @@ class ProfileAdminForm(ModelForm):
                 raise ValueError("JSON byte budget exceeded")
             if not h_card_str or not h_card_str.strip():
                 return {}
-            h_card = json.loads(h_card_str)
+            h_card = json.loads(
+                h_card_str,
+                object_pairs_hook=_unique_h_card_json_object,
+                parse_constant=_reject_h_card_json_constant,
+            )
         except (ValueError, RecursionError, OverflowError) as exc:
             raise ValidationError("Invalid JSON: malformed data or resource limit exceeded.") from exc
 

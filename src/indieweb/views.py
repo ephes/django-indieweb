@@ -1657,10 +1657,10 @@ class TokenAuthMixin(View):
             return False
 
     def mutation_authority_error(self, request: HttpRequest, *scopes: str) -> HttpResponse | None:
-        """Refresh exact bearer authority immediately before handing off a mutation.
+        """Refresh exact bearer authority immediately before a protected handoff.
 
         Host handlers own authorization once called; no database lock is held
-        across their code. Subclasses can reuse this check after blocking setup.
+        across their code. Source reads reuse this check after blocking setup.
         """
         # Client policy may execute host code, so resolve it before the final read.
         if not _client_id_allowed(self.token.client_id):
@@ -3138,6 +3138,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if policy_response is not None:
             return policy_response
 
+        authority_error = self.mutation_authority_error(request, "update")
+        if authority_error is not None:
+            return authority_error
         try:
             entry = handler.get_entry(url, self.token.owner)
         except Exception as exc:
@@ -3174,6 +3177,9 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         except ValueError:
             return self._invalid_request()
 
+        authority_error = self.mutation_authority_error(request, "update")
+        if authority_error is not None:
+            return authority_error
         try:
             result = handler.list_entries(
                 self.token.owner,
@@ -3371,6 +3377,9 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
             return policy_response
         if not self._handler_overrides(handler, "get_media"):
             return self._not_implemented()
+        authority_error = self.mutation_authority_error(request, MICROPUB_MEDIA_SCOPE)
+        if authority_error is not None:
+            return authority_error
         try:
             item = handler.get_media(url, self.token.owner)
         except Exception as exc:
@@ -3390,6 +3399,9 @@ class MicropubMediaView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMix
         except ValueError:
             return self._invalid_request()
 
+        authority_error = self.mutation_authority_error(request, MICROPUB_MEDIA_SCOPE)
+        if authority_error is not None:
+            return authority_error
         try:
             result = handler.list_media(
                 self.token.owner,
