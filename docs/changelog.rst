@@ -5,6 +5,9 @@ Changelog
 
 Unreleased
 ----------
+
+0.7.1 (2026-11-17)
+------------------
 * Compare redirect URI allowlist paths complete, including ``;`` path
   parameters. An exact entry such as ``https://app.example/callback``
   previously also admitted ``https://app.example/callback;other`` and issued

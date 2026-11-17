@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-17
 
+### Prepare the 0.7.1 release
+
+- Tag ``0.7.0`` was pushed from the validated release commit while the
+  authorization redirect confinement fix below landed on ``develop``. 0.7.1
+  merges that fix on top of 0.7.0 and moves its two changelog entries under
+  ``0.7.1 (2026-11-17)``; the version files and the editable ``uv.lock`` entry
+  say 0.7.1.
+- Documentation: changelog only.
+- Validation: the same release gates as 0.7.0 on the merged tree (pytest,
+  mypy, prek, Sphinx ``-W``, ``tox p -p 4``, ``uv build``, ``twine check``,
+  ``just sbom`` and a fresh-environment wheel install).
+
 ### Prepare the 0.7.0 release
 
 - Moved the ``Unreleased`` changelog entries under ``0.7.0 (2026-11-17)`` and
