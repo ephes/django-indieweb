@@ -5,6 +5,9 @@ Changelog
 
 Unreleased
 ----------
+
+0.7.0 (2026-11-17)
+------------------
 * Send the debug client's Micropub access token in the supported Bearer
   authorization header instead of an ``Authorization`` form property.
   Ignore netrc and proxy environment settings so a stored netrc password can

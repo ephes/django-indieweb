@@ -4,6 +4,22 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-17
 
+### Prepare the 0.7.0 release
+
+- Moved the ``Unreleased`` changelog entries under ``0.7.0 (2026-11-17)`` and
+  bumped the version in ``pyproject.toml``, ``src/indieweb/__init__.py``,
+  ``docs/conf.py`` and the editable ``uv.lock`` entry. 0.7.0 is a minor
+  release because the entries include breaking changes (Python 3.10 dropped,
+  signed WebSub deliveries required by default, stricter IndieAuth and
+  Micropub validation).
+- Documentation: changelog only; the release process in
+  ``docs/development.rst`` is unchanged.
+- Validation: ``uv run pytest`` (3867 passed, 77 skipped), ``uv run mypy``,
+  ``uv run prek run --all-files``,
+  ``uv run sphinx-build -W -b html docs docs/_build/html``, ``tox p -p 4``
+  (12 environments), ``uv build``, ``uvx twine check`` and ``just sbom``; the
+  built wheel installs and migrates in a fresh Python 3.13 environment.
+
 ### Webmention receive writer transaction (round 128 B12: 23)
 
 - Resolve the parent write alias once; pin its lookup, lock, Vouch/outcome
