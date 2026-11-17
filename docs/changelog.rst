@@ -5,6 +5,17 @@ Changelog
 
 Unreleased
 ----------
+* Compare redirect URI allowlist paths complete, including ``;`` path
+  parameters. An exact entry such as ``https://app.example/callback``
+  previously also admitted ``https://app.example/callback;other`` and issued
+  the authorization code to that different path. Reject ``..;``/``.;`` dot
+  segments as traversal under prefix entries. Approval and denial redirects
+  keep the validated path byte-for-byte, including an empty trailing ``;``.
+  Same-origin binding and policy hooks are unchanged.
+* Replace, rather than duplicate, the authorization response keys ``code``,
+  ``state``, ``me``, ``iss``, ``error``, ``error_description`` and
+  ``error_uri`` when a client's ``redirect_uri`` already carries them, for
+  approvals and denials alike. Unrelated query pairs are preserved.
 
 0.7.0 (2026-11-17)
 ------------------

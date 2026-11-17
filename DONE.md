@@ -20,6 +20,23 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   (12 environments), ``uv build``, ``uvx twine check`` and ``just sbom``; the
   built wheel installs and migrates in a fresh Python 3.13 environment.
 
+### Authorization redirect confinement (security audit 2026-11-17; scout round 123 B07)
+
+- Allowlist matching uses ``urlsplit`` so exact entries compare the complete
+  path including ``;`` parameters; prefix entries reject ``..;``/``.;``
+  segments. ``_append_redirect_params`` drops pre-existing reserved response
+  keys (``code``, ``state``, ``me``, ``iss``, ``error``,
+  ``error_description``, ``error_uri``) before adding the server's values.
+- New regression file ``tests/test_redirect_uri_confinement.py`` against the
+  unfixed code: 10 failed, 5 passed (the passing cases are positive controls);
+  after the fix: 15 passed. Review round 1 found that ``urlunparse`` dropped an
+  empty trailing ``;`` from the delivered path; redirects now use
+  ``urlsplit``/``urlunsplit`` (4 more cases, 19 passed).
+- Validation: `just lint`; `just typecheck`; `just test`; `uv run prek run --all-files`.
+- Documentation: `docs/indieauth.rst` (allowlist path identity, reserved
+  response keys) and `docs/configuration.rst` (allowlist). Changelog: two
+  Unreleased entries.
+
 ### Webmention receive writer transaction (round 128 B12: 23)
 
 - Resolve the parent write alias once; pin its lookup, lock, Vouch/outcome
