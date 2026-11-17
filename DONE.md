@@ -4,6 +4,30 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-17
 
+### Webmention receive writer transaction (round 128 B12: 23)
+
+- Resolve the parent write alias once; pin its lookup, lock, Vouch/outcome
+  saves and refreshes, snapshot reads/writes, child batches and helper
+  savepoints to that connection. Keep collection outside the transaction and
+  notifications after the writer commit. Preserve stale-outcome refusal and
+  independent helper rollback.
+- Fresh develop baseline: `8e47b4c6e9ad3cf7efbe462546270cc9affe254d`.
+  New regression file against the unfixed processor: 10 failed, 3 passed and
+  one PostgreSQL-only skip. Focused processor, child-query and routed tests
+  after the fix: 203 passed, one PostgreSQL-only skip.
+- Validation: `just lint`; `just typecheck`;
+  `uv run pytest --no-cov tests/test_webmention_database_authority.py tests/test_webmention_processor.py tests/test_nested_response_queries.py`.
+  Full shared gates are recorded with the following round 128 slice.
+- Added the routed regression file to both existing local storage lanes.
+  PostgreSQL could not start inside the sandbox (`shmget: Operation not
+  permitted`). Attempted routed gate, blocked during DB setup:
+  `DJANGO_SETTINGS_MODULE=tests.settings_postgres INDIEWEB_TEST_POSTGRES_PORT=55428 uv run pytest --migrations --no-cov tests/test_webmention_database_authority.py`.
+  The merge clerk must run it against disposable PostgreSQL to exercise the
+  real `pg_blocking_pids` row-lock oracle.
+- Docs: `docs/webmention.rst` receive routing/failure isolation and
+  `docs/development.rst` gate recipe; `docs/changelog.rst` Unreleased and
+  `BACKLOG.md` synchronized. No schema or version change.
+
 ### Strict profile JSON admission (round 122 B12: 29)
 
 - Reject exact duplicate JSON members at every depth and nonfinite constants

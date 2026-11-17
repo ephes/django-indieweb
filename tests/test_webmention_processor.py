@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 from django.contrib.auth import get_user_model
+from django.db.models import QuerySet
 from django.test import RequestFactory, override_settings
 from django.utils import timezone as django_timezone
 
@@ -307,11 +308,12 @@ class TestWebmentionProcessor:
         target_url = "https://mysite.com/article"
 
         events: list[str] = []
-        original_select_for_update = Webmention.objects.select_for_update
+        original_select_for_update = QuerySet.select_for_update
 
-        def spying_select_for_update(*args, **kwargs):
-            events.append("lock")
-            return original_select_for_update(*args, **kwargs)
+        def spying_select_for_update(queryset, *args, **kwargs):
+            if queryset.model is Webmention:
+                events.append("lock")
+            return original_select_for_update(queryset, *args, **kwargs)
 
         def fetching_handler(request: httpx.Request) -> httpx.Response:
             events.append("fetch")
@@ -322,7 +324,7 @@ class TestWebmentionProcessor:
             )
 
         with (
-            patch.object(Webmention.objects, "select_for_update", side_effect=spying_select_for_update),
+            patch.object(QuerySet, "select_for_update", spying_select_for_update),
             _processor_client(processor, side_effect=[fetching_handler]),
         ):
             webmention = processor.process_webmention(source_url, target_url)
@@ -1705,7 +1707,7 @@ class TestWebmentionProcessor:
         with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with (
                 patch(
-                    "indieweb.processors.WebmentionSourceSnapshot.objects.update_or_create",
+                    "indieweb.processors.WebmentionProcessor._store_source_snapshot",
                     side_effect=RuntimeError("snapshot unavailable"),
                 ),
                 patch("indieweb.processors.webmention_received.send_robust") as mock_signal,
@@ -1988,7 +1990,7 @@ class TestWebmentionProcessor:
         with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
             with (
                 patch(
-                    "indieweb.processors.WebmentionSourceSnapshot.objects.update_or_create",
+                    "indieweb.processors.WebmentionProcessor._store_source_snapshot",
                     side_effect=IntegrityError("simulated db error"),
                 ),
                 django_capture_on_commit_callbacks(execute=True),

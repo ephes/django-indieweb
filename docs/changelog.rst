@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Pin Webmention receive persistence to the parent's write database, including
+  its row lock, Vouch/outcome saves, previous-snapshot reads, child batches and
+  helper savepoints. Preserve partial-failure isolation and post-commit
+  notification on routed databases without writing to unrelated default rows.
 * Recheck exact bearer identity, active owner, expiry and required source scope
   on the write database immediately before entry/media source handlers, after
   URL/client policy and handler setup. Refuse revoked or changed credentials
