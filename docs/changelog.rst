@@ -5,6 +5,10 @@ Changelog
 
 Unreleased
 ----------
+* Send the debug client's Micropub access token in the supported Bearer
+  authorization header instead of an ``Authorization`` form property.
+  Exercise the helper's serialized requests against the real Django endpoint.
+  Keep transport and disabled-redirect preparation errors value-free.
 * Confine the debug client's credentials to a validated HTTP(S) origin.
   Disable POST redirects, accept only same-origin login/logout 302/303
   completion, and validate every GET redirect before navigation. Refused

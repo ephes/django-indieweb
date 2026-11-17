@@ -65,7 +65,10 @@ class Client:
         for _ in range(31):
             if credential_origin(url) != self.origin:
                 raise ValueError("Debug client refused redirect")
-            response = self.session.get(url, allow_redirects=False)
+            try:
+                response = self.session.get(url, allow_redirects=False)
+            except (requests.RequestException, ValueError):
+                raise ValueError("Debug client request failed") from None
             if not 300 <= response.status_code < 400:
                 return response
             try:
@@ -79,7 +82,10 @@ class Client:
     ) -> requests.Response:
         if credential_origin(url) != self.origin:
             raise ValueError("Debug client refused redirect")
-        response = self.session.post(url, payload, allow_redirects=False, headers=headers)
+        try:
+            response = self.session.post(url, payload, allow_redirects=False, headers=headers)
+        except (requests.RequestException, ValueError):
+            raise ValueError("Debug client request failed") from None
         if 300 <= response.status_code < 400:
             try:
                 self._redirect_target(response, url)
@@ -170,11 +176,10 @@ class Client:
     def post_entry(self, token):
         micropub_url = urljoin(self.base_url, "indieweb/micropub/")
         payload = {
-            "Authorization": token,
             "h": "entry",
             "content": "blub bla",
         }
-        r = self._post(micropub_url, payload)
+        r = self._post(micropub_url, payload, headers={"Authorization": f"Bearer {token}"})
         print("micropub:", r.status_code)
 
 

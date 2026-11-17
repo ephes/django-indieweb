@@ -2,7 +2,7 @@
 
 import importlib.util
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 import requests
@@ -87,7 +87,7 @@ def test_debug_client_flow_still_passes_credentials_to_the_next_call(debug_clien
 
     assert fake_session.payload_for("accounts/login/")["csrfmiddlewaretoken"] == CSRF_COOKIE
     assert fake_session.payload_for("indieweb/token/")["code"] == AUTH_CODE
-    assert fake_session.payload_for("indieweb/micropub/")["Authorization"] == ACCESS_TOKEN
+    assert "Authorization" not in fake_session.payload_for("indieweb/micropub/")
     assert fake_session.payload_for("indieweb/auth/")["code"] == AUTH_CODE
 
 
@@ -242,3 +242,98 @@ def test_redirect_loop_stops(debug_client, monkeypatch):
         debug_client.Client(BASE_URL, "synthetic", PASSWORD).get_auth()
 
     assert len(adapter.calls) == 31
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_requests_redirect_preparation_errors_are_private(debug_client, monkeypatch, capsys, status):
+    canary = "redirect-target-PRIVATE"
+    adapter = RedirectAdapter(f"http://dev.test:{canary}/", status)
+    mount_adapter(debug_client, monkeypatch, adapter)
+    helper = debug_client.Client(BASE_URL, "synthetic", PASSWORD)
+
+    with pytest.raises(ValueError, match="Debug client request failed") as exc:
+        helper.post_entry(ACCESS_TOKEN)
+
+    assert len(adapter.calls) == 1
+    assert canary not in str(exc.value) + str(capsys.readouterr())
+
+
+class DjangoAdapter(BaseAdapter):
+    """Pass prepared HTTP bytes and headers through the real Django endpoint."""
+
+    def __init__(self, django_client):
+        self.client = django_client
+        self.calls = []
+        self.responses = []
+
+    def send(self, request, **kwargs):
+        self.calls.append(request)
+        headers = {
+            "HTTP_" + key.upper().replace("-", "_"): value
+            for key, value in request.headers.items()
+            if key.lower() not in {"content-type", "content-length"}
+        }
+        headers["HTTP_HOST"] = urlparse(request.url).netloc
+        result = self.client.generic(
+            request.method,
+            request.path_url,
+            data=request.body or b"",
+            content_type=request.headers.get("Content-Type", ""),
+            **headers,
+        )
+        self.responses.append(result)
+        response = requests.Response()
+        response.request = request
+        response.url = request.url
+        response.status_code = result.status_code
+        response.headers.update(result.items())
+        response._content = result.content
+        return response
+
+    def close(self):
+        pass
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("authority", "expected_status"),
+    [("create", 201), ("missing", 401), ("revoked", 401), ("wrong_scope", 403), ("inactive", 401)],
+)
+def test_debug_client_real_micropub_contract(
+    debug_client, monkeypatch, client, django_user_model, settings, capsys, authority, expected_status
+):
+    from indieweb.handlers import InMemoryMicropubHandler
+    from indieweb.models import Token
+
+    settings.ALLOWED_HOSTS = ["dev.test"]
+    user = django_user_model.objects.create_user(username="synthetic-debug", is_active=authority != "inactive")
+    token = Token.objects.create(
+        key=ACCESS_TOKEN,
+        owner=user,
+        me="http://dev.test/synthetic/",
+        client_id=BASE_URL,
+        scope="update" if authority == "wrong_scope" else "create",
+    )
+    raw_token = "" if authority == "missing" else token.key
+    if authority == "revoked":
+        token.delete()
+    handler = InMemoryMicropubHandler()
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", lambda: handler)
+    adapter = DjangoAdapter(client)
+    mount_adapter(debug_client, monkeypatch, adapter)
+
+    debug_client.Client(BASE_URL, "synthetic", PASSWORD).post_entry(raw_token)
+
+    assert len(adapter.calls) == 1
+    assert adapter.responses[0].status_code == expected_status
+    assert adapter.calls[0].headers["Authorization"] == f"Bearer {raw_token}"
+    properties = parse_qs(adapter.calls[0].body)
+    assert properties == {"h": ["entry"], "content": ["blub bla"]}
+    if expected_status == 201:
+        entry = handler.entries[urlparse(adapter.responses[0]["Location"]).path]
+        assert entry.properties == {"content": ["blub bla"]}
+    else:
+        assert not handler.entries
+    output = str(capsys.readouterr())
+    assert f"micropub: {expected_status}" in output
+    assert not any(secret in output for secret in SECRETS)

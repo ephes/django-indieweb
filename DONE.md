@@ -5944,3 +5944,49 @@ bundle.
 - Docs: debug-helper usage/security in `docs/development.rst`, README pointer,
   `docs/changelog.rst` Unreleased and BACKLOG completion pointer. No version
   bump, schema change or owner decision; external review/integration follows.
+
+### Match the debug-client bearer wire contract (round 131 B06, slice 13)
+
+- Send the Micropub token as `Authorization: Bearer ...`, keeping it out of
+  form/content properties. Replace the incorrect form-field assertion and
+  route real Requests-prepared bytes/headers through Django middleware and
+  the real authentication/create view to an isolated host content handler.
+- Regression proof: six assertions failed before the header fix, including
+  the real endpoint returning 401 for the active create-scoped token. The
+  final `uv run pytest tests/test_debug_client.py --no-cov -q` passes 61 tests:
+  valid create reaches the handler with 201; missing/revoked credentials and
+  inactive owners receive 401, wrong scope 403. Stored properties and stdout
+  contain no credential; redirect confinement remains covered after the fix.
+- Also reproduced value-bearing errors in Requests' preparation of a disabled
+  POST redirect (307/308 with a malformed port). Catch transport/preparation
+  errors with fixed diagnostics and suppress their private exception context;
+  two additional regressions cover this boundary without a second request.
+- Shared validation: `just check` passed (Ruff, mypy; 3,863 tests passed,
+  77 conditional skips, 94.61% coverage against the 88% gate; 10 existing
+  SQLite ResourceWarnings). Configured `uv run prek run --all-files` with
+  workspace `PREK_HOME`, strict `uv run sphinx-build -W -b html docs
+  docs/_build/html`, `uv run python -m django check --settings=tests.settings`
+  and `uv run python -m django makemigrations --check --dry-run
+  --settings=tests.settings` passed.
+- Docs: bearer transport and regression command in `docs/development.rst`,
+  release notes in `docs/changelog.rst` Unreleased; BACKLOG synchronized.
+  No version bump, schema change or owner decision. Local branch only;
+  external cross-family review and integration remain with the merge clerk.
+- Supported matrix: all twelve existing environments passed across
+  `uv run tox -p 2` and the final `uv run tox -e py314-django61` retry.
+  The initial Python 3.14/Django 6.1 run collected an intermediate test
+  expectation while the final diagnostics regression was being refined;
+  its clean full rerun passed 3,863 tests with 77 conditional skips.
+  The other full Python/Django lanes and migrations lane passed 3,861 tests
+  with 77 skips; required file-SQLite storage passed 609 with two skips.
+  After the final diagnostics guard, all nine other Python/Django combinations
+  also passed all 61 helper tests using `uv run tox -p 2 -e
+  py311-django52,py312-django52,py313-django52,py314-django52,py312-django60,py313-django60,py314-django60,py312-django61,py313-django61
+  -x 'testenv.commands=pytest tests/test_debug_client.py --no-cov -q'`.
+- Parallel coverage files were temporarily isolated per environment;
+  `tox.ini` is unchanged in the delivered branch. The full retry used
+  `-x 'testenv.setenv+=COVERAGE_FILE=/Users/jochen/workspaces/ws-cx-cx-r131-django-indieweb/django-indieweb/.tox/py314-django61/.coverage'`.
+  Tool caches were private to the workspace where needed. No required local
+  gate was sandbox-blocked; optional PostgreSQL storage is unrelated to this
+  helper-only change. Check receipts are outside the clone in the private
+  coordination log directory. No review agent or remote mutation was run.

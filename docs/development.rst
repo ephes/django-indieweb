@@ -42,9 +42,19 @@ an HTTP-to-HTTPS redirect: configure the final trusted URL directly instead.
 On refusal, correct the server route or base URL and start a deliberate new
 flow; no later credential request is made automatically.
 
+Micropub sends ``Authorization: Bearer <access token>`` as an HTTP header;
+the form contains only ``h=entry`` and the sample ``content``. The token never
+becomes a content property. The real endpoint requires an active token owner
+and ``create`` (or legacy ``post``) scope; missing/revoked tokens receive 401
+and insufficient scope receives 403. The isolated helper regressions exercise
+Requests serialization through Django's real authentication and create path::
+
+    uv run pytest tests/test_debug_client.py --no-cov -q
+
 The helper prints statuses, parameter names and short one-way fingerprints,
 never cookies, passwords, authorization codes, access tokens or response bodies.
-Redirect/configuration errors use fixed diagnostics without destination values.
+Redirect/configuration/transport errors use fixed diagnostics without destination
+values, including failures while Requests prepares a disabled redirect.
 This helper is a smoke-test aid, not a production client or grant-policy example.
 
 Running Tests
