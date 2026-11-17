@@ -46,12 +46,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   coverage paths for parallel execution. Every full suite passed 3,740 tests
   with 76 expected skips; SQLite storage passed 544 with one PostgreSQL-only
   skip, including all eight new two-connection source-read cases.
-- Blocked PostgreSQL gate:
-  `INDIEWEB_TEST_POSTGRES_PORT=55492 uv run tox -e storage-postgres`
-  cannot connect to a disposable server. Local
-  `initdb -D /Users/jochen/workspaces/ws-cx-cx-r122-django-indieweb/.cache/postgres -U synthetic -A trust`
-  fails with `shmget: Operation not permitted`; the merge clerk must run the
-  gate outside the sandbox. No live database was used.
+- PostgreSQL storage lane (run at merge, outside the sandbox, against a
+  disposable synthetic `postgres:17` server):
+  `INDIEWEB_TEST_POSTGRES_PORT=<port> uv run tox -e storage-postgres`
+  passed 545 tests, including all eight two-connection source-read cases and
+  the writer/replica regressions. No live database was used.
+- No stored-row migration is needed: Django's SQLite `JSON_VALID` column
+  check and PostgreSQL `jsonb` both refuse `NaN`/`Infinity`, so such values
+  previously failed at the database (verified with a throwaway SQLite probe)
+  and are now refused as a field error before saving.
 
 ## 2026-11-16
 

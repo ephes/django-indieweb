@@ -136,6 +136,10 @@ properties, counts repeated values each time, and rejects invalid UTF-8 text.
 All leaves, including extension properties, must be JSON scalars: strings,
 booleans, integers, finite floats or null. Nonfinite numbers and other Python
 objects are rejected before serialization or profile field derivation.
+The supported databases already refuse nonfinite JSON numbers at the column
+(SQLite's ``JSON_VALID`` check and PostgreSQL ``jsonb``), so this check turns a
+former database integrity error into a validation error; no stored profile
+needs migration.
 ``parse_h_card()`` additionally limits raw HTML to 1,048,576 UTF-8 bytes before
 starting the shared Webmention parse worker. Extraction runs in that child
 under the configured memory, CPU, wall-clock, result-size and admission-slot

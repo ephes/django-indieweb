@@ -13,6 +13,8 @@ Unreleased
   admin JSON before saving. The shared h-card envelope now requires finite
   JSON scalars, including in extension properties; preserve valid Unicode and
   nested extension lists and leave existing profiles unchanged on refusal.
+  Nonfinite values previously failed only at the database JSON constraint;
+  no stored profile needs migration.
 * Sync the local static-site publication directory and its parents through the
   content root after exclusive publication and stage cleanup, plus the parents
   of root directories the handler creates; leave other ancestors unsynced.
