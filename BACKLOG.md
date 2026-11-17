@@ -39,7 +39,7 @@ Round 113 held-directory and durable static-site publication is recorded in `DON
 Round 122 strict profile JSON admission and current source-read bearer authority
 are recorded in `DONE.md`.
 
-Round 128 Webmention receive database authority is recorded in `DONE.md`.
+Round 128 Webmention receive and nested-display database authority is recorded in `DONE.md`.
 
 ## Priority 1
 

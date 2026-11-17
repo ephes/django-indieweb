@@ -28,6 +28,37 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   `docs/development.rst` gate recipe; `docs/changelog.rst` Unreleased and
   `BACKLOG.md` synchronized. No schema or version change.
 
+### Nested display parent database identity (round 128 B12: 24)
+
+- Use the child's database identity for lazy parent verification. Trust cached
+  parents only on that same alias; recheck a cross-database prefetch on the
+  child's database. Missing parents and nonverified children remain hidden.
+- Regression proof before the fix: 10 failed and 40 passed. After the fix,
+  all 50 new cases pass (lazy/joined/prefetched loading, opposite same-PK
+  parent states, nonverified children and missing-parent controls).
+  Focused model/routing tests: 96 passed, one PostgreSQL-only skip.
+- Added these display regressions to both existing local storage lanes.
+  Docs: `docs/webmention.rst`; `docs/changelog.rst` Unreleased and
+  `BACKLOG.md` synchronized. No schema migration or version bump.
+- Shared round 128 validation: `uv sync --frozen --python 3.13`;
+  `just lint`; `just typecheck`; `just test` (3,803 passed, 77 expected
+  skips, 94.61% coverage against the 88% gate); `uv run ruff check .`;
+  `uv run ruff format --check .`; `uv run prek run --all-files`
+  with workspace-local caches; `uv run sphinx-build -W -b html docs docs/_build/html`;
+  `uv run python -m django check --settings=tests.settings`;
+  `uv run python -m django makemigrations --check --dry-run --settings=tests.settings`.
+- All twelve configured tox environments passed: ten supported Python/Django
+  combinations plus real migrations and required file SQLite storage. Each
+  full suite passed 3,803 tests with 77 expected skips; SQLite storage passed
+  607 with two expected PostgreSQL-only skips. Parallel execution used a
+  private copy of `tox.ini` with only `COVERAGE_FILE={env_dir}/.coverage`
+  added, keeping per-environment coverage data separate. Invocation:
+  `uv run tox -c /Users/jochen/workspaces/ws-work-planning/coordination/codex/logs/cx-r128-django-indieweb/tox-parallel.ini --root /Users/jochen/workspaces/ws-cx-cx-r128-django-indieweb/django-indieweb --workdir /Users/jochen/workspaces/ws-cx-cx-r128-django-indieweb/django-indieweb/.tox -p 4 --parallel-no-spinner`.
+- PostgreSQL storage gate attempted but blocked at database connection setup
+  by the sandbox: `INDIEWEB_TEST_POSTGRES_PORT=55428 uv run tox -e storage-postgres`.
+  The targeted routed-lock gate recorded above is also blocked; both must
+  run against disposable synthetic PostgreSQL outside the sandbox before merge.
+
 ### Strict profile JSON admission (round 122 B12: 29)
 
 - Reject exact duplicate JSON members at every depth and nonfinite constants

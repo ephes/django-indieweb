@@ -545,8 +545,18 @@ class WebmentionNestedResponse(models.Model):
         if self.status != "verified":
             return False
         if self.__class__.webmention.is_cached(self):
-            return self.webmention.status == "verified"
-        return Webmention.objects.only("status").filter(pk=self.webmention_id, status="verified").exists()
+            try:
+                parent = self.webmention
+            except Webmention.DoesNotExist:
+                return False
+            # A read router can prefetch a same-PK parent from another database.
+            if parent._state.db == self._state.db:
+                return parent.status == "verified"
+        return (
+            Webmention.objects.db_manager(self._state.db, hints={"instance": self})
+            .filter(pk=self.webmention_id, status="verified")
+            .exists()
+        )
 
 
 class WebmentionOutboundTarget(models.Model):

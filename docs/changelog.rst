@@ -5,6 +5,9 @@ Changelog
 
 Unreleased
 ----------
+* Check nested-response parent verification on the child's database. Keep lazy,
+  joined and prefetched display checks equivalent, ignoring same-PK parent
+  state from another database and refusing missing parents.
 * Pin Webmention receive persistence to the parent's write database, including
   its row lock, Vouch/outcome saves, previous-snapshot reads, child batches and
   helper savepoints. Preserve partial-failure isolation and post-commit

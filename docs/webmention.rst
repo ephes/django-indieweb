@@ -930,6 +930,13 @@ other helper to persist. An outer transaction failure rolls back the whole
 attempt and suppresses the success notification, which runs only after the
 writer commits. No schema migration is required.
 
+A nested response's ``is_currently_displayable`` check reads verification from
+its own database. A cached parent is used only when its database identity
+matches the child's; a parent prefetched from another database is rechecked on
+the child's alias. Lazy, joined and prefetched loading therefore agree even
+when an unrelated database contains a parent with the same primary key.
+Nonverified children and missing parents are not displayable.
+
 Because snapshots store the raw HTML from the last successful source fetch,
 database storage grows with the size of those source documents. Operators that
 receive large volumes of Webmentions should account for that table in normal
