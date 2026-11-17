@@ -337,3 +337,76 @@ def test_debug_client_real_micropub_contract(
     output = str(capsys.readouterr())
     assert f"micropub: {expected_status}" in output
     assert not any(secret in output for secret in SECRETS)
+
+
+NETRC_PASSWORD = "netrc-password-SECRET-6b6b"
+
+
+class RecordingAdapter(BaseAdapter):
+    """Record prepared requests without opening a socket."""
+
+    def __init__(self):
+        self.calls = []
+        self.kwargs = []
+
+    def send(self, request, **kwargs):
+        self.calls.append(request)
+        self.kwargs.append(kwargs)
+        response = requests.Response()
+        response.request = request
+        response.url = request.url
+        response.status_code = 200
+        response._content = b""
+        response.cookies.set("csrftoken", CSRF_COOKIE)
+        return response
+
+    def close(self):
+        pass
+
+
+def test_netrc_cannot_replace_bearer_or_leak_its_password(debug_client, monkeypatch, tmp_path):
+    netrc = tmp_path / "netrc"
+    netrc.write_text(f"machine dev.test login netrc-user password {NETRC_PASSWORD}\n")
+    netrc.chmod(0o600)
+    monkeypatch.setenv("NETRC", str(netrc))
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy-user:proxy-SECRET@proxy.invalid:3128")
+    monkeypatch.setenv("http_proxy", "http://proxy-user:proxy-SECRET@proxy.invalid:3128")
+    adapter = RecordingAdapter()
+    mount_adapter(debug_client, monkeypatch, adapter)
+    client = debug_client.Client(BASE_URL, "synthetic", PASSWORD)
+
+    client.login()
+    client.post_entry(ACCESS_TOKEN)
+
+    assert adapter.calls[-1].headers["Authorization"] == f"Bearer {ACCESS_TOKEN}"
+    for request in adapter.calls:
+        assert not request.headers.get("Authorization", "").startswith("Basic")
+        assert "Proxy-Authorization" not in request.headers
+    assert all(NETRC_PASSWORD not in str(request.headers) for request in adapter.calls)
+    assert all(not any(kwargs["proxies"].values()) for kwargs in adapter.kwargs)
+
+
+@pytest.mark.parametrize("variable", ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
+def test_private_ca_bundle_still_verifies_https(debug_client, monkeypatch, tmp_path, variable):
+    bundle = tmp_path / "dev-ca.pem"
+    bundle.write_text("synthetic\n")
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    monkeypatch.setenv(variable, str(bundle))
+    adapter = RecordingAdapter()
+    mount_adapter(debug_client, monkeypatch, adapter)
+
+    debug_client.Client("https://dev.test/", "synthetic", PASSWORD).post_entry(ACCESS_TOKEN)
+
+    assert adapter.kwargs[-1]["verify"] == str(bundle)
+
+
+def test_https_verification_defaults_on(debug_client, monkeypatch):
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
+    adapter = RecordingAdapter()
+    mount_adapter(debug_client, monkeypatch, adapter)
+
+    debug_client.Client("https://dev.test/", "synthetic", PASSWORD).post_entry(ACCESS_TOKEN)
+
+    assert adapter.kwargs[-1]["verify"] is True

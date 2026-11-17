@@ -50,6 +50,11 @@ class Client:
         self.username = username
         self.password = password
         self.session = requests.Session()
+        # Ignore ~/.netrc and environment proxies: netrc auth would replace the
+        # Micropub Bearer header and send a stored password to the dev server.
+        self.session.trust_env = False
+        # Keep honoring an explicit private CA bundle (e.g. mkcert) for HTTPS.
+        self.session.verify = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE") or True
 
     def _redirect_target(self, response: requests.Response, url: str) -> str:
         try:

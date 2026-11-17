@@ -44,7 +44,11 @@ flow; no later credential request is made automatically.
 
 Micropub sends ``Authorization: Bearer <access token>`` as an HTTP header;
 the form contains only ``h=entry`` and the sample ``content``. The token never
-becomes a content property. The real endpoint requires an active token owner
+becomes a content property. The helper ignores ``~/.netrc``/``NETRC`` and
+proxy environment variables, so a stored netrc password can neither replace
+the Bearer header nor reach the server. HTTPS verification stays on; a private
+development CA (for example mkcert) is still honored through
+``REQUESTS_CA_BUNDLE`` or ``CURL_CA_BUNDLE``. The real endpoint requires an active token owner
 and ``create`` (or legacy ``post``) scope; missing/revoked tokens receive 401
 and insufficient scope receives 403. The isolated helper regressions exercise
 Requests serialization through Django's real authentication and create path::

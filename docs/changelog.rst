@@ -7,6 +7,9 @@ Unreleased
 ----------
 * Send the debug client's Micropub access token in the supported Bearer
   authorization header instead of an ``Authorization`` form property.
+  Ignore netrc and proxy environment settings so a stored netrc password can
+  neither replace the Bearer header nor reach the development server; a
+  private CA from ``REQUESTS_CA_BUNDLE``/``CURL_CA_BUNDLE`` is still honored.
   Exercise the helper's serialized requests against the real Django endpoint.
   Keep transport and disabled-redirect preparation errors value-free.
 * Confine the debug client's credentials to a validated HTTP(S) origin.

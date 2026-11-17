@@ -5990,3 +5990,25 @@ bundle.
   gate was sandbox-blocked; optional PostgreSQL storage is unrelated to this
   helper-only change. Check receipts are outside the clone in the private
   coordination log directory. No review agent or remote mutation was run.
+
+### Keep netrc and proxy settings away from the debug client (round 131 B06, merge review)
+
+- Merge review found that Requests' default `trust_env` let a `~/.netrc` /
+  `NETRC` entry for the development host replace the Micropub Bearer header
+  with HTTP Basic auth and send the stored netrc password. The helper session
+  now sets `trust_env = False`, which also ignores proxy environment
+  variables, and keeps HTTPS verification on while still honoring an explicit
+  private CA from `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`.
+- Regression proof: `test_netrc_cannot_replace_bearer_or_leak_its_password`
+  failed without the `trust_env` line; it also asserts that no proxy reaches
+  the transport. Two further tests cover the CA-bundle variables and the
+  verification default. `uv run pytest tests/test_debug_client.py --no-cov -q`
+  now passes 65 tests.
+- Validation after the fix: `just check` passed (3,867 tests, 77 conditional
+  skips, 94.60% coverage); `uv run prek run --all-files` and strict
+  `uv run sphinx-build -W -b html docs ...` passed; the helper tests passed in
+  all ten Python/Django tox environments with
+  `-x 'testenv.commands=pytest tests/test_debug_client.py --no-cov -q'`.
+  The earlier slice 12/13 counts (54/61 helper tests, 3,863 suite tests)
+  describe the state before this follow-up.
+- Docs: `docs/development.rst` and `docs/changelog.rst` Unreleased.
