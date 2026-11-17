@@ -909,6 +909,37 @@ still describes the earlier source. Retrying a successful receive rewrites the
 snapshot and upserts every current child, retaining stable identities and
 retiring children absent from the latest source.
 
+Receive database routing
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The processor resolves the ``Webmention`` write database once before loading
+or creating the submitted pair. The parent lock, freshness check, Vouch and
+outcome saves, previous-snapshot lookup, child batches and snapshot writes all
+use that alias explicitly. ``process_queued_webmention()`` also loads the
+queued row, including its stored Vouch URL, from that write database, so a
+lagging read replica cannot hide the row or supply an older Vouch URL.
+Read-replica routing and later router changes cannot redirect part of the
+receive to another database. Hosts must keep the
+``Webmention``, ``WebmentionNestedResponse`` and ``WebmentionSourceSnapshot``
+tables together and permit their model relations on that database.
+
+Fetching, parsing and spam/Vouch checks remain outside the processor's
+persistence transaction. The parent is then reloaded with ``select_for_update``
+inside an atomic block on its writer. Older outcomes cannot replace a newer
+committed receive. Child synchronization and snapshot storage each have their
+own savepoint on this same connection: an isolated helper failure rolls back
+its complete partial write set while allowing the verified parent and the
+other helper to persist. An outer transaction failure rolls back the whole
+attempt and suppresses the success notification, which runs only after the
+writer commits. No schema migration is required.
+
+A nested response's ``is_currently_displayable`` check reads verification from
+its own database. A cached parent is used only when its database identity
+matches the child's; a parent prefetched from another database is rechecked on
+the child's alias. Lazy, joined and prefetched loading therefore agree even
+when an unrelated database contains a parent with the same primary key.
+Nonverified children and missing parents are not displayable.
+
 Because snapshots store the raw HTML from the last successful source fetch,
 database storage grows with the size of those source documents. Operators that
 receive large volumes of Webmentions should account for that table in normal

@@ -344,6 +344,18 @@ on the synthetic PostgreSQL CI service, including an isolated second database::
 
     DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_nested_response_queries.py tests/test_delivery_diagnostic_atomicity.py
 
+Routed Webmention receive regressions use conflicting synthetic rows in both
+``default`` and ``other``. They exercise writer transaction ownership, routing
+changes during collection, complete child/snapshot savepoint rollback, outer
+rollback and post-commit notification. A PostgreSQL-only overlap test observes
+``pg_blocking_pids`` to prove that an older outcome waits for the actual parent
+writer lock before rejecting its stale result::
+
+    DJANGO_SETTINGS_MODULE=tests.settings_postgres uv run pytest --migrations --no-cov tests/test_webmention_database_authority.py
+
+The same file runs in both local storage lanes; SQLite covers routed atomicity
+and stale-outcome refusal, while PostgreSQL additionally proves row-lock overlap.
+
 Webmention count and display regressions run on both SQLite and the disposable
 PostgreSQL service. Count tests temporarily apply case/accent/space-insensitive
 collations to real columns and restore them after each test (PostgreSQL requires

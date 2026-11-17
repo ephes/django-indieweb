@@ -22,7 +22,7 @@ import httpx
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import router, transaction
 from django.dispatch import Signal
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -398,7 +398,10 @@ class WebmentionProcessor:
         # variants of the same logical pair share a single stored row.
         canonical_source = canonicalize_webmention_storage_url(source_url)
         canonical_target = canonicalize_webmention_storage_url(target_url)
-        webmention, _created = Webmention.objects.get_or_create(
+        # Pin the writer once: parent, children, snapshots, locks and savepoints
+        # must share one database even if routing changes during outbound IO.
+        using = router.db_for_write(Webmention)
+        webmention, _created = Webmention.objects.using(using).get_or_create(
             source_url=canonical_source,
             target_url=canonical_target,
         )
@@ -425,8 +428,8 @@ class WebmentionProcessor:
         # the row under the lock so writes never echo stale field values from
         # the pre-lock snapshot — a concurrent receive for the same pair may
         # have committed updates to fields we did not intend to touch.
-        with transaction.atomic():
-            locked = Webmention.objects.select_for_update().get(pk=webmention.pk)
+        with transaction.atomic(using=using):
+            locked = Webmention.objects.using(using).select_for_update().get(pk=webmention.pk)
 
             # Freshness gate: if a concurrent receive has already committed an
             # outcome computed after ours, skip our writes entirely. The lock
@@ -459,7 +462,7 @@ class WebmentionProcessor:
                     # and we can persist it together with the timestamp.
                     locked.vouch_url = vouch_url
                     locked.vouch_verified_at = outcome.vouch_verified_at
-                    locked.save(update_fields=["vouch_url", "vouch_verified_at", "modified"])
+                    locked.save(using=using, update_fields=["vouch_url", "vouch_verified_at", "modified"])
             elif (
                 outcome.vouch_verified_at is not None
                 and outcome.verified_vouch_url is not None
@@ -470,7 +473,7 @@ class WebmentionProcessor:
                 # the URL we verified — a concurrent receive may have changed
                 # ``vouch_url`` between Phase 1 and the row lock.
                 locked.vouch_verified_at = outcome.vouch_verified_at
-                locked.save(update_fields=["vouch_verified_at", "modified"])
+                locked.save(using=using, update_fields=["vouch_verified_at", "modified"])
 
             self._apply_webmention_outcome(locked, outcome, source_url, target_url)
 
@@ -655,15 +658,16 @@ class WebmentionProcessor:
             webmention.verified_at = None
             webmention.last_received_at = outcome.received_at
             webmention.save(
+                using=webmention._state.db,
                 update_fields=[
                     "spam_check_result",
                     "status",
                     "verified_at",
                     "last_received_at",
                     "modified",
-                ]
+                ],
             )
-            webmention.refresh_from_db()
+            webmention.refresh_from_db(using=webmention._state.db)
             return
 
         # Verified: copy parsed fields from the outcome onto the locked row,
@@ -691,7 +695,7 @@ class WebmentionProcessor:
         webmention.status = "verified"
         webmention.verified_at = timezone.now()
         webmention.last_received_at = outcome.received_at
-        webmention.save(update_fields=update_fields)
+        webmention.save(using=webmention._state.db, update_fields=update_fields)
 
         self._sync_nested_responses_safely(
             webmention=webmention,
@@ -727,8 +731,8 @@ class WebmentionProcessor:
         if last_received_at is not None:
             webmention.last_received_at = last_received_at
             update_fields.append("last_received_at")
-        webmention.save(update_fields=update_fields)
-        webmention.refresh_from_db()
+        webmention.save(using=webmention._state.db, update_fields=update_fields)
+        webmention.refresh_from_db(using=webmention._state.db)
 
     def _fetch_source(self, source_url: str) -> RedirectedResponse:
         """Fetch the source URL with explicit bounded redirect handling."""
@@ -1032,7 +1036,7 @@ class WebmentionProcessor:
         """Persist the latest verified source snapshot for future Salmention comparison."""
         normalized_h_entry = self._normalize_snapshot_json(h_entry or {})
         nested_response_identities = self._nested_response_identities(h_entry or {}, final_source_url)
-        WebmentionSourceSnapshot.objects.update_or_create(
+        WebmentionSourceSnapshot.objects.using(webmention._state.db).update_or_create(
             webmention=webmention,
             defaults={
                 "raw_source_html": raw_source_html,
@@ -1058,7 +1062,7 @@ class WebmentionProcessor:
         # rather than poisoning the outer atomic block (which would discard the
         # parent's "verified" save).
         try:
-            with transaction.atomic():
+            with transaction.atomic(using=webmention._state.db):
                 self._store_source_snapshot(
                     webmention=webmention,
                     raw_source_html=raw_source_html,
@@ -1078,7 +1082,11 @@ class WebmentionProcessor:
     def _previous_nested_response_identities(self, webmention: Webmention) -> set[str]:
         """Return nested identities from the previous successful source snapshot."""
         try:
-            values = WebmentionSourceSnapshot.objects.get(webmention=webmention).nested_response_identities
+            values = (
+                WebmentionSourceSnapshot.objects.using(webmention._state.db)
+                .get(webmention=webmention)
+                .nested_response_identities
+            )
         except WebmentionSourceSnapshot.DoesNotExist:
             return set()
         if not isinstance(values, list):
@@ -1178,7 +1186,7 @@ class WebmentionProcessor:
         # Savepoint so a DB error here does not discard the parent's verified
         # save when this runs inside the outer atomic block.
         try:
-            with transaction.atomic():
+            with transaction.atomic(using=webmention._state.db):
                 self._sync_nested_responses(
                     webmention=webmention,
                     candidates=candidates,
@@ -1220,9 +1228,9 @@ class WebmentionProcessor:
         by_identity = {candidate["identity"]: candidate for candidate in candidates}
         existing = {
             child.identity: child
-            for child in WebmentionNestedResponse.objects.filter(
-                webmention=webmention, identity__in=current_identities
-            ).only("identity")
+            for child in WebmentionNestedResponse.objects.using(webmention._state.db)
+            .filter(webmention=webmention, identity__in=current_identities)
+            .only("identity")
         }
         presentation_fields = (
             "response_url",
@@ -1252,16 +1260,16 @@ class WebmentionProcessor:
             child.last_seen_at = child.verified_at = seen_at
             child.modified = modified
         if creates:
-            WebmentionNestedResponse.objects.bulk_create(creates, batch_size=25)
+            WebmentionNestedResponse.objects.using(webmention._state.db).bulk_create(creates, batch_size=25)
         if updates:
-            WebmentionNestedResponse.objects.bulk_update(
+            WebmentionNestedResponse.objects.using(webmention._state.db).bulk_update(
                 updates,
                 [*presentation_fields, "status", "last_seen_at", "verified_at", "modified"],
                 batch_size=25,
             )
 
         # QuerySet.update() does not run auto_now, so modified is set explicitly for retired rows.
-        WebmentionNestedResponse.objects.filter(webmention=webmention).exclude(
+        WebmentionNestedResponse.objects.using(webmention._state.db).filter(webmention=webmention).exclude(
             identity__in=current_identities
         ).exclude(status="missing").update(status="missing", verified_at=None, modified=timezone.now())
 
@@ -1884,7 +1892,9 @@ def process_queued_webmention(webmention_id: int, *, client: httpx.Client | None
     safety semantics (intended for tests).
     """
     # Load by id first so worker integrations get an explicit DoesNotExist for missing queued rows.
-    webmention = Webmention.objects.get(pk=webmention_id)
+    # Read the writer, not a possibly lagging read replica: the processor pins
+    # the same alias, and a stale replica could hide the row or its Vouch URL.
+    webmention = Webmention.objects.using(router.db_for_write(Webmention)).get(pk=webmention_id)
     return WebmentionProcessor(client=client).process_webmention(
         webmention.source_url,
         webmention.target_url,

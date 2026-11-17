@@ -5,6 +5,15 @@ Changelog
 
 Unreleased
 ----------
+* Check nested-response parent verification on the child's database. Keep lazy,
+  joined and prefetched display checks equivalent, ignoring same-PK parent
+  state from another database and refusing missing parents.
+* Pin Webmention receive persistence to the parent's write database, including
+  its row lock, Vouch/outcome saves, previous-snapshot reads, child batches and
+  helper savepoints. Preserve partial-failure isolation and post-commit
+  notification on routed databases without writing to unrelated default rows.
+  ``process_queued_webmention()`` loads the queued row and its stored Vouch URL
+  from the same write database instead of the read database.
 * Recheck exact bearer identity, active owner, expiry and required source scope
   on the write database immediately before entry/media source handlers, after
   URL/client policy and handler setup. Refuse revoked or changed credentials
