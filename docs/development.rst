@@ -77,6 +77,12 @@ pages and WebSub callbacks through Django's cache middleware::
 
     uv run pytest --no-cov tests/test_introspection_current_authority.py tests/test_token_management.py tests/test_websub_callback_privacy.py
 
+Source GET regressions exercise all four entry/media handlers through real
+middleware, including configured client/URL policy hooks and disposable
+writer/replica aliases::
+
+    uv run pytest --no-cov tests/test_micropub_read_authority.py
+
 The two-connection tests require file SQLite or disposable PostgreSQL. They
 pause a real request at the policy/SQL boundary, commit a synthetic authority
 change on another connection, then resume the request. The required storage

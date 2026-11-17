@@ -1,5 +1,6 @@
 """H-card parsing, validation, and processing functions."""
 
+import math
 from typing import Any
 
 from django.core.exceptions import ValidationError
@@ -48,11 +49,15 @@ def _admit_properties(data: dict[str, Any]) -> None:
             remaining -= _text_byte_size(value, remaining)
         elif value is None or isinstance(value, bool | int | float):
             remaining -= _text_byte_size(_scalar_text(value), remaining)
+        else:
+            raise ValidationError("H-card values must be finite JSON data", code="invalid_h_card")
 
     visit(data, 0)
 
 
 def _scalar_text(value: bool | int | float | None) -> str:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValidationError("H-card values must be finite JSON data", code="invalid_h_card")
     try:
         return str(value) if value is not None else "null"
     except ValueError as exc:

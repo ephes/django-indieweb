@@ -183,6 +183,8 @@ WebSub admin edits preserve current callback secrets and delivery diagnostics.
 Only deliberately changed WebSub fields are saved; conflicting lease/state
 changes require reloading the form. The profile admin JSON editor accepts at
 most 256 KiB of UTF-8 text and reports decoding resource failures as field errors.
+It rejects duplicate JSON members at any depth and nonfinite numbers. All
+h-card extensions must contain portable JSON values with finite numbers.
 
 Lease inspection streams metadata in chunks of 500 rows and prints URL
 origin/path descriptions without credentials, queries, fragments or terminal

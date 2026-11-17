@@ -5,6 +5,16 @@ Changelog
 
 Unreleased
 ----------
+* Recheck exact bearer identity, active owner, expiry and required source scope
+  on the write database immediately before entry/media source handlers, after
+  URL/client policy and handler setup. Refuse revoked or changed credentials
+  and stale replica grants without calling private source readers.
+* Reject duplicate members at every depth and nonfinite numbers in profile
+  admin JSON before saving. The shared h-card envelope now requires finite
+  JSON scalars, including in extension properties; preserve valid Unicode and
+  nested extension lists and leave existing profiles unchanged on refusal.
+  Nonfinite values previously failed only at the database JSON constraint;
+  no stored profile needs migration.
 * Sync the local static-site publication directory and its parents through the
   content root after exclusive publication and stage cleanup, plus the parents
   of root directories the handler creates; leave other ancestors unsynced.

@@ -133,6 +133,13 @@ Before copying or normalizing keys, it also admits at most 262,144 aggregate
 UTF-8 bytes across all keys and string scalars, plus the textual sizes of
 numeric, boolean and null scalars. This budget is shared across nested
 properties, counts repeated values each time, and rejects invalid UTF-8 text.
+All leaves, including extension properties, must be JSON scalars: strings,
+booleans, integers, finite floats or null. Nonfinite numbers and other Python
+objects are rejected before serialization or profile field derivation.
+The supported databases already refuse nonfinite JSON numbers at the column
+(SQLite's ``JSON_VALID`` check and PostgreSQL ``jsonb``), so this check turns a
+former database integrity error into a validation error; no stored profile
+needs migration.
 ``parse_h_card()`` additionally limits raw HTML to 1,048,576 UTF-8 bytes before
 starting the shared Webmention parse worker. Extraction runs in that child
 under the configured memory, CPU, wall-clock, result-size and admission-slot
@@ -147,8 +154,10 @@ is built in the application process. The first top-level card, relative URL
 resolution and normalized property names retain their existing behavior.
 The admin JSON editor additionally accepts at most 262,144 bytes (256 KiB) of
 UTF-8 text before decoding. This bounds decoder input work; malformed JSON,
-excessive decoder nesting and integer-conversion limits return a value-free
-field error and leave the stored profile unchanged.
+exact duplicate members at any depth, nonfinite constants (``NaN``,
+``Infinity``), overflowing float literals, excessive decoder nesting and
+integer-conversion limits return a value-free field error and leave the stored
+profile unchanged.
 The node budget is shared across all properties and nested lists. Exceeding
 any resource limit raises ``ValidationError`` with code ``invalid_h_card``;
 ``validate_h_card()`` returns ``False``. Profile validation checks these limits
