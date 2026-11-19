@@ -371,6 +371,9 @@ def request_with_safe_redirects(
 ) -> RedirectedResponse:
     """Run an HTTP request after SSRF checks, re-checking every redirect.
 
+    The helper handles redirects itself, overriding HTTPX's ``follow_redirects``
+    setting for every request.
+
     When ``max_bytes`` is provided, the request is routed through streaming so the
     body is bounded before it is fully buffered. Guarded requests advertise
     identity encoding and refuse any other Content-Encoding before decoding.
@@ -456,14 +459,15 @@ def _prepare_pinned_request(
 ) -> tuple[str, dict[str, Any]]:
     """Validate ``url`` and, when pinning is enabled, return an IP-rewritten URL plus updated kwargs.
 
-    When ``pin_to_resolved_ip`` is False, behavior matches the legacy
-    pre-flight: validate (with resolver if given) and return the URL/kwargs
-    unchanged. When True and a resolver is configured, the host is resolved to
+    Every dispatch disables HTTPX redirect following. When
+    ``pin_to_resolved_ip`` is False, only validate the URL (with resolver if
+    given). When True and a resolver is configured, the host is resolved to
     one safe IP, the URL host is replaced with that IP literal, the ``Host``
     header is set to the original hostname, and HTTPS requests gain
     ``extensions["sni_hostname"]`` so TLS SNI / certificate verification still
     target the original hostname.
     """
+    request_kwargs = {**request_kwargs, "follow_redirects": False}
     if not pin_to_resolved_ip or resolver is None:
         validate_safe_http_url(url, resolver=resolver)
         return url, request_kwargs
@@ -571,16 +575,13 @@ def stream_with_safe_redirects(
             raise WebmentionRedirectError(f"unsupported Webmention redirect target: {current_url}") from exc
         with client.stream(method, connect_url, **connect_kwargs) as response:
             _check_deadline(deadline)
-            if response.status_code not in WEBMENTION_REDIRECT_STATUS_CODES:
+            location = response.headers.get("location") or response.headers.get("Location")
+            if response.status_code not in WEBMENTION_REDIRECT_STATUS_CODES or not location:
                 content = _decoded_response_content_with_limit(response, max_bytes=max_bytes, deadline=deadline)
                 return RedirectedResponse(
                     response=_copy_response_with_content(response, content),
                     final_url=current_url,
                 )
-
-            location = response.headers.get("location") or response.headers.get("Location")
-            if not location:
-                return RedirectedResponse(response=_copy_response_with_content(response, b""), final_url=current_url)
 
         if redirects_followed >= WEBMENTION_MAX_REDIRECTS:
             raise WebmentionRedirectError(f"exceeded {WEBMENTION_MAX_REDIRECTS} Webmention redirects")

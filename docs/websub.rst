@@ -101,9 +101,9 @@ malformed topic or hub URLs, raise ``ValueError`` before any network request is
 made.
 
 When no hubs are configured or passed, ``notify_hubs()`` returns an empty list
-without opening an HTTP client. If you inject a custom ``httpx.Client`` into
-``notify_hubs()`` for testing or integration, that trusted client controls its
-own redirect behavior; the package-created client uses ``follow_redirects=False``.
+without opening an HTTP client. The shared HTTP helper handles redirects for
+both package-created and injected clients, and refuses redirects to a
+different origin.
 
 .. _websub-injected-client-warning:
 

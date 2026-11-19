@@ -6140,3 +6140,14 @@ bundle.
   tests/test_websub_subscriber.py` (139 passed, 4 skipped). The split-routing
   regression failed before the fix.
 - Docs: `docs/websub.rst` and `docs/changelog.rst` Unreleased.
+
+## 2026-11-19
+
+### Keep guarded redirects and terminal bodies consistent (round 152 B08)
+
+- The shared HTTP helper controls each redirect hop and keeps terminal
+  redirect bodies under the configured byte limit and deadline.
+- Validation: `uv run --frozen pytest --no-cov -q tests/test_http_client.py`
+  (80 passed). Both regressions failed before their fixes.
+- Docs: `docs/webmention.rst`, `docs/websub.rst` and
+  `docs/changelog.rst` Unreleased.

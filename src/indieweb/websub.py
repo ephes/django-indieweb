@@ -1787,9 +1787,8 @@ def notify_hubs(
     Sends the widely-supported publisher notification form as an
     ``application/x-www-form-urlencoded`` POST with ``hub.mode=publish`` and
     ``hub.url=<topic_url>``. Network failures and non-2xx hub responses are
-    captured in the returned results instead of being raised. When callers
-    inject ``client``, that trusted client is responsible for its own redirect
-    policy.
+    captured in the returned results instead of being raised. The shared HTTP
+    helper applies the same redirect policy with an injected ``client``.
     """
     validated_topic_url = _validate_url(topic_url, label="topic URL")
     hub_urls = get_websub_hubs(hubs)

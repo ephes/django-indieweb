@@ -1134,10 +1134,15 @@ HTTP Redirects
 ==============
 
 django-indieweb follows HTTP redirects explicitly for Webmention network
-requests. Redirect handling is bounded to 5 redirects per request and only
+requests. The shared guarded HTTP helper handles each redirect itself, even
+when the supplied HTTPX client or request options enable automatic following.
+Redirect handling is bounded to 5 redirects per request and only
 continues to ``http`` and ``https`` URLs. Redirect chains that exceed the
 limit, redirect to another scheme, loop until the limit is reached, or raise a
 network/client error are treated as request failures.
+When a redirect response has no ``Location`` value, the helper returns it as
+the terminal response and reads its body under any configured byte limit
+and total timeout.
 
 Receive-side source fetches follow redirects before validating the source
 document. The submitted ``Webmention.source_url`` and ``Webmention.target_url``

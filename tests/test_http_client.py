@@ -83,6 +83,28 @@ def test_request_with_safe_redirects_allows_public_mocked_url():
     assert result.final_url == "https://example.com/post"
 
 
+@pytest.mark.parametrize("options", [{}, {"max_bytes": 7}, {"total_timeout": 10}])
+def test_locationless_redirect_preserves_terminal_body(options):
+    def respond(request):
+        return httpx.Response(302, stream=httpx.ByteStream(b"details"))
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        url = "https://example.com/post"
+        result = request_with_safe_redirects(client, "GET", url, resolver=public_resolver, **options)
+
+    assert result.final_url == url
+    assert result.response.status_code == 302
+    assert result.response.content == b"details"
+
+
+def test_locationless_redirect_enforces_body_size_limit():
+    def respond(request):
+        return httpx.Response(302, stream=httpx.ByteStream(b"details"))
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client, pytest.raises(HTTPResponseTooLarge):
+        request_with_safe_redirects(client, "GET", "https://example.com/post", resolver=public_resolver, max_bytes=6)
+
+
 def test_request_with_safe_redirects_enforces_max_bytes():
     """Passing max_bytes routes through streaming and raises HTTPResponseTooLarge."""
 
@@ -576,7 +598,8 @@ def test_default_clients_disable_trust_env(path):
         assert "trust_env=False" in snippet, f"{path}: {snippet} missing trust_env=False"
 
 
-def test_strict_redirect_rejects_cross_origin():
+@pytest.mark.parametrize("max_bytes", [None, 100])
+def test_strict_redirect_rejects_cross_origin(max_bytes):
     """When cross_origin_strip=True, a redirect to a different origin must raise."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -594,6 +617,7 @@ def test_strict_redirect_rejects_cross_origin():
                 resolver=lambda host, port: ["1.1.1.1"],
                 pin_to_resolved_ip=False,
                 cross_origin_strip=True,
+                max_bytes=max_bytes,
             )
 
 
@@ -618,8 +642,15 @@ def test_disable_client_cookies_drops_set_cookie_responses():
         assert not cookie_header, f"unexpected cookie replayed: {cookie_header!r}"
 
 
-def test_safe_redirect_allows_same_origin_when_strict():
+@pytest.mark.parametrize("max_bytes", [None, 100])
+@pytest.mark.parametrize("request_options", [{}, {"follow_redirects": True}])
+def test_safe_redirect_allows_same_origin_when_strict(max_bytes, request_options):
     """Same-origin redirects should be permitted even when strict mode is on."""
+    lookups = []
+
+    def resolve(host, port):
+        lookups.append((host, port))
+        return ("93.184.216.34",)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/":
@@ -627,17 +658,20 @@ def test_safe_redirect_allows_same_origin_when_strict():
         return httpx.Response(200)
 
     transport = httpx.MockTransport(handler)
-    with httpx.Client(transport=transport, trust_env=False) as client:
+    with httpx.Client(transport=transport, trust_env=False, follow_redirects=True) as client:
         result = request_with_safe_redirects(
             client,
             "GET",
             "https://a.example/",
-            resolver=lambda host, port: ["1.1.1.1"],
+            resolver=resolve,
             pin_to_resolved_ip=False,
             cross_origin_strip=True,
+            max_bytes=max_bytes,
+            **request_options,
         )
         assert result.response.status_code == 200
         assert result.final_url == "https://a.example/next"
+    assert lookups == [("a.example", 443)] * 2
 
 
 class _Clock:

@@ -6,6 +6,10 @@ Changelog
 Unreleased
 ----------
 
+* Disable automatic HTTPX redirect following for every guarded request hop
+  so the helper can enforce its redirect policy.
+* Preserve the body of terminal redirects without a ``Location`` value,
+  subject to the guarded request's byte limit and total timeout.
 * Open a fresh connection for package-managed pinned HTTP requests so
   each HTTPS request verifies the hostname of its own origin.
 * Resolve hostnames once per guarded redirect hop and remove the extra
