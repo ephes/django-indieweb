@@ -51,8 +51,9 @@ class Command(BaseCommand):
         if not math.isfinite(renewal_window_hours) or renewal_window_hours < 0:
             raise CommandError("--renewal-window-hours must be finite and non-negative")
 
+        observed_at = timezone.now()
         try:
-            summaries = iter_websub_lease_summaries(within=timedelta(hours=renewal_window_hours))
+            summaries = iter_websub_lease_summaries(within=timedelta(hours=renewal_window_hours), now=observed_at)
             first = next(summaries, None)
         except (ValueError, OverflowError) as exc:
             raise CommandError("--renewal-window-hours exceeds the supported datetime range") from exc
@@ -61,7 +62,7 @@ class Command(BaseCommand):
             return
 
         self.stdout.write(
-            f"WebSub subscriptions requiring lease attention at {timezone.now().isoformat()} "
+            f"WebSub subscriptions requiring lease attention at {observed_at.isoformat()} "
             f"(window: {renewal_window_hours:g} hours)"
         )
         for summary in chain((first,), summaries):

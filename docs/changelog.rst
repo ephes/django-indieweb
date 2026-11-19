@@ -18,6 +18,7 @@ Unreleased
   finish updating the same outbound history.
 * Advance the outbound success watermark for late successes even when a
   newer attempt failed, so older failures cannot inflate the pruning count.
+* Use the same WebSub lease observation time in the CLI header and all rows.
 
 0.7.1 (2026-11-17)
 ------------------

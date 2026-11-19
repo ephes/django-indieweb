@@ -118,3 +118,32 @@ def test_cli_streams_projected_lease_metadata(monkeypatch):
     assert [int(line.split("#")[1].split()[0]) for line in lines] == ids
     assert isinstance(websub.summarize_websub_leases(now=now), list)
     assert [s.subscription_id for s in websub.summarize_websub_leases(now=now)] == ids
+
+
+@pytest.mark.django_db
+def test_cli_uses_one_observation_time_across_the_query(monkeypatch):
+    observed_at = timezone.now()
+    expires_at = observed_at + timedelta(seconds=1)
+    clock = observed_at
+    row = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/",
+        topic_url="https://topic.example/",
+        state=WebSubSubscription.STATE_ACTIVE,
+        lease_expires_at=expires_at,
+    )
+    monkeypatch.setattr(timezone, "now", lambda: clock)
+
+    def advance_clock(execute, sql, params, many, context):
+        nonlocal clock
+        result = execute(sql, params, many, context)
+        clock = expires_at + timedelta(seconds=1)
+        return result
+
+    out = StringIO()
+    with connection.execute_wrapper(advance_clock):
+        call_command("websub_subscriptions", stdout=out)
+    assert clock > expires_at
+    header, summary = out.getvalue().splitlines()
+    assert f"at {observed_at.isoformat()} " in header
+    assert summary.startswith(f"renewal_due: #{row.pk} ")
+    assert summary.endswith(f"lease_expires_at={expires_at.isoformat()}")

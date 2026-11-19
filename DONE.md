@@ -6120,3 +6120,13 @@ bundle.
   tests/test_round90_outbound.py tests/test_webmention_sender.py`
   (183 passed, 3 skipped). The pruning regression failed before the fix.
 - Docs: `docs/webmention.rst` and `docs/changelog.rst` Unreleased.
+
+### Share one WebSub lease observation time (round 150 B11)
+
+- The CLI uses its header timestamp for selection and expiry classification even
+  when a query returns after a lease expires.
+- Validation: `uv run pytest --no-cov -q tests/test_round92_maintenance.py
+  tests/test_round92_delivery.py tests/test_maintenance_boundaries.py
+  tests/test_websub_subscriber.py` (152 passed). The query-clock regression
+  failed before the fix.
+- Docs: `docs/websub.rst` and `docs/changelog.rst` Unreleased.

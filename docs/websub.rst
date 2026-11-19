@@ -175,8 +175,10 @@ lease has expired or expires within a configurable renewal window:
    python manage.py websub_subscriptions --renewal-window-hours 6
 
 The command streams metadata only: subscription id, topic/hub origin and path,
-status, and ``lease_expires_at``. URL userinfo, query strings and fragments are
-omitted independently of logging settings. URLs containing terminal controls
+status, and ``lease_expires_at``. The header reports the observation time used
+for every row. A lease expiring at or before that instant is marked expired.
+URL userinfo, query strings and fragments are omitted independently of logging
+settings. URLs containing terminal controls
 or invalid authorities are replaced with ``[invalid URL]``; full URLs remain
 available in authenticated admin/data surfaces. It selects only lease metadata
 in chunks of 500 rows, ordered by lease expiry then primary key, without loading
