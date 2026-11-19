@@ -1800,7 +1800,6 @@ def notify_hubs(
     try:
         for hub_url in hub_urls:
             try:
-                validate_safe_http_url(hub_url, resolver=resolver)
                 delivered = request_with_safe_redirects(
                     http_client,
                     "POST",

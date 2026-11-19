@@ -651,7 +651,8 @@ WebSub network calls unless your application explicitly calls
 topic values are syntactically valid ``http`` or ``https`` URLs. Hub network
 requests use the shared outbound HTTP safety checks: loopback, private,
 link-local, multicast, reserved, metadata-service, and other non-global IP
-destinations are rejected after DNS resolution and again after each redirect.
+destinations are rejected after DNS resolution. The publisher resolves and
+pins the initial hub and each allowed redirect once per request hop.
 Each connection is pinned to the resolved IP literal while the original ``Host``
 header and TLS SNI are preserved, so a DNS rebinding hub host cannot resolve
 to a public address during validation and a private address during the connect.

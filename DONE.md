@@ -6069,3 +6069,14 @@ bundle.
   exercises the HTTP pool with a fake network stream and checks that each
   connection starts TLS with hostname and certificate verification enabled.
 - Docs: `docs/configuration.rst`, `docs/websub.rst`, and `docs/changelog.rst` Unreleased.
+
+### Resolve once per guarded redirect hop (round 148 B16)
+
+- Let request preparation validate and pin each redirect target and each
+  initial publisher request. Preserve strict origin checks and redirect
+  error handling.
+- Validation: `uv run --frozen pytest --no-cov -q tests/test_http_client.py
+  tests/test_websub.py tests/test_websub_boundaries.py`. Three lookup-count
+  cases failed before the fix. The suite also checks that rejected destinations
+  never reach transport.
+- Docs: `docs/websub.rst` and `docs/changelog.rst` Unreleased.

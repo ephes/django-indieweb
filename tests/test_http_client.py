@@ -335,19 +335,12 @@ def test_request_with_safe_redirects_pin_to_resolved_ip_can_be_disabled():
 
 
 def test_request_with_safe_redirects_resists_dns_rebinding():
-    """A rebinding resolver returning a private address on the second lookup is rejected.
-
-    Each redirect hop runs the resolver again, so a rebinding host that is
-    public during the first request and private during the redirect target's
-    pre-flight is caught before any second connection is attempted.
-    """
+    """A private answer on the redirect hop is rejected before transport."""
     call_count = {"value": 0}
 
     def rebinding_resolver(host: str, port: int) -> tuple[str, ...]:
         call_count["value"] += 1
-        # First two calls (initial + redirect target preflight) succeed; later calls
-        # rebind to a private address.
-        if call_count["value"] >= 3:
+        if call_count["value"] == 2:
             return ("10.0.0.5",)
         return ("93.184.216.34",)
 
@@ -371,7 +364,7 @@ def test_request_with_safe_redirects_resists_dns_rebinding():
     # second hop blocked the second connection before it was attempted.
     assert len(requests) == 1
     assert requests[0].url.host == "93.184.216.34"
-    assert call_count["value"] >= 3
+    assert call_count["value"] == 2
 
 
 def test_request_with_safe_redirects_preserves_port_in_host_header():
@@ -883,3 +876,30 @@ def test_pinned_tls_authority_overrides_supplied_sni_across_redirects(streaming)
     assert all(request.extensions["synthetic_extension"] == "preserved" for request in requests)
     assert extensions["sni_hostname"] == "conflicting.example"
     assert headers == {"hOsT": "conflicting.example"}
+
+
+@pytest.mark.parametrize("max_bytes", [None, 100])
+def test_resolves_each_allowed_redirect_hop_once(max_bytes):
+    lookups = []
+    requests = []
+    addresses = {"first.example": "93.184.216.34", "next.example": "1.1.1.1"}
+
+    def resolve(host, port):
+        lookups.append((host, port))
+        return (addresses[host],)
+
+    def respond(request):
+        requests.append((request.headers["Host"], request.url.host))
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"Location": "https://next.example/final"})
+        return httpx.Response(200, content=b"ok")
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = request_with_safe_redirects(
+            client, "GET", "https://first.example/start", resolver=resolve, max_bytes=max_bytes
+        )
+
+    assert result.final_url == "https://next.example/final"
+    assert result.response.content == b"ok"
+    assert lookups == [("first.example", 443), ("next.example", 443)]
+    assert requests == list(addresses.items())

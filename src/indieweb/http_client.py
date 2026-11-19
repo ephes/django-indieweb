@@ -442,11 +442,6 @@ def request_with_safe_redirects(
             raise WebmentionRedirectError(
                 f"cross-origin redirect not permitted for strict caller: {current_url} -> {next_url}"
             )
-        try:
-            validate_safe_http_url(next_url, resolver=resolver)
-        except UnsafeHTTPUrlError as exc:
-            raise WebmentionRedirectError(f"unsupported Webmention redirect target: {next_url}") from exc
-
         current_url = next_url
 
     raise WebmentionRedirectError(f"exceeded {WEBMENTION_MAX_REDIRECTS} Webmention redirects")
@@ -595,11 +590,6 @@ def stream_with_safe_redirects(
             raise WebmentionRedirectError(
                 f"cross-origin redirect not permitted for strict caller: {current_url} -> {next_url}"
             )
-        try:
-            validate_safe_http_url(next_url, resolver=resolver)
-        except UnsafeHTTPUrlError as exc:
-            raise WebmentionRedirectError(f"unsupported Webmention redirect target: {next_url}") from exc
-
         current_url = next_url
 
     raise WebmentionRedirectError(f"exceeded {WEBMENTION_MAX_REDIRECTS} Webmention redirects")

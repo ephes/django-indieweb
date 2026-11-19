@@ -8,6 +8,8 @@ Unreleased
 
 * Open a fresh connection for package-managed pinned HTTP requests so
   each HTTPS request verifies the hostname of its own origin.
+* Resolve hostnames once per guarded redirect hop and remove the extra
+  lookup before WebSub publisher notifications.
 
 0.7.1 (2026-11-17)
 ------------------

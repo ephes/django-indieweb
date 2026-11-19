@@ -256,3 +256,30 @@ def test_owned_publisher_disables_connection_reuse_for_pinned_requests(monkeypat
     assert [result.status_code for result in results] == [204, 204, 204]
     assert destinations == [("93.184.216.34", 443)] * 3
     assert handshakes == ["alpha.example", "beta.example", "alpha.example"]
+
+
+def test_owned_publisher_resolves_once_per_hop(monkeypatch):
+    lookups = []
+    requests = []
+    real_client = httpx.Client
+
+    def resolve(host, port):
+        lookups.append((host, port))
+        return ("93.184.216.34",)
+
+    def respond(request):
+        requests.append((request.url.host, request.url.path))
+        if request.url.path == "/publish":
+            return httpx.Response(307, headers={"Location": "/notify"})
+        return httpx.Response(204)
+
+    monkeypatch.setattr("indieweb.websub.default_address_resolver", resolve)
+    monkeypatch.setattr(
+        "indieweb.websub.httpx.Client", lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)
+    )
+
+    results = notify_hubs("https://topic.example/feed", "https://hub.example/publish")
+
+    assert [result.status_code for result in results] == [204]
+    assert lookups == [("hub.example", 443)] * 2
+    assert requests == [("93.184.216.34", "/publish"), ("93.184.216.34", "/notify")]
