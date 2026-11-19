@@ -959,6 +959,7 @@ class WebmentionSender:
         started = attempt_started_at or timezone.now()
         using = router.db_for_write(WebmentionOutboundTarget)
         rows = WebmentionOutboundTarget.objects.using(using)
+        claim_updates: dict[str, None] = {}
         if claim is None:
             target, _ = rows.get_or_create(source_url=source_url, target_url=target_url)
             completion = rows.filter(pk=target.pk)
@@ -968,14 +969,14 @@ class WebmentionSender:
                 return None
             target = claimed_target
             completion = rows.filter(pk=target.pk, resend_claim=claim, resend_claim_expires_at__gt=timezone.now())
+            claim_updates = {"resend_claim": None, "resend_claim_expires_at": None}
         current = Q(last_attempted_at__isnull=True) | Q(last_attempted_at__lte=started)
         after_success = Q(last_successful_attempt_at__isnull=True) | Q(last_successful_attempt_at__lte=started)
         success = bool(result.get("success"))
         # Every expression sees the current stored row in one atomic SQL update.
         updates: dict[str, Any] = {
+            **claim_updates,
             "modified": timezone.now(),
-            "resend_claim": None,
-            "resend_claim_expires_at": None,
             "last_attempted_at": Case(When(current, then=Value(started)), default=F("last_attempted_at")),
             "last_status_code": Case(
                 When(current, then=Value(result.get("status_code"))), default=F("last_status_code")

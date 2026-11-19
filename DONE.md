@@ -6101,3 +6101,12 @@ bundle.
   tests/test_maintenance_boundaries.py` passed (377 passed, 4 skipped).
   Both oversized-inventory cases failed before enforcing the limit.
 - Docs: `docs/configuration.rst` and `docs/changelog.rst` Unreleased.
+
+### Preserve live historical resend claims (round 150 B10)
+
+- A current-target completion updates outbound history without clearing a live
+  resend claim. The historical owner still settles its claimed attempt.
+- Validation: `uv run pytest --no-cov -q tests/test_outbound_state.py
+  tests/test_round90_outbound.py` (28 passed, 3 skipped). The interleaved
+  resend test failed before the fix.
+- Docs: `docs/webmention.rst` and `docs/changelog.rst` Unreleased.

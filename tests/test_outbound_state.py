@@ -99,6 +99,45 @@ def test_late_failed_send_preserves_newer_success_and_observation(monkeypatch):
     assert row.endpoint_url == "https://endpoint.example/"
 
 
+@pytest.mark.django_db
+def test_current_target_completion_preserves_historical_claim(monkeypatch):
+    sender = WebmentionSender()
+    source = "https://source.example/"
+    target = "https://target.example/"
+    row = WebmentionOutboundTarget.objects.create(source_url=source, target_url=target)
+    start = timezone.now()
+    current_start = start + timedelta(seconds=1)
+    monkeypatch.setattr(sender, "discover_endpoint", lambda target, **kwargs: "https://endpoint.example/")
+
+    def send(*args, **kwargs):
+        row.refresh_from_db()
+        claim = row.resend_claim
+        expires = row.resend_claim_expires_at
+        assert claim is not None and expires > current_start
+
+        with (
+            patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 200}),
+            patch("indieweb.senders.timezone.now", return_value=current_start),
+        ):
+            [current] = sender.send_webmentions(source, f'<a href="{target}">target</a>')
+        assert current["success"]
+        row.refresh_from_db()
+        assert (row.resend_claim, row.resend_claim_expires_at) == (claim, expires)
+        assert row.last_attempted_at == row.last_seen_in_source_at == current_start
+        assert row.last_status_code == 200
+        return {"success": True, "status_code": 202}
+
+    monkeypatch.setattr(sender, "send_webmention", send)
+    with patch("indieweb.senders.timezone.now", return_value=start):
+        [historical] = sender.resend_salmentions(source, "")
+    assert historical["success"] and historical["provenance"] == "history"
+    row.refresh_from_db()
+    assert row.resend_claim is None and row.resend_claim_expires_at is None
+    assert row.first_sent_at == start
+    assert row.last_sent_at == current_start
+    assert row.last_status_code == 200
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("existing", [False, True])
 def test_concurrent_history_failures_count_twice(existing, concurrent_database):

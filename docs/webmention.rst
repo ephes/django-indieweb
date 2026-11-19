@@ -1800,7 +1800,8 @@ when reserving. Other workers return ``skip_reason=claimed`` or
 A claim expires after the remaining source budget plus 30 seconds. A crashed
 worker therefore permits a later retry without inventing a delivery failure or
 cooldown timestamp. Completion records history and clears the claim only for
-its live owner. A replacement claim, a current-link observation or deletion
+its live owner. A current-link attempt can update the shared history while
+the historical owner retains its claim. A replacement claim or deletion
 fences an older completion. Deadline refusals release only their own claim;
 already accepted deliveries retain their outcomes. A worker that continues
 past lease expiry cannot commit history, though the remote HTTP endpoint may
