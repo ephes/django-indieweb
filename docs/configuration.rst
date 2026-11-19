@@ -972,8 +972,9 @@ Malformed values, including an empty environment variable that resolves to
 ignored and logged; the callback falls back to the default 1 MiB limit rather
 than disabling the cap. The other integer WebSub settings (hub response cap,
 lease bounds, replay window and history) treat floats the same way.
-The callback rejects an oversized or negative ``Content-Length`` before
-reading the body when the header is present. Also configure a tight Django
+The callback rejects an oversized or negative decimal ``Content-Length`` before
+reading the body, even when the value has more digits than Python's integer
+conversion allows. Also configure a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching reverse-proxy request-body limit
 so oversized or malformed requests are stopped before they reach application
 workers.

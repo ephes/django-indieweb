@@ -4,18 +4,21 @@ import hashlib
 import hmac
 from datetime import timedelta
 from io import StringIO
+from sys import int_info
 from urllib.parse import parse_qs
 
 import django
 import httpx
 import pytest
 from django.core.management import call_command
+from django.http import HttpRequest
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from indieweb.log_redaction import text_fingerprint
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
+from indieweb.views import WebSubCallbackView
 from indieweb.websub import (
     accept_websub_delivery,
     build_websub_callback_url,
@@ -1030,6 +1033,19 @@ def test_callback_post_reports_secret_decryption_failure(client, settings, subsc
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("case", [str.lower, str.upper])
+def test_validate_websub_delivery_signature_accepts_hex_in_either_case(subscription, case):
+    subscription.secret = SHARED_SECRET
+    body = b"<feed/>"
+    digest = hmac.new(SHARED_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    headers = {"X-Hub-Signature-256": f"sha256={case(digest)}"}
+
+    assert validate_websub_delivery_signature(subscription, body, headers) == "sha256"
+    with pytest.raises(ValueError, match="did not validate"):
+        validate_websub_delivery_signature(subscription, b"<other/>", headers)
+
+
+@pytest.mark.django_db
 def test_validate_websub_delivery_signature_accepts_legacy_signature_header_when_enabled(settings, subscription):
     settings.INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES = True
     subscription.secret = SHARED_SECRET
@@ -1231,6 +1247,41 @@ def test_callback_post_rejects_oversized_content_length_before_body_read(client,
     assert response.status_code == 413
     assert subscription.last_delivery_status_code == 413
     assert subscription.last_delivery_size == 0
+
+
+@pytest.mark.parametrize(
+    ("content_length", "status"),
+    [
+        ("9" * (int_info.default_max_str_digits + 1), 413),
+        ("0" * (int_info.default_max_str_digits + 1) + "7", 413),
+        ("0" * (int_info.default_max_str_digits + 1) + "6", 204),
+        ("6", 204),
+        (None, 204),
+    ],
+    ids=["oversized-decimal", "padded-oversize", "padded-limit", "ordinary", "omitted"],
+)
+def test_callback_checks_decimal_length_before_read(
+    settings, subscription, unsigned_deliveries_allowed, monkeypatch, content_length, status
+):
+    settings.INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES = 6
+    request = HttpRequest()
+    request.META["CONTENT_TYPE"] = "application/atom+xml"
+    request.META["HTTP_LINK"] = _topic_link(subscription)
+    if content_length is not None:
+        request.META["CONTENT_LENGTH"] = content_length
+
+    reads = []
+
+    def read_body(request):
+        reads.append(request)
+        return b"<feed>"
+
+    monkeypatch.setattr("indieweb.views._read_request_body_with_invalid_content_length_fallback", read_body)
+
+    response = WebSubCallbackView().post(request, subscription.callback_token)
+
+    assert reads == ([] if status == 413 else [request])
+    assert response.status_code == status
 
 
 @pytest.mark.django_db

@@ -6151,3 +6151,13 @@ bundle.
   (80 passed). Both regressions failed before their fixes.
 - Docs: `docs/webmention.rst`, `docs/websub.rst` and
   `docs/changelog.rst` Unreleased.
+
+### Decode WebSub signature and length headers consistently (round 152 B09)
+
+- Compare valid hexadecimal HMAC digests independently of letter case and
+  reject oversized decimal lengths before the callback reads the body.
+- Validation: `uv run --frozen pytest --no-cov -q tests/test_websub_subscriber.py
+  tests/test_websub_boundaries.py tests/test_websub_signed_deliveries.py`
+  (170 passed). Both regressions failed before their fixes.
+- Docs: `docs/websub.rst`, `docs/configuration.rst` and `docs/changelog.rst`
+  Unreleased.

@@ -13,6 +13,7 @@ import warnings
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 from itertools import islice
 from typing import Any
 from urllib.parse import urlparse
@@ -1245,14 +1246,21 @@ def delivery_content_length_too_large(content_length: str | None) -> bool:
     """
     if not content_length:
         return False
-    try:
-        parsed = int(content_length)
-    except (TypeError, ValueError):
+    value = content_length.strip()
+    digits = value[1:] if value.startswith(("+", "-")) else value
+    if not digits.isascii() or not digits.isdecimal():
         return False
-    if parsed < 0:
+    digits = digits.lstrip("0")
+    if not digits:
+        return False
+    if value.startswith("-"):
         return True
     max_bytes = _delivery_max_bytes()
-    return max_bytes is not None and parsed > max_bytes
+    if max_bytes is None:
+        return False
+    # Decimal formats even a configured integer beyond Python's int-to-str digit limit.
+    limit = str(Decimal(max_bytes))
+    return (len(digits), digits) > (len(limit), limit)
 
 
 def delivery_content_type_allowed(content_type: str) -> bool:
@@ -1408,7 +1416,7 @@ def validate_websub_delivery_signature(
         expected = expected_digests[algorithm]
         if len(received_digest) != len(expected) or any(char not in string.hexdigits for char in received_digest):
             continue
-        if hmac.compare_digest(expected, received_digest):
+        if hmac.compare_digest(expected, received_digest.lower()):
             return algorithm
     raise WebSubRejection("WebSub delivery rejected: the HMAC did not validate against the stored secret")
 

@@ -621,6 +621,7 @@ stronger digest labels by default. ``X-Hub-Signature-256`` only carries
 only in ``X-Hub-Signature`` and only when
 ``INDIEWEB_WEBSUB_ALLOW_SHA1_SIGNATURES`` is enabled. When multiple supported
 signatures are present, the strongest supplied algorithm must validate.
+Uppercase and lowercase hexadecimal digits are equivalent in the digest.
 Missing, malformed, unsupported, or mismatched signatures return HTTP ``403``
 and are recorded without invoking the host hook.
 
@@ -667,8 +668,10 @@ not need cross-origin access to this callback. The optional
 ``websub_callback`` rate-limit key can be configured with
 ``INDIEWEB_RATE_LIMITS``.
 
-The callback checks an oversized or negative ``Content-Length`` before reading
-the request body when that header is present, then applies
+The callback checks an oversized or negative decimal ``Content-Length`` before
+reading the request body. It compares significant ASCII digits to the cap
+without converting the header to an integer, so leading zeroes and Python's
+integer digit limit do not affect the check. The callback then applies
 ``INDIEWEB_WEBSUB_DELIVERY_MAX_BYTES`` to the body that is actually read.
 Production deployments should also set a tight Django
 ``DATA_UPLOAD_MAX_MEMORY_SIZE`` and matching proxy/CDN body-size limit. Keep

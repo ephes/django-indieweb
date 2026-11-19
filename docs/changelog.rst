@@ -6,6 +6,9 @@ Changelog
 Unreleased
 ----------
 
+* Accept either hexadecimal letter case in valid WebSub delivery signatures.
+* Reject oversized decimal WebSub delivery lengths before reading the body,
+  including values beyond Python's integer-conversion digit limit.
 * Disable automatic HTTPX redirect following for every guarded request hop
   so the helper can enforce its redirect policy.
 * Preserve the body of terminal redirects without a ``Location`` value,
