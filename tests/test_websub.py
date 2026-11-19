@@ -283,3 +283,43 @@ def test_owned_publisher_resolves_once_per_hop(monkeypatch):
     assert [result.status_code for result in results] == [204]
     assert lookups == [("hub.example", 443)] * 2
     assert requests == [("93.184.216.34", "/publish"), ("93.184.216.34", "/notify")]
+
+
+@pytest.mark.parametrize("publisher_action", ["notify", "link"])
+def test_oversized_hub_inventory_is_bounded_before_side_effects(settings, publisher_action):
+    consumed = []
+    requests = []
+
+    def configured_hubs():
+        for index in range(100):
+            consumed.append(index)
+            yield "https://hub.example/publish"
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(204)
+
+    settings.INDIEWEB_WEBSUB_HUBS = configured_hubs()
+    topic = "https://topic.example/feed"
+    existing_link = '<https://topic.example/micropub>; rel="micropub"'
+    response = HttpResponse(headers={"Link": existing_link})
+    with (
+        httpx.Client(transport=httpx.MockTransport(respond)) as client,
+        pytest.raises(ValueError, match="INDIEWEB_WEBSUB_HUBS must contain at most 16 entries"),
+    ):
+        if publisher_action == "notify":
+            notify_hubs(topic, client=client)
+        else:
+            add_websub_link_header(response, topic)
+
+    assert consumed == list(range(17))
+    assert not requests
+    assert response["Link"] == existing_link
+
+
+def test_hub_inventory_accepts_sixteen_entries_in_first_seen_order():
+    first = "https://hub.example/first"
+    second = "https://hub.example/second"
+    hubs = iter([first, second, *([first] * 13), "https://backup.example/publish"])
+
+    assert get_websub_hubs(hubs) == (first, second, "https://backup.example/publish")

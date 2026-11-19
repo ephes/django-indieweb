@@ -891,7 +891,11 @@ explicitly.
 
 The values must be non-empty ``http`` or ``https`` URLs. Discovery and
 notification use each exact URL once, in first-seen order. Distinct URLs
-on the same host remain separate entries. Discovery helpers such
+on the same host remain separate entries. Supply a URL string or an
+iterable of up to 16 entries, counting duplicates toward the limit. The
+same limit applies to explicit hub arguments and repeated ``--hub``
+options. An oversized inventory raises an error before discovery links are
+produced or any hub is notified. Discovery helpers such
 as ``websub_link_header()`` and the ``websub_link_tags`` template tag require at
 least one hub so they cannot silently render an invalid WebSub publisher
 advertisement. ``notify_hubs()`` with no configured hubs returns an empty

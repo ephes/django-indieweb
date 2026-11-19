@@ -6090,3 +6090,14 @@ bundle.
   tests/test_maintenance_boundaries.py`. All six command cases failed before
   deduplication and verify counts for successful and failed responses.
 - Docs: `docs/configuration.rst` and `docs/changelog.rst` Unreleased.
+
+### Bound configured WebSub hub inventory (round 148 B17)
+
+- Admit up to 16 publisher entries before rendering discovery links or
+  opening a client for notifications. Count entries before deduplication and
+  consume at most 17 items from an oversized iterable.
+- Validation: `uv run --frozen pytest --no-cov -q tests/test_http_client.py
+  tests/test_websub*.py tests/test_notify_websub_command.py
+  tests/test_maintenance_boundaries.py` passed (377 passed, 4 skipped).
+  Both oversized-inventory cases failed before enforcing the limit.
+- Docs: `docs/configuration.rst` and `docs/changelog.rst` Unreleased.

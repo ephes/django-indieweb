@@ -12,6 +12,8 @@ Unreleased
   lookup before WebSub publisher notifications.
 * Deduplicate exact WebSub hub URLs in first-seen order for discovery and
   publishing. The notification command counts each endpoint once.
+* Limit WebSub publisher configuration to 16 hub entries before rendering
+  links or sending notifications. The limit includes duplicate entries.
 
 0.7.1 (2026-11-17)
 ------------------

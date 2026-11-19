@@ -10,9 +10,10 @@ import math
 import string
 import uuid
 import warnings
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import islice
 from typing import Any
 from urllib.parse import urlparse
 
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WEBSUB_TIMEOUT = 10.0
 MAX_WEBSUB_TIMEOUT = 24 * 60 * 60
+MAX_WEBSUB_CONFIGURED_HUBS = 16
 MAX_WEBSUB_INTEGER = 2**31 - 1
 DEFAULT_WEBSUB_DELIVERY_MAX_BYTES = 1024 * 1024
 DEFAULT_WEBSUB_HUB_RESPONSE_MAX_BYTES = 256 * 1024
@@ -144,7 +146,7 @@ class WebSubDeliveryEnqueueError(Exception):
     """Configured WebSub delivery enqueue hook failed to load or run."""
 
 
-def _as_string_tuple(value: Any, *, setting_name: str) -> tuple[str, ...]:
+def _as_string_tuple(value: Any, *, setting_name: str, max_items: int | None = None) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
@@ -152,7 +154,9 @@ def _as_string_tuple(value: Any, *, setting_name: str) -> tuple[str, ...]:
     if not isinstance(value, Iterable):
         raise ValueError(f"{setting_name} must be a string or iterable of strings")
 
-    values = tuple(value)
+    values = tuple(value if max_items is None else islice(value, max_items + 1))
+    if max_items is not None and len(values) > max_items:
+        raise ValueError(f"{setting_name} must contain at most {max_items} entries")
     if not all(isinstance(item, str) and item for item in values):
         raise ValueError(f"{setting_name} must contain non-empty strings")
     return values
@@ -167,14 +171,16 @@ def _validate_url(value: str, *, label: str) -> str:
     return value
 
 
-def get_websub_hubs(hubs: Sequence[str] | str | None = None) -> tuple[str, ...]:
+def get_websub_hubs(hubs: Iterable[str] | str | None = None) -> tuple[str, ...]:
     """Return distinct validated WebSub hub URLs in first-seen order."""
     configured_hubs = getattr(settings, "INDIEWEB_WEBSUB_HUBS", ()) if hubs is None else hubs
-    parsed_hubs = _as_string_tuple(configured_hubs, setting_name="INDIEWEB_WEBSUB_HUBS")
+    parsed_hubs = _as_string_tuple(
+        configured_hubs, setting_name="INDIEWEB_WEBSUB_HUBS", max_items=MAX_WEBSUB_CONFIGURED_HUBS
+    )
     return tuple(dict.fromkeys(_validate_url(hub_url, label="hub URL") for hub_url in parsed_hubs))
 
 
-def build_websub_links(topic_url: str, hubs: Sequence[str] | str | None = None) -> tuple[WebSubLink, ...]:
+def build_websub_links(topic_url: str, hubs: Iterable[str] | str | None = None) -> tuple[WebSubLink, ...]:
     """Build WebSub discovery links for a topic.
 
     The result contains one ``rel=hub`` link for each hub and exactly one
@@ -189,7 +195,7 @@ def build_websub_links(topic_url: str, hubs: Sequence[str] | str | None = None) 
     return (*hub_links, WebSubLink(rel="self", url=validated_topic_url))
 
 
-def websub_link_header(topic_url: str, hubs: Sequence[str] | str | None = None) -> str:
+def websub_link_header(topic_url: str, hubs: Iterable[str] | str | None = None) -> str:
     """Return a combined HTTP ``Link`` header value for WebSub discovery."""
     return ", ".join(f'<{link.url}>; rel="{link.rel}"' for link in build_websub_links(topic_url, hubs))
 
@@ -197,7 +203,7 @@ def websub_link_header(topic_url: str, hubs: Sequence[str] | str | None = None) 
 def add_websub_link_header(
     response: HttpResponseBase,
     topic_url: str,
-    hubs: Sequence[str] | str | None = None,
+    hubs: Iterable[str] | str | None = None,
 ) -> HttpResponseBase:
     """Add WebSub discovery links to a Django response's ``Link`` header."""
     header_value = websub_link_header(topic_url, hubs)
@@ -1762,7 +1768,7 @@ def enqueue_websub_delivery(
 
 def notify_hubs(
     topic_url: str,
-    hubs: Sequence[str] | str | None = None,
+    hubs: Iterable[str] | str | None = None,
     *,
     timeout: float | None = None,
     client: httpx.Client | None = None,
