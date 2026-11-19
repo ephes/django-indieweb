@@ -1,3 +1,6 @@
+import ssl
+
+import httpcore
 import httpx
 import pytest
 from django.http import HttpResponse
@@ -221,3 +224,35 @@ def test_notify_hubs_disables_cap_when_setting_is_none(settings):
     results = notify_hubs("https://example.com/feed", ("https://hub.example/",), client=client)
 
     assert results[0].success is True
+
+
+def test_owned_publisher_disables_connection_reuse_for_pinned_requests(monkeypatch):
+    destinations = []
+    handshakes = []
+    real_client = httpx.Client
+
+    class HubStream(httpcore.MockStream):
+        def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+            assert ssl_context.verify_mode == ssl.CERT_REQUIRED
+            assert ssl_context.check_hostname
+            handshakes.append(server_hostname)
+            return self
+
+    def connect_tcp(_backend, host, port, **kwargs):
+        destinations.append((host, port))
+        return HubStream([b"HTTP/1.1 204 No Content\r\n\r\n"])
+
+    def make_client(**kwargs):
+        assert kwargs["limits"].max_keepalive_connections == 0
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(httpcore.SyncBackend, "connect_tcp", connect_tcp)
+    monkeypatch.setattr("indieweb.websub.httpx.Client", make_client)
+    monkeypatch.setattr("indieweb.websub.default_address_resolver", lambda host, port: ("93.184.216.34",))
+    hubs = ("https://alpha.example/first", "https://beta.example/", "https://alpha.example/second")
+
+    results = notify_hubs("https://topic.example/feed", hubs)
+
+    assert [result.status_code for result in results] == [204, 204, 204]
+    assert destinations == [("93.184.216.34", 443)] * 3
+    assert handshakes == ["alpha.example", "beta.example", "alpha.example"]

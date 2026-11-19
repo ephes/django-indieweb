@@ -782,7 +782,10 @@ The safe HTTP request helpers connect to the admitted public IP while setting
 ``Host`` and HTTPS ``extensions["sni_hostname"]`` from the validated URL authority.
 A supplied conflicting Host or SNI value is replaced on every redirect hop.
 Other transport extensions are preserved, and the caller's argument mappings
-are left intact. SNI excludes the port; Host includes non-default ports.
+are left intact. SNI excludes the port and Host includes non-default ports.
+Package-managed clients open a fresh connection per request. A custom
+transport used with pinning must either do the same or isolate reuse by
+logical origin and pinned destination.
 
 Subscription admin edits
 ------------------------

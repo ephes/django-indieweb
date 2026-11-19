@@ -2271,7 +2271,11 @@ Several django-indieweb APIs (``WebmentionProcessor``,
 provides one, django-indieweb trusts the transport: DNS-based SSRF blocking
 and IP pinning are not applied to that client's requests. Production
 deployments should leave ``client`` unset so the package-managed client and
-SSRF safety checks apply. Treat the injection point as a test/integration
+SSRF safety checks apply. Package-managed pinned requests open a fresh
+connection for each request, so HTTPS verifies the requested hostname even
+when multiple origins share an IP address. When using a custom transport
+with the low-level pinning helpers, disable connection reuse or key it by
+both the logical origin and pinned destination. Treat the injection point as a test/integration
 escape hatch and review the source docstrings in
 ``src/indieweb/processors.py``, ``src/indieweb/senders.py``, and
 ``src/indieweb/websub.py`` before using it. See the prominent warnings in

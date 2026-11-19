@@ -6,6 +6,9 @@ Changelog
 Unreleased
 ----------
 
+* Open a fresh connection for package-managed pinned HTTP requests so
+  each HTTPS request verifies the hostname of its own origin.
+
 0.7.1 (2026-11-17)
 ------------------
 * Compare redirect URI allowlist paths complete, including ``;`` path

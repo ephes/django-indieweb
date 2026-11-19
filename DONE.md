@@ -6057,3 +6057,15 @@ bundle.
   The earlier slice 12/13 counts (54/61 helper tests, 3,863 suite tests)
   describe the state before this follow-up.
 - Docs: `docs/development.rst` and `docs/changelog.rst` Unreleased.
+
+## 2026-11-19
+
+### Keep pinned TLS connection identity per origin (round 148 B16)
+
+- Disable keep-alive for owned pinned transports so each HTTPS connection
+  verifies the intended hostname even when several origins share an IP.
+- Validation: `uv run --frozen pytest --no-cov -q tests/test_http_client.py tests/test_websub.py`.
+  The publisher regression first failed on the idle connection limit. It
+  exercises the HTTP pool with a fake network stream and checks that each
+  connection starts TLS with hostname and certificate verification enabled.
+- Docs: `docs/configuration.rst`, `docs/websub.rst`, and `docs/changelog.rst` Unreleased.

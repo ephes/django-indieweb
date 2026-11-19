@@ -18,7 +18,9 @@ WEBMENTION_MAX_REDIRECTS = 5
 WEBMENTION_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 SAFE_HTTP_ALLOWED_SCHEMES = ("http", "https")
 SAFE_HTTP_DEFAULT_TIMEOUT = httpx.Timeout(connect=3.0, read=5.0, write=5.0, pool=2.0)
-SAFE_HTTP_DEFAULT_LIMITS = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+# Owned clients use HTTP/1.1. Disable keep-alive so origins sharing a pinned
+# IP cannot reuse a connection authenticated for a different hostname.
+SAFE_HTTP_DEFAULT_LIMITS = httpx.Limits(max_connections=10, max_keepalive_connections=0)
 DEFAULT_OUTBOUND_USER_AGENT = "django-indieweb/1.0"
 
 
