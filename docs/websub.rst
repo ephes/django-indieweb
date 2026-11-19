@@ -753,7 +753,10 @@ Django's router and the subscription instance as a hint. Expiry pruning, insert,
 count maintenance, and both atomic/savepoint boundaries use that same alias.
 A duplicate insert does not poison an enclosing transaction on that database;
 a later failure rolls back pruning and insertion together. Count caps remain
-best-effort under concurrent distinct deliveries.
+best-effort under concurrent distinct deliveries. The deprecated
+``delivery_is_replay`` helper reads the same write database, including when
+ordinary reads use a replica. Use ``accept_websub_delivery`` for atomic
+replay checking and acceptance.
 
 Malformed restored ciphertext
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

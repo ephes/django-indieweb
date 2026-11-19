@@ -1413,6 +1413,10 @@ def validate_websub_delivery_signature(
     raise WebSubRejection("WebSub delivery rejected: the HMAC did not validate against the stored secret")
 
 
+def _accepted_delivery_write_db(subscription: WebSubSubscription) -> str:
+    return router.db_for_write(WebSubAcceptedDelivery, instance=subscription)
+
+
 def delivery_is_replay(
     subscription: WebSubSubscription,
     body: bytes,
@@ -1425,7 +1429,7 @@ def delivery_is_replay(
         ``delivery_is_replay`` is replaced by :func:`accept_websub_delivery`,
         which performs the replay check and acceptance gate atomically against
         the ``WebSubAcceptedDelivery`` table. The legacy helper is retained for
-        backwards compatibility and continues to consult the new table.
+        backwards compatibility and reads the same write database as acceptance.
     """
     warnings.warn(
         "delivery_is_replay is deprecated; use accept_websub_delivery for atomic replay-check + acceptance",
@@ -1439,11 +1443,16 @@ def delivery_is_replay(
     cutoff = received_at - timedelta(seconds=replay_window_seconds)
     body_digest = hashlib.sha256(body).hexdigest()
 
-    return WebSubAcceptedDelivery.objects.filter(
-        subscription=subscription,
-        body_digest=body_digest,
-        accepted_at__gte=cutoff,
-    ).exists()
+    alias = _accepted_delivery_write_db(subscription)
+    return (
+        WebSubAcceptedDelivery.objects.using(alias)
+        .filter(
+            subscription=subscription,
+            body_digest=body_digest,
+            accepted_at__gte=cutoff,
+        )
+        .exists()
+    )
 
 
 def accept_websub_delivery(
@@ -1491,7 +1500,7 @@ def accept_websub_delivery(
     if replay_window_seconds is None:
         return True
 
-    alias = router.db_for_write(WebSubAcceptedDelivery, instance=subscription)
+    alias = _accepted_delivery_write_db(subscription)
     with transaction.atomic(using=alias):
         cutoff = received_at - timedelta(seconds=replay_window_seconds)
         WebSubAcceptedDelivery.objects.using(alias).filter(
@@ -1567,7 +1576,7 @@ def admit_websub_delivery(
         if not delivery_topic_link_allowed(headers, subscription.topic_url):
             raise WebSubDeliveryAdmissionError("topic link mismatch", 400, algorithm)
         # Related replay rows must live on the same database as their FK target.
-        if router.db_for_write(WebSubAcceptedDelivery, instance=subscription) != using:
+        if _accepted_delivery_write_db(subscription) != using:
             raise ValueError("WebSub delivery admission requires subscription and replay rows on the same database")
         if not accept_websub_delivery(subscription, body_digest):
             raise WebSubDeliveryAdmissionError("replay detected", 409, algorithm)

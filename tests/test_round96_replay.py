@@ -1,5 +1,6 @@
 """Replay acceptance failures and retention use the authoritative database."""
 
+import hashlib
 import sqlite3
 from datetime import timedelta
 from unittest.mock import patch
@@ -10,7 +11,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from indieweb.models import WebSubAcceptedDelivery, WebSubSubscription
-from indieweb.websub import accept_websub_delivery
+from indieweb.websub import accept_websub_delivery, delivery_is_replay
 from tests.test_websub_database_boundaries import ReplayRouter
 
 
@@ -120,3 +121,30 @@ def test_count_pruning_uses_no_sliced_in_subquery(settings, routed_subscription)
         assert accept_websub_delivery(routed_subscription, "d" * 64, now=now)
     assert not any("IN (SELECT" in query["sql"].upper() for query in captured.captured_queries)
     assert sorted(rows.values_list("body_digest", flat=True)) == ["c" * 64, "d" * 64]
+
+
+@pytest.mark.django_db(databases=["default", "other"], transaction=True)
+def test_legacy_replay_lookup_uses_the_acceptance_writer(settings, routed_subscription):
+    class SplitReplayRouter(ReplayRouter):
+        def db_for_read(self, model, **hints):
+            if model is WebSubAcceptedDelivery:
+                return "default"
+            return None
+
+    settings.DATABASE_ROUTERS = [SplitReplayRouter()]
+    body = b"<feed/>"
+    digest = hashlib.sha256(body).hexdigest()
+    accepted_at = timezone.now()
+    assert accept_websub_delivery(routed_subscription, digest, now=accepted_at)
+    assert not WebSubAcceptedDelivery.objects.using("default").exists()
+    assert WebSubAcceptedDelivery.objects.using("other").filter(body_digest=digest).exists()
+
+    boundary = accepted_at + timedelta(seconds=60)
+    with pytest.warns(DeprecationWarning, match="delivery_is_replay"):
+        assert delivery_is_replay(routed_subscription, body, now=boundary)
+    assert not accept_websub_delivery(routed_subscription, digest, now=boundary)
+
+    after_window = boundary + timedelta(microseconds=1)
+    with pytest.warns(DeprecationWarning, match="delivery_is_replay"):
+        assert not delivery_is_replay(routed_subscription, body, now=after_window)
+    assert accept_websub_delivery(routed_subscription, digest, now=after_window)

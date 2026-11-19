@@ -6130,3 +6130,13 @@ bundle.
   tests/test_websub_subscriber.py` (152 passed). The query-clock regression
   failed before the fix.
 - Docs: `docs/websub.rst` and `docs/changelog.rst` Unreleased.
+
+### Read legacy WebSub replay history on the writer (round 150 B11)
+
+- The deprecated replay check and atomic acceptance use the same routed write
+  database and agree at the exact expiry boundary and just after it.
+- Validation: `uv run pytest --no-cov -q tests/test_round96_replay.py
+  tests/test_websub_database_boundaries.py tests/test_websub_delivery_admission.py
+  tests/test_websub_subscriber.py` (139 passed, 4 skipped). The split-routing
+  regression failed before the fix.
+- Docs: `docs/websub.rst` and `docs/changelog.rst` Unreleased.
