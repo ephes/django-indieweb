@@ -991,7 +991,7 @@ class WebmentionSender:
         }
         if success:
             updates["last_successful_attempt_at"] = Case(
-                When(current, then=Value(started)), default=F("last_successful_attempt_at")
+                When(after_success, then=Value(started)), default=F("last_successful_attempt_at")
             )
         if endpoint:
             fresh_endpoint = Q(endpoint_discovered_at__isnull=True) | Q(endpoint_discovered_at__lte=started)

@@ -138,6 +138,33 @@ def test_current_target_completion_preserves_historical_claim(monkeypatch):
     assert row.last_status_code == 200
 
 
+@pytest.mark.django_db
+def test_late_success_prevents_older_failure_from_pruning(monkeypatch, settings):
+    settings.INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES = 2
+    sender = WebmentionSender()
+    started = timezone.now()
+    success_at = started + timedelta(seconds=1)
+    newest_failure_at = started + timedelta(seconds=2)
+    row = _record(success=True, attempt_started_at=started - timedelta(days=2))
+    monkeypatch.setattr(sender, "discover_endpoint", lambda target, **kwargs: "https://endpoint.example/")
+
+    def send(*args, **kwargs):
+        _record(attempt_started_at=newest_failure_at)
+        _record(success=True, attempt_started_at=success_at)
+        return {"success": False, "status_code": 410}
+
+    monkeypatch.setattr(sender, "send_webmention", send)
+    with patch("indieweb.senders.timezone.now", return_value=started):
+        [historical] = sender.resend_salmentions(row.source_url, "")
+    assert historical["status_code"] == 410
+    assert not historical.get("dropped")
+    row.refresh_from_db()
+    assert row.last_attempted_at == newest_failure_at
+    assert row.last_status_code == 503 and not row.last_success
+    assert row.consecutive_failures == 1
+    assert row.last_successful_attempt_at == success_at
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("existing", [False, True])
 def test_concurrent_history_failures_count_twice(existing, concurrent_database):

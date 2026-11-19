@@ -1675,9 +1675,10 @@ Overlapping outbound history
 Outbound history updates counters atomically on the unique source/target pair,
 including first-row creation. Attempts are ordered by their start time (before
 endpoint discovery); equal timestamps are resolved in database completion order.
-The latest attempt owns outcome diagnostics. Older successful attempts do not
-reset newer failures. Failures count once unless they predate the latest accepted
-success. Endpoint, sent and source-observation timestamps never move backwards.
+The latest attempt owns outcome diagnostics. A late success can advance the
+success watermark while preserving newer diagnostics and failure counts.
+Failures count once unless they predate the latest accepted success. Endpoint,
+sent and source-observation timestamps never move backwards.
 Apply migrations to add the successful-attempt watermark used by this policy.
 
 These history timestamps now refer to attempt start rather than completion;

@@ -6110,3 +6110,13 @@ bundle.
   tests/test_round90_outbound.py` (28 passed, 3 skipped). The interleaved
   resend test failed before the fix.
 - Docs: `docs/webmention.rst` and `docs/changelog.rst` Unreleased.
+
+### Advance the outbound success watermark independently (round 150 B10)
+
+- A late success advances the success watermark while keeping newer outcome
+  diagnostics and failure counts. A failure older than that success cannot add
+  a pruning strike.
+- Validation: `uv run pytest --no-cov -q tests/test_outbound_state.py
+  tests/test_round90_outbound.py tests/test_webmention_sender.py`
+  (183 passed, 3 skipped). The pruning regression failed before the fix.
+- Docs: `docs/webmention.rst` and `docs/changelog.rst` Unreleased.
