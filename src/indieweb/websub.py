@@ -168,10 +168,10 @@ def _validate_url(value: str, *, label: str) -> str:
 
 
 def get_websub_hubs(hubs: Sequence[str] | str | None = None) -> tuple[str, ...]:
-    """Return validated WebSub hub URLs from ``hubs`` or ``INDIEWEB_WEBSUB_HUBS``."""
+    """Return distinct validated WebSub hub URLs in first-seen order."""
     configured_hubs = getattr(settings, "INDIEWEB_WEBSUB_HUBS", ()) if hubs is None else hubs
     parsed_hubs = _as_string_tuple(configured_hubs, setting_name="INDIEWEB_WEBSUB_HUBS")
-    return tuple(_validate_url(hub_url, label="hub URL") for hub_url in parsed_hubs)
+    return tuple(dict.fromkeys(_validate_url(hub_url, label="hub URL") for hub_url in parsed_hubs))
 
 
 def build_websub_links(topic_url: str, hubs: Sequence[str] | str | None = None) -> tuple[WebSubLink, ...]:

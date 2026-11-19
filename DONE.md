@@ -6080,3 +6080,13 @@ bundle.
   cases failed before the fix. The suite also checks that rejected destinations
   never reach transport.
 - Docs: `docs/websub.rst` and `docs/changelog.rst` Unreleased.
+
+### Notify each configured WebSub hub once (round 148 B17)
+
+- Deduplicate identical validated hub URLs in first-seen order for discovery
+  and publisher requests. Keep distinct URLs on the same host.
+- Validation: `uv run --frozen pytest --no-cov -q tests/test_websub.py
+  tests/test_notify_websub_command.py tests/test_websub_templatetags.py
+  tests/test_maintenance_boundaries.py`. All six command cases failed before
+  deduplication and verify counts for successful and failed responses.
+- Docs: `docs/configuration.rst` and `docs/changelog.rst` Unreleased.

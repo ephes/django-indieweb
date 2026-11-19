@@ -889,7 +889,9 @@ explicitly.
        "https://backup.example/websub",
    )
 
-The values must be non-empty ``http`` or ``https`` URLs. Discovery helpers such
+The values must be non-empty ``http`` or ``https`` URLs. Discovery and
+notification use each exact URL once, in first-seen order. Distinct URLs
+on the same host remain separate entries. Discovery helpers such
 as ``websub_link_header()`` and the ``websub_link_tags`` template tag require at
 least one hub so they cannot silently render an invalid WebSub publisher
 advertisement. ``notify_hubs()`` with no configured hubs returns an empty

@@ -40,7 +40,7 @@ def test_build_websub_links_rejects_invalid_discovery_inputs(topic_url, hubs, me
 def test_build_websub_links_returns_hub_links_and_exactly_one_self_link():
     links = build_websub_links(
         "https://example.com/feed",
-        ("https://hub.example/", "https://backup.example/websub"),
+        ("https://hub.example/", "https://backup.example/websub", "https://hub.example/"),
     )
 
     assert [(link.rel, link.url) for link in links] == [

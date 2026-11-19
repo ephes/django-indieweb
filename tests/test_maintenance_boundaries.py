@@ -54,14 +54,14 @@ def test_webmention_command_batch_exit(monkeypatch, resend, outcomes):
 
 @pytest.mark.parametrize("statuses", [(204, 202), (503, 204), (503, 500)])
 @pytest.mark.parametrize("redact", [False, True])
-def test_notification_batch_attempts_every_hub_before_exit(monkeypatch, settings, statuses, redact):
-    settings.INDIEWEB_LOG_REDACTION = "redact" if redact else "off"
-    hubs = ["https://first.example/private", "https://second.example/private"]
+def test_notification_batch_attempts_each_distinct_hub_once_before_exit(monkeypatch, settings, statuses, redact):
+    settings.INDIEWEB_LOG_REDACTION = "redact" if redact else "passthrough"
+    hubs = ["https://hub.example/private/first", "https://hub.example/private/second"]
     requested = []
 
     def respond(request):
         requested.append(str(request.url))
-        return httpx.Response(statuses[len(requested) - 1])
+        return httpx.Response(statuses[hubs.index(str(request.url))])
 
     real_notify = websub.notify_hubs
     output = StringIO()
@@ -72,14 +72,14 @@ def test_notification_batch_attempts_every_hub_before_exit(monkeypatch, settings
         )
         failed = any(status >= 400 for status in statuses)
         with pytest.raises(CommandError, match="failed") if failed else nullcontext():
-            call_command("notify_websub", "https://source.example/feed", hub=hubs, stdout=output)
+            call_command("notify_websub", "https://source.example/feed", hub=[hubs[0], *hubs], stdout=output)
     assert requested == hubs
     text = output.getvalue()
     assert f"Notified {sum(status < 400 for status in statuses)}/2" in text
     for status in statuses:
         assert f"HTTP {status}" in text
     if redact:
-        assert "first.example" not in text and "second.example" not in text and "/private" not in text
+        assert "hub.example" not in text and "/private" not in text
 
 
 @pytest.mark.parametrize("hours", [float("nan"), float("inf"), -float("inf"), 1e300, 1e8, -1])

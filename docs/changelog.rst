@@ -10,6 +10,8 @@ Unreleased
   each HTTPS request verifies the hostname of its own origin.
 * Resolve hostnames once per guarded redirect hop and remove the extra
   lookup before WebSub publisher notifications.
+* Deduplicate exact WebSub hub URLs in first-seen order for discovery and
+  publishing. The notification command counts each endpoint once.
 
 0.7.1 (2026-11-17)
 ------------------
