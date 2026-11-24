@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from contextlib import suppress
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -93,23 +94,23 @@ def configured_canonical_origins() -> tuple[Origin, ...] | None:
     Only ``None`` (or an absent setting) means unset; an empty string or empty
     list is invalid and fails closed.
 
-    An invalid setting fails closed: callers treat ``()`` as "no URL is
-    local". The problem is logged once per distinct value and reported by the
-    ``indieweb.E001`` system check.
+    An invalid setting fails closed for absolute URLs. The system check
+    reports ``indieweb.E001`` and runtime attempts to log one diagnostic per
+    process.
     """
     value = getattr(settings, CANONICAL_ORIGINS_SETTING, None)
     if value is None:
         return None
     try:
         return parse_canonical_origins(value)
-    except ValueError as exc:
-        marker = repr(value)[:200]
-        if marker not in _warned_invalid:
-            _warned_invalid.add(marker)
-            logger.error(
-                f"Invalid {CANONICAL_ORIGINS_SETTING} ({type(exc).__name__}); rejecting all Micropub action URLs. "
-                "The indieweb.E001 system check (manage.py check) reports the problem."
-            )
+    except ValueError:
+        if CANONICAL_ORIGINS_SETTING not in _warned_invalid:
+            _warned_invalid.add(CANONICAL_ORIGINS_SETTING)
+            with suppress(Exception):
+                logger.error(
+                    f"Invalid {CANONICAL_ORIGINS_SETTING}. Rejecting absolute Micropub action URLs. "
+                    "The indieweb.E001 system check (manage.py check) reports the problem."
+                )
         return ()
 
 

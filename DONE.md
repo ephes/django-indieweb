@@ -6214,3 +6214,12 @@ bundle.
 - Validation: all three delimiter cases failed before the fix. The
   Micropub action URL tests passed (111 tests), as did Ruff and mypy.
 - Docs: configuration and changelog Unreleased.
+
+### Keep invalid Micropub origins fail-closed when logging fails (round 182 B25)
+
+- Absolute actions keep their ordinary refusal when the diagnostic sink
+  raises. The process attempts one value-free diagnostic and Django still
+  reports the invalid configuration.
+- Validation: both diagnostic failure cases failed before the fix. The
+  Micropub action URL tests passed (113 tests), as did Ruff and mypy.
+- Docs: configuration and changelog Unreleased.

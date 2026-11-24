@@ -13,6 +13,8 @@ Unreleased
   returned entries, including nested values.
 * Reject empty query and fragment delimiters in Micropub canonical origin
   settings in both the Django system check and endpoint URL validation.
+* Keep rejecting absolute Micropub action URLs when invalid canonical origins
+  cannot be logged. The runtime diagnostic omits the configured values.
 * Require a boolean WebSub signature policy. Malformed values trigger the
   ``indieweb.E005`` security check and keep signature verification required.
 * Report malformed endpoint rate limits and unknown endpoint keys with the

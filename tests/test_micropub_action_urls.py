@@ -135,6 +135,45 @@ def test_invalid_canonical_origins_fail_closed(settings, post_action, recording_
     assert recording_handler.calls == []
 
 
+@pytest.mark.parametrize("broken_repr", [False, True])
+def test_invalid_canonical_origins_refused_when_diagnostics_fail(
+    settings, post_action, recording_handler, monkeypatch, broken_repr
+):
+    class BrokenRepr:
+        def __repr__(self):
+            raise RuntimeError("setting representation unavailable")
+
+    attempts = []
+
+    def broken_sink(message):
+        attempts.append(message)
+        raise RuntimeError("logging sink unavailable")
+
+    monkeypatch.setattr(micropub_urls, "_warned_invalid", set())
+    monkeypatch.setattr(micropub_urls.logger, "error", broken_sink)
+    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = (
+        [BrokenRepr()] if broken_repr else "https://example.org/private-path"
+    )
+
+    target = "https://example.org/entries/1/"
+    refused = post_action("delete", target)
+    assert refused.status_code == 400
+    assert refused.content == b"invalid_request"
+    assert recording_handler.calls == []
+    assert [message.id for message in checks.check_micropub_canonical_origins()] == ["indieweb.E001"]
+
+    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = "https://another.example/another-path"
+    assert post_action("delete", target).status_code == 400
+    assert len(attempts) == 1
+    assert "indieweb.E001" in attempts[0]
+    assert "example" not in attempts[0]
+
+    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = "https://example.org"
+    assert post_action("delete", target).status_code == 204
+    assert recording_handler.calls == [("delete", target)]
+    assert checks.check_micropub_canonical_origins() == []
+
+
 @pytest.mark.parametrize("suffix", ["?", "#", "/?#"])
 def test_canonical_origin_markers_fail_closed(settings, post_action, recording_handler, suffix):
     settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = ["https://example.org", f" https://testserver{suffix} "]

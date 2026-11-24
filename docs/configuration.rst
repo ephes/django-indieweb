@@ -860,9 +860,10 @@ Each entry must be an ``http``/``https`` origin with an optional trailing slash.
 Userinfo, other paths, and query or fragment delimiters (``?`` or ``#``) are
 invalid, including when the query or fragment is empty. An empty string or
 list is also invalid. Scheme, host and port are compared; default ports are ignored
-and hosts are compared case-insensitively. An invalid value fails closed (every
-absolute action URL is rejected), is logged once, and is reported by the
-``indieweb.E001`` system check.
+and hosts are compared case-insensitively. With an invalid configuration,
+Micropub rejects absolute action URLs even when logging fails. Runtime
+attempts to log one diagnostic per process without including setting values.
+The ``indieweb.E001`` system check also reports the invalid configuration.
 
 Without this setting, an absolute action URL must name the host of the current
 request (``request.get_host()``), so the check inherits the project's
