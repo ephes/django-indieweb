@@ -41,6 +41,8 @@ Unreleased
   finish updating the same outbound history.
 * Advance the outbound success watermark for late successes even when a
   newer attempt failed, so older failures cannot inflate the pruning count.
+* Report invalid WebSub delivery media type allowlists with the
+  ``indieweb.E006`` Django security check. The error omits the configured values.
 * Reject naive reference times when pruning WebSub delivery attempts with
   ``USE_TZ=True``, including dry runs. Naive times remain supported with
   ``USE_TZ=False``.

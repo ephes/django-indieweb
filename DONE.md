@@ -6231,3 +6231,13 @@ bundle.
 - Validation: both rejection cases failed before the fix. All 38 pruning tests
   passed with `uv run --no-sync pytest --no-cov tests/test_prune_websub_delivery_attempts.py`.
 - Docs: WebSub retention guide and changelog Unreleased.
+
+### Report invalid WebSub delivery type configuration (round 184 B11)
+
+- Register the value-free Django security error `indieweb.E006` for malformed
+  WebSub delivery type allowlists.
+- Validation: seven new diagnostic cases failed before the fix.
+  `uv run --no-sync pytest --no-cov tests/test_websub_delivery_types.py
+  tests/test_websub_subscriber.py tests/test_websub_signed_deliveries.py` passed
+  all 148 tests.
+- Docs: configuration guide and changelog Unreleased.

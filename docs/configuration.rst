@@ -1062,15 +1062,20 @@ handler runs.
 INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Optional iterable of content types accepted by the WebSub subscriber callback.
+Optional media type string or reusable iterable of media type strings accepted
+by the WebSub subscriber callback. Each entry must be a bare ``type/subtype``
+name, using the syntax in `RFC 6838 section 4.2 <https://www.rfc-editor.org/rfc/rfc6838.html#section-4.2>`_.
 
-**Default:** ``None`` (no content-type allowlist)
+**Default:** ``None`` (no content-type allowlist). An empty iterable also disables
+the allowlist.
 
-When configured, the callback compares the base ``Content-Type`` value without
-parameters. Requests outside the allowlist return HTTP ``415`` and do not
-invoke the host delivery hook.
-Malformed allowlist values are ignored and logged, leaving the callback with no
-content-type allowlist.
+The callback compares the base ``Content-Type`` value case-insensitively and
+ignores request parameters. Requests outside the allowlist return HTTP ``415``
+and skip the host delivery hook. Django's security checks report invalid
+configuration as ``indieweb.E006`` without including the configured values. Run
+``python manage.py check --tag security`` to catch errors before deployment.
+If the callback cannot read the setting as strings, it logs a warning and
+allows any content type.
 
 **Example:**
 

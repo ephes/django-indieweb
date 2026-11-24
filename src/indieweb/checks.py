@@ -14,7 +14,12 @@ from django.core.exceptions import ImproperlyConfigured
 from .auth_settings import DEFAULT_TOKEN_EXPIRES_IN, auth_code_timeout_setting, auth_lifetime
 from .micropub_urls import CANONICAL_ORIGINS_SETTING, parse_canonical_origins
 from .rate_limit import RATE_LIMITS_SETTING, parse_rate_limit_config, rate_limit_settings
-from .websub import WEBSUB_SIGNED_DELIVERIES_SETTING, websub_signature_policy
+from .websub import (
+    WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING,
+    WEBSUB_SIGNED_DELIVERIES_SETTING,
+    validate_websub_delivery_allowed_types,
+    websub_signature_policy,
+)
 
 RATE_LIMIT_ENDPOINTS = frozenset(
     {"auth", "token", "token_introspection", "micropub", "media", "websub_callback", "webmention", "webmention_status"}
@@ -71,6 +76,23 @@ def check_websub_unsigned_deliveries(app_configs: Any = None, **kwargs: Any) -> 
             id="indieweb.W001",
         )
     ]
+
+
+@register(Tags.security)
+def check_websub_delivery_allowed_types(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """Report malformed media type allowlists without exposing configured values."""
+    try:
+        validate_websub_delivery_allowed_types()
+    except ValueError:
+        return [
+            Error(
+                f"{WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING} must contain bare media types.",
+                hint='Use a string or a reusable iterable such as ("application/atom+xml",), or set it to None.',
+                obj=WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING,
+                id="indieweb.E006",
+            )
+        ]
+    return []
 
 
 @register(Tags.security)

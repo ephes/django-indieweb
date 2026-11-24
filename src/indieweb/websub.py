@@ -7,6 +7,7 @@ import hmac
 import inspect
 import logging
 import math
+import re
 import string
 import uuid
 import warnings
@@ -67,6 +68,10 @@ WEBSUB_SECRET_MAX_BYTES = 200
 WEBSUB_ALLOWED_SCHEMES = ("http", "https")
 WEBSUB_SUBSCRIPTION_MODES = (WebSubSubscription.MODE_SUBSCRIBE, WebSubSubscription.MODE_UNSUBSCRIBE)
 WEBSUB_SIGNED_DELIVERIES_SETTING = "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES"
+WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING = "INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES"
+# RFC 6838 section 4.2 defines the syntax for type and subtype names.
+_MEDIA_TYPE_NAME = r"[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}"
+_BASE_MEDIA_TYPE = re.compile(rf"{_MEDIA_TYPE_NAME}/{_MEDIA_TYPE_NAME}")
 WEBSUB_SIGNATURE_ALGORITHMS = {
     "sha1": hashlib.sha1,
     "sha256": hashlib.sha256,
@@ -311,12 +316,22 @@ def _hub_response_max_bytes() -> int | None:
     return parsed
 
 
+def validate_websub_delivery_allowed_types() -> None:
+    """Validate the allowlist for Django's security checks without consuming iterators."""
+    configured = getattr(settings, WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING, None)
+    if isinstance(configured, Iterator):
+        raise ValueError("Use a reusable iterable for the delivery type allowlist")
+    allowed_types = _as_string_tuple(configured, setting_name=WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING)
+    if any(not _BASE_MEDIA_TYPE.fullmatch(media_type) for media_type in allowed_types):
+        raise ValueError("Delivery types must be bare media type names")
+
+
 def _delivery_content_type_allowed(content_type: str) -> bool:
-    configured = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES", None)
+    configured = getattr(settings, WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING, None)
     if configured is None:
         return True
     try:
-        allowed_types = _as_string_tuple(configured, setting_name="INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES")
+        allowed_types = _as_string_tuple(configured, setting_name=WEBSUB_DELIVERY_ALLOWED_TYPES_SETTING)
     except ValueError:
         logger.warning("Ignoring invalid INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES value; allowing all delivery types")
         return True
