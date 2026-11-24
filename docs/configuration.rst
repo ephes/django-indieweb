@@ -449,6 +449,8 @@ does not add any model, migration, or runtime dependency.
 **Default:** ``None`` (rate limiting disabled)
 
 Set this to ``None`` or an empty dictionary to disable built-in rate limiting.
+Omit an endpoint key or set its value to ``None``, ``False``, or an empty
+dictionary to disable its limit.
 Each configured endpoint key accepts a mapping with:
 
 - ``limit`` - Maximum number of requests allowed during the window.
@@ -460,6 +462,10 @@ numeric values such as ``"60"`` and ``60.0`` are accepted. Booleans,
 nonfinite values, fractional numbers and larger values are invalid: the
 endpoint's optional rate limit is ignored with a warning, rather than
 truncating the allowance or raising an endpoint error.
+
+Run ``python manage.py check --tag security`` before deploying configuration
+changes. Check ``indieweb.E004`` reports malformed settings and unknown
+endpoint keys without accessing the cache.
 
 **Example:**
 

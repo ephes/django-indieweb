@@ -13,6 +13,11 @@ from django.core.exceptions import ImproperlyConfigured
 
 from .auth_settings import DEFAULT_TOKEN_EXPIRES_IN, auth_code_timeout_setting, auth_lifetime
 from .micropub_urls import CANONICAL_ORIGINS_SETTING, parse_canonical_origins
+from .rate_limit import RATE_LIMITS_SETTING, parse_rate_limit_config, rate_limit_settings
+
+RATE_LIMIT_ENDPOINTS = frozenset(
+    {"auth", "token", "token_introspection", "micropub", "media", "websub_callback", "webmention", "webmention_status"}
+)
 
 
 @register(Tags.security)
@@ -70,4 +75,27 @@ def check_auth_lifetimes(app_configs: Any = None, **kwargs: Any) -> list[CheckMe
             auth_lifetime(name, default)
         except ImproperlyConfigured as exc:
             errors.append(Error(str(exc), obj=name, id=error_id))
+    return errors
+
+
+@register(Tags.security)
+def check_endpoint_rate_limits(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """Report malformed rate limits and unknown built-in endpoint keys."""
+    try:
+        configured = rate_limit_settings()
+    except ValueError as exc:
+        return [Error(str(exc), obj=RATE_LIMITS_SETTING, id="indieweb.E004")]
+
+    errors: list[CheckMessage] = []
+    for key, config in configured.items():
+        if not isinstance(key, str):
+            errors.append(Error("Endpoint keys must be strings.", obj=RATE_LIMITS_SETTING, id="indieweb.E004"))
+            continue
+        if key not in RATE_LIMIT_ENDPOINTS:
+            errors.append(Error(f"Unknown endpoint {key!r}.", obj=RATE_LIMITS_SETTING, id="indieweb.E004"))
+            continue
+        try:
+            parse_rate_limit_config(config)
+        except ValueError as exc:
+            errors.append(Error(f"Invalid limit for {key!r}: {exc}.", obj=RATE_LIMITS_SETTING, id="indieweb.E004"))
     return errors

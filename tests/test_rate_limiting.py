@@ -9,6 +9,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.contrib.sites.models import Site
 from django.core.cache import cache
+from django.core.checks import Tags, run_checks
 from django.urls import reverse
 
 from indieweb import models, rate_limit
@@ -62,6 +63,37 @@ def _valid_webmention_payload() -> dict[str, str]:
         "source": "https://source.example.org/reply",
         "target": f"https://{site.domain}/post",
     }
+
+
+@pytest.mark.parametrize(
+    "configured,invalid_entries",
+    [
+        (None, []),
+        ({}, []),
+        ({"token": None, "auth": {}, "media": False}, []),
+        ({"token": {"limit": "2", "window": 60.0}}, []),
+        ([], ["expected a mapping"]),
+        (
+            {
+                "tokne": {"limit": 2, "window": 60},
+                "token": {"limti": 2, "window": 60},
+                "auth": {"limit": 2, "window": 2**31},
+                "media": "invalid",
+                "websub_callback": {"limit": 2, "window": 60},
+            },
+            ["'tokne'", "'token'", "'auth'", "'media'"],
+        ),
+    ],
+)
+def test_rate_limit_security_check_without_cache(settings, monkeypatch, configured, invalid_entries):
+    settings.INDIEWEB_RATE_LIMITS = configured
+    monkeypatch.setattr(rate_limit, "cache", object())
+    monkeypatch.setattr(rate_limit, "caches", object())
+
+    messages = [message for message in run_checks(tags=[Tags.security]) if message.id == "indieweb.E004"]
+
+    assert len(messages) == len(invalid_entries)
+    assert all(any(entry in message.msg for message in messages) for entry in invalid_entries)
 
 
 @pytest.mark.django_db

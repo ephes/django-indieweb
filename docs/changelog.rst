@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Report malformed endpoint rate limits and unknown endpoint keys with the
+  ``indieweb.E004`` Django security check.
 * Accept either hexadecimal letter case in valid WebSub delivery signatures.
 * Reject oversized decimal WebSub delivery lengths before reading the body,
   including values beyond Python's integer-conversion digit limit.

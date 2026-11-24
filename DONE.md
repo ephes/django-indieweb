@@ -6161,3 +6161,14 @@ bundle.
   (170 passed). Both regressions failed before their fixes.
 - Docs: `docs/websub.rst`, `docs/configuration.rst` and `docs/changelog.rst`
   Unreleased.
+
+## 2026-11-24
+
+### Report invalid endpoint rate limits (round 181 B06)
+
+- The Django security check reports unknown endpoint keys and uses the same
+  settings parser as the endpoints without accessing the cache.
+- Validation: `uv run --frozen pytest --no-cov -q tests/test_rate_limiting.py
+  tests/test_round93_lookup.py` passed (88 tests). Both new invalid-setting
+  cases failed before the fix. `just check` passed (3918 tests, 77 skipped).
+- Docs: `docs/configuration.rst` and `docs/changelog.rst` Unreleased.

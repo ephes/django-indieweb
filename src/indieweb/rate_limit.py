@@ -19,6 +19,8 @@ from django.views.generic import View
 
 logger = logging.getLogger(__name__)
 
+RATE_LIMITS_SETTING = "INDIEWEB_RATE_LIMITS"
+
 # Counter bucket shared by every HTTP method the endpoint does not implement.
 UNSUPPORTED_METHOD_BUCKET = "OTHER"
 
@@ -56,35 +58,44 @@ def _positive_int(value: Any) -> int | None:
     return parsed
 
 
-def get_rate_limit_config(endpoint_key: str) -> RateLimitConfig | None:
-    """Return the validated rate-limit config for ``endpoint_key``.
-
-    ``INDIEWEB_RATE_LIMITS`` defaults to disabled. Invalid global or per-key
-    values are ignored so an optional hardening setting cannot crash protocol
-    endpoints.
-    """
-    configured = getattr(settings, "INDIEWEB_RATE_LIMITS", None)
-    if not configured:
-        return None
+def rate_limit_settings() -> Mapping[str, object]:
+    """Read the endpoint settings without accessing the cache."""
+    configured = getattr(settings, RATE_LIMITS_SETTING, None)
+    if configured is None:
+        return {}
     if not isinstance(configured, Mapping):
-        logger.warning("Ignoring invalid INDIEWEB_RATE_LIMITS value; expected a mapping")
-        return None
+        raise ValueError("expected a mapping")
+    return configured
 
-    endpoint_config = configured.get(endpoint_key)
-    if not endpoint_config:
+
+def parse_rate_limit_config(endpoint_config: object) -> RateLimitConfig | None:
+    """Parse a single endpoint's budget, returning None when disabled."""
+    if endpoint_config is None or endpoint_config is False:
         return None
     if not isinstance(endpoint_config, Mapping):
-        logger.warning(f"Ignoring invalid rate-limit config for {endpoint_key!r}; expected a mapping")
+        raise ValueError("expected a mapping")
+    if not endpoint_config:
         return None
 
     limit = _positive_int(endpoint_config.get("limit"))
     window = _positive_int(endpoint_config.get("window"))
     if limit is None or window is None:
-        logger.warning(
-            f"Ignoring invalid rate-limit config for {endpoint_key!r}; limit and window must be positive integers"
-        )
-        return None
+        raise ValueError(f"limit and window must be positive integers up to {MAX_RATE_LIMIT_INTEGER}")
     return RateLimitConfig(limit=limit, window=window)
+
+
+def get_rate_limit_config(endpoint_key: str) -> RateLimitConfig | None:
+    """Return the endpoint's validated budget, logging and ignoring invalid settings."""
+    try:
+        configured = rate_limit_settings()
+    except ValueError as exc:
+        logger.warning("Ignoring invalid %s value; %s", RATE_LIMITS_SETTING, exc)
+        return None
+    try:
+        return parse_rate_limit_config(configured.get(endpoint_key))
+    except ValueError as exc:
+        logger.warning("Ignoring invalid rate-limit config for %r; %s", endpoint_key, exc)
+        return None
 
 
 def _client_identity(request: HttpRequest) -> str:
