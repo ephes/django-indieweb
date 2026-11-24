@@ -6250,6 +6250,8 @@ bundle.
   accepted success before applying the historical drop threshold.
 - Validation: the six completion orders exposed two incorrect counts before
   the fix. The SQLite sender and outbound state regressions pass.
+- Bound the stored failure start times to 32 per target. Older failures fold
+  into the oldest kept start time without changing the streak total.
 - Docs: overlapping outbound history and changelog Unreleased.
 
 ### Use the outbound writer for Salmention history (round 186 B11)

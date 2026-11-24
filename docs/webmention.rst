@@ -1688,7 +1688,10 @@ The latest attempt owns outcome diagnostics. A late success advances the
 success watermark and clears failures at or before its start while preserving
 later failures and newer diagnostics. A failure completed after a success
 counts if it started later, or if their start times are equal. The stored
-streak drives the historical drop threshold. Endpoint, sent and
+streak drives the historical drop threshold. Each target keeps at most 32
+distinct failure start times; older failures fold into the oldest kept start
+time, so the streak total stays exact and only a success that started after
+that time clears them. Endpoint, sent and
 source-observation timestamps never move backwards.
 Apply migrations to add the persisted failure timestamps. Existing failure
 streaks carry forward as a group at the last recorded attempt (or the last

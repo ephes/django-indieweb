@@ -46,6 +46,8 @@ DEFAULT_SALMENTION_MAX_CONSECUTIVE_FAILURES = 5
 DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS = 30.0
 DEFAULT_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS = 120
 DEFAULT_SALMENTION_HISTORY_SCAN_LIMIT = 1000
+# Distinct failure start times kept per outbound target; older ones are folded together.
+OUTBOUND_FAILURE_ATTEMPTS_LIMIT = 32
 # Per-operation timeouts for endpoint discovery and delivery. Each one only
 # bounds a single connect, read, write or pool wait; the total budget from
 # ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` bounds a whole call.
@@ -79,6 +81,21 @@ def _source_deadline(deadline: float | None = None) -> float:
 def _request_budget(deadline: float | None) -> float:
     budget = _webmention_send_total_timeout()
     return min(budget, deadline - time.monotonic()) if deadline is not None else budget
+
+
+def _fold_oldest_failure_attempts(failures: dict[str, int]) -> dict[str, int]:
+    """Bound the per-start failure map without changing the total streak.
+
+    Failures beyond the newest limit move onto the oldest retained start time,
+    so only a success that started after that time can clear them.
+    """
+    if len(failures) <= OUTBOUND_FAILURE_ATTEMPTS_LIMIT:
+        return failures
+    ordered = sorted(failures.items(), key=lambda item: datetime.fromisoformat(item[0]))
+    overflow = len(ordered) - OUTBOUND_FAILURE_ATTEMPTS_LIMIT
+    folded = sum(count for _, count in ordered[: overflow + 1])
+    kept = dict(ordered[overflow + 1 :])
+    return {ordered[overflow][0]: folded, **kept}
 
 
 def _deadline_result(target: str, provenance: str | None = None) -> dict:
@@ -1048,6 +1065,7 @@ class WebmentionSender:
         else:
             stamp = started.isoformat()
             failures[stamp] = failures.get(stamp, 0) + 1
+            failures = _fold_oldest_failure_attempts(failures)
         return {
             "failure_attempts": failures,
             "consecutive_failures": sum(failures.values()),

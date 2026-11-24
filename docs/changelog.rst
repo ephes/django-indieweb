@@ -41,6 +41,7 @@ Unreleased
   finish updating the same outbound history.
 * Recompute the outbound failure streak when a late success settles. Only
   failures ordered after that success count toward historical target pruning.
+  Each target stores at most 32 distinct failure start times.
 * Read Salmention resend history and provenance from the outbound write
   database in both previews and real resends.
 * Report invalid WebSub delivery media type allowlists with the

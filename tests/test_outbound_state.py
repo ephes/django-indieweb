@@ -12,7 +12,7 @@ from django.db import close_old_connections, connection
 from django.utils import timezone
 
 from indieweb.models import WebmentionOutboundTarget, WebSubSubscription
-from indieweb.senders import WebmentionSender
+from indieweb.senders import OUTBOUND_FAILURE_ATTEMPTS_LIMIT, WebmentionSender
 from indieweb.websub import confirm_websub_verification, request_websub_subscription
 
 
@@ -182,6 +182,26 @@ def test_history_failure_streak_uses_attempt_order(settings, order):
     assert row.consecutive_failures == 1
     assert WebmentionSender()._salmention_historical_skip_result(row, dry_run=False) is None
     assert WebmentionOutboundTarget.objects.filter(pk=row.pk).exists()
+
+
+@pytest.mark.django_db
+def test_history_failure_attempts_stay_bounded_and_keep_the_streak():
+    started = timezone.now() - timedelta(days=2)
+    failures = OUTBOUND_FAILURE_ATTEMPTS_LIMIT * 3
+    for offset in range(failures):
+        _record(attempt_started_at=started + timedelta(seconds=offset))
+
+    row = WebmentionOutboundTarget.objects.get()
+    assert len(row.failure_attempts) == OUTBOUND_FAILURE_ATTEMPTS_LIMIT
+    assert sum(row.failure_attempts.values()) == failures
+    assert row.consecutive_failures == failures
+
+    # A late success inside the retained window clears only failures folded at or before it.
+    oldest_kept = failures - OUTBOUND_FAILURE_ATTEMPTS_LIMIT
+    _record(attempt_started_at=started + timedelta(seconds=oldest_kept), success=True)
+    row.refresh_from_db()
+    assert row.consecutive_failures == OUTBOUND_FAILURE_ATTEMPTS_LIMIT - 1
+    assert len(row.failure_attempts) == OUTBOUND_FAILURE_ATTEMPTS_LIMIT - 1
 
 
 @pytest.mark.django_db(transaction=True)
