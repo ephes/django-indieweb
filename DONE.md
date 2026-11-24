@@ -6172,3 +6172,15 @@ bundle.
   tests/test_round93_lookup.py` passed (88 tests). Both new invalid-setting
   cases failed before the fix. `just check` passed (3918 tests, 77 skipped).
 - Docs: `docs/configuration.rst` and `docs/changelog.rst` Unreleased.
+
+### Require a boolean WebSub signature policy (round 181 B06)
+
+- Django reports malformed signature settings and WebSub still requires
+  signatures. A boolean `False` explicitly opts out for subscriptions
+  without a secret.
+- Validation: `uv run --frozen pytest --no-cov -q
+  tests/test_websub_signed_deliveries.py tests/test_websub_delivery_admission.py`
+  passed (51 tests, 4 skipped). All seven new malformed-setting cases failed
+  before the fix. `just check` passed (3926 tests, 77 skipped).
+- Docs: `docs/configuration.rst`, `docs/websub.rst` and `docs/changelog.rst`
+  Unreleased.

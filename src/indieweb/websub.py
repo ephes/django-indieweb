@@ -66,6 +66,7 @@ WEBSUB_SECRET_MIN_BYTES = 20
 WEBSUB_SECRET_MAX_BYTES = 200
 WEBSUB_ALLOWED_SCHEMES = ("http", "https")
 WEBSUB_SUBSCRIPTION_MODES = (WebSubSubscription.MODE_SUBSCRIBE, WebSubSubscription.MODE_UNSUBSCRIBE)
+WEBSUB_SIGNED_DELIVERIES_SETTING = "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES"
 WEBSUB_SIGNATURE_ALGORITHMS = {
     "sha1": hashlib.sha1,
     "sha256": hashlib.sha256,
@@ -337,15 +338,21 @@ def hub_response_error(response: httpx.Response) -> str:
     return f"HTTP {response.status_code}; body {text_fingerprint(response.content)}"
 
 
+def websub_signature_policy() -> bool | None:
+    """Read the signature requirement, returning None for malformed configuration."""
+    value = getattr(settings, WEBSUB_SIGNED_DELIVERIES_SETTING, True)
+    return value if isinstance(value, bool) else None
+
+
 def websub_signed_deliveries_required() -> bool:
     """Return whether WebSub deliveries must carry a valid signature.
 
     ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES`` defaults to ``True``: a
     delivery for a subscription without a stored secret is rejected. Set it to
     ``False`` to accept unsigned deliveries for subscriptions created without a
-    secret.
+    secret. Malformed values retain the signature requirement.
     """
-    return _setting_enabled("INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES", default=True)
+    return websub_signature_policy() is not False
 
 
 def _warn_unsigned_subscription(subscription: WebSubSubscription) -> None:

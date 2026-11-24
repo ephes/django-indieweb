@@ -635,7 +635,8 @@ verifies the request. To keep accepting unsigned deliveries instead (for
 example from a hub reachable only over plain HTTP, which never receives a
 ``hub.secret``), set ``INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False``; the
 ``indieweb.W001`` system check then warns while a delivery hook or queue is
-configured.
+configured. The setting accepts Python booleans. Malformed values trigger
+``indieweb.E005`` and keep signatures required.
 Empty secrets, secrets shorter than 20 bytes, and secrets longer than 200
 bytes when UTF-8 encoded are rejected before a subscription request is sent to
 the hub.

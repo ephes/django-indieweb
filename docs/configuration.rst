@@ -1188,6 +1188,11 @@ Whether WebSub deliveries must carry a valid HMAC signature.
 
 **Default:** ``True``
 
+Use a Python boolean (``True`` or ``False``) when setting this explicitly.
+Django's ``indieweb.E005`` security check reports other values, including
+strings and ``None``. The callback requires signatures when the setting is
+omitted or invalid.
+
 With the default, a delivery for a subscription that has no stored
 ``hub.secret`` is rejected with HTTP ``403`` and recorded as
 ``invalid signature``; the delivery hook and enqueue callable are not called.

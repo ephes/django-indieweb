@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Require a boolean WebSub signature policy. Malformed values trigger the
+  ``indieweb.E005`` security check and keep signature verification required.
 * Report malformed endpoint rate limits and unknown endpoint keys with the
   ``indieweb.E004`` Django security check.
 * Accept either hexadecimal letter case in valid WebSub delivery signatures.

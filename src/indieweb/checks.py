@@ -14,6 +14,7 @@ from django.core.exceptions import ImproperlyConfigured
 from .auth_settings import DEFAULT_TOKEN_EXPIRES_IN, auth_code_timeout_setting, auth_lifetime
 from .micropub_urls import CANONICAL_ORIGINS_SETTING, parse_canonical_origins
 from .rate_limit import RATE_LIMITS_SETTING, parse_rate_limit_config, rate_limit_settings
+from .websub import WEBSUB_SIGNED_DELIVERIES_SETTING, websub_signature_policy
 
 RATE_LIMIT_ENDPOINTS = frozenset(
     {"auth", "token", "token_introspection", "micropub", "media", "websub_callback", "webmention", "webmention_status"}
@@ -42,8 +43,17 @@ def check_micropub_canonical_origins(app_configs: Any = None, **kwargs: Any) -> 
 
 @register(Tags.security)
 def check_websub_unsigned_deliveries(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
-    """Warn when unsigned WebSub deliveries may reach a configured delivery hook or queue."""
-    if bool(getattr(settings, "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES", True)):
+    """Validate the WebSub signature policy and warn about unsigned hook or queue delivery."""
+    policy = websub_signature_policy()
+    if policy is None:
+        return [
+            Error(
+                f"{WEBSUB_SIGNED_DELIVERIES_SETTING} must be True or False.",
+                obj=WEBSUB_SIGNED_DELIVERIES_SETTING,
+                id="indieweb.E005",
+            )
+        ]
+    if policy:
         return []
     hook = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_HOOK", None)
     enqueue = getattr(settings, "INDIEWEB_WEBSUB_DELIVERY_ENQUEUE", None)
@@ -57,7 +67,7 @@ def check_websub_unsigned_deliveries(app_configs: Any = None, **kwargs: Any) -> 
                 "Subscribe with a hub.secret and remove the opt-out, or silence indieweb.W001 if "
                 "unauthenticated content is acceptable for your delivery hook."
             ),
-            obj="INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES",
+            obj=WEBSUB_SIGNED_DELIVERIES_SETTING,
             id="indieweb.W001",
         )
     ]

@@ -9,6 +9,7 @@ import logging
 import httpx
 import pytest
 from django.contrib import admin
+from django.core.checks import Tags, run_checks
 from django.test import RequestFactory
 from django.urls import reverse
 
@@ -59,9 +60,12 @@ def test_signed_deliveries_are_required_by_default(settings):
 
 
 @pytest.mark.django_db
-def test_unsigned_delivery_without_secret_is_rejected_by_default(client, settings, active_subscription):
+@pytest.mark.parametrize("overrides", [{}, {"INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES": True}])
+def test_unsigned_delivery_without_secret_is_rejected_when_required(client, settings, active_subscription, overrides):
     if hasattr(settings, "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES"):
         del settings.INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES
+    for name, value in overrides.items():
+        setattr(settings, name, value)
     settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
 
     response = _deliver(client, active_subscription)
@@ -80,6 +84,25 @@ def test_unsigned_delivery_is_accepted_after_opt_out(client, settings, active_su
 
     assert response.status_code == 204
     assert len(websub_hooks.DELIVERIES) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("configured", [None, 0, "", [], "False", 1])
+def test_malformed_signature_policy_requires_signatures_and_reports_error(
+    client, settings, active_subscription, configured
+):
+    settings.INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = configured
+    settings.INDIEWEB_WEBSUB_DELIVERY_HOOK = "tests.websub_hooks.capture_delivery"
+
+    response = _deliver(client, active_subscription)
+
+    assert response.status_code == 403
+    assert websub_hooks.DELIVERIES == []
+    assert WebSubDeliveryAttempt.objects.get(subscription=active_subscription).error == "invalid signature"
+    security_checks = run_checks(tags=[Tags.security])
+    messages = [message for message in security_checks if message.id in {"indieweb.E005", "indieweb.W001"}]
+    assert [message.id for message in messages] == ["indieweb.E005"]
+    assert messages[0].obj == "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES"
 
 
 @pytest.mark.django_db
@@ -180,6 +203,7 @@ def test_unsubscribe_without_secret_does_not_warn(active_subscription, caplog):
     [
         ({}, []),
         ({"INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES": False}, []),
+        ({"INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES": None}, ["indieweb.E005"]),
         (
             {
                 "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES": False,
