@@ -36,8 +36,12 @@ For tests and development only, explicitly configure the in-memory example:
 
    INDIEWEB_MICROPUB_HANDLER = "indieweb.handlers.InMemoryMicropubHandler"
 
-Each operation creates a fresh instance, so entries are lost between requests.
-This example performs no ownership checks and is unsuitable for durable
+The example keeps entries across requests in the same process. Use the create
+response's ``Location`` for source queries and actions when its origin is allowed.
+Processes keep separate state and lose it on restart. In tests, Django
+overrides of ``INDIEWEB_MICROPUB_HANDLER`` reset the example on entry and exit.
+Call ``indieweb.handlers.reset_in_memory_micropub_handler()`` to reset it
+explicitly. This example performs no ownership checks and is unsuitable for durable
 publishing. With no handler configured, content writes return empty HTTP
 ``500`` responses. Use a persistent custom adapter for real content.
 
@@ -1420,11 +1424,10 @@ Handler setup failures
 Set ``INDIEWEB_MICROPUB_HANDLER`` to a persistent content adapter before using
 content writes. Without it, create/update/delete/undelete return empty HTTP
 ``500`` responses; create never returns a success ``Location`` and uploaded
-inline files are cleaned up. Discovery remains available. Handler instances
-are created per operation, so store content outside the instance. The bundled
-``InMemoryMicropubHandler`` requires explicit configuration for tests/examples
-and does not preserve content between requests. Configured adapters continue
-to own persistence and authorization.
+inline files are cleaned up. Discovery remains available. Custom handler
+instances are created per operation and own persistence and authorization.
+The bundled ``InMemoryMicropubHandler`` requires explicit configuration for
+tests and examples and stores entries in the current process.
 
 Current bearer authority and failed media saves
 ===============================================

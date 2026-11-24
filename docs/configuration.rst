@@ -593,14 +593,17 @@ return an empty HTTP ``500`` and never report successful publication or a
 ``Location``. Inline files uploaded during a failed create are cleaned up.
 Configuration discovery remains available, while no source entries are held
 by the default handler. Configure a persistent adapter before enabling content
-writes. The loader creates a new handler instance per operation; persistence
+writes. The loader creates a new custom handler instance per operation. Persistence
 must live in your database, filesystem or another host-owned store.
 
 ``InMemoryMicropubHandler`` is an explicit development/test opt-in only::
 
    INDIEWEB_MICROPUB_HANDLER = "indieweb.handlers.InMemoryMicropubHandler"
 
-It loses content between requests and must not be used for durable publishing.
+It keeps entries across requests handled by the same process. Each worker has
+its own entries, and a restart or a Django settings override for
+``INDIEWEB_MICROPUB_HANDLER`` clears the example state. Use a persistent
+adapter for durable publishing.
 
 **Example:**
 

@@ -8,7 +8,7 @@ to add IndieAuth authentication, Micropub content creation, and Webmention suppo
    Configure ``INDIEWEB_MICROPUB_HANDLER`` before creating content; without it,
    content writes return HTTP 500. Use a persistent adapter to store content in
    your own models. The in-memory example requires explicit opt-in for testing
-   and loses entries between requests.
+   and keeps entries across requests in the same process.
 
 Prerequisites
 -------------
@@ -267,7 +267,7 @@ To persist content, configure your own handler:
 See :doc:`micropub` for a fuller handler example that implements create,
 source queries, update, and delete. The explicitly configured
 ``InMemoryMicropubHandler`` example implements source queries, update, delete,
-and undelete in instance memory only; entries are lost between requests. The minimal durable-storage example below
+and undelete with entries stored in the current process. The minimal durable-storage example below
 intentionally leaves editing methods as stubs until you map those operations
 to your own content model.
 

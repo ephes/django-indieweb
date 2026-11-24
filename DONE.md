@@ -6187,3 +6187,13 @@ bundle.
   before the fix. `just check` passed (3926 tests, 77 skipped).
 - Docs: `docs/configuration.rst`, `docs/websub.rst` and `docs/changelog.rst`
   Unreleased.
+
+### Retain Micropub example state across requests (round 182 B07)
+
+- The explicitly configured example keeps entries in the current process.
+  Its local create location works with source and mutation requests. Django
+  settings overrides and the explicit reset hook clear the example state.
+- Validation: the request round trip failed before the fix. The handler
+  configuration tests and source scope regressions passed together (16
+  tests). Ruff and mypy passed.
+- Docs: README, Micropub, configuration, tutorial and changelog Unreleased.

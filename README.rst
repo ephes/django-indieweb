@@ -96,10 +96,10 @@ Quick Start
 
     INDIEWEB_MICROPUB_HANDLER = 'myapp.handlers.MyContentHandler'
 
-   Without a configured handler, content writes return HTTP 500. Each operation
-   creates a new handler instance, so use a database or other persistent store.
-   The bundled in-memory example is an explicit testing opt-in and loses content
-   between requests.
+   Without a configured handler, content writes return HTTP 500. Custom handlers
+   are instantiated per operation and should use a persistent store. The bundled
+   in-memory example is an explicit testing opt-in and keeps entries across
+   requests handled by the same process.
 
 Production Deployment
 ~~~~~~~~~~~~~~~~~~~~~

@@ -7,9 +7,15 @@ import pytest
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.urls import reverse
 
-from indieweb.handlers import InMemoryMicropubHandler, MicropubEntry, get_micropub_handler
+from indieweb.handlers import (
+    InMemoryMicropubHandler,
+    MicropubEntry,
+    get_micropub_handler,
+    reset_in_memory_micropub_handler,
+)
 from indieweb.models import Token
 
 
@@ -121,3 +127,47 @@ def test_unconfigured_discovery_stays_available(client, grant, settings):
     response = client.get(reverse("indieweb:micropub"), {"q": "config"}, Authorization=f"Bearer {grant.key}")
     assert response.status_code == 200
     assert response.json()["media-endpoint"]
+
+
+def test_in_memory_example_round_trips_location_across_requests(client, grant, settings):
+    settings.INDIEWEB_MICROPUB_HANDLER = "indieweb.handlers.InMemoryMicropubHandler"
+    endpoint = reverse("indieweb:micropub")
+    headers = {"Authorization": f"Bearer {grant.key}"}
+    created = client.post(endpoint, {"h": "entry", "content": "synthetic note"}, **headers)
+    assert created.status_code == 201
+    entry_url = created["Location"]
+
+    def source():
+        return client.get(endpoint, {"q": "source", "url": entry_url}, **headers)
+
+    def action(name, **properties):
+        return client.post(
+            endpoint,
+            {"action": name, "url": entry_url, **properties},
+            content_type="application/json",
+            **headers,
+        )
+
+    first_source = source()
+    assert first_source.status_code == 200
+    assert first_source.json()["properties"]["content"] == ["synthetic note"]
+    assert (
+        client.get(
+            endpoint, {"q": "source", "url": entry_url.replace("testserver", "other.example")}, **headers
+        ).status_code
+        == 400
+    )
+    assert action("update", replace={"content": ["edited note"]}).status_code == 204
+    assert source().json()["properties"]["content"] == ["edited note"]
+    assert action("delete").status_code == 204
+    assert source().status_code == 400
+    assert action("undelete").status_code == 204
+    assert source().json()["properties"]["content"] == ["edited note"]
+
+    with override_settings(INDIEWEB_MICROPUB_HANDLER=None):
+        assert source().status_code == 400
+    assert source().status_code == 400
+
+    assert client.post(endpoint, {"h": "entry", "content": "next note"}, **headers)["Location"] == entry_url
+    reset_in_memory_micropub_handler()
+    assert source().status_code == 400

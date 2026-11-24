@@ -5,6 +5,7 @@ import json
 import pytest
 
 from indieweb import parse_isolation, webmention_parse_worker
+from indieweb.handlers import reset_in_memory_micropub_handler
 
 
 def run_parse_worker_inline(request):
@@ -23,6 +24,13 @@ def parse_worker(monkeypatch):
     isolation itself override this fixture and start the real child process.
     """
     monkeypatch.setattr(parse_isolation, "run_parse_worker", run_parse_worker_inline)
+
+
+@pytest.fixture(autouse=True)
+def clear_micropub_example():
+    """Keep process-local example entries from leaking into the next test."""
+    yield
+    reset_in_memory_micropub_handler()
 
 
 @pytest.fixture(scope="session")

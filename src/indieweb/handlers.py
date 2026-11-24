@@ -8,9 +8,12 @@ and includes basic implementations for testing and development.
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
+from django.core.signals import setting_changed
+from django.dispatch import receiver
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractBaseUser
@@ -276,23 +279,25 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         self.entries: dict[str, MicropubEntry] = {}
         self.deleted_entries: dict[str, MicropubEntry] = {}
         self.counter = 0
+        self._lock = Lock()
 
     def create_entry(self, properties: dict[str, list[Any]], user: "AbstractBaseUser") -> MicropubEntry:
         # UNSAFE: example only - performs no ownership check.
-        self.counter += 1
-        url = f"/entries/{self.counter}/"
+        with self._lock:
+            self.counter += 1
+            url = f"/entries/{self.counter}/"
 
-        # Ensure properties are in list format
-        normalized_props = {}
-        for key, value in properties.items():
-            if not isinstance(value, list):
-                normalized_props[key] = [value]
-            else:
-                normalized_props[key] = value
+            # Ensure properties are in list format
+            normalized_props = {}
+            for key, value in properties.items():
+                if not isinstance(value, list):
+                    normalized_props[key] = [value]
+                else:
+                    normalized_props[key] = value
 
-        entry = MicropubEntry(url=url, properties=normalized_props)
-        self.entries[url] = entry
-        return entry
+            entry = MicropubEntry(url=url, properties=normalized_props)
+            self.entries[url] = entry
+            return entry
 
     def _apply_replace(self, entry: MicropubEntry, replacements: dict[str, Any]) -> None:
         """Apply replace operations to an entry."""
@@ -329,47 +334,51 @@ class InMemoryMicropubHandler(MicropubContentHandler):
 
     def update_entry(self, url: str, updates: dict[str, Any], user: "AbstractBaseUser") -> MicropubEntry:
         # UNSAFE: example only - performs no ownership check.
-        if url not in self.entries:
-            raise ValueError(f"Entry not found: {url}")
+        with self._lock:
+            if url not in self.entries:
+                raise ValueError(f"Entry not found: {url}")
 
-        entry = self.entries[url]
+            entry = self.entries[url]
 
-        # Handle replace operations
-        if "replace" in updates:
-            self._apply_replace(entry, updates["replace"])
+            # Handle replace operations
+            if "replace" in updates:
+                self._apply_replace(entry, updates["replace"])
 
-        # Handle add operations
-        if "add" in updates:
-            self._apply_add(entry, updates["add"])
+            # Handle add operations
+            if "add" in updates:
+                self._apply_add(entry, updates["add"])
 
-        # Handle delete operations
-        if "delete" in updates:
-            if isinstance(updates["delete"], list):
-                self._apply_delete_list(entry, updates["delete"])
-            elif isinstance(updates["delete"], dict):
-                self._apply_delete_dict(entry, updates["delete"])
+            # Handle delete operations
+            if "delete" in updates:
+                if isinstance(updates["delete"], list):
+                    self._apply_delete_list(entry, updates["delete"])
+                elif isinstance(updates["delete"], dict):
+                    self._apply_delete_dict(entry, updates["delete"])
 
-        return entry
+            return entry
 
     def delete_entry(self, url: str, user: "AbstractBaseUser") -> None:
         # UNSAFE: example only - performs no ownership check.
-        if url not in self.entries:
-            raise ValueError(f"Entry not found: {url}")
+        with self._lock:
+            if url not in self.entries:
+                raise ValueError(f"Entry not found: {url}")
 
-        self.deleted_entries[url] = self.entries.pop(url)
+            self.deleted_entries[url] = self.entries.pop(url)
 
     def undelete_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry:
         # UNSAFE: example only - performs no ownership check.
-        if url not in self.deleted_entries:
-            raise ValueError(f"Deleted entry not found: {url}")
+        with self._lock:
+            if url not in self.deleted_entries:
+                raise ValueError(f"Deleted entry not found: {url}")
 
-        entry = self.deleted_entries.pop(url)
-        self.entries[url] = entry
-        return entry
+            entry = self.deleted_entries.pop(url)
+            self.entries[url] = entry
+            return entry
 
     def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
         # UNSAFE: example only - performs no ownership check.
-        return self.entries.get(url)
+        with self._lock:
+            return self.entries.get(url)
 
     @staticmethod
     def _entry_filter_matches(entry: MicropubEntry, needle: str) -> bool:
@@ -391,16 +400,17 @@ class InMemoryMicropubHandler(MicropubContentHandler):
         filter: str | None = None,
     ) -> MicropubEntryList:
         # UNSAFE: example only - performs no ownership check.
-        entries = list(self.entries.values())
-        if filter:
-            needle = filter.lower()
-            entries = [entry for entry in entries if self._entry_filter_matches(entry, needle)]
-        total = len(entries)
-        if offset:
-            entries = entries[offset:]
-        if limit is not None:
-            entries = entries[:limit]
-        return MicropubEntryList(entries=entries, total=total)
+        with self._lock:
+            entries = list(self.entries.values())
+            if filter:
+                needle = filter.lower()
+                entries = [entry for entry in entries if self._entry_filter_matches(entry, needle)]
+            total = len(entries)
+            if offset:
+                entries = entries[offset:]
+            if limit is not None:
+                entries = entries[:limit]
+            return MicropubEntryList(entries=entries, total=total)
 
 
 class _UnconfiguredMicropubHandler(MicropubContentHandler):
@@ -422,6 +432,32 @@ class _UnconfiguredMicropubHandler(MicropubContentHandler):
         return None
 
 
+_EXAMPLE_HANDLER_PATH = "indieweb.handlers.InMemoryMicropubHandler"
+_example_handler: InMemoryMicropubHandler | None = None
+_example_handler_lock = Lock()
+
+
+def _get_example_handler() -> InMemoryMicropubHandler:
+    global _example_handler
+    with _example_handler_lock:
+        if _example_handler is None:
+            _example_handler = InMemoryMicropubHandler()
+        return _example_handler
+
+
+def reset_in_memory_micropub_handler() -> None:
+    """Discard the configured example's process-local entries."""
+    global _example_handler
+    with _example_handler_lock:
+        _example_handler = None
+
+
+@receiver(setting_changed)
+def _reset_example_on_setting_change(sender: object, setting: str, **kwargs: Any) -> None:
+    if setting == "INDIEWEB_MICROPUB_HANDLER":
+        reset_in_memory_micropub_handler()
+
+
 def get_micropub_handler() -> MicropubContentHandler:
     """
     Get the configured Micropub content handler.
@@ -434,6 +470,8 @@ def get_micropub_handler() -> MicropubContentHandler:
 
     handler_path = getattr(settings, "INDIEWEB_MICROPUB_HANDLER", None)
 
+    if handler_path == _EXAMPLE_HANDLER_PATH:
+        return _get_example_handler()
     if handler_path:
         handler_class = import_string(handler_path)
         handler_instance: MicropubContentHandler = handler_class()

@@ -49,7 +49,7 @@ from django.views.generic import View
 from . import micropub_urls
 from .auth_settings import auth_lifetimes
 from .cors import CorsMixin
-from .handlers import MicropubContentHandler, get_micropub_handler
+from .handlers import InMemoryMicropubHandler, MicropubContentHandler, get_micropub_handler
 from .log_redaction import (
     configured_mode,
     exc_info_without_messages,
@@ -2786,6 +2786,19 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         """Return the standard 400 plain-text body the action handlers use for client errors."""
         return HttpResponse("invalid_request", status=400)
 
+    @staticmethod
+    def _entry_handler_url(request: HttpRequest, handler: MicropubContentHandler, url: str) -> str:
+        """Resolve an admitted absolute URL to the bundled example's stored path."""
+        if (
+            type(handler) is InMemoryMicropubHandler
+            and not url.startswith("/")
+            and "?" not in url
+            and "#" not in url
+            and micropub_urls.action_url_is_local(request, url)
+        ):
+            return urlsplit(url).path
+        return url
+
     def _action_response(self, request: HttpRequest, entry: MicropubEntry, submitted_url: str) -> HttpResponse:
         """Build a success response for ``update``/``undelete``: 204, or 201+Location if URL changed."""
         if entry.url == submitted_url:
@@ -2971,6 +2984,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if self._updates_have_invalid_url_property(request, updates):
             return self._invalid_request()
         handler = get_micropub_handler()
+        url = self._entry_handler_url(request, handler, url)
         try:
             authority_error = self.mutation_authority_error(request, "update")
             if authority_error is not None:
@@ -2993,6 +3007,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if policy_response is not None:
             return policy_response
         handler = get_micropub_handler()
+        url = self._entry_handler_url(request, handler, url)
         try:
             authority_error = self.mutation_authority_error(request, "delete")
             if authority_error is not None:
@@ -3015,6 +3030,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if policy_response is not None:
             return policy_response
         handler = get_micropub_handler()
+        url = self._entry_handler_url(request, handler, url)
         try:
             authority_error = self.mutation_authority_error(request, "undelete")
             if authority_error is not None:
@@ -3171,7 +3187,7 @@ class MicropubView(CSRFExemptMixin, CorsMixin, RateLimitMixin, TokenAuthMixin, V
         if authority_error is not None:
             return authority_error
         try:
-            entry = handler.get_entry(url, self.token.owner)
+            entry = handler.get_entry(self._entry_handler_url(request, handler, url), self.token.owner)
         except Exception as exc:
             _log_micropub_handler_error("get_entry", f"url={redact_url(url)!r}", exc)
             return self._invalid_request() if isinstance(exc, ValueError) else HttpResponse(status=500)
