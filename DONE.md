@@ -6206,3 +6206,11 @@ bundle.
   configuration, and endpoint tests passed together (202 tests).
   Ruff and mypy passed.
 - Docs: Micropub guide and changelog Unreleased.
+
+### Reject empty Micropub canonical origin delimiters (round 182 B25)
+
+- The shared parser rejects query and fragment markers before URL
+  normalization, including markers with empty values.
+- Validation: all three delimiter cases failed before the fix. The
+  Micropub action URL tests passed (111 tests), as did Ruff and mypy.
+- Docs: configuration and changelog Unreleased.

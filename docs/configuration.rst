@@ -856,8 +856,10 @@ rejects (such as ``http://localhost/...``).
 
    INDIEWEB_MICROPUB_CANONICAL_ORIGINS = ["https://example.com"]
 
-Each entry must be an ``http``/``https`` origin without userinfo, path, query
-or fragment, and an empty string or list is invalid. Scheme, host and port are compared; default ports are ignored
+Each entry must be an ``http``/``https`` origin with an optional trailing slash.
+Userinfo, other paths, and query or fragment delimiters (``?`` or ``#``) are
+invalid, including when the query or fragment is empty. An empty string or
+list is also invalid. Scheme, host and port are compared; default ports are ignored
 and hosts are compared case-insensitively. An invalid value fails closed (every
 absolute action URL is rejected), is logged once, and is reported by the
 ``indieweb.E001`` system check.

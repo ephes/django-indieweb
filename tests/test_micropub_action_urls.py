@@ -109,7 +109,7 @@ def test_action_accepts_local_urls(post_action, recording_handler, action, url):
 @pytest.mark.parametrize("action", ACTIONS)
 def test_canonical_origins_replace_request_host_comparison(settings, post_action, recording_handler, action):
     settings.ALLOWED_HOSTS = ["testserver", "attacker.example"]
-    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = ["https://example.org"]
+    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = [" HTTPS://Example.ORG:443/ "]
 
     spoofed = post_action(action, "http://attacker.example/entries/1/", HTTP_HOST="attacker.example")
     request_host = post_action(action, "http://testserver/entries/1/")
@@ -132,6 +132,17 @@ def test_invalid_canonical_origins_fail_closed(settings, post_action, recording_
     response = post_action(action, "http://testserver/entries/1/")
 
     assert response.status_code == 400
+    assert recording_handler.calls == []
+
+
+@pytest.mark.parametrize("suffix", ["?", "#", "/?#"])
+def test_canonical_origin_markers_fail_closed(settings, post_action, recording_handler, suffix):
+    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = ["https://example.org", f" https://testserver{suffix} "]
+
+    assert [message.id for message in checks.check_micropub_canonical_origins()] == ["indieweb.E001"]
+    assert micropub_urls.configured_canonical_origins() == ()
+    assert post_action("delete", "https://example.org/entries/1/").status_code == 400
+    assert post_action("delete", "http://testserver/entries/1/").status_code == 400
     assert recording_handler.calls == []
 
 
@@ -235,7 +246,8 @@ def test_empty_canonical_origins_fail_closed(settings, rf, value):
     assert [message.id for message in checks.check_micropub_canonical_origins()] == ["indieweb.E001"]
 
 
-def test_system_check_accepts_valid_canonical_origins(settings):
-    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = "https://example.org"
+@pytest.mark.parametrize("value", ["https://example.org", " HTTPS://Example.ORG:443/ ", ["http://localhost:8000"]])
+def test_system_check_accepts_valid_canonical_origins(settings, value):
+    settings.INDIEWEB_MICROPUB_CANONICAL_ORIGINS = value
 
     assert checks.check_micropub_canonical_origins() == []

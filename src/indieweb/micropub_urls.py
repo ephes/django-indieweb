@@ -49,10 +49,15 @@ def parse_origin(value: Any) -> Origin:
     Raises ``ValueError`` unless ``value`` is an http(s) origin without
     userinfo, path (other than ``/``), query, or fragment.
     """
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
         raise ValueError("origin must be a non-empty string")
+    origin = value.strip()
+    if not origin:
+        raise ValueError("origin must be a non-empty string")
+    if "?" in origin or "#" in origin:
+        raise ValueError("origin must not include a query or fragment")
     try:
-        parts = urlsplit(value.strip())
+        parts = urlsplit(origin)
         port = parts.port
     except ValueError as exc:
         raise ValueError("origin is not a valid URL") from exc
@@ -63,8 +68,8 @@ def parse_origin(value: Any) -> Origin:
         raise ValueError("origin must include a host")
     if parts.username is not None or parts.password is not None:
         raise ValueError("origin must not include userinfo")
-    if parts.path not in ("", "/") or parts.query or parts.fragment:
-        raise ValueError("origin must not include a path, query, or fragment")
+    if parts.path not in ("", "/"):
+        raise ValueError("origin must not include a path")
     return scheme, parts.hostname.lower(), _normalized_port(scheme, port)
 
 

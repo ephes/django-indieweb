@@ -11,6 +11,8 @@ Unreleased
   actions. Custom Micropub handler instances are still created per operation.
 * Isolate Micropub example state from mutations to submitted properties and
   returned entries, including nested values.
+* Reject empty query and fragment delimiters in Micropub canonical origin
+  settings in both the Django system check and endpoint URL validation.
 * Require a boolean WebSub signature policy. Malformed values trigger the
   ``indieweb.E005`` security check and keep signature verification required.
 * Report malformed endpoint rate limits and unknown endpoint keys with the

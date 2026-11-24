@@ -33,7 +33,7 @@ def check_micropub_canonical_origins(app_configs: Any = None, **kwargs: Any) -> 
         return [
             Error(
                 f"{CANONICAL_ORIGINS_SETTING} is invalid: {exc}.",
-                hint='Use http(s) origins without path, query or userinfo, for example "https://example.com".',
+                hint='Use bare http(s) origins, for example "https://example.com".',
                 obj=CANONICAL_ORIGINS_SETTING,
                 id="indieweb.E001",
             )
