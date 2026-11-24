@@ -9,6 +9,8 @@ Unreleased
 * Keep explicitly configured Micropub example entries across requests in one
   process and accept the create response's local ``Location`` for lookups and
   actions. Custom Micropub handler instances are still created per operation.
+* Isolate Micropub example state from mutations to submitted properties and
+  returned entries, including nested values.
 * Require a boolean WebSub signature policy. Malformed values trigger the
   ``indieweb.E005`` security check and keep signature verification required.
 * Report malformed endpoint rate limits and unknown endpoint keys with the

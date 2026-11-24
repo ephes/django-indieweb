@@ -1427,7 +1427,9 @@ content writes. Without it, create/update/delete/undelete return empty HTTP
 inline files are cleaned up. Discovery remains available. Custom handler
 instances are created per operation and own persistence and authorization.
 The bundled ``InMemoryMicropubHandler`` requires explicit configuration for
-tests and examples and stores entries in the current process.
+tests and examples and stores entries in the current process. Its create and
+update methods copy submitted property values, and its entry results are
+snapshots. Use the handler's update method to change stored properties.
 
 Current bearer authority and failed media saves
 ===============================================

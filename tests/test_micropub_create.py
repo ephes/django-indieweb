@@ -1245,3 +1245,48 @@ class TestInMemoryHandler:
         assert entry.get_properties("content") == ["First content", "Second content"]
         assert entry.get_properties("category") == ["tag1", "tag2", "tag3"]
         assert entry.get_properties("missing") == []
+
+    def test_create_and_update_copy_nested_property_inputs(self):
+        handler = InMemoryMicropubHandler()
+        content = {"html": "<p>Original</p>"}
+        category = {"properties": {"name": ["Example"]}}
+        entry = handler.create_entry({"content": [content]}, None)
+        url = entry.url
+
+        content["html"] = "changed outside the handler"
+        assert handler.get_entry(url, None).properties["content"] == [{"html": "<p>Original</p>"}]
+
+        replacement = {"html": "<p>Edited</p>"}
+        handler.update_entry(url, {"replace": {"content": [replacement]}, "add": {"category": [category]}}, None)
+        replacement["html"] = "changed outside the handler"
+        category["properties"]["name"].append("extra")
+        assert handler.get_entry(url, None).properties == {
+            "content": [{"html": "<p>Edited</p>"}],
+            "category": [{"properties": {"name": ["Example"]}}],
+        }
+
+    def test_entry_results_are_independent_of_stored_state(self):
+        handler = InMemoryMicropubHandler()
+        created = handler.create_entry({"content": [{"html": "<p>Original</p>"}]}, None)
+        url = created.url
+        created.properties["content"][0]["html"] = "changed create result"
+
+        source = handler.get_entry(url, None)
+        assert source.properties["content"] == [{"html": "<p>Original</p>"}]
+        source.type.append("h-event")
+        source.properties["content"][0]["html"] = "changed source result"
+
+        listed = handler.list_entries(None).entries[0]
+        assert listed.type == ["h-entry"]
+        assert listed.properties["content"] == [{"html": "<p>Original</p>"}]
+        listed.url = "/changed/"
+        listed.properties["content"][0]["html"] = "changed list result"
+        assert handler.get_entry(url, None).properties["content"] == [{"html": "<p>Original</p>"}]
+
+        updated = handler.update_entry(url, {"replace": {"content": [{"html": "<p>Edited</p>"}]}}, None)
+        updated.properties["content"][0]["html"] = "changed update result"
+        handler.delete_entry(url, None)
+        restored = handler.undelete_entry(url, None)
+        assert restored.properties["content"] == [{"html": "<p>Edited</p>"}]
+        restored.properties["content"].clear()
+        assert handler.get_entry(url, None).properties["content"] == [{"html": "<p>Edited</p>"}]

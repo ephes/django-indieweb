@@ -6197,3 +6197,12 @@ bundle.
   configuration tests and source scope regressions passed together (16
   tests). Ruff and mypy passed.
 - Docs: README, Micropub, configuration, tutorial and changelog Unreleased.
+
+### Copy Micropub example entries at state boundaries (round 182 B07)
+
+- The example takes ownership of nested property values and returns
+  independent snapshots from create, source, list, update, and undelete.
+- Validation: both new tests failed before the fix. The Micropub creation,
+  configuration, and endpoint tests passed together (202 tests).
+  Ruff and mypy passed.
+- Docs: Micropub guide and changelog Unreleased.

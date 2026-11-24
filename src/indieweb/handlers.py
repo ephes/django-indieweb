@@ -7,6 +7,7 @@ and includes basic implementations for testing and development.
 
 import json
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import TYPE_CHECKING, Any
@@ -283,28 +284,22 @@ class InMemoryMicropubHandler(MicropubContentHandler):
 
     def create_entry(self, properties: dict[str, list[Any]], user: "AbstractBaseUser") -> MicropubEntry:
         # UNSAFE: example only - performs no ownership check.
+        normalized_props = {key: value if isinstance(value, list) else [value] for key, value in properties.items()}
+        stored_properties = deepcopy(normalized_props)
         with self._lock:
-            self.counter += 1
-            url = f"/entries/{self.counter}/"
-
-            # Ensure properties are in list format
-            normalized_props = {}
-            for key, value in properties.items():
-                if not isinstance(value, list):
-                    normalized_props[key] = [value]
-                else:
-                    normalized_props[key] = value
-
-            entry = MicropubEntry(url=url, properties=normalized_props)
+            url = f"/entries/{self.counter + 1}/"
+            entry = MicropubEntry(url=url, properties=stored_properties)
+            result = deepcopy(entry)
             self.entries[url] = entry
-            return entry
+            self.counter += 1
+            return result
 
     def _apply_replace(self, entry: MicropubEntry, replacements: dict[str, Any]) -> None:
         """Apply replace operations to an entry."""
         for key, values in replacements.items():
             if not isinstance(values, list):
                 values = [values]
-            entry.properties[key] = values
+            entry.properties[key] = deepcopy(values)
 
     def _apply_add(self, entry: MicropubEntry, additions: dict[str, Any]) -> None:
         """Apply add operations to an entry."""
@@ -313,7 +308,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
                 values = [values]
             if key not in entry.properties:
                 entry.properties[key] = []
-            entry.properties[key].extend(values)
+            entry.properties[key].extend(deepcopy(values))
 
     def _apply_delete_list(self, entry: MicropubEntry, deletions: list[str]) -> None:
         """Delete entire properties from an entry."""
@@ -338,7 +333,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
             if url not in self.entries:
                 raise ValueError(f"Entry not found: {url}")
 
-            entry = self.entries[url]
+            entry = deepcopy(self.entries[url])
 
             # Handle replace operations
             if "replace" in updates:
@@ -355,7 +350,9 @@ class InMemoryMicropubHandler(MicropubContentHandler):
                 elif isinstance(updates["delete"], dict):
                     self._apply_delete_dict(entry, updates["delete"])
 
-            return entry
+            result = deepcopy(entry)
+            self.entries[url] = entry
+            return result
 
     def delete_entry(self, url: str, user: "AbstractBaseUser") -> None:
         # UNSAFE: example only - performs no ownership check.
@@ -371,14 +368,14 @@ class InMemoryMicropubHandler(MicropubContentHandler):
             if url not in self.deleted_entries:
                 raise ValueError(f"Deleted entry not found: {url}")
 
-            entry = self.deleted_entries.pop(url)
-            self.entries[url] = entry
-            return entry
+            result = deepcopy(self.deleted_entries[url])
+            self.entries[url] = self.deleted_entries.pop(url)
+            return result
 
     def get_entry(self, url: str, user: "AbstractBaseUser") -> MicropubEntry | None:
         # UNSAFE: example only - performs no ownership check.
         with self._lock:
-            return self.entries.get(url)
+            return deepcopy(self.entries.get(url))
 
     @staticmethod
     def _entry_filter_matches(entry: MicropubEntry, needle: str) -> bool:
@@ -410,7 +407,7 @@ class InMemoryMicropubHandler(MicropubContentHandler):
                 entries = entries[offset:]
             if limit is not None:
                 entries = entries[:limit]
-            return MicropubEntryList(entries=entries, total=total)
+            return MicropubEntryList(entries=deepcopy(entries), total=total)
 
 
 class _UnconfiguredMicropubHandler(MicropubContentHandler):
