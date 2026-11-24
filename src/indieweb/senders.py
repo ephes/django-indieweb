@@ -719,16 +719,18 @@ class WebmentionSender:
             if html_content is None:
                 return [_deadline_result(source_url)] if time.monotonic() >= deadline else []
 
+        using = router.db_for_write(WebmentionOutboundTarget)
         target_urls, current_targets, historical_rows, historical_targets = self._salmention_target_context(
-            source_url,
-            html_content,
+            source_url, html_content, using
         )
 
         results = []
         for target_url in target_urls:
             provenance = self._target_provenance(target_url, current_targets, historical_targets)
             row = historical_rows.get(target_url) if provenance == "history" else None
-            results.append(self._resend_target(source_url, target_url, provenance, row, vouch_url, deadline))
+            results.append(
+                self._resend_target(source_url, target_url, provenance, row, vouch_url, deadline, using=using)
+            )
         return results
 
     def _deliver_source_target(
@@ -754,6 +756,8 @@ class WebmentionSender:
         row: WebmentionOutboundTarget | None,
         vouch: str | None,
         deadline: float,
+        *,
+        using: str,
     ) -> dict:
         if time.monotonic() >= deadline:
             return _deadline_result(target_url, provenance)
@@ -783,6 +787,7 @@ class WebmentionSender:
             seen_in_source=provenance != "history",
             sent=result["endpoint"] is not None,
             claim=claim,
+            using=using,
         )
         if (
             row is not None
@@ -804,8 +809,7 @@ class WebmentionSender:
         """Return a dry-run Salmention resend preview without sending or recording history."""
         deadline = _source_deadline(deadline)
         target_urls, current_targets, historical_rows, historical_targets = self._salmention_target_context(
-            source_url,
-            html_content,
+            source_url, html_content, router.db_for_write(WebmentionOutboundTarget)
         )
 
         results = []
@@ -840,6 +844,7 @@ class WebmentionSender:
         self,
         source_url: str,
         html_content: str,
+        using: str,
     ) -> tuple[list[str], set[str], dict[str, WebmentionOutboundTarget], set[str]]:
         """Return capped Salmention targets plus provenance inputs.
 
@@ -852,7 +857,7 @@ class WebmentionSender:
         selected = self.select_target_urls(source_url, html_content)
         current_targets = set(selected)
         historical_rows: dict[str, WebmentionOutboundTarget] = {}
-        history = WebmentionOutboundTarget.objects.filter(source_url=source_url)
+        history = WebmentionOutboundTarget.objects.using(using).filter(source_url=source_url)
         historical_targets = set(history.filter(target_url__in=selected).values_list("target_url", flat=True))
         max_targets = _webmention_max_targets_per_source()
         max_host = _webmention_max_targets_per_host()
@@ -954,10 +959,11 @@ class WebmentionSender:
         sent: bool,
         attempt_started_at: datetime | None = None,
         claim: UUID | None = None,
+        using: str | None = None,
     ) -> WebmentionOutboundTarget | None:
         """Create or refresh outbound Webmention target history for an attempt."""
         started = attempt_started_at or timezone.now()
-        using = router.db_for_write(WebmentionOutboundTarget)
+        using = using or router.db_for_write(WebmentionOutboundTarget)
         rows = WebmentionOutboundTarget.objects.using(using)
         claim_updates: dict[str, None] = {}
         if claim is None:
@@ -1060,8 +1066,7 @@ class WebmentionSender:
         self, row: WebmentionOutboundTarget, *, deadline: float
     ) -> tuple[UUID | None, dict | None]:
         """Reserve one current policy generation without a lock across HTTP."""
-        using = router.db_for_write(WebmentionOutboundTarget, instance=row)
-        rows = WebmentionOutboundTarget.objects.using(using)
+        rows = WebmentionOutboundTarget.objects.using(row._state.db)
         fresh = rows.filter(pk=row.pk).first()
         reason = "history_changed"
         if fresh is not None:
@@ -1100,8 +1105,7 @@ class WebmentionSender:
         )
 
     def _release_historical_claim(self, row: WebmentionOutboundTarget, claim: UUID | None) -> None:
-        using = router.db_for_write(WebmentionOutboundTarget, instance=row)
-        WebmentionOutboundTarget.objects.using(using).filter(pk=row.pk, resend_claim=claim).update(
+        WebmentionOutboundTarget.objects.using(row._state.db).filter(pk=row.pk, resend_claim=claim).update(
             resend_claim=None, resend_claim_expires_at=None
         )
 
@@ -1180,9 +1184,8 @@ class WebmentionSender:
 
     def _delete_failed_outbound_target(self, row: WebmentionOutboundTarget) -> bool:
         """Delete only the failed generation inspected by the caller."""
-        using = router.db_for_write(WebmentionOutboundTarget, instance=row)
         deleted, _ = (
-            WebmentionOutboundTarget.objects.using(using)
+            WebmentionOutboundTarget.objects.using(row._state.db)
             .filter(
                 pk=row.pk,
                 last_attempted_at=row.last_attempted_at,

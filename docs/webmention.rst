@@ -822,6 +822,10 @@ available, success or error, and a provenance label:
 * ``both`` means the target is both currently linked and present in outbound
   history.
 
+Resend and dry-run selection read history from the database alias Django
+routes outbound target writes to. Claims, completions and pruning use that
+same alias, so replica lag cannot hide a historical target or its provenance.
+
 No-endpoint union targets remain visible in resend output as failures with an
 ``Error: No endpoint found`` message. Policy skips are shown separately as
 ``skipped`` or ``dropped`` rows and are not counted as sent Webmentions in the

@@ -41,6 +41,8 @@ Unreleased
   finish updating the same outbound history.
 * Recompute the outbound failure streak when a late success settles. Only
   failures ordered after that success count toward historical target pruning.
+* Read Salmention resend history and provenance from the outbound write
+  database in both previews and real resends.
 * Report invalid WebSub delivery media type allowlists with the
   ``indieweb.E006`` Django security check. The error omits the configured values.
 * Reject naive reference times when pruning WebSub delivery attempts with

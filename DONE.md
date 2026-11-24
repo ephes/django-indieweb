@@ -6251,3 +6251,11 @@ bundle.
 - Validation: the six completion orders exposed two incorrect counts before
   the fix. The SQLite sender and outbound state regressions pass.
 - Docs: overlapping outbound history and changelog Unreleased.
+
+### Use the outbound writer for Salmention history (round 186 B11)
+
+- Resolve the write alias for both preview and resend selection, and keep
+  historical claims, completion and pruning on that alias.
+- Validation: the split-alias tests failed before the fix and pass for dry-run
+  and real resends with a lagging replica.
+- Docs: resend provenance and changelog Unreleased.

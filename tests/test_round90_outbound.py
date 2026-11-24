@@ -24,7 +24,7 @@ def test_history_selection_projects_and_stops_at_cap(settings):
         ]
     )
     with CaptureQueriesContext(connection) as queries:
-        targets, current, rows, history = WebmentionSender()._salmention_target_context(SOURCE, "")
+        targets, current, rows, history = WebmentionSender()._salmention_target_context(SOURCE, "", connection.alias)
     assert targets == ["https://h0000.example/", "https://h0001.example/"]
     assert len(rows) == len(history) == 2
     assert all('"last_error"' not in query["sql"] for query in queries)
@@ -229,3 +229,48 @@ def test_expired_claim_recovery_fences_old_completion():
     )
     assert result is not None
     assert result.last_success and result.resend_claim is None
+
+
+@pytest.mark.django_db(databases=["default", "other"])
+@pytest.mark.parametrize("preview", [False, True])
+def test_salmention_history_uses_writer_with_lagging_replica(settings, monkeypatch, preview):
+    class HistoryRouter:
+        def db_for_read(self, model, **hints):
+            if model is WebmentionOutboundTarget:
+                return "default"
+            return None
+
+        def db_for_write(self, model, **hints):
+            if model is WebmentionOutboundTarget:
+                return "default" if "instance" in hints else "other"
+            return None
+
+    settings.DATABASE_ROUTERS = [HistoryRouter()]
+    current_url = "https://current.example/"
+    history_url = "https://history.example/"
+    writer = WebmentionOutboundTarget.objects.using("other")
+    writer.bulk_create(
+        [
+            WebmentionOutboundTarget(source_url=SOURCE, target_url=current_url),
+            WebmentionOutboundTarget(source_url=SOURCE, target_url=history_url),
+        ]
+    )
+
+    sender = WebmentionSender()
+    monkeypatch.setattr(sender, "discover_endpoint", Mock(return_value="https://endpoint.example/"))
+    send = Mock(return_value={"success": True, "status_code": 202})
+    monkeypatch.setattr(sender, "send_webmention", send)
+    operation = sender.preview_salmention_resend_targets if preview else sender.resend_salmentions
+    results = operation(SOURCE, f'<a href="{current_url}">link</a>')
+
+    assert [(result["target"], result["provenance"]) for result in results] == [
+        (current_url, "both"),
+        (history_url, "history"),
+    ]
+    if preview:
+        send.assert_not_called()
+        assert writer.filter(last_attempted_at__isnull=True).count() == 2
+    else:
+        assert send.call_count == 2
+        assert writer.filter(last_success=True, resend_claim__isnull=True).count() == 2
+    assert not WebmentionOutboundTarget.objects.using("default").exists()
