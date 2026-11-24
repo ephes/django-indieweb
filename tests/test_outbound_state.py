@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from itertools import permutations
 from threading import Barrier
 from unittest.mock import patch
 
@@ -163,6 +164,50 @@ def test_late_success_prevents_older_failure_from_pruning(monkeypatch, settings)
     assert row.last_status_code == 503 and not row.last_success
     assert row.consecutive_failures == 1
     assert row.last_successful_attempt_at == success_at
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("order", list(permutations(range(3))))
+def test_history_failure_streak_uses_attempt_order(settings, order):
+    settings.INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES = 2
+    started = timezone.now() - timedelta(days=2)
+    attempts = [started + timedelta(seconds=index) for index in range(3)]
+    for index in order:
+        _record(attempt_started_at=attempts[index], success=index == 1)
+
+    row = WebmentionOutboundTarget.objects.get()
+    assert row.last_attempted_at == attempts[2]
+    assert row.last_successful_attempt_at == attempts[1]
+    assert not row.last_success
+    assert row.consecutive_failures == 1
+    assert WebmentionSender()._salmention_historical_skip_result(row, dry_run=False) is None
+    assert WebmentionOutboundTarget.objects.filter(pk=row.pk).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_history_success_discards_only_earlier_failure(concurrent_database):
+    started = timezone.now() - timedelta(days=2)
+    _record(attempt_started_at=started)
+    barrier = Barrier(2)
+
+    def worker(offset, success):
+        close_old_connections()
+        try:
+            barrier.wait(timeout=10)
+            _record(attempt_started_at=started + timedelta(seconds=offset), success=success)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        failure = pool.submit(worker, 2, False)
+        success = pool.submit(worker, 1, True)
+        failure.result(timeout=15)
+        success.result(timeout=15)
+
+    row = WebmentionOutboundTarget.objects.get()
+    assert row.last_attempted_at == started + timedelta(seconds=2)
+    assert row.last_successful_attempt_at == started + timedelta(seconds=1)
+    assert row.consecutive_failures == 1
 
 
 @pytest.mark.django_db(transaction=True)

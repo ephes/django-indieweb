@@ -39,8 +39,8 @@ Unreleased
   links or sending notifications. The limit includes duplicate entries.
 * Preserve live historical resend claims when current-target Webmentions
   finish updating the same outbound history.
-* Advance the outbound success watermark for late successes even when a
-  newer attempt failed, so older failures cannot inflate the pruning count.
+* Recompute the outbound failure streak when a late success settles. Only
+  failures ordered after that success count toward historical target pruning.
 * Report invalid WebSub delivery media type allowlists with the
   ``indieweb.E006`` Django security check. The error omits the configured values.
 * Reject naive reference times when pruning WebSub delivery attempts with

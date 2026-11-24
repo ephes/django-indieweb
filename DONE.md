@@ -6241,3 +6241,13 @@ bundle.
   tests/test_websub_subscriber.py tests/test_websub_signed_deliveries.py` passed
   all 148 tests.
 - Docs: configuration guide and changelog Unreleased.
+
+## 2026-11-24
+
+### Settle outbound failure streaks in attempt order (round 186 B11)
+
+- Persist failure timestamps and remove failures that precede the latest
+  accepted success before applying the historical drop threshold.
+- Validation: the six completion orders exposed two incorrect counts before
+  the fix. The SQLite sender and outbound state regressions pass.
+- Docs: overlapping outbound history and changelog Unreleased.

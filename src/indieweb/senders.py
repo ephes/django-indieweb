@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 import httpx
 from bs4 import BeautifulSoup, Tag
 from django.conf import settings
-from django.db import router
+from django.db import router, transaction
 from django.db.models import Case, F, Q, Value, When
 from django.utils import timezone
 
@@ -971,7 +971,6 @@ class WebmentionSender:
             completion = rows.filter(pk=target.pk, resend_claim=claim, resend_claim_expires_at__gt=timezone.now())
             claim_updates = {"resend_claim": None, "resend_claim_expires_at": None}
         current = Q(last_attempted_at__isnull=True) | Q(last_attempted_at__lte=started)
-        after_success = Q(last_successful_attempt_at__isnull=True) | Q(last_successful_attempt_at__lte=started)
         success = bool(result.get("success"))
         # Every expression sees the current stored row in one atomic SQL update.
         updates: dict[str, Any] = {
@@ -983,16 +982,7 @@ class WebmentionSender:
             ),
             "last_success": Case(When(current, then=Value(success)), default=F("last_success")),
             "last_error": Case(When(current, then=Value(result.get("error") or "")), default=F("last_error")),
-            "consecutive_failures": (
-                Case(When(current, then=Value(0)), default=F("consecutive_failures"))
-                if success
-                else Case(When(after_success, then=F("consecutive_failures") + 1), default=F("consecutive_failures"))
-            ),
         }
-        if success:
-            updates["last_successful_attempt_at"] = Case(
-                When(after_success, then=Value(started)), default=F("last_successful_attempt_at")
-            )
         if endpoint:
             fresh_endpoint = Q(endpoint_discovered_at__isnull=True) | Q(endpoint_discovered_at__lte=started)
             updates["endpoint_url"] = Case(When(fresh_endpoint, then=Value(endpoint)), default=F("endpoint_url"))
@@ -1020,10 +1010,43 @@ class WebmentionSender:
         for field_name, expression in updates.items():
             if isinstance(expression, Case):
                 expression.output_field = WebmentionOutboundTarget._meta.get_field(field_name)
-        if not completion.update(**updates):
-            return None
-        target.refresh_from_db(using=using)
+        with transaction.atomic(using=using):
+            # Fence the claim and acquire the write lock before reading the streak.
+            # Starting with a write also avoids a read-to-write lock upgrade on SQLite.
+            if not completion.update(modified=updates["modified"]):
+                return None
+            target.refresh_from_db(using=using)
+            updates.update(self._settle_outbound_failures(target, started, success))
+            rows.filter(pk=target.pk).update(**updates)
+            target.refresh_from_db(using=using)
         return target
+
+    @staticmethod
+    def _settle_outbound_failures(
+        target: WebmentionOutboundTarget, started: datetime, success: bool
+    ) -> dict[str, Any]:
+        """Fold the outcome into the failure streak using attempt start order."""
+        watermark = target.last_successful_attempt_at
+        if watermark is not None and started < watermark:
+            return {}
+
+        failures = target.failure_attempts
+        if not failures and target.consecutive_failures:
+            # Old rows only have an aggregate. Preserve it at their last known attempt.
+            legacy_attempt = target.last_attempted_at or target.last_sent_at or target.created
+            failures = {legacy_attempt.isoformat(): target.consecutive_failures}
+
+        if success:
+            watermark = started
+            failures = {stamp: count for stamp, count in failures.items() if datetime.fromisoformat(stamp) > started}
+        else:
+            stamp = started.isoformat()
+            failures[stamp] = failures.get(stamp, 0) + 1
+        return {
+            "failure_attempts": failures,
+            "consecutive_failures": sum(failures.values()),
+            "last_successful_attempt_at": watermark,
+        }
 
     def _target_provenance(self, target_url: str, current_targets: set[str], historical_targets: set[str]) -> str:
         """Return the resend provenance label for a target URL."""
