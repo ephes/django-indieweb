@@ -41,6 +41,9 @@ Unreleased
   finish updating the same outbound history.
 * Advance the outbound success watermark for late successes even when a
   newer attempt failed, so older failures cannot inflate the pruning count.
+* Reject naive reference times when pruning WebSub delivery attempts with
+  ``USE_TZ=True``, including dry runs. Naive times remain supported with
+  ``USE_TZ=False``.
 * Use the same WebSub lease observation time in the CLI header and all rows.
 * Read legacy WebSub replay history from the same write database as
   atomic acceptance.

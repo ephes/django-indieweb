@@ -1123,9 +1123,10 @@ def prune_websub_delivery_attempts(
 ) -> WebSubDeliveryAttemptPruneResult:
     """Delete ``WebSubDeliveryAttempt`` rows received before the retention cutoff.
 
-    The cutoff is ``now`` minus the retention days; attempts received exactly
-    at the cutoff are kept. Rows are deleted in primary-key batches of
-    at most ``batch_size`` (capped at 1,000 and the write backend's public
+    The cutoff is ``now`` minus the retention days. With ``USE_TZ`` enabled,
+    a naive ``now`` raises ``ValueError``. Attempts received exactly at the cutoff
+    are kept. Rows are deleted in primary-key batches of at most ``batch_size``
+    (capped at 1,000 and the write backend's public
     parameter limit) until none is left, so one run drains the backlog without
     one unbounded ``DELETE``. ``dry_run`` only counts. Subscriptions, their
     ``last_delivery_*`` summary fields and the ``WebSubAcceptedDelivery``
@@ -1137,8 +1138,11 @@ def prune_websub_delivery_attempts(
     days = websub_delivery_attempt_retention_days(retention_days)
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
         raise ValueError("WebSub delivery-attempt prune batch size must be a positive integer")
+    reference_time = now if now is not None else timezone.now()
+    if settings.USE_TZ and timezone.is_naive(reference_time):
+        raise ValueError("WebSub delivery-attempt prune reference time must be timezone-aware when USE_TZ is enabled")
     try:
-        cutoff = (now or timezone.now()) - timedelta(days=days)
+        cutoff = reference_time - timedelta(days=days)
     except OverflowError as exc:
         raise ValueError("WebSub delivery-attempt retention exceeds the supported datetime range") from exc
     # Count, select and delete on the write database. Batches selected from a

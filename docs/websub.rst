@@ -586,10 +586,13 @@ its own. Run it from your scheduler, for example daily from cron:
 Host code can call ``indieweb.websub.prune_websub_delivery_attempts()``
 directly; it takes ``retention_days``, ``now``, ``batch_size`` and ``dry_run``
 and returns the cutoff with the ``matched`` and ``deleted`` counts. With
-database routers, it counts, selects and deletes on the write database of
-``WebSubDeliveryAttempt``, so a lagging read replica cannot influence a run. The older
-``examples.websub_workflows.prune_websub_delivery_attempts()`` example still
-works for hosts that keep the retention window in their own code.
+``USE_TZ=True``, pass a timezone-aware ``now`` or omit it to use Django's
+current time. A naive ``now`` raises ``ValueError`` before any database query,
+including in dry-run mode. With ``USE_TZ=False``, naive reference times are
+accepted. With database routers, it counts, selects and deletes on the write
+database of ``WebSubDeliveryAttempt``, so a lagging read replica cannot
+influence a run. The older ``examples.websub_workflows.prune_websub_delivery_attempts()``
+example still works for hosts that keep the retention window in their own code.
 
 Pruning is independent of replay protection. ``WebSubAcceptedDelivery`` rows,
 which reject replayed bodies, are bounded separately by

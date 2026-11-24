@@ -6223,3 +6223,11 @@ bundle.
 - Validation: both diagnostic failure cases failed before the fix. The
   Micropub action URL tests passed (113 tests), as did Ruff and mypy.
 - Docs: configuration and changelog Unreleased.
+
+### Validate WebSub prune reference time awareness (round 184 B11)
+
+- Reject naive reference times before querying delivery attempts when timezone
+  support is enabled. Keep naive times usable with timezone support disabled.
+- Validation: both rejection cases failed before the fix. All 38 pruning tests
+  passed with `uv run --no-sync pytest --no-cov tests/test_prune_websub_delivery_attempts.py`.
+- Docs: WebSub retention guide and changelog Unreleased.

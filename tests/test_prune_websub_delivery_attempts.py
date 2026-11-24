@@ -67,6 +67,30 @@ def test_prune_dry_run_counts_without_deleting(attempts):
     assert _remaining(attempts) == set(attempts)
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_prune_rejects_naive_reference_time(subscription, settings, django_assert_num_queries, dry_run):
+    settings.TIME_ZONE = "America/Los_Angeles"
+    # Interpreting the naive reference as local time would include this row.
+    attempt = _attempt(subscription, CUTOFF + timedelta(hours=3))
+
+    with django_assert_num_queries(0), pytest.raises(ValueError, match="timezone-aware"):
+        prune_websub_delivery_attempts(retention_days=30, now=NOW.replace(tzinfo=None), dry_run=dry_run)
+
+    assert WebSubDeliveryAttempt.objects.filter(pk=attempt.pk).exists()
+
+
+def test_prune_accepts_naive_reference_time_without_timezone_support(subscription, settings):
+    settings.USE_TZ = False
+    cutoff = CUTOFF.replace(tzinfo=None)
+    _attempt(subscription, cutoff - timedelta(seconds=1))
+    retained = _attempt(subscription, cutoff)
+
+    result = prune_websub_delivery_attempts(retention_days=30, now=NOW.replace(tzinfo=None))
+
+    assert (result.cutoff, result.matched, result.deleted) == (cutoff, 1, 1)
+    assert list(WebSubDeliveryAttempt.objects.values_list("pk", flat=True)) == [retained.pk]
+
+
 def test_prune_leaves_subscriptions_and_replay_rows_untouched(subscription, attempts):
     accepted = WebSubAcceptedDelivery.objects.create(
         subscription=subscription, body_digest="a" * 64, accepted_at=CUTOFF - timedelta(days=60)
