@@ -185,6 +185,29 @@ def test_history_failure_streak_uses_attempt_order(settings, order):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("attempt_field", ["last_attempted_at", "last_sent_at"])
+@pytest.mark.parametrize(
+    ("offset", "success", "expected"),
+    [(1, False, 4), (-1, True, 3), (1, True, 0)],
+)
+def test_legacy_failure_streak_settles_at_its_last_known_attempt(attempt_field, offset, success, expected):
+    legacy_at = timezone.now() - timedelta(days=2)
+    row = _record(attempt_started_at=legacy_at - timedelta(hours=1), success=True)
+    WebmentionOutboundTarget.objects.filter(pk=row.pk).update(
+        consecutive_failures=3,
+        failure_attempts={},
+        last_successful_attempt_at=None,
+        last_attempted_at=legacy_at if attempt_field == "last_attempted_at" else None,
+        last_sent_at=legacy_at,
+    )
+
+    _record(attempt_started_at=legacy_at + timedelta(seconds=offset), success=success)
+    row.refresh_from_db()
+    assert row.consecutive_failures == expected
+    assert sum(row.failure_attempts.values()) == expected
+
+
+@pytest.mark.django_db
 def test_history_failure_attempts_stay_bounded_and_keep_the_streak():
     started = timezone.now() - timedelta(days=2)
     failures = OUTBOUND_FAILURE_ATTEMPTS_LIMIT * 3
