@@ -9,7 +9,10 @@ Unreleased
 * Require a boolean WebSub signature policy. Malformed values trigger the
   ``indieweb.E005`` security check and keep signature verification required.
 * Report malformed endpoint rate limits and unknown endpoint keys with the
-  ``indieweb.E004`` Django security check.
+  ``indieweb.E004`` Django security check. ``None``, ``False`` and an empty
+  dictionary still disable rate limiting globally or per endpoint; other
+  undocumented falsy values such as ``0``, ``""`` or ``[]`` are now reported
+  and logged instead of being ignored silently.
 * Accept either hexadecimal letter case in valid WebSub delivery signatures.
 * Reject oversized decimal WebSub delivery lengths before reading the body,
   including values beyond Python's integer-conversion digit limit.

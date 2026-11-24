@@ -6171,6 +6171,9 @@ bundle.
 - Validation: `uv run --frozen pytest --no-cov -q tests/test_rate_limiting.py
   tests/test_round93_lookup.py` passed (88 tests). Both new invalid-setting
   cases failed before the fix. `just check` passed (3918 tests, 77 skipped).
+- Review follow-up: `INDIEWEB_RATE_LIMITS = False` disables limits like
+  `None`, and a test keeps the check's endpoint keys in step with the
+  `rate_limit_key` values of the built-in views.
 - Docs: `docs/configuration.rst` and `docs/changelog.rst` Unreleased.
 
 ### Require a boolean WebSub signature policy (round 181 B06)

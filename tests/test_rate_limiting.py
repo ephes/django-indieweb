@@ -13,6 +13,7 @@ from django.core.checks import Tags, run_checks
 from django.urls import reverse
 
 from indieweb import models, rate_limit
+from indieweb.checks import RATE_LIMIT_ENDPOINTS
 from indieweb.rate_limit import (
     UNSUPPORTED_METHOD_BUCKET,
     _cache_key,
@@ -69,6 +70,7 @@ def _valid_webmention_payload() -> dict[str, str]:
     "configured,invalid_entries",
     [
         (None, []),
+        (False, []),
         ({}, []),
         ({"token": None, "auth": {}, "media": False}, []),
         ({"token": {"limit": "2", "window": 60.0}}, []),
@@ -94,6 +96,26 @@ def test_rate_limit_security_check_without_cache(settings, monkeypatch, configur
 
     assert len(messages) == len(invalid_entries)
     assert all(any(entry in message.msg for message in messages) for entry in invalid_entries)
+
+
+def _rate_limited_views(cls: type) -> list[type]:
+    subclasses = []
+    for subclass in cls.__subclasses__():
+        subclasses.append(subclass)
+        subclasses.extend(_rate_limited_views(subclass))
+    return subclasses
+
+
+def test_rate_limit_check_knows_every_endpoint_key():
+    import indieweb.views  # noqa: F401  - registers the rate-limited views
+
+    view_keys = {
+        view.rate_limit_key
+        for view in _rate_limited_views(rate_limit.RateLimitMixin)
+        if view.__module__.startswith("indieweb.") and view.rate_limit_key is not None
+    }
+
+    assert view_keys == RATE_LIMIT_ENDPOINTS
 
 
 @pytest.mark.django_db

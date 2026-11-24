@@ -448,7 +448,8 @@ does not add any model, migration, or runtime dependency.
 
 **Default:** ``None`` (rate limiting disabled)
 
-Set this to ``None`` or an empty dictionary to disable built-in rate limiting.
+Set this to ``None``, ``False``, or an empty dictionary to disable built-in rate
+limiting.
 Omit an endpoint key or set its value to ``None``, ``False``, or an empty
 dictionary to disable its limit.
 Each configured endpoint key accepts a mapping with:

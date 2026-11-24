@@ -61,7 +61,7 @@ def _positive_int(value: Any) -> int | None:
 def rate_limit_settings() -> Mapping[str, object]:
     """Read the endpoint settings without accessing the cache."""
     configured = getattr(settings, RATE_LIMITS_SETTING, None)
-    if configured is None:
+    if configured is None or configured is False:
         return {}
     if not isinstance(configured, Mapping):
         raise ValueError("expected a mapping")
