@@ -189,7 +189,10 @@ def _display_webmention_snapshot(target_url: str) -> list[Webmention]:
     )
     child_rows = (
         WebmentionNestedResponse.objects.filter(
-            webmention__target_url=target_url, webmention__status="verified", status="verified"
+            webmention__target_url=target_url,
+            webmention__status="verified",
+            webmention__mention_type="reply",
+            status="verified",
         )
         .order_by()
         .annotate(**child_projection, child_order=Coalesce("published", "first_seen_at"))

@@ -1070,8 +1070,8 @@ response embedded inside that source.
 
 Display/query support exposes verified child responses as inline responses under
 their parent reply Webmention. ``show_webmentions`` continues querying verified
-top-level ``Webmention`` rows by exact ``target_url`` and loads their verified
-children from the same statement snapshot. Top-level Webmentions with a
+top-level ``Webmention`` rows by exact ``target_url`` and loads verified children
+of candidate reply parents from the same statement snapshot. Top-level Webmentions with a
 ``published`` timestamp appear newest first, followed by those without one.
 Within a tie (including missing timestamps), newer ``created`` timestamps come
 first, then lower primary keys. Child responses render under their parent
@@ -1780,7 +1780,9 @@ instances or ingestion payloads. Supply only the current page's target URLs.
 and child ``parsed_h_entry`` and ``content_digest``. Bundled templates use only
 loaded presentation fields and render with one ``UNION ALL`` query, including
 with a type filter. Separate parent and child projections transfer each large
-parent body once, rather than once per child. The result is consumed in chunks
+parent body once. The child projection selects rows under candidate reply
+parents, and Python checks the parent's exact type before displaying children.
+The result is consumed in chunks
 of 100 without a QuerySet result cache; the final model lists still scale with
 the displayed parents and children. All verified direct-source identities for
 the exact target share that statement snapshot with parents and children, so a concurrent moderation

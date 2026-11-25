@@ -8,6 +8,8 @@ Unreleased
 
 * Render dated Webmentions before undated ones on both SQLite and PostgreSQL
   so duplicate nested replies appear under the same parent.
+* Limit the Webmention display query's child rows to candidate reply parents.
+  All verified direct mentions still participate in duplicate suppression.
 * Reserve the SQLite writer before reloading a Webmention for settlement.
 * Reserve the SQLite writer before selecting each WebSub attempt prune batch.
 * Log Webmention outcomes after commit so failing log handlers cannot

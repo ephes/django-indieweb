@@ -8,9 +8,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 - Put dated parents before undated parents while keeping creation-time and
   primary-key ties deterministic in the single display query.
-- The display query regression failed on SQLite before the fix because
-  the UNION omitted explicit null placement. It now checks child ownership
-  and the query order. PostgreSQL SQL compilation also emits `NULLS LAST`.
+- The display query regression failed on SQLite before the fix because the
+  UNION omitted explicit null placement. It now passes in `uv run pytest`.
+  PostgreSQL SQL compilation also emits `NULLS LAST`.
+- Updated the Webmention guide and changelog Unreleased.
+
+### Skip child payloads under non-reply parents (round 204 B12)
+
+- Filter the child projection by parent reply type in the single display
+  query while keeping exact type checks and all verified direct suppression URLs.
+- The reclassification regression previously received twelve extra child rows.
+  It now passes in `uv run pytest`, checking child transfer and suppression
+  by the reclassified parent's direct source URL.
 - Updated the Webmention guide and changelog Unreleased.
 
 ### Refuse unsupported drafts in the Micropub blog examples (round 198 B16)

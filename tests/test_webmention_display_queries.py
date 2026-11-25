@@ -4,7 +4,7 @@ import re
 from datetime import timedelta
 
 import pytest
-from django.db.models import F
+from django.db.models import F, QuerySet
 from django.template import Context, Template
 from django.template.loader import render_to_string
 from django.utils import timezone
@@ -135,3 +135,52 @@ def test_display_puts_undated_parents_last_when_deduplicating_children(django_as
     # SQLite already sorts descending NULLs last. Verify the UNION states
     # the rule explicitly so this also catches a regression on SQLite.
     assert re.search(r"order by\s+[^,]+ desc nulls last", queries.captured_queries[0]["sql"], re.IGNORECASE)
+
+
+def test_display_skips_child_payloads_after_parent_is_reclassified(monkeypatch, django_assert_num_queries):
+    target = "https://target.example/post"
+    reclassified = Webmention.objects.create(
+        target_url=target, source_url="https://source.example/reclassified", status="verified", mention_type="reply"
+    )
+    reply = Webmention.objects.create(
+        target_url=target, source_url="https://source.example/reply", status="verified", mention_type="reply"
+    )
+    now = timezone.now()
+    legacy_body = "Historical child body " * 2000
+    WebmentionNestedResponse.objects.bulk_create(
+        [
+            WebmentionNestedResponse(
+                webmention=reclassified,
+                identity=f"https://child.example/legacy/{index}",
+                content=legacy_body,
+                first_seen_at=now,
+                last_seen_at=now,
+            )
+            for index in range(12)
+        ]
+    )
+    reclassified.mention_type = "like"
+    reclassified.save(update_fields=["mention_type"])
+    suppressed = WebmentionNestedResponse.objects.create(
+        webmention=reply, identity=reclassified.source_url, first_seen_at=now, last_seen_at=now
+    )
+    visible = WebmentionNestedResponse.objects.create(
+        webmention=reply, identity="https://child.example/visible", first_seen_at=now, last_seen_at=now
+    )
+
+    transferred_child_ids = set()
+    original_iterator = QuerySet.iterator
+
+    def record_transferred_children(queryset, *args, **kwargs):
+        for row in original_iterator(queryset, *args, **kwargs):
+            if row["c_id"] is not None:
+                transferred_child_ids.add(row["c_id"])
+            yield row
+
+    monkeypatch.setattr(QuerySet, "iterator", record_transferred_children)
+    with django_assert_num_queries(1):
+        [parent] = webmention_tags.show_webmentions(target, "reply")["webmentions"]
+
+    assert parent.pk == reply.pk
+    assert [child.pk for child in parent.displayable_nested_responses] == [visible.pk]
+    assert transferred_child_ids == {suppressed.pk, visible.pk}
