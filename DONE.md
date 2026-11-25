@@ -2,6 +2,17 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-25
+
+### Preflight the Webmention command source URL (round 191 B08)
+
+- Apply the sender's HTTP(S) admission before resolving command content in
+  ordinary, Salmention and dry-run modes.
+- Validation: command admission, delivery and display regression tests;
+  ``uv run ruff check .``, ``uv run ruff format . --check``,
+  ``uv run mypy``, and ``uv run pytest``.
+- Documentation: updated `docs/webmention.rst` and the Unreleased changelog.
+
 ## 2026-11-17
 
 ### Prepare the 0.7.1 release

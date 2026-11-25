@@ -6,6 +6,9 @@ Changelog
 Unreleased
 ----------
 
+* Validate the source URL in ``send_webmentions`` before reading stdin,
+  fetching or parsing content. Rejected sources raise a fixed command error
+  in send and dry-run modes.
 * Recheck Salmention claim expiry after acquiring the write reservation. An
   attempt whose claim expires while waiting leaves outbound history intact.
 * Preserve verified Webmention results, source snapshots and notifications

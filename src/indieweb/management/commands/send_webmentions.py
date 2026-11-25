@@ -12,6 +12,7 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.core.validators import URLValidator
 
+from indieweb.http_client import is_safe_http_url
 from indieweb.log_redaction import redact_url, text_fingerprint
 from indieweb.senders import (
     DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES,
@@ -102,9 +103,8 @@ class Command(BaseCommand):
         vouch_url = options["vouch"]
         salmention_resend = options["salmention_resend"]
 
-        # Validate source URL
-        if not source_url.startswith(("http://", "https://")):
-            raise CommandError("Source URL must start with http:// or https://")
+        if not is_safe_http_url(source_url, resolver=None):
+            raise CommandError("Source URL must be a valid http:// or https:// URL")
         if vouch_url:
             try:
                 URLValidator(schemes=["http", "https"])(vouch_url)

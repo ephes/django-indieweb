@@ -10,7 +10,7 @@ from django.core.management.base import CommandError
 from indieweb.log_redaction import redact_url, text_fingerprint
 from indieweb.management.commands import send_webmentions as command
 
-SOURCE = "https://user:SOURCE_SECRET@source.example/post?token=QUERY_SECRET#FRAGMENT_SECRET"
+SOURCE = "https://source.example/post?token=QUERY_SECRET#FRAGMENT_SECRET"
 TARGET = "https://user:TARGET_SECRET@target.example/\x1b[31mpost;session=PATH_SECRET?token=QUERY_SECRET"
 ENDPOINT = "https://user:ENDPOINT_SECRET@endpoint.example/receive?token=QUERY_SECRET"
 ERROR = "REMOTE_SECRET\x1b[31m\r\nforged status"
@@ -30,7 +30,6 @@ def private_sender(request, settings, monkeypatch):
 
 def assert_private(output):
     for secret in [
-        "SOURCE_SECRET",
         "TARGET_SECRET",
         "ENDPOINT_SECRET",
         "QUERY_SECRET",

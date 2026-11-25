@@ -15,7 +15,7 @@ def test_command_with_invalid_url():
     with pytest.raises(CommandError) as exc:
         call_command("send_webmentions", "not-a-url")
 
-    assert "Source URL must start with http:// or https://" in str(exc.value)
+    assert "Source URL must be a valid http:// or https:// URL" in str(exc.value)
 
 
 @patch("indieweb.management.commands.send_webmentions.WebmentionSender")

@@ -1505,6 +1505,12 @@ Management Commands
 send_webmentions
 ----------------
 
+The command applies the sender's HTTP(S) URL checks to the source before
+resolving content in every mode. This preflight checks URL syntax and rejects
+userinfo, localhost and blocked IP literals without a DNS lookup. A refused
+source raises a fixed ``CommandError`` without printing the source. A source
+fetch still applies the sender's network checks.
+
 ``--content`` and ``--content -`` (stdin) are admitted before HTML parsing,
 endpoint discovery or delivery, in ordinary, Salmention and dry-run modes.
 The UTF-8 byte limit uses ``INDIEWEB_WEBMENTION_FETCH_MAX_BYTES`` (default

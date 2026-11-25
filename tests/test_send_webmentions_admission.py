@@ -32,6 +32,30 @@ class CountingInput(StringIO):
         return super().read(size)
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("resend", [False, True])
+@pytest.mark.parametrize("content", [None, "-"])
+def test_invalid_source_is_refused_before_resolving_content(monkeypatch, sender, dry_run, resend, content):
+    stream = CountingInput("<p>synthetic</p>")
+    monkeypatch.setattr(command.sys, "stdin", stream)
+    sender.fetch_content.return_value = "<p>synthetic</p>"
+    sender.select_target_urls.return_value = []
+    sender.preview_salmention_resend_targets.return_value = []
+
+    with pytest.raises(CommandError, match=r"^Source URL must be a valid http:// or https:// URL$"):
+        call_command(
+            "send_webmentions",
+            "https://source.example:invalid/post",
+            content=content,
+            dry_run=dry_run,
+            salmention_resend=resend,
+            stdout=StringIO(),
+        )
+
+    assert not stream.requests
+    assert not sender.mock_calls
+
+
 @pytest.mark.parametrize("stdin", [False, True])
 @pytest.mark.parametrize("resend", [False, True])
 @pytest.mark.parametrize("content", ["x" * 9, "é" * 5])
