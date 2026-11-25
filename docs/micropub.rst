@@ -185,7 +185,8 @@ policy instead of silently overwriting a post.
 It stages the complete UTF-8 document in the target directory, flushes and
 syncs it, then publishes with ``os.link``. This exclusive operation lets
 exactly one concurrent create win; a collision raises ``FileExistsError``.
-Readers of the final path see a complete document. A ``finally`` block
+Readers of the final path see a complete document. The handler owns the
+staging descriptor even if opening the buffered stream fails. A ``finally`` block
 attempts to remove only that call's temporary file on success, failure, or
 Python interruption.
 The example requires POSIX directory descriptors, ``O_DIRECTORY``,

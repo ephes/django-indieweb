@@ -285,7 +285,7 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
                 stage = f".micropub-{secrets.token_hex(8)}.tmp"
                 fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=directory)
                 try:
-                    with os.fdopen(fd, "wb") as staged:
+                    with os.fdopen(fd, "wb", closefd=False) as staged:
                         staged.write(document.render_markdown().encode("utf-8"))
                         staged.flush()
                         os.fsync(staged.fileno())
@@ -303,8 +303,11 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
                             f"Static-site document already exists: {document.path.as_posix()}"
                         ) from exc
                 finally:
-                    with contextlib.suppress(FileNotFoundError):
-                        os.unlink(stage, dir_fd=directory)
+                    try:
+                        with contextlib.suppress(FileNotFoundError):
+                            os.unlink(stage, dir_fd=directory)
+                    finally:
+                        os.close(fd)
         except OSError as exc:
             if not published:
                 raise

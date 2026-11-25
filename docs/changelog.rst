@@ -6,6 +6,9 @@ Changelog
 Unreleased
 ----------
 
+* Close the static-site Micropub staging descriptor if buffered stream
+  setup fails.
+
 * Reject Webmention parse results whose byte count exceeds the cap or
   differs from the file size observed before reading.
 * Count Webmention parse worker launch and result decoding against the

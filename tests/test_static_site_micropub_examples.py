@@ -193,6 +193,35 @@ def test_local_filesystem_concurrent_creates_publish_one_complete_post(tmp_path,
     assert list(target.parent.iterdir()) == [target]
 
 
+def test_local_filesystem_closes_stage_descriptor_when_fdopen_fails(tmp_path, monkeypatch):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"content": ["Synthetic unpublished post"]})
+    target = tmp_path / document.path
+    descriptors = []
+
+    def fail_fdopen(fd, *args, **kwargs):
+        descriptors.append(fd)
+        assert stat.S_ISREG(os.fstat(fd).st_mode)
+        raise OSError("Synthetic fdopen failure")
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fdopen", fail_fdopen)
+    with pytest.raises(OSError, match="Synthetic fdopen failure"):
+        handler.save_document(document, DummyUser())
+
+    (fd,) = descriptors
+    try:
+        with pytest.raises(OSError) as closed:
+            os.fstat(fd)
+        assert closed.value.errno == errno.EBADF
+    finally:
+        # Retire the leaked descriptor if this regression fails.
+        try:
+            os.close(fd)
+        except OSError as exc:
+            assert exc.errno == errno.EBADF
+    assert list(target.parent.iterdir()) == []
+
+
 def test_local_filesystem_interrupted_stage_never_publishes_partial_post(tmp_path, monkeypatch):
     handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
     document = handler.mapper.build_document({"mp-slug": ["interrupted"], "content": ["Synthetic body"]})

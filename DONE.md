@@ -4,6 +4,13 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Close the static-site Micropub staging descriptor (round 198 B15)
+
+- Keep ownership of the descriptor across buffered stream setup.
+- The `fdopen_fails` regression in `tests/test_static_site_micropub_examples.py`
+  detected the leak before the fix and passes afterward.
+- Updated the Micropub guide and changelog Unreleased.
+
 ### Recheck the Webmention discovery deadline after parsing (round 195 B11)
 
 - Check the shared deadline after parsing and validating the endpoint from
