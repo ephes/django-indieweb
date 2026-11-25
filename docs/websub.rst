@@ -825,8 +825,10 @@ Multiple signatures and strongest-algorithm/no-downgrade behavior are unchanged.
 ``prune_websub_delivery_attempts(batch_size=...)`` treats the positive requested
 batch size as an upper bound, additionally capped at 1,000 and the selected
 write connection's public ``features.max_query_params`` capability when set.
-Every select/delete batch is transactional; a failed batch rolls back while
-previous batches remain committed (unless enclosed in a host transaction).
+Every select/delete batch is transactional. SQLite reserves the writer before
+selecting attempt IDs. Delivery imports can commit between batches, and each
+batch keeps a valid read snapshot. A failed batch rolls back while previous
+batches remain committed (unless enclosed in a host transaction).
 Retrying drains the remaining expired attempts. The cutoff, dry-run count,
 subscription summaries and replay rows are unchanged.
 

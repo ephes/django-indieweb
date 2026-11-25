@@ -1163,7 +1163,8 @@ def prune_websub_delivery_attempts(
     # Count, select and delete on the write database. Batches selected from a
     # lagging read replica would keep returning rows that are already deleted.
     alias = router.db_for_write(WebSubDeliveryAttempt)
-    parameter_limit = connections[alias].features.max_query_params
+    connection = connections[alias]
+    parameter_limit = connection.features.max_query_params
     batch_size = min(batch_size, parameter_limit or 1000, 1000)
     attempts = WebSubDeliveryAttempt.objects.using(alias)
     expired = attempts.filter(received_at__lt=cutoff)
@@ -1171,6 +1172,10 @@ def prune_websub_delivery_attempts(
     deleted = 0
     while not dry_run:
         with transaction.atomic(using=alias):
+            if connection.vendor == "sqlite":
+                # Reserve the writer before reading IDs. The impossible PK
+                # predicate acquires the reservation without updating any row.
+                attempts.filter(pk__isnull=True).update(modified=F("modified"))
             batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
             if not batch:
                 break

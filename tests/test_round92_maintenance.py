@@ -1,13 +1,14 @@
 """Backend-aware pruning and streaming metadata-only lease inspection."""
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
-from django.db import connection
+from django.db import OperationalError, connection
 from django.db.models import QuerySet
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -77,6 +78,57 @@ def test_prune_rolls_back_failing_batch_only(monkeypatch):
         websub.prune_websub_delivery_attempts(retention_days=30, now=now, batch_size=2)
     assert list(WebSubDeliveryAttempt.objects.order_by("pk").values_list("pk", flat=True)) == ids[2:]
     assert websub.prune_websub_delivery_attempts(retention_days=30, now=now, batch_size=2).deleted == 3
+
+
+@pytest.mark.django_db(transaction=True)
+def test_sqlite_prune_reserves_writer_before_selecting_a_batch(sqlite_wal):
+    now = timezone.now()
+    cutoff = now - timedelta(days=30)
+    row = WebSubSubscription.objects.create(hub_url="https://hub.example/", topic_url="https://topic.example/")
+    attempts(row, 3, cutoff - timedelta(seconds=1))
+    attempts(row, 1, cutoff)
+    main_connection = sqlite_wal.connection
+
+    def import_attempt():
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("PRAGMA busy_timeout=0")
+            assert connection.connection is not main_connection
+            attempts(row, 1, now)
+            return True
+        except OperationalError as exc:
+            assert exc.__cause__.sqlite_errorcode == sqlite3.SQLITE_BUSY
+            return False
+        finally:
+            connection.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        imports = []
+
+        def import_during_prune(execute, sql, params, many, context):
+            if sql == "BEGIN" and imports == [False]:
+                # The first batch committed. Another writer can now import
+                # before the next batch reserves the writer.
+                imports.append(pool.submit(import_attempt).result(timeout=5))
+            result = execute(sql, params, many, context)
+            if (
+                not imports
+                and sqlite_wal.in_atomic_block
+                and sql.startswith("SELECT")
+                and "indieweb_websubdeliveryattempt" in sql
+            ):
+                imports.append(pool.submit(import_attempt).result(timeout=5))
+            return result
+
+        with sqlite_wal.execute_wrapper(import_during_prune):
+            result = websub.prune_websub_delivery_attempts(retention_days=30, now=now, batch_size=2)
+
+    assert imports == [False, True]
+    assert result.matched == result.deleted == 3
+    assert list(WebSubDeliveryAttempt.objects.order_by("received_at").values_list("received_at", flat=True)) == [
+        cutoff,
+        now,
+    ]
 
 
 @pytest.mark.django_db

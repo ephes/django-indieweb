@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connections
+from django.db import connection, connections
 from django.test.utils import CaptureQueriesContext
 
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
@@ -110,7 +110,9 @@ def test_prune_drains_every_batch(subscription, django_assert_num_queries):
 
     # 1 count + 4 batch selects (3, 3, 1, 0 rows) + 3 deletes,
     # plus a savepoint/release pair for each atomic batch (including empty).
-    with django_assert_num_queries(16):
+    # SQLite also reserves the writer before each select.
+    reservations = 4 if connection.vendor == "sqlite" else 0
+    with django_assert_num_queries(16 + reservations):
         result = prune_websub_delivery_attempts(retention_days=30, now=NOW, batch_size=3)
 
     assert (result.matched, result.deleted) == (7, 7)

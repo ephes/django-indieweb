@@ -7,6 +7,7 @@ Unreleased
 ----------
 
 * Reserve the SQLite writer before reloading a Webmention for settlement.
+* Reserve the SQLite writer before selecting each WebSub attempt prune batch.
 
 * Preserve the primary static-site Micropub publication error while closing
   all held directory descriptors. Report close failures after a successful

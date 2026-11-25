@@ -6475,3 +6475,13 @@ bundle.
   change and passed in `tests/test_webmention_database_authority.py` with
   `DJANGO_INDIEWEB_TEST_SQLITE_PATH` set to a temporary file.
 - Updated the receive database routing guide and changelog Unreleased.
+
+### Reserve the SQLite writer before selecting WebSub prune batches (round 202 B05)
+
+- Reserve the writer with a zero-row update before each batch read. Keep the
+  same retention cutoff and batch size limit.
+- The two-connection WAL regression failed with a locked database before the
+  change. It passed with the surrounding tests in
+  `tests/test_round92_maintenance.py` and `tests/test_prune_websub_delivery_attempts.py`
+  with `DJANGO_INDIEWEB_TEST_SQLITE_PATH` set to a temporary file.
+- Updated the WebSub maintenance limits guide and changelog Unreleased.
