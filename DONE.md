@@ -4,6 +4,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Check the static-site Micropub staging identity (round 198 B15)
+
+- Hold the file descriptor through linking and cleanup and compare its identity
+  with the staging name before either operation.
+- Both `replaced_stage` cases in `tests/test_static_site_micropub_examples.py`
+  failed before the fix and pass afterward.
+- Updated the Micropub guide and changelog Unreleased.
+
 ### Close the static-site Micropub staging descriptor (round 198 B15)
 
 - Keep ownership of the descriptor across buffered stream setup.

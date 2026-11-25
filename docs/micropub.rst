@@ -186,9 +186,10 @@ It stages the complete UTF-8 document in the target directory, flushes and
 syncs it, then publishes with ``os.link``. This exclusive operation lets
 exactly one concurrent create win; a collision raises ``FileExistsError``.
 Readers of the final path see a complete document. The handler owns the
-staging descriptor even if opening the buffered stream fails. A ``finally`` block
-attempts to remove only that call's temporary file on success, failure, or
-Python interruption.
+staging descriptor even if opening the buffered stream fails. It holds the
+descriptor through publication and cleanup and checks the staging name against
+the opened file before linking or unlinking. If the name refers to a different
+file, the handler leaves that replacement in place and reports a storage error.
 The example requires POSIX directory descriptors, ``O_DIRECTORY``,
 ``O_NOFOLLOW`` and a local filesystem supporting hardlinks. Mapper paths must
 be relative and contain no ``..`` segments. It resolves the host-configured
@@ -198,7 +199,9 @@ descriptors.
 Replacing a named directory with a symlink cannot redirect publication or
 cleanup. A directory renamed after opening remains the publication directory;
 host code must control directory permissions and reconcile such moves before
-serving the returned URL. Unsupported platforms fail rather than falling back
+serving the returned URL. POSIX name checks and hardlink or unlink operations
+are separate calls, so the post directories must be writable only by trusted
+writers. Unsupported platforms fail rather than falling back
 to pathname writes. The stage is created exclusively with mode 0666 filtered
 through the process umask (typically giving 0644), so the published post has
 the mode of a plain file create; the example

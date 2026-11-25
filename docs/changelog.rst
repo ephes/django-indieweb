@@ -8,6 +8,8 @@ Unreleased
 
 * Close the static-site Micropub staging descriptor if buffered stream
   setup fails.
+* Check that the Micropub staging name still refers to the open file before
+  linking it into place or removing it. Leave detected replacements untouched.
 
 * Reject Webmention parse results whose byte count exceeds the cap or
   differs from the file size observed before reading.

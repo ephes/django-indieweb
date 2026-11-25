@@ -9,6 +9,7 @@ media index.
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import re
@@ -221,6 +222,12 @@ class StaticSitePublicationUncertainError(RuntimeError):
     """The post was linked, but persistence/cleanup failed; inspect before retrying."""
 
 
+def _require_stage_identity(stage: str, directory: int, identity: os.stat_result) -> None:
+    named = os.stat(stage, dir_fd=directory, follow_symlinks=False)
+    if not os.path.samestat(identity, named):
+        raise OSError(errno.ESTALE, "Static-site staging file changed", stage)
+
+
 class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
     """Example handler that writes new Markdown files under one configured root."""
 
@@ -284,11 +291,14 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
                 # filtered by the kernel through the umask; never change the umask.
                 stage = f".micropub-{secrets.token_hex(8)}.tmp"
                 fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=directory)
+                identity = None
                 try:
+                    identity = os.fstat(fd)
                     with os.fdopen(fd, "wb", closefd=False) as staged:
                         staged.write(document.render_markdown().encode("utf-8"))
                         staged.flush()
                         os.fsync(staged.fileno())
+                    _require_stage_identity(stage, directory, identity)
                     try:
                         os.link(
                             stage,
@@ -304,8 +314,10 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
                         ) from exc
                 finally:
                     try:
-                        with contextlib.suppress(FileNotFoundError):
-                            os.unlink(stage, dir_fd=directory)
+                        if identity is not None:
+                            with contextlib.suppress(FileNotFoundError):
+                                _require_stage_identity(stage, directory, identity)
+                                os.unlink(stage, dir_fd=directory)
                     finally:
                         os.close(fd)
         except OSError as exc:

@@ -296,6 +296,44 @@ def test_local_publication_and_cleanup_keep_held_directory(tmp_path, monkeypatch
     assert not list(held_posts.glob(".micropub-*"))
 
 
+@pytest.mark.parametrize("replace_after_link", [False, True])
+def test_local_publication_refuses_to_use_or_remove_a_replaced_stage(tmp_path, monkeypatch, replace_after_link):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"content": ["Synthetic original"]})
+    target = tmp_path / document.path
+    sync, link = os.fsync, os.link
+
+    def replace_stage():
+        (stage,) = target.parent.glob(".micropub-*.tmp")
+        stage.rename(target.parent / "displaced")
+        stage.write_text("Synthetic replacement")
+
+    def sync_stage(fd):
+        sync(fd)
+        if not replace_after_link and stat.S_ISREG(os.fstat(fd).st_mode):
+            replace_stage()
+
+    def link_stage(*args, **kwargs):
+        link(*args, **kwargs)
+        if replace_after_link:
+            replace_stage()
+
+    monkeypatch.setattr("examples.static_site_micropub.os.fsync", sync_stage)
+    monkeypatch.setattr("examples.static_site_micropub.os.link", link_stage)
+    if replace_after_link:
+        with pytest.raises(RuntimeError, match="publication is uncertain") as caught:
+            handler.save_document(document, DummyUser())
+        assert "staging file changed" in str(caught.value.__cause__)
+        assert target.read_text() == document.render_markdown()
+    else:
+        with pytest.raises(OSError, match="staging file changed"):
+            handler.save_document(document, DummyUser())
+        assert not target.exists()
+
+    (replacement,) = target.parent.glob(".micropub-*.tmp")
+    assert replacement.read_text() == "Synthetic replacement"
+
+
 def test_local_publication_refuses_symlink_during_descent(tmp_path, monkeypatch):
     handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path / "site", public_base_url="https://example.org/")
     outside = tmp_path / "outside"
