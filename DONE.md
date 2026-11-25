@@ -4,6 +4,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Make Webmention display null ordering portable (round 204 B12)
+
+- Put dated parents before undated parents while keeping creation-time and
+  primary-key ties deterministic in the single display query.
+- The display query regression failed on SQLite before the fix because
+  the UNION omitted explicit null placement. It now checks child ownership
+  and the query order. PostgreSQL SQL compilation also emits `NULLS LAST`.
+- Updated the Webmention guide and changelog Unreleased.
+
 ### Refuse unsupported drafts in the Micropub blog examples (round 198 B16)
 
 - Refuse draft creates before writing a row and remove the draft configuration.

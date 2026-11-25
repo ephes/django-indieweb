@@ -1,8 +1,10 @@
 """Synthetic ORM and bundled-template query budgets."""
 
+import re
 from datetime import timedelta
 
 import pytest
+from django.db.models import F
 from django.template import Context, Template
 from django.template.loader import render_to_string
 from django.utils import timezone
@@ -88,7 +90,9 @@ def test_display_defers_payloads_without_lazy_template_queries(size, django_asse
     assert output.count("webmention-nested webmention-nested-reply") == size
     assert output.index(f"Child {size - 1}") <= output.index("Child 0")
     # Compare the same bundled rendering against fully loaded models.
-    eager = list(Webmention.objects.filter(target_url=target).order_by("-published", "-created"))
+    eager = list(
+        Webmention.objects.filter(target_url=target).order_by(F("published").desc(nulls_last=True), "-created", "pk")
+    )
     for row in eager:
         row._verified_nested_responses = list(row.nested_responses.order_by("-first_seen_at"))
         webmention_tags._prepare_webmention_for_display(row)
@@ -101,3 +105,33 @@ def test_display_defers_payloads_without_lazy_template_queries(size, django_asse
 def test_count_context_collision_uses_legacy_fallback(existing, django_assert_num_queries):
     with django_assert_num_queries(1):
         assert webmention_tags.webmention_count({"webmention_counts": existing}, "url") == 0
+
+
+def test_display_puts_undated_parents_last_when_deduplicating_children(django_assert_num_queries):
+    target = "https://target.example/post"
+    child_url = "https://source.example/shared-child"
+    now = timezone.now()
+    undated = Webmention.objects.create(
+        target_url=target, source_url="https://source.example/undated", status="verified", mention_type="reply"
+    )
+    dated = Webmention.objects.create(
+        target_url=target,
+        source_url="https://source.example/dated",
+        status="verified",
+        mention_type="reply",
+        published=now - timedelta(days=1),
+    )
+    for parent in (undated, dated):
+        WebmentionNestedResponse.objects.create(
+            webmention=parent, identity=child_url, mention_type="reply", first_seen_at=now, last_seen_at=now
+        )
+
+    with django_assert_num_queries(1) as queries:
+        parents = webmention_tags.show_webmentions(target)["webmentions"]
+
+    assert [parent.pk for parent in parents] == [dated.pk, undated.pk]
+    assert [child.identity for child in parents[0].displayable_nested_responses] == [child_url]
+    assert parents[1].displayable_nested_responses == []
+    # SQLite already sorts descending NULLs last. Verify the UNION states
+    # the rule explicitly so this also catches a regression on SQLite.
+    assert re.search(r"order by\s+[^,]+ desc nulls last", queries.captured_queries[0]["sql"], re.IGNORECASE)

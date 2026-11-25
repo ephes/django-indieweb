@@ -200,7 +200,15 @@ def _display_webmention_snapshot(target_url: str) -> list[Webmention]:
     rows = (
         parent_rows.using(read_alias)
         .union(child_rows.using(read_alias), all=True)
-        .order_by("-p_published", "-p_created", "p_id", "-child_order", "-c_first_seen_at", "-c_created", "c_id")
+        .order_by(
+            F("p_published").desc(nulls_last=True),
+            "-p_created",
+            "p_id",
+            "-child_order",
+            "-c_first_seen_at",
+            "-c_created",
+            "c_id",
+        )
     )
     parents: dict[int, Webmention] = {}
     children: dict[int, list[WebmentionNestedResponse]] = {}

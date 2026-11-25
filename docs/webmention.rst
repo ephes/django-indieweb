@@ -1071,9 +1071,11 @@ response embedded inside that source.
 Display/query support exposes verified child responses as inline responses under
 their parent reply Webmention. ``show_webmentions`` continues querying verified
 top-level ``Webmention`` rows by exact ``target_url`` and loads their verified
-children from the same statement snapshot. The default top-level ordering
-remains based on the parent Webmention's ``published`` or ``created`` timestamp; child responses render
-under their parent ordered by their own ``published`` timestamp, falling back to
+children from the same statement snapshot. Top-level Webmentions with a
+``published`` timestamp appear newest first, followed by those without one.
+Within a tie (including missing timestamps), newer ``created`` timestamps come
+first, then lower primary keys. Child responses render under their parent
+ordered by their own ``published`` timestamp, falling back to
 ``first_seen_at``. ``webmention_count`` keeps its current top-level counting
 semantics for backwards compatibility. If nested-inclusive counts are needed,
 they should be added through an explicit new API rather than changing this tag.
