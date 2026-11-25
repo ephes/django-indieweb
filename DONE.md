@@ -6342,3 +6342,11 @@ bundle.
   reproduced the stale settlement before the fix. The regression passed
   after it, including the comparison of every stored field.
 - Updated historical resend reservations and changelog Unreleased.
+
+### Admit outbound discovery budgets before opening a client (round 192 B21)
+
+- Use the default for timeout settings outside the finite float range and
+  refuse expired discovery deadlines before creating an HTTP client.
+- `uv run pytest --no-cov -q tests/test_webmention_sender.py -k 'total_timeout or falls_back_before_creating_owned_client or expired_deadline_does_not_create_client'`
+  passed. Both new ownership tests failed before the fix.
+- Updated outbound timeout configuration, Webmention usage and changelog Unreleased.

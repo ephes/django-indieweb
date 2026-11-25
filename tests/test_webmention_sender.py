@@ -8,6 +8,7 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 
+from indieweb import senders
 from indieweb.models import WebmentionOutboundTarget
 from indieweb.senders import WebmentionSender
 
@@ -1567,6 +1568,39 @@ class _SenderClock:
 
         self.now = 0.0
         monkeypatch.setattr(http_client.time, "monotonic", lambda: self.now)
+
+
+def test_discover_endpoint_falls_back_before_creating_owned_client(sender, target_url, settings, caplog, monkeypatch):
+    settings.INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS = 10**400
+    _SenderClock(monkeypatch)
+    owned = _make_test_client(lambda request: httpx.Response(200, headers={"Link": '</webmention>; rel="webmention"'}))
+    warning = "Invalid INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS"
+    observed = []
+
+    def create_client(**kwargs):
+        observed.append(warning in caplog.text)
+        return owned
+
+    monkeypatch.setattr("indieweb.senders.httpx.Client", create_client)
+    monkeypatch.setattr("indieweb.senders.default_address_resolver", lambda host, port: ["93.184.216.34"])
+    with patch.object(
+        senders, "request_with_webmention_redirects", wraps=senders.request_with_webmention_redirects
+    ) as head:
+        assert sender.discover_endpoint(target_url) == "https://target.com/webmention"
+    assert head.call_args.kwargs["total_timeout"] == 30.0
+    assert observed == [True]
+    assert owned.is_closed
+
+
+def test_discover_endpoint_expired_deadline_does_not_create_client(sender, target_url, monkeypatch):
+    clock = _SenderClock(monkeypatch)
+    with (
+        patch("indieweb.senders.httpx.Client") as create_client,
+        patch("indieweb.senders.default_address_resolver") as resolver,
+    ):
+        assert sender.discover_endpoint(target_url, deadline=clock.now) is None
+    create_client.assert_not_called()
+    resolver.assert_not_called()
 
 
 @override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)

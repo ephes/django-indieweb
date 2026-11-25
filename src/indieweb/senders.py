@@ -62,8 +62,13 @@ def _webmention_send_total_timeout() -> float:
         settings, "INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS", DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
     )
     if isinstance(configured, (int, float)) and not isinstance(configured, bool):
-        if math.isfinite(configured) and configured > 0:
-            return float(configured)
+        try:
+            budget = float(configured)
+        except OverflowError:
+            pass
+        else:
+            if math.isfinite(budget) and budget > 0:
+                return budget
     logger.warning(
         "Invalid INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS; using "
         f"{DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS} seconds"
@@ -363,6 +368,12 @@ class WebmentionSender:
         Returns:
             The webmention endpoint URL or None if not found
         """
+        request_deadline = time.monotonic() + _webmention_send_total_timeout()
+        if deadline is not None:
+            request_deadline = min(request_deadline, deadline)
+        if request_deadline <= time.monotonic():
+            return None
+
         close_client = client is None
         http_client = (
             client
@@ -377,7 +388,6 @@ class WebmentionSender:
             )
         )
         resolver = default_address_resolver if close_client else None
-        deadline = time.monotonic() + _request_budget(deadline)
         try:
             validate_safe_http_url(target_url, resolver=resolver)
             # First try HEAD request to check Link headers
@@ -388,7 +398,7 @@ class WebmentionSender:
                 resolver=resolver,
                 timeout=self.timeout,
                 max_bytes=_sender_head_max_bytes(),
-                total_timeout=deadline - time.monotonic(),
+                total_timeout=request_deadline - time.monotonic(),
             )
             # Preserve fail-closed validation of successful HEAD advertisements.
             # HEAD errors (e.g. 405) still allow a GET attempt.
@@ -397,7 +407,7 @@ class WebmentionSender:
 
             # Confirm with GET: Link header first, then HTML. The GET gets
             # only what is left of the discovery budget.
-            remaining = deadline - time.monotonic()
+            remaining = request_deadline - time.monotonic()
             if remaining <= 0:
                 raise HTTPTotalTimeoutExceeded("HTTP total deadline exceeded")
             discovered = stream_with_safe_redirects(

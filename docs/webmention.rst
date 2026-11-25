@@ -1218,9 +1218,10 @@ delivery ``POST`` allows 15 seconds per read for endpoints that process the
 Webmention before they answer. On top of that, each discovery (``HEAD`` and
 the ``GET`` confirmation together), each delivery and each source-content fetch
 has a total budget across all redirects and body reads,
-``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` (default 30 seconds). A
-discovery over the budget finds no endpoint; a delivery over the budget
-returns ``{"success": False, "status_code": None, "error": ...}``. The budget
+``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` (default 30 seconds).
+Discovery checks the deadline before creating an HTTP client and finds no
+endpoint if the budget expires. A delivery over the budget returns
+``{"success": False, "status_code": None, "error": ...}``. The budget
 is a check, not an interrupt, with the same limits as the receive-side
 :ref:`fetch budget <webmention-fetch-total-timeout>`.
 

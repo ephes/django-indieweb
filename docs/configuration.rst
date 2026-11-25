@@ -1684,8 +1684,10 @@ trickles its answer could hold a worker for up to six hops of read timeouts.
 A discovery over the budget finds no endpoint, a delivery over the budget is
 reported as a failure with ``status_code=None``, and a source fetch over the
 budget returns ``None``. The budget is a check, not an interrupt; see
-:ref:`webmention-fetch-total-timeout` for its limits. Values that are not a
-finite positive number fall back to the default with a warning.
+:ref:`webmention-fetch-total-timeout` for its limits. The setting accepts
+positive integers and floats that convert to a finite float. Other values,
+including integers too large to convert to a float, use the default with a
+warning.
 
 INDIEWEB_WEBMENTION_STRICT_REDIRECTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

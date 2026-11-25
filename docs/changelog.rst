@@ -6,6 +6,9 @@ Changelog
 Unreleased
 ----------
 
+* Fall back to the default outbound Webmention timeout if the setting
+  exceeds the float range. Check the discovery deadline before opening
+  an HTTP client.
 * Preserve the Salmention deadline result when releasing a resend claim
   fails. Delivery history stays intact and the claim can expire normally.
 * Validate the source URL in ``send_webmentions`` before reading stdin,
