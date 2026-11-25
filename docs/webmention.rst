@@ -445,6 +445,9 @@ metadata is not a visible mention the author meant to make. A page that omits
 both ``</head>`` and the ``<body>`` start tag and whose first content after the
 metadata is a bare ``<a>`` therefore does not verify through that link.
 
+After building the HTML tree, target and Vouch checks walk it in document
+order and stop at the first matching rendered link.
+
 The list is kept short on purpose: CSS-hidden content and the ``hidden``
 attribute are not checked, because deciding what CSS hides needs a browser,
 and the narrower list rejects fewer legitimate mentions.

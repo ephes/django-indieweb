@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 from django.contrib.sites.models import Site
 from django.test import override_settings
 from django.urls import reverse
@@ -888,6 +889,28 @@ def test_malformed_relative_link_does_not_match_or_crash():
 )
 def test_source_analysis_preserves_hidden_link_rejection(html):
     assert not webmention_parse_worker.analyze_source(html, SOURCE_URL, TARGET_URL)["links_to_target"]
+
+
+@pytest.mark.parametrize(
+    "check,url",
+    [(_html_links_to_target, TARGET_URL), (_html_links_to_source_domain, SOURCE_URL)],
+    ids=["target", "vouch"],
+)
+def test_rendered_link_scan_stops_at_first_match(monkeypatch, check, url):
+    visited = []
+
+    class TrackingSoup(BeautifulSoup):
+        @property
+        def descendants(self):
+            for node in super().descendants:
+                visited.append(node.name)
+                yield node
+
+    monkeypatch.setattr(webmention_parse_worker, "BeautifulSoup", TrackingSoup)
+    html = f'<p><a href="{url}">match</a></p><section>' + "<div>irrelevant</div>" * 1000 + "</section>"
+
+    assert check(html, url)
+    assert visited == ["p", "a"]
 
 
 @pytest.mark.django_db

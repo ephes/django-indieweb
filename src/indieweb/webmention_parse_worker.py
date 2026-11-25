@@ -21,7 +21,7 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from types import ModuleType
 from typing import Any
 from urllib.parse import ParseResult, parse_qsl, urlencode, urljoin, urlparse, urlunparse
@@ -142,8 +142,8 @@ def _urls_match(left: str, right: str) -> bool:
     return _canonicalize_url_for_match(left) == _canonicalize_url_for_match(right)
 
 
-def _rendered_link_tags(html_content: str) -> list[Tag]:
-    """Return the ``<a href>`` elements of ``html_content`` that a browser renders.
+def _rendered_link_tags(html_content: str) -> Iterator[Tag]:
+    """Yield the ``<a href>`` elements of ``html_content`` that a browser renders.
 
     Links inside non-rendered containers (:data:`NON_RENDERED_LINK_ANCESTORS`)
     and in the metadata part of ``<head>`` (see
@@ -155,8 +155,7 @@ def _rendered_link_tags(html_content: str) -> list[Tag]:
     soup = BeautifulSoup(html_content, "html.parser")
     hidden: set[int] = set()
     open_heads: set[int] = set()
-    links: list[Tag] = []
-    for tag in soup.find_all(True):
+    for tag in soup.descendants:
         if not isinstance(tag, Tag):
             continue
         parent_id = id(tag.parent)
@@ -170,8 +169,7 @@ def _rendered_link_tags(html_content: str) -> list[Tag]:
         elif tag.name == "head":
             open_heads.add(id(tag))
         elif tag.name == "a" and tag.get("href") is not None:
-            links.append(tag)
-    return links
+            yield tag
 
 
 def _relative_link_base(html_content: str, source_url: str) -> str:

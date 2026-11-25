@@ -6261,3 +6261,14 @@ bundle.
 - Validation: the split-alias tests failed before the fix and pass for dry-run
   and real resends with a lagging replica.
 - Docs: resend provenance and changelog Unreleased.
+
+## 2026-11-25
+
+### Stream rendered link checks (round 188 B24)
+
+- Walk the parsed HTML tree in document order so target and Vouch checks can
+  stop at the first matching rendered anchor.
+- Validation: both early-stop regressions failed on the previous traversal.
+  All 21 focused tests passed after the fix, including malformed-head and
+  hidden-ancestor cases.
+- Docs: Webmention source link verification and changelog Unreleased.

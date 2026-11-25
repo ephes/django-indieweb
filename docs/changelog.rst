@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Stop scanning the parsed HTML tree after the first matching rendered
+  link during Webmention target and Vouch verification.
 * Keep explicitly configured Micropub example entries across requests in one
   process and accept the create response's local ``Location`` for lookups and
   actions. Custom Micropub handler instances are still created per operation.
