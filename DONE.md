@@ -4,6 +4,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Recheck the Webmention discovery deadline after parsing (round 195 B11)
+
+- Check the shared deadline after parsing and validating the endpoint from
+  the GET response's Link header or HTML.
+- `uv run pytest --no-cov -q tests/test_webmention_sender.py -k rechecks_budget_after_parsing`
+  passed all six cases. Four reproduced the expired results before the fix.
+- Updated the outbound timeout docs, Webmention usage and changelog Unreleased.
+
 ### Preserve Salmention deadline outcomes during claim cleanup (round 191 B08)
 
 - Release historical claims best-effort after a deadline outcome or delivery

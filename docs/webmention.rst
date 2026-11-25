@@ -1222,10 +1222,11 @@ Webmention before they answer. On top of that, each discovery (``HEAD`` and
 the ``GET`` confirmation together), each delivery and each source-content fetch
 has a total budget across all redirects and body reads,
 ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` (default 30 seconds).
-Discovery checks the deadline before creating an HTTP client and finds no
-endpoint if the budget expires. A delivery over the budget returns
-``{"success": False, "status_code": None, "error": ...}``. The budget
-is a check, not an interrupt, with the same limits as the receive-side
+Discovery checks the deadline before creating an HTTP client and again after
+parsing and validating the endpoint advertised by the ``GET`` response. If
+the budget has expired, ``discover_endpoint`` returns ``None``. A delivery
+over the budget returns ``{"success": False, "status_code": None, "error": ...}``.
+The budget is a check, not an interrupt, with the same limits as the receive-side
 :ref:`fetch budget <webmention-fetch-total-timeout>`.
 
 ``send_webmention`` checks an optional ``vouch`` URL only syntactically (it must

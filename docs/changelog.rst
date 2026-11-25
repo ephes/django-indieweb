@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Recheck the Webmention discovery deadline after parsing and validating the
+  endpoint advertised in the GET response's Link header or HTML.
 * Fall back to the default outbound Webmention timeout if the setting
   exceeds the float range. Check the discovery deadline before opening
   an HTTP client.

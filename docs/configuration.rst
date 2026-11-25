@@ -1673,7 +1673,8 @@ INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
 Time budget in seconds for one outbound Webmention call of
 ``WebmentionSender``: one endpoint discovery (the ``HEAD`` probe and the
 ``GET`` confirmation share it), one endpoint delivery ``POST``, or one
-source-content fetch, each counted across all redirects and body reads.
+source-content fetch, each counted across all redirects and body reads. The
+discovery budget also includes parsing and validating the advertised endpoint.
 
 **Default:** ``30``
 

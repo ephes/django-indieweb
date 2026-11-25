@@ -1675,6 +1675,38 @@ def test_discover_endpoint_get_confirmation_gets_the_remaining_budget(sender, ta
 
 
 @override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
+@pytest.mark.parametrize("advertisement", ["link-header", "html"])
+@pytest.mark.parametrize("finished_at", [24, 25, 26])
+def test_discover_endpoint_rechecks_budget_after_parsing(sender, target_url, monkeypatch, advertisement, finished_at):
+    clock = _SenderClock(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            return httpx.Response(405)
+        if advertisement == "link-header":
+            return httpx.Response(200, headers={"Link": '</webmention>; rel="webmention"'})
+        return httpx.Response(200, text='<link rel="webmention" href="/webmention">')
+
+    parser = "_endpoint_from_link_header" if advertisement == "link-header" else "_parse_html_for_endpoint"
+    parse_endpoint = getattr(sender, parser)
+
+    def finish_parsing(*args, **kwargs):
+        endpoint = parse_endpoint(*args, **kwargs)
+        clock.now = finished_at
+        return endpoint
+
+    owned = _make_test_client(handler)
+    monkeypatch.setattr(senders.httpx, "Client", lambda **kwargs: owned)
+    monkeypatch.setattr(senders, "default_address_resolver", lambda host, port: ["93.184.216.34"])
+    monkeypatch.setattr(sender, parser, finish_parsing)
+
+    expected = "https://target.com/webmention" if finished_at < 25 else None
+    assert sender.discover_endpoint(target_url) == expected
+    assert clock.now == finished_at
+    assert owned.is_closed
+
+
+@override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)
 def test_fetch_content_total_timeout_cuts_off_dripping_body(sender, source_url, monkeypatch):
     clock = _SenderClock(monkeypatch)
 

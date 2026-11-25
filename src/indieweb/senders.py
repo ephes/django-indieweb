@@ -353,9 +353,9 @@ class WebmentionSender:
         HEAD error statuses still allow GET discovery. SSRF, redirect and
         response-size failures stay fail-closed and are never retried with GET,
         including an unsafe or unresolvable HEAD-advertised endpoint.
-        HEAD and GET share
-        one ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` budget; a
-        discovery over the budget returns ``None``.
+        HEAD, GET, and endpoint parsing and validation share one
+        ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` budget. Discovery
+        returns ``None`` if the deadline has expired.
 
         Args:
             target_url: The URL to discover the endpoint for
@@ -423,13 +423,11 @@ class WebmentionSender:
             response.raise_for_status()
 
             endpoint = self._endpoint_from_link_header(discovered, resolver=resolver)
-            if endpoint:
-                return endpoint
-
-            endpoint = self._parse_html_for_endpoint(response.text, discovered.final_url)
-            if endpoint:
-                validate_safe_http_url(endpoint, resolver=resolver)
-            return endpoint
+            if not endpoint:
+                endpoint = self._parse_html_for_endpoint(response.text, discovered.final_url)
+                if endpoint:
+                    validate_safe_http_url(endpoint, resolver=resolver)
+            return endpoint if time.monotonic() < request_deadline else None
 
         except Exception:
             # Return None for any errors during discovery
