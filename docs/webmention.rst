@@ -1832,9 +1832,10 @@ fences an older completion. Deadline refusals release only their own claim;
 already accepted deliveries retain their outcomes. If delivery raises, claim
 cleanup is best-effort. A cleanup failure is reported without URLs or exception
 details, the original delivery exception propagates, and the lease can expire
-naturally. A worker that continues
-past lease expiry cannot commit history, though the remote HTTP endpoint may
-already have accepted its request; delivery is not exactly once.
+naturally. Completion checks the lease clock after acquiring the write
+reservation, so a claim that expires while waiting cannot settle history.
+The remote HTTP endpoint may already have accepted the request, so a retry
+after expiry can deliver it again.
 
 Migration 0029 still revokes duplicate no-scope credentials by keeping the
 newest ``modified``/primary-key row unchanged. It now reconciles stable batches

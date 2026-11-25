@@ -264,6 +264,47 @@ def test_expired_claim_recovery_fences_old_completion():
     assert result.last_success and result.resend_claim is None
 
 
+@pytest.mark.django_db
+def test_lease_expiring_during_write_reservation_cannot_settle(monkeypatch):
+    row = WebmentionOutboundTarget.objects.create(source_url=SOURCE, target_url="https://history.example/")
+    sender = WebmentionSender()
+    now = started = timezone.now()
+    monkeypatch.setattr(senders.timezone, "now", lambda: now)
+    claim, skipped = sender._claim_historical_target(row, deadline=senders.time.monotonic() + 5)
+    assert claim is not None and skipped is None
+    row.refresh_from_db()
+    expiry = row.resend_claim_expires_at
+    assert expiry is not None
+    unchanged = WebmentionOutboundTarget.objects.values().get(pk=row.pk)
+    reservation_waited = False
+
+    def wait_for_writer(execute, sql, params, many, context):
+        nonlocal now, reservation_waited
+        if sql.startswith("UPDATE ") and not reservation_waited:
+            # Simulate a writer holding the lock until expiry, after the
+            # reservation SQL and any time parameters have been prepared.
+            now = expiry
+            reservation_waited = True
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(wait_for_writer):
+        completed = sender._record_outbound_target(
+            source_url=SOURCE,
+            target_url=row.target_url,
+            endpoint="https://endpoint.example/",
+            result={"success": True, "status_code": 202},
+            vouch_url=None,
+            seen_in_source=False,
+            sent=True,
+            attempt_started_at=started,
+            claim=claim,
+        )
+
+    assert reservation_waited
+    assert completed is None
+    assert WebmentionOutboundTarget.objects.values().get(pk=row.pk) == unchanged
+
+
 @pytest.mark.django_db(databases=["default", "other"])
 @pytest.mark.parametrize("preview", [False, True])
 def test_salmention_history_uses_writer_with_lagging_replica(settings, monkeypatch, preview):

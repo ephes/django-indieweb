@@ -6292,24 +6292,33 @@ bundle.
 - Attempt owner-checked cleanup after a delivery exception and emit a fixed
   warning if cleanup fails. The original exception propagates and the lease
   remains eligible for takeover after expiry.
-- Validation: `uv run pytest --no-cov -q tests/test_round90_outbound.py -k delivery_error_survives`
+- `uv run pytest --no-cov -q tests/test_round90_outbound.py -k delivery_error_survives`
   reproduced the masked exception before the fix and passed both cases after it.
-- Docs: historical resend reservations and changelog Unreleased.
+- Updated historical resend reservations and changelog Unreleased.
 
 ### Bind queued Webmentions to the admitted row (round 190 B02)
 
 - Load the row by primary key on the selected writer and settle on that alias.
   A missing row raises `Webmention.DoesNotExist` at lookup or settlement.
-- Validation: `uv run pytest --no-cov -q tests/test_webmention_database_authority.py tests/test_webmention_processor.py -k queued`
+- `uv run pytest --no-cov -q tests/test_webmention_database_authority.py tests/test_webmention_processor.py -k queued`
   passed all seven cases. The replacement-row regression failed before the fix.
-- Docs: Webmention queue integration, receive database routing, and changelog
+- Updated Webmention queue integration, receive database routing, and changelog
   Unreleased.
 
 ### Preserve parent verification when child error logging fails (round 190 B03)
 
 - Roll back the child savepoint, guard the redacted diagnostic, and continue
   with the parent snapshot and post-commit notification.
-- Validation: `uv run pytest --no-cov -q tests/test_nested_response_queries.py -k processor_nested_failure`.
-  The failure with a broken log sink reproduced before the fix. Both cases
-  passed after it, including the committed parent and notification.
-- Docs: nested response write failures and changelog Unreleased.
+- `uv run pytest --no-cov -q tests/test_nested_response_queries.py -k processor_nested_failure`
+  reproduced the log sink failure before the fix. Both cases passed afterward,
+  including the committed parent and notification.
+- Updated nested response write failures and changelog Unreleased.
+
+### Recheck Salmention expiry after reserving the completion write (round 190 B03)
+
+- Reserve the claim owner's row with a no-op write, then check the current
+  lease expiry before settling any history or clearing the claim.
+- `uv run pytest --no-cov -q tests/test_round90_outbound.py -k lease_expiring_during_write`
+  reproduced the stale settlement before the fix. The regression passed
+  after it, including the comparison of every stored field.
+- Updated historical resend reservations and changelog Unreleased.

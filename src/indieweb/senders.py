@@ -998,7 +998,7 @@ class WebmentionSender:
             if claimed_target is None:
                 return None
             target = claimed_target
-            completion = rows.filter(pk=target.pk, resend_claim=claim, resend_claim_expires_at__gt=timezone.now())
+            completion = rows.filter(pk=target.pk, resend_claim=claim)
             claim_updates = {"resend_claim": None, "resend_claim_expires_at": None}
         current = Q(last_attempted_at__isnull=True) | Q(last_attempted_at__lte=started)
         success = bool(result.get("success"))
@@ -1041,11 +1041,14 @@ class WebmentionSender:
             if isinstance(expression, Case):
                 expression.output_field = WebmentionOutboundTarget._meta.get_field(field_name)
         with transaction.atomic(using=using):
-            # Fence the claim and acquire the write lock before reading the streak.
-            # Starting with a write also avoids a read-to-write lock upgrade on SQLite.
-            if not completion.update(modified=updates["modified"]):
+            # Reserve the row for the current claim owner before checking the
+            # clock. A no-op write also avoids a lock upgrade on SQLite.
+            if not completion.update(modified=F("modified")):
                 return None
             target.refresh_from_db(using=using)
+            expiry = target.resend_claim_expires_at
+            if claim is not None and (expiry is None or expiry <= timezone.now()):
+                return None
             updates.update(self._settle_outbound_failures(target, started, success))
             rows.filter(pk=target.pk).update(**updates)
             target.refresh_from_db(using=using)
