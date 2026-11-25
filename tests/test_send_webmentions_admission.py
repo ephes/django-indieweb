@@ -35,25 +35,39 @@ class CountingInput(StringIO):
 @pytest.mark.parametrize("dry_run", [False, True])
 @pytest.mark.parametrize("resend", [False, True])
 @pytest.mark.parametrize("content", [None, "-"])
-def test_invalid_source_is_refused_before_resolving_content(monkeypatch, sender, dry_run, resend, content):
+@pytest.mark.parametrize(
+    "source",
+    [
+        "https://source.example:invalid/post",
+        "https://user:SOURCE_SECRET@source.example/post",
+        "http://localhost/SOURCE_SECRET",
+        "http://127.0.0.1/SOURCE_SECRET",
+        "http://[::1]/SOURCE_SECRET",
+    ],
+)
+def test_invalid_source_is_refused_before_resolving_content(monkeypatch, sender, dry_run, resend, content, source):
     stream = CountingInput("<p>synthetic</p>")
     monkeypatch.setattr(command.sys, "stdin", stream)
     sender.fetch_content.return_value = "<p>synthetic</p>"
     sender.select_target_urls.return_value = []
     sender.preview_salmention_resend_targets.return_value = []
+    stdout, stderr = StringIO(), StringIO()
 
-    with pytest.raises(CommandError, match=r"^Source URL must be a valid http:// or https:// URL$"):
+    with pytest.raises(CommandError, match=r"^Source URL must be a valid http:// or https:// URL$") as exc:
         call_command(
             "send_webmentions",
-            "https://source.example:invalid/post",
+            source,
             content=content,
             dry_run=dry_run,
             salmention_resend=resend,
-            stdout=StringIO(),
+            stdout=stdout,
+            stderr=stderr,
         )
 
     assert not stream.requests
     assert not sender.mock_calls
+    for text in [str(exc.value), stdout.getvalue(), stderr.getvalue()]:
+        assert "SOURCE_SECRET" not in text
 
 
 @pytest.mark.parametrize("stdin", [False, True])
