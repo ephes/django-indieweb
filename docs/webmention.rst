@@ -224,11 +224,11 @@ Queue integrations should call ``process_queued_webmention()`` from the worker:
     def process_webmention_task(webmention_id: int) -> None:
         process_queued_webmention(webmention_id)
 
-``process_queued_webmention(webmention_id)`` loads the existing row and calls
-``WebmentionProcessor().process_webmention(webmention.source_url,
-webmention.target_url)``. If the row no longer exists, Django raises
-``Webmention.DoesNotExist`` so the queue's retry or failure policy can decide
-what to do.
+``process_queued_webmention(webmention_id)`` loads and processes the existing
+row by primary key. If the row is missing at lookup or is deleted before
+settlement, it raises ``Webmention.DoesNotExist`` so the queue's retry or
+failure policy can decide what to do. A row created for the same source and
+target afterward needs its own processing job.
 
 If ``INDIEWEB_WEBMENTION_ENQUEUE`` cannot be imported, is not callable, or the
 callable raises, the receive endpoint returns HTTP ``500`` and does not fall
@@ -928,8 +928,9 @@ The processor resolves the ``Webmention`` write database once before loading
 or creating the submitted pair. The parent lock, freshness check, Vouch and
 outcome saves, previous-snapshot lookup, child batches and snapshot writes all
 use that alias explicitly. ``process_queued_webmention()`` also loads the
-queued row, including its stored Vouch URL, from that write database, so a
-lagging read replica cannot hide the row or supply an older Vouch URL.
+queued row, including its stored Vouch URL, from that write database and
+uses the same alias through settlement. This keeps worker processing on the
+admitted row even if routing changes during processing.
 Read-replica routing and later router changes cannot redirect part of the
 receive to another database. Hosts must keep the
 ``Webmention``, ``WebmentionNestedResponse`` and ``WebmentionSourceSnapshot``

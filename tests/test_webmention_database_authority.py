@@ -318,7 +318,7 @@ def test_receive_creates_new_parent_and_family_only_on_writer(routed_receive):
 
 @pytest.mark.parametrize("stale_read_row", [False, True])
 def test_queued_processing_loads_row_from_writer_not_read_replica(routed_receive, stale_read_row):
-    _processor, _current, _router = routed_receive
+    processor, _current, receive_router = routed_receive
     Webmention.objects.using("other").create(
         pk=202, source_url=SOURCE + "/queued", target_url=TARGET, vouch_url="https://vouch.example/current"
     )
@@ -327,12 +327,47 @@ def test_queued_processing_loads_row_from_writer_not_read_replica(routed_receive
         Webmention.objects.using("default").create(
             pk=202, source_url=SOURCE + "/stale", target_url=TARGET, vouch_url="https://vouch.example/stale"
         )
-    calls = []
+    before = state("default")
+    original_route = receive_router.db_for_write
 
-    def capture(self, source_url, target_url, vouch_url=None):
-        calls.append((source_url, target_url, vouch_url))
-        return None
+    def switch_after_resolution(model, **hints):
+        alias = original_route(model, **hints)
+        if model is Webmention:
+            receive_router.writer = "default"
+        return alias
 
-    with patch.object(WebmentionProcessor, "process_webmention", capture):
-        process_queued_webmention(202)
-    assert calls == [(SOURCE + "/queued", TARGET, "https://vouch.example/current")]
+    with patch.object(receive_router, "db_for_write", switch_after_resolution):
+        result = process_queued_webmention(202, client=processor._injected_client)
+
+    assert result.pk == 202
+    assert result.source_url == SOURCE + "/queued"
+    assert result.vouch_url == "https://vouch.example/current"
+    assert Webmention.objects.using("other").get(pk=202).status == "verified"
+    assert WebmentionSourceSnapshot.objects.using("other").filter(webmention_id=202).exists()
+    assert state("default") == before
+
+
+def test_queued_processing_does_not_settle_replacement_row(monkeypatch):
+    old = Webmention.objects.create(source_url=SOURCE, target_url=TARGET)
+    admitted_id = old.pk
+    original_init = WebmentionProcessor.__init__
+
+    def replace_after_admission(self, **kwargs):
+        original_init(self, **kwargs)
+        old.delete()
+        Webmention.objects.create(pk=admitted_id + 1, source_url=SOURCE, target_url=TARGET)
+
+    monkeypatch.setattr(WebmentionProcessor, "__init__", replace_after_admission)
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, headers={"content-type": "text/html"}, text=NEW)
+        )
+    ) as client:
+        with pytest.raises(Webmention.DoesNotExist):
+            process_queued_webmention(admitted_id, client=client)
+
+    replacement = Webmention.objects.get()
+    assert replacement.pk != admitted_id
+    assert replacement.status == "pending" and replacement.last_received_at is None
+    assert not WebmentionNestedResponse.objects.exists()
+    assert not WebmentionSourceSnapshot.objects.exists()

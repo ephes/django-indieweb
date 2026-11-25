@@ -380,7 +380,7 @@ class WebmentionProcessor:
         except Exception as e:
             raise _SpamScreeningError("Configured spam checker unavailable") from e
 
-    def process_webmention(self, source_url: str, target_url: str, vouch_url: str | None = None) -> Webmention:  # noqa: C901
+    def process_webmention(self, source_url: str, target_url: str, vouch_url: str | None = None) -> Webmention:
         """
         Process a webmention by fetching and parsing the source.
 
@@ -392,8 +392,6 @@ class WebmentionProcessor:
         Returns:
             Webmention object with processing results
         """
-        logger.info(f"Processing webmention from {redact_url(source_url)} to {redact_url(target_url)}")
-
         # Get or create webmention against the canonical pair so cosmetic URL
         # variants of the same logical pair share a single stored row.
         canonical_source = canonicalize_webmention_storage_url(source_url)
@@ -405,6 +403,20 @@ class WebmentionProcessor:
             source_url=canonical_source,
             target_url=canonical_target,
         )
+
+        return self._process_admitted_webmention(webmention, source_url, target_url, vouch_url=vouch_url, using=using)
+
+    def _process_admitted_webmention(  # noqa: C901
+        self,
+        webmention: Webmention,
+        source_url: str,
+        target_url: str,
+        *,
+        vouch_url: str | None = None,
+        using: str,
+    ) -> Webmention:
+        """Verify and settle an admitted row on its original writer."""
+        logger.info(f"Processing webmention from {redact_url(source_url)} to {redact_url(target_url)}")
 
         # If a different Vouch URL is being submitted, we attempt verification
         # against it. The persistence step at the end of process_webmention
@@ -1891,12 +1903,10 @@ def process_queued_webmention(webmention_id: int, *, client: httpx.Client | None
     the underlying :class:`WebmentionProcessor`; see its ``__init__`` for the
     safety semantics (intended for tests).
     """
-    # Load by id first so worker integrations get an explicit DoesNotExist for missing queued rows.
-    # Read the writer, not a possibly lagging read replica: the processor pins
-    # the same alias, and a stale replica could hide the row or its Vouch URL.
-    webmention = Webmention.objects.using(router.db_for_write(Webmention)).get(pk=webmention_id)
-    return WebmentionProcessor(client=client).process_webmention(
-        webmention.source_url,
-        webmention.target_url,
-        vouch_url=webmention.vouch_url or None,
+    # Keep both admission and settlement on this row and writer, even if the
+    # pair is recreated or routing changes while the worker is processing it.
+    using = router.db_for_write(Webmention)
+    webmention = Webmention.objects.using(using).get(pk=webmention_id)
+    return WebmentionProcessor(client=client)._process_admitted_webmention(
+        webmention, webmention.source_url, webmention.target_url, using=using
     )

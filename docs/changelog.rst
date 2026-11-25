@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Keep queued Webmention processing on the original row and write database.
+  A deleted row raises ``Webmention.DoesNotExist``.
 * Preserve the original Salmention delivery exception if releasing its resend
   claim fails. The claim can expire normally.
 * Stop scanning the parsed HTML tree after the first matching rendered

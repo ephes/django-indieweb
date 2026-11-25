@@ -6295,3 +6295,12 @@ bundle.
 - Validation: `uv run pytest --no-cov -q tests/test_round90_outbound.py -k delivery_error_survives`
   reproduced the masked exception before the fix and passed both cases after it.
 - Docs: historical resend reservations and changelog Unreleased.
+
+### Bind queued Webmentions to the admitted row (round 190 B02)
+
+- Load the row by primary key on the selected writer and settle on that alias.
+  A missing row raises `Webmention.DoesNotExist` at lookup or settlement.
+- Validation: `uv run pytest --no-cov -q tests/test_webmention_database_authority.py tests/test_webmention_processor.py -k queued`
+  passed all seven cases. The replacement-row regression failed before the fix.
+- Docs: Webmention queue integration, receive database routing, and changelog
+  Unreleased.

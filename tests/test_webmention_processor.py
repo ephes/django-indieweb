@@ -835,48 +835,26 @@ class TestWebmentionProcessor:
             assert str(captured[0].url) == source_url
             assert dict(captured[0].headers).get("user-agent") == "django-indieweb/1.0"
 
-    def test_process_queued_webmention_processes_existing_row(self):
-        """Test the public worker helper dispatches processing for an existing row."""
-        webmention = Webmention.objects.create(
-            source_url="https://example.com/post",
-            target_url="https://mysite.com/article",
-        )
+    @override_settings(INDIEWEB_WEBMENTION_VOUCH_TRUSTED_DOMAINS=("trusted.example",))
+    def test_process_queued_webmention_verifies_stored_vouch(self):
+        source_url = "https://example.com/post"
+        target_url = "https://mysite.example/article"
+        vouch_url = "https://trusted.example/vouch"
+        webmention = Webmention.objects.create(source_url=source_url, target_url=target_url, vouch_url=vouch_url)
+        responses = {
+            source_url: f'<a href="{target_url}">Target</a>',
+            vouch_url: f'<a href="{source_url}">Source</a>',
+        }
 
-        with patch("indieweb.processors.WebmentionProcessor") as mock_processor_class:
-            mock_processor = Mock()
-            mock_processor_class.return_value = mock_processor
-            mock_processor.process_webmention.return_value = webmention
+        def handler(request):
+            return _source_response(status_code=200, text=responses[str(request.url)])
 
-            result = process_queued_webmention(webmention.pk)
+        with _make_test_http_client(handler) as client:
+            result = process_queued_webmention(webmention.pk, client=client)
 
-        assert result == webmention
-        mock_processor.process_webmention.assert_called_once_with(
-            "https://example.com/post",
-            "https://mysite.com/article",
-            vouch_url=None,
-        )
-
-    def test_process_queued_webmention_passes_stored_vouch(self):
-        """Test queued processing includes persisted Vouch metadata."""
-        webmention = Webmention.objects.create(
-            source_url="https://example.com/post",
-            target_url="https://mysite.com/article",
-            vouch_url="https://trusted.example/vouch-for-example",
-        )
-
-        with patch("indieweb.processors.WebmentionProcessor") as mock_processor_class:
-            mock_processor = Mock()
-            mock_processor_class.return_value = mock_processor
-            mock_processor.process_webmention.return_value = webmention
-
-            result = process_queued_webmention(webmention.pk)
-
-        assert result == webmention
-        mock_processor.process_webmention.assert_called_once_with(
-            "https://example.com/post",
-            "https://mysite.com/article",
-            vouch_url="https://trusted.example/vouch-for-example",
-        )
+        assert result.pk == webmention.pk
+        assert result.status == "verified"
+        assert result.vouch_url == vouch_url and result.vouch_verified_at is not None
 
     def test_process_queued_webmention_creates_source_snapshot(self):
         """Test the worker helper can create snapshots through WebmentionProcessor."""
