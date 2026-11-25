@@ -1527,7 +1527,10 @@ The command applies the sender's HTTP(S) URL checks to the source before
 resolving content in every mode. This preflight checks URL syntax and rejects
 userinfo, localhost and blocked IP literals without a DNS lookup. A refused
 source raises a fixed ``CommandError`` without printing the source. A source
-fetch still applies the sender's network checks.
+fetch still applies the sender's network checks. A successful fetch with an
+empty body supplies zero current links. A Salmention resend can still
+select eligible historical targets for that source. A failed fetch raises
+``CommandError``.
 
 ``--content`` and ``--content -`` (stdin) are admitted before HTML parsing,
 endpoint discovery or delivery, in ordinary, Salmention and dry-run modes.

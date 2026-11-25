@@ -167,6 +167,27 @@ def test_command_fetch_content(mock_sender_class):
     mock_sender.fetch_content.assert_called_once_with("https://example.com/my-post", deadline=ANY)
 
 
+def test_command_empty_fetch_previews_historical_targets():
+    source = "https://source.example/post"
+    target = "https://history.example/post"
+    endpoint = "https://history.example/webmention"
+    WebmentionOutboundTarget.objects.create(source_url=source, target_url=target)
+    explicit = StringIO()
+    fetched = StringIO()
+
+    with (
+        patch.object(senders.WebmentionSender, "fetch_content", return_value="") as fetch,
+        patch.object(senders.WebmentionSender, "discover_endpoint", return_value=endpoint) as discover,
+    ):
+        call_command("send_webmentions", source, content="", dry_run=True, salmention_resend=True, stdout=explicit)
+        call_command("send_webmentions", source, dry_run=True, salmention_resend=True, stdout=fetched)
+
+    fetch.assert_called_once_with(source, deadline=ANY)
+    assert [call.args[0] for call in discover.call_args_list] == [target, target]
+    assert f"[history] {target} -> {endpoint}" in explicit.getvalue()
+    assert fetched.getvalue().replace(f"Fetching content from {source}...\n", "") == explicit.getvalue()
+
+
 @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
 def test_command_fetch_content_failure(mock_sender_class):
     """Test command when content fetch fails."""

@@ -6536,3 +6536,11 @@ bundle.
   tests/test_round90_outbound.py` passed (44 passed, one storage-only test skipped).
 - The `py313-django52-migrations` tox lane passed with 4,069 tests.
 - Updated `docs/webmention.rst` and changelog Unreleased.
+
+### Admit successfully fetched empty Webmention sources (round 208 B07)
+
+- Treat an empty fetched body as zero current links so Salmention resends
+  can still select historical targets. A failed fetch still raises a command error.
+- The empty-fetch preview regression failed before the fix and passed after
+  it alongside the failed-fetch check in `tests/test_send_webmentions_command.py`.
+- Updated the management command guide in `docs/webmention.rst` and changelog Unreleased.

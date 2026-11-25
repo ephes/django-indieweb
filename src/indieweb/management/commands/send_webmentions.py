@@ -141,7 +141,7 @@ class Command(BaseCommand):
             return html_content
         self.stdout.write(f"Fetching content from {redact_url(source_url)}...")
         fetched_content = sender.fetch_content(source_url, deadline=self.source_deadline)
-        if not fetched_content:
+        if fetched_content is None:
             raise CommandError(f"Failed to fetch content from {redact_url(source_url)}")
         return fetched_content
 
