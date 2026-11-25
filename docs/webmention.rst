@@ -1229,6 +1229,11 @@ over the budget returns ``{"success": False, "status_code": None, "error": ...}`
 The budget is a check, not an interrupt, with the same limits as the receive-side
 :ref:`fetch budget <webmention-fetch-total-timeout>`.
 
+``discover_endpoint`` attempts to close the client it creates. A close failure
+triggers a warning without request or exception details. The discovery result
+is preserved even if logging fails. Callers are responsible for closing any
+client they supply.
+
 ``send_webmention`` checks an optional ``vouch`` URL only syntactically (it must
 be an absolute ``http``/``https`` URL that is not a literal private or local
 address). The sender never fetches the Vouch URL, so it does not resolve its

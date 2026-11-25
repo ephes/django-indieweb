@@ -12,6 +12,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   passed all six cases. Four reproduced the expired results before the fix.
 - Updated the outbound timeout docs, Webmention usage and changelog Unreleased.
 
+### Preserve Webmention discovery results during client cleanup (round 195 B11)
+
+- Attempt one close for the discovery client's resources. Preserve the result
+  if closing or logging fails. Injected clients remain caller-owned.
+- `uv run pytest --no-cov -q tests/test_webmention_sender.py -k 'owned_close_fails or discovery_close_fails or from_link_header'`
+  covered discovery results, continued sending and injected client ownership.
+  All five new close-failure cases failed before the fix.
+- Updated Webmention usage and changelog Unreleased.
+
 ### Preserve Salmention deadline outcomes during claim cleanup (round 191 B08)
 
 - Release historical claims best-effort after a deadline outcome or delivery

@@ -356,6 +356,8 @@ class WebmentionSender:
         HEAD, GET, and endpoint parsing and validation share one
         ``INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS`` budget. Discovery
         returns ``None`` if the deadline has expired.
+        Closing an internally created client is best effort. Callers retain
+        ownership of injected clients.
 
         Args:
             target_url: The URL to discover the endpoint for
@@ -434,7 +436,11 @@ class WebmentionSender:
             return None
         finally:
             if close_client:
-                http_client.close()
+                try:
+                    http_client.close()
+                except Exception:
+                    with suppress(Exception):
+                        logger.warning("Failed to close Webmention discovery client")
 
     def _endpoint_from_link_header(
         self, discovered: RedirectedResponse, *, resolver: AddressResolver | None

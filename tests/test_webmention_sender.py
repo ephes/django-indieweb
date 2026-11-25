@@ -173,7 +173,9 @@ def test_discover_endpoint_from_link_header(sender, source_url, target_url):
         captured.append(request)
         return httpx.Response(200, headers={"Link": '<https://target.com/webmention>; rel="webmention"'})
 
-    endpoint = sender.discover_endpoint(target_url, client=_make_test_client(handler))
+    with _make_test_client(handler) as client:
+        endpoint = sender.discover_endpoint(target_url, client=client)
+        assert not client.is_closed
 
     assert endpoint == "https://target.com/webmention"
     assert [request.method for request in captured] == ["HEAD", "GET"]
@@ -1601,6 +1603,58 @@ def test_discover_endpoint_expired_deadline_does_not_create_client(sender, targe
         assert sender.discover_endpoint(target_url, deadline=clock.now) is None
     create_client.assert_not_called()
     resolver.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [200, 503])
+@pytest.mark.parametrize("broken_logger", [False, True])
+def test_discover_endpoint_preserves_result_when_owned_close_fails(
+    sender, target_url, monkeypatch, status, broken_logger
+):
+    owned = _make_test_client(
+        lambda request: httpx.Response(status, headers={"Link": '</webmention>; rel="webmention"'})
+    )
+    monkeypatch.setattr(senders.httpx, "Client", lambda **kwargs: owned)
+    monkeypatch.setattr(senders, "default_address_resolver", lambda host, port: ["93.184.216.34"])
+    warning_error = RuntimeError("Log sink unavailable") if broken_logger else None
+
+    with (
+        patch.object(owned, "close", side_effect=OSError("Sensitive cleanup details")) as close,
+        patch.object(senders.logger, "warning", side_effect=warning_error) as warning,
+    ):
+        expected = "https://target.com/webmention" if status == 200 else None
+        assert sender.discover_endpoint(target_url) == expected
+    close.assert_called_once_with()
+    warning.assert_called_once_with("Failed to close Webmention discovery client")
+    owned.close()
+
+
+def test_send_webmentions_continues_when_discovery_close_fails(sender, source_url, monkeypatch):
+    first_target = "https://first.example/post"
+    next_target = "https://second.example/post"
+    html = f'<a href="{first_target}">First</a><a href="{next_target}">Second</a>'
+
+    with (
+        _make_test_client(lambda request: httpx.Response(503)) as failed_client,
+        _make_test_client(
+            lambda request: httpx.Response(200, headers={"Link": '</webmention>; rel="webmention"'})
+        ) as next_client,
+    ):
+        clients = iter([failed_client, next_client])
+        monkeypatch.setattr(senders.httpx, "Client", lambda **kwargs: next(clients))
+        monkeypatch.setattr(senders, "default_address_resolver", lambda host, port: ["93.184.216.34"])
+        with (
+            patch.object(failed_client, "close", side_effect=OSError("Close failed")) as close,
+            patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 204}) as send,
+        ):
+            results = sender.send_webmentions(source_url, html, record_history=False)
+
+    close.assert_called_once_with()
+    send.assert_called_once_with(
+        source_url, next_target, "https://second.example/webmention", vouch=None, deadline=ANY
+    )
+    assert results == [
+        {"target": next_target, "endpoint": "https://second.example/webmention", "success": True, "status_code": 204}
+    ]
 
 
 @override_settings(INDIEWEB_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS=25)

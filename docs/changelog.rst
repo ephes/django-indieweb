@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Preserve Webmention discovery results when closing an internally created
+  HTTP client fails.
 * Recheck the Webmention discovery deadline after parsing and validating the
   endpoint advertised in the GET response's Link header or HTML.
 * Fall back to the default outbound Webmention timeout if the setting
