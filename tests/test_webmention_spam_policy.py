@@ -200,7 +200,7 @@ def test_falsy_configured_checker_is_still_executed(spam_processor, settings):
     assert mention.status == "spam"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_spam_policy_failure_logs_no_private_details(spam_processor, settings, caplog):
     settings.INDIEWEB_SPAM_CHECKER = "tests.test_webmention_spam_policy.BrokenSpamChecker"
     mention = spam_processor.process_webmention(SOURCE, TARGET)

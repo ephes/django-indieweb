@@ -1,5 +1,6 @@
 """Webmention receive persistence stays on its authoritative writer database."""
 
+import logging
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -10,7 +11,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from django.db import IntegrityError, OperationalError, connection, connections
+from django.db import IntegrityError, OperationalError, connection, connections, transaction
 from django.utils import timezone
 
 from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
@@ -193,7 +194,7 @@ def test_routed_savepoint_rolls_back_partial_writes_and_retry_reconciles(routed_
     assert state("default") == default_before
 
 
-def test_outer_writer_failure_rolls_back_parent_children_snapshot_and_notification(routed_receive, monkeypatch):
+def test_outer_writer_failure_rolls_back_parent_children_snapshot_and_callbacks(routed_receive, monkeypatch, caplog):
     processor, current, _router = routed_receive
     current[0] = NEW
     before = {alias: state(alias) for alias in ("default", "other")}
@@ -204,9 +205,13 @@ def test_outer_writer_failure_rolls_back_parent_children_snapshot_and_notificati
         raise RuntimeError("synthetic outer failure")
 
     monkeypatch.setattr(processor, "_apply_webmention_outcome", fail_after_apply)
-    with patch("indieweb.processors.webmention_received.send_robust") as notify:
-        with pytest.raises(RuntimeError, match="synthetic outer failure"):
-            processor.process_webmention(SOURCE, TARGET, vouch_url="https://vouch.example/new")
+    with (
+        caplog.at_level(logging.INFO, logger="indieweb.processors"),
+        patch("indieweb.processors.webmention_received.send_robust") as notify,
+        pytest.raises(RuntimeError, match="synthetic outer failure"),
+    ):
+        processor.process_webmention(SOURCE, TARGET, vouch_url="https://vouch.example/new")
+    assert "Successfully processed webmention" not in caplog.text
     notify.assert_not_called()
     assert {alias: state(alias) for alias in before} == before
 
@@ -420,3 +425,55 @@ def test_sqlite_reserves_writer_before_reloading_receive(sqlite_wal, monkeypatch
         assert pool.submit(competing_receive).result(timeout=5) == newer_at
 
     assert Webmention.objects.get().last_received_at == newer_at
+
+
+@pytest.mark.parametrize("status", ["failed", "spam", "verified"])
+def test_primary_outcome_logging_cannot_break_routed_settlement(routed_receive, monkeypatch, status):
+    processor, _current, _router = routed_receive
+    default_before = state("default")
+    vouch = "https://vouch.example/verified"
+    received_at = timezone.now()
+    message = "Synthetic primary outcome diagnostic"
+    outcome = _WebmentionOutcome(
+        status=status,
+        received_at=received_at,
+        log=("warning", message),
+        vouch_verified_at=received_at,
+        verified_vouch_url=vouch,
+        spam_result={"is_spam": True} if status == "spam" else None,
+        parsed_fields={"content": "verified content"},
+        source_html=NEW,
+        final_url=SOURCE,
+        fetched_at=received_at,
+        nested_response_candidates=[],
+        previous_nested_identities=set(),
+    )
+    monkeypatch.setattr(processor, "_collect_webmention_outcome", lambda *args: outcome)
+    observed = []
+
+    class BrokenOutcomeHandler(logging.Handler):
+        def emit(self, record):
+            if record.getMessage() == message:
+                parent = Webmention.objects.using("other").get(pk=101)
+                observed.append((connections["other"].in_atomic_block, parent.status, parent.last_received_at))
+                raise RuntimeError("synthetic logging failure")
+
+    log = logging.getLogger("indieweb.processors")
+    handler = BrokenOutcomeHandler()
+    log.addHandler(handler)
+    try:
+        with (
+            patch("indieweb.processors.webmention_received.send_robust") as notify,
+            transaction.atomic(using="default"),
+        ):
+            result = processor.process_webmention(SOURCE, TARGET, vouch_url=vouch)
+            assert observed == [(False, status, received_at)]
+    finally:
+        log.removeHandler(handler)
+
+    assert result._state.db == "other"
+    parent = Webmention.objects.using("other").get(pk=result.pk)
+    assert (parent.status, parent.last_received_at) == (status, received_at)
+    assert (parent.vouch_url, parent.vouch_verified_at) == (vouch, received_at)
+    assert state("default") == default_before
+    assert notify.call_count == (1 if status == "verified" else 0)

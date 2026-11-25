@@ -230,7 +230,7 @@ def test_large_ordinary_article_fits_the_default_limits():
 # --- expensive sources ------------------------------------------------------
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("html", EXPENSIVE_SOURCES.values(), ids=EXPENSIVE_SOURCES.keys())
 def test_expensive_source_is_rejected_within_the_limits_and_nothing_is_stored(html, caplog):
     assert len(html) < MIB
@@ -388,7 +388,7 @@ def test_worker_receipt_must_match_admitted_size(monkeypatch, settings, limit, c
     assert not decoded
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_vouch_document_over_the_limits_fails_the_webmention(caplog):
     vouch_url = "https://trusted.example/vouch"
     vouch_html = '<a href="https://example.com/">vouched</a>'
@@ -488,7 +488,7 @@ def test_stored_size_limit_counts_encoded_bytes():
 # --- worker failures --------------------------------------------------------
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     "code, reason",
     [
@@ -510,7 +510,7 @@ def test_worker_failure_is_handled_as_a_rejection(monkeypatch, caplog, code, rea
     assert f"source too expensive to process ({reason})" in caplog.text
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_worker_that_cannot_be_started_is_handled_as_a_rejection(caplog):
     with override_settings(INDIEWEB_WEBMENTION_PARSE_PYTHON="/nonexistent/python"):
         webmention = processor_serving(REPLY).process_webmention(SOURCE_URL, TARGET_URL)

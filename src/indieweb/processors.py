@@ -437,6 +437,13 @@ class WebmentionProcessor:
         # open. The result captures exactly what should be persisted.
         outcome = self._collect_webmention_outcome(webmention, source_url, target_url)
 
+        level, message = outcome.log
+
+        def log_outcome() -> None:
+            # Let later post-commit callbacks run even if a handler fails.
+            with suppress(Exception):
+                getattr(logger, level)(message)
+
         # Phase 2: serialize the persistence step per row so concurrent receives
         # for the same (source, target) pair cannot interleave writes. Reload
         # the row under the lock so writes never echo stale field values from
@@ -494,6 +501,7 @@ class WebmentionProcessor:
                 locked.vouch_verified_at = outcome.vouch_verified_at
                 locked.save(using=using, update_fields=["vouch_verified_at", "modified"])
 
+            transaction.on_commit(log_outcome, using=using)
             self._apply_webmention_outcome(locked, outcome, source_url, target_url)
 
         return locked
@@ -664,9 +672,6 @@ class WebmentionProcessor:
         ``update_fields`` so concurrent receives cannot have their unrelated
         field updates clobbered by a stale full save.
         """
-        level, message = outcome.log
-        getattr(logger, level)(message)
-
         if outcome.status == "failed":
             self._mark_webmention_failed(webmention, last_received_at=outcome.received_at)
             return

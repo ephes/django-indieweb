@@ -947,11 +947,13 @@ inside an atomic block on its writer. SQLite reserves the writer before the
 reload so a competing receive cannot commit between the reload and the outcome
 write. Older outcomes cannot replace a newer committed receive. Child
 synchronization and snapshot storage each have their own savepoint on this
-same connection: an isolated helper failure rolls back
-its complete partial write set while allowing the verified parent and the
-other helper to persist. An outer transaction failure rolls back the whole
-attempt and suppresses the success notification, which runs only after the
-writer commits. No schema migration is required.
+same connection: an isolated helper failure rolls back its complete partial
+write set while allowing the verified parent and the other helper to persist.
+The redacted diagnostic for a failed, spam or verified outcome runs after the
+writer commits. A logging handler failure leaves the committed outcome and
+Vouch intact and allows the success notification to run. An outer transaction
+failure rolls back the attempt and discards both callbacks. No schema migration
+is required.
 
 A nested response's ``is_currently_displayable`` check reads verification from
 its own database. A cached parent is used only when its database identity

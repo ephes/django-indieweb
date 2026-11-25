@@ -6485,3 +6485,13 @@ bundle.
   `tests/test_round92_maintenance.py` and `tests/test_prune_websub_delivery_attempts.py`
   with `DJANGO_INDIEWEB_TEST_SQLITE_PATH` set to a temporary file.
 - Updated the WebSub maintenance limits guide and changelog Unreleased.
+
+### Log primary Webmention outcomes after commit (round 202 B05)
+
+- Send the redacted diagnostic after commit on the selected writer. A failing
+  log handler leaves the committed status, receipt watermark, Vouch and success
+  notification intact.
+- A raising handler reproduced the failure for failed, spam and verified
+  outcomes. Those cases pass with the rollback and redaction checks in
+  `tests/test_webmention_database_authority.py` and `tests/test_log_redaction.py`.
+- Updated the receive database routing guide and changelog Unreleased.

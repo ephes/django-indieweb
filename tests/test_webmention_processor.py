@@ -2645,7 +2645,7 @@ class TestWebmentionProcessor:
             assert webmention.content == "This is bold text with a link."
             assert "<strong>bold</strong>" in webmention.content_html
 
-    def test_processor_logging(self, processor, caplog):
+    def test_processor_logging(self, processor, caplog, django_capture_on_commit_callbacks):
         """Test that processor logs appropriate messages."""
         source_url = "https://example.com/post"
         target_url = "https://mysite.com/article"
@@ -2658,7 +2658,7 @@ class TestWebmentionProcessor:
         ):
             import logging
 
-            with caplog.at_level(logging.INFO):
+            with caplog.at_level(logging.INFO), django_capture_on_commit_callbacks(execute=True):
                 processor.process_webmention(source_url, target_url)
 
             assert "Processing webmention" in caplog.text

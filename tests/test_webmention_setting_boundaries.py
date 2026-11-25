@@ -51,7 +51,7 @@ def test_timer_settings_are_representable(settings, getter, name, default, optio
     assert getter() == expected
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("failure", ["transport", "spam_checker"])
 @pytest.mark.parametrize("mode", ["redact", "passthrough"])
 def test_collection_exception_logs_only_safe_category(monkeypatch, caplog, settings, failure, mode):

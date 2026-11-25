@@ -181,7 +181,7 @@ def test_token_introspection_logs_do_not_leak_token_prefix_in_redact_mode(client
 # ----------------------------------------------------------------------------
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_webmention_outcome_logs_redact_source_url_in_redact_mode(settings, caplog):
     """A webmention whose source can't be fetched must not echo the source URL
     verbatim in the resulting outcome log line."""
@@ -206,12 +206,13 @@ def test_webmention_outcome_logs_redact_source_url_in_redact_mode(settings, capl
     with caplog.at_level(logging.INFO, logger="indieweb.processors"):
         processor.process_webmention(source, target)
 
+    assert "410 Gone" in caplog.text
     # In redact mode neither source nor target should appear verbatim in INFO/WARNING logs.
     assert "leaky-source-path" not in caplog.text
     assert "https://attacker.example.org" not in caplog.text
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_webmention_outcome_logs_passthrough_includes_urls(settings, caplog):
     """In passthrough mode (default) the outcome log line still contains the URLs verbatim
     so existing operators retain the diagnostic value they had before."""
