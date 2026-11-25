@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import time
+from collections.abc import Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
@@ -664,7 +665,7 @@ class WebmentionSender:
     def send_webmentions(
         self,
         source_url: str,
-        html_content: str | None = None,
+        html_content: str | Sequence[str] | None = None,
         vouch_url: str | None = None,
         record_history: bool = True,
         *,
@@ -674,7 +675,7 @@ class WebmentionSender:
 
         Args:
             source_url: The source URL (your post)
-            html_content: Optional HTML content. If not provided, will be fetched.
+            html_content: HTML or ordered link hrefs. If omitted, fetch the source.
             vouch_url: Optional Vouch URL to include with each sent Webmention
             record_history: Whether to record attempted deliveries in outbound target history
 
@@ -730,7 +731,7 @@ class WebmentionSender:
     def resend_salmentions(
         self,
         source_url: str,
-        html_content: str | None = None,
+        html_content: str | Sequence[str] | None = None,
         vouch_url: str | None = None,
         *,
         deadline: float | None = None,
@@ -739,7 +740,7 @@ class WebmentionSender:
 
         Args:
             source_url: The source URL (your post)
-            html_content: Optional HTML content. If not provided, will be fetched.
+            html_content: HTML or ordered link hrefs. If omitted, fetch the source.
             vouch_url: Optional Vouch URL to include with each sent Webmention
 
         Returns:
@@ -832,11 +833,11 @@ class WebmentionSender:
     def preview_salmention_resend_targets(
         self,
         source_url: str,
-        html_content: str,
+        html_content: str | Sequence[str],
         *,
         deadline: float | None = None,
     ) -> list[dict]:
-        """Return a dry-run Salmention resend preview without sending or recording history."""
+        """Preview Salmention resends from HTML or ordered link hrefs without recording history."""
         deadline = _source_deadline(deadline)
         target_urls, current_targets, historical_rows, historical_targets = self._salmention_target_context(
             source_url, html_content, router.db_for_write(WebmentionOutboundTarget)
@@ -873,7 +874,7 @@ class WebmentionSender:
     def _salmention_target_context(
         self,
         source_url: str,
-        html_content: str,
+        html_content: str | Sequence[str],
         using: str,
     ) -> tuple[list[str], set[str], dict[str, WebmentionOutboundTarget], set[str]]:
         """Return capped Salmention targets plus provenance inputs.
@@ -926,17 +927,17 @@ class WebmentionSender:
             historical_targets.add(url)
         return selected, current_targets, historical_rows, historical_targets
 
-    def select_target_urls(self, source_url: str, html_content: str) -> list[str]:
+    def select_target_urls(self, source_url: str, html_content: str | Sequence[str]) -> list[str]:
         """Return ordered current external targets after URL, same-host and fanout policy.
 
-        Selection performs no network requests or history reads/writes, so ordinary
-        sending and command previews can use exactly the same admission policy.
+        Accepts HTML or ordered link hrefs. Selection performs no network requests
+        or history reads/writes.
         """
         return self._limit_target_urls(self._extract_external_target_urls(source_url, html_content))
 
-    def _extract_external_target_urls(self, source_url: str, html_content: str) -> list[str]:
-        """Extract current absolute external HTTP(S) targets from HTML content."""
-        urls = self.extract_urls(html_content)
+    def _extract_external_target_urls(self, source_url: str, html_content: str | Sequence[str]) -> list[str]:
+        """Filter HTML links or supplied hrefs for absolute external HTTP(S) targets."""
+        urls = self.extract_urls(html_content) if isinstance(html_content, str) else dict.fromkeys(html_content)
         # Compare canonical hosts (lowercase, IDNA, default port dropped) so
         # ``https://Example.COM:443/x`` counts as the source's own domain.
         source_domain = _canonical_destination_host(source_url)

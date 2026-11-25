@@ -6513,3 +6513,14 @@ bundle.
   outcomes. Those cases pass with the rollback and redaction checks in
   `tests/test_webmention_database_authority.py` and `tests/test_log_redaction.py`.
 - Updated the receive database routing guide and changelog Unreleased.
+
+### Reuse command link extraction during Webmention selection (round 205 B11)
+
+- Parse the source once for the URL count and selection in all four command
+  modes. Apply the same safety, same-host and fanout policy to the extracted
+  hrefs and preserve current-before-history ordering.
+- The four cases in `test_command_parses_source_once_for_count_and_selection`
+  failed on the second parse before the change. The focused command,
+  admission, privacy and sender suites then passed (282 tests).
+- `uv run pytest` passed with 4,068 tests and 94.50% coverage.
+- Updated `docs/webmention.rst` and changelog Unreleased.

@@ -5,9 +5,49 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
+from indieweb import senders
 from indieweb.models import WebmentionOutboundTarget
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("salmention_resend", [False, True])
+def test_command_parses_source_once_for_count_and_selection(dry_run, salmention_resend, settings):
+    settings.INDIEWEB_WEBMENTION_MAX_TARGETS_PER_HOST = 1
+    source = "https://source.example/post"
+    current = "https://current.example/post"
+    both = "https://both.example/post"
+    history = "https://history.example/post"
+    WebmentionOutboundTarget.objects.bulk_create(
+        [WebmentionOutboundTarget(source_url=source, target_url=url) for url in (both, history)]
+    )
+    links = [current, "/relative", "https://source.example/other", both, "https://current.example/other", current]
+    content = "".join(f'<a href="{url}">Link</a>' for url in links)
+    out = StringIO()
+    with (
+        patch.object(senders, "BeautifulSoup", wraps=senders.BeautifulSoup) as parse,
+        patch.object(
+            senders.WebmentionSender, "discover_endpoint", side_effect=lambda url, **kwargs: url + "/wm"
+        ) as discover,
+        patch.object(
+            senders.WebmentionSender, "send_webmention", return_value={"success": True, "status_code": 202}
+        ) as send,
+    ):
+        call_command(
+            "send_webmentions",
+            source,
+            content=content,
+            dry_run=dry_run,
+            salmention_resend=salmention_resend,
+            stdout=out,
+        )
+
+    expected = [current, both, history] if salmention_resend else [current, both]
+    assert [call.args[0] for call in discover.call_args_list] == expected
+    assert [call.args[1] for call in send.call_args_list] == ([] if dry_run else expected)
+    assert "Found 5 URLs in content" in out.getvalue()
+    parse.assert_called_once_with(content, "html.parser")
 
 
 def test_command_with_invalid_url():
@@ -56,7 +96,7 @@ def test_command_with_content_provided(mock_sender_class):
     assert "✗ https://target2.com/post" in output
 
     mock_sender.send_webmentions.assert_called_once_with(
-        "https://example.com/my-post", '<a href="https://target1.com/post">Link</a>', vouch_url=None, deadline=ANY
+        "https://example.com/my-post", mock_sender.extract_urls.return_value, vouch_url=None, deadline=ANY
     )
     mock_sender.resend_salmentions.assert_not_called()
 
@@ -93,7 +133,7 @@ def test_command_passes_vouch_url(mock_sender_class):
 
     mock_sender.send_webmentions.assert_called_once_with(
         "https://example.com/my-post",
-        '<a href="https://target.com/post">Link</a>',
+        ["https://target.com/post"],
         vouch_url="https://trusted.example/vouch-for-example",
         deadline=ANY,
     )
@@ -177,7 +217,7 @@ def test_command_dry_run(mock_sender_class):
     assert "https://target.com/post -> https://target.com/webmention" in output
     assert "Selected 1 targets after URL, same-host and fanout policy exclusions" in output
     mock_sender.select_target_urls.assert_called_once_with(
-        "https://example.com/my-post", '<a href="https://target.com/post">Link</a>'
+        "https://example.com/my-post", mock_sender.extract_urls.return_value
     )
     assert "https://history.example/post" not in output
 
@@ -200,9 +240,10 @@ def test_command_stdin_input(mock_sender_class):
     call_command("send_webmentions", "https://example.com/my-post", content="-", stdout=out)
 
     # Verify stdin content was used
-    mock_sender.send_webmentions.assert_called_once()
-    args = mock_sender.send_webmentions.call_args[0]
-    assert args[1] == '<a href="https://target.com">Link from stdin</a>'
+    mock_sender.extract_urls.assert_called_once_with('<a href="https://target.com">Link from stdin</a>')
+    mock_sender.send_webmentions.assert_called_once_with(
+        "https://example.com/my-post", ["https://target.com"], vouch_url=None, deadline=ANY
+    )
 
 
 @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
@@ -249,7 +290,7 @@ def test_salmention_resend_calls_resend_sender_api(mock_sender_class):
     )
 
     mock_sender.resend_salmentions.assert_called_once_with(
-        "https://example.com/my-post", html_content, vouch_url=None, deadline=ANY
+        "https://example.com/my-post", ["https://target.com/post"], vouch_url=None, deadline=ANY
     )
     mock_sender.send_webmentions.assert_not_called()
 
@@ -274,7 +315,7 @@ def test_salmention_resend_passes_vouch_url(mock_sender_class):
 
     mock_sender.resend_salmentions.assert_called_once_with(
         "https://example.com/my-post",
-        '<a href="https://target.com/post">Link</a>',
+        ["https://target.com/post"],
         vouch_url="https://trusted.example/vouch-for-example",
         deadline=ANY,
     )
@@ -298,8 +339,9 @@ def test_salmention_resend_stdin_input(mock_sender_class):
         stdout=out,
     )
 
+    mock_sender.extract_urls.assert_called_once_with('<a href="https://target.com">Link from stdin</a>')
     mock_sender.resend_salmentions.assert_called_once_with(
-        "https://example.com/my-post", '<a href="https://target.com">Link from stdin</a>', vouch_url=None, deadline=ANY
+        "https://example.com/my-post", ["https://target.com"], vouch_url=None, deadline=ANY
     )
 
 
@@ -435,7 +477,7 @@ def test_salmention_resend_dry_run_includes_current_history_and_both(mock_sender
     assert "https://example.com/same-domain" not in output
     assert "/relative" not in output
     mock_sender.preview_salmention_resend_targets.assert_called_once_with(
-        "https://example.com/my-post", '<a href="https://current.example/post">Current</a>', deadline=ANY
+        "https://example.com/my-post", mock_sender.extract_urls.return_value, deadline=ANY
     )
     mock_sender.discover_endpoint.assert_not_called()
     mock_sender.send_webmentions.assert_not_called()

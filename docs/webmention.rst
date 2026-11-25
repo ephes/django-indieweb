@@ -1545,6 +1545,11 @@ that finishes after the deadline fails before parsing or sending. Descriptor
 readiness must be supported by the platform; unsupported stdin streams fail
 with a fixed error (use direct ``--content`` instead).
 
+The command parses the source HTML once. The reported URL count includes all
+distinct nonempty link hrefs in document order, before URL safety, same-host
+and fanout filtering. Both preview and delivery use those same links for
+selection. Salmention modes also consider the source's recorded history.
+
 All command URL output, including fetch errors and both dry-run modes, uses
 the configured ``INDIEWEB_LOG_REDACTION`` policy. In ``passthrough`` mode,
 userinfo, query, fragment and path parameters are removed and unsafe URL
@@ -1832,6 +1837,10 @@ including failure counters and cooldown.
 The optional ``deadline`` keyword on sender methods accepts an absolute
 ``time.monotonic()`` deadline so a host can share one budget across earlier work.
 The existing transport budget is cooperative, not a hard process interrupt.
+
+The sender's ``html_content`` argument accepts HTML or a sequence of already
+extracted link hrefs. Supplied hrefs are deduplicated in order and go through
+the same URL safety, same-host and fanout checks as hrefs extracted from HTML.
 
 Salmention selection reads only policy fields in bounded chunks and keeps only
 admitted historical rows. Current targets retain precedence; historical targets

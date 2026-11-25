@@ -123,13 +123,13 @@ class Command(BaseCommand):
 
         if dry_run:
             if salmention_resend:
-                self._handle_salmention_dry_run(sender, source_url, html_content)
+                self._handle_salmention_dry_run(sender, source_url, urls)
             else:
-                self._handle_dry_run(sender, source_url, html_content)
+                self._handle_dry_run(sender, source_url, urls)
         elif salmention_resend:
-            self._handle_salmention_send(sender, source_url, html_content, vouch_url)
+            self._handle_salmention_send(sender, source_url, urls, vouch_url)
         else:
-            self._handle_send(sender, source_url, html_content, vouch_url)
+            self._handle_send(sender, source_url, urls, vouch_url)
 
     def _resolve_content(self, sender: WebmentionSender, source_url: str, html_content: str | None) -> str:
         """Resolve HTML content from argument, stdin, or by fetching the source URL."""
@@ -197,9 +197,9 @@ class Command(BaseCommand):
         except (OSError, ValueError):
             raise CommandError("Unable to read stdin with a bounded wait; provide --content instead") from None
 
-    def _handle_dry_run(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
+    def _handle_dry_run(self, sender: WebmentionSender, source_url: str, urls: list[str]) -> None:
         """Discover only targets admitted by the ordinary sender's policy."""
-        targets = sender.select_target_urls(source_url, html_content)
+        targets = sender.select_target_urls(source_url, urls)
         self.stdout.write(f"Selected {len(targets)} targets after URL, same-host and fanout policy exclusions")
         for url in targets:
             if time.monotonic() >= self.source_deadline:
@@ -214,11 +214,11 @@ class Command(BaseCommand):
         self,
         sender: WebmentionSender,
         source_url: str,
-        html_content: str,
+        urls: list[str],
         vouch_url: str | None,
     ) -> None:
         """Send webmentions and display results."""
-        results = sender.send_webmentions(source_url, html_content, vouch_url=vouch_url, deadline=self.source_deadline)
+        results = sender.send_webmentions(source_url, urls, vouch_url=vouch_url, deadline=self.source_deadline)
 
         if not results:
             self.stdout.write("No webmentions were sent (no valid targets found)")
@@ -242,10 +242,10 @@ class Command(BaseCommand):
         if success_count < len(sent_results):
             raise CommandError(f"{len(sent_results) - success_count} Webmention deliveries failed")
 
-    def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, html_content: str) -> None:
+    def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, urls: list[str]) -> None:
         """Show the Salmention resend target union without sending or recording history."""
         try:
-            results = sender.preview_salmention_resend_targets(source_url, html_content, deadline=self.source_deadline)
+            results = sender.preview_salmention_resend_targets(source_url, urls, deadline=self.source_deadline)
         except ValueError as exc:
             raise CommandError(f"Salmention selection failed ({text_fingerprint(str(exc))})") from None
         if not results:
@@ -266,14 +266,12 @@ class Command(BaseCommand):
         self,
         sender: WebmentionSender,
         source_url: str,
-        html_content: str,
+        urls: list[str],
         vouch_url: str | None,
     ) -> None:
         """Resend Salmentions and display provenance-aware results."""
         try:
-            results = sender.resend_salmentions(
-                source_url, html_content, vouch_url=vouch_url, deadline=self.source_deadline
-            )
+            results = sender.resend_salmentions(source_url, urls, vouch_url=vouch_url, deadline=self.source_deadline)
         except ValueError as exc:
             raise CommandError(f"Salmention selection failed ({text_fingerprint(str(exc))})") from None
 

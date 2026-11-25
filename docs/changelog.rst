@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Parse source HTML once for link counting and target selection in the
+  Webmention management command, including previews and Salmention resends.
 * Render dated Webmentions before undated ones on both SQLite and PostgreSQL
   so duplicate nested replies appear under the same parent.
 * Limit the Webmention display query's child rows to candidate reply parents.
