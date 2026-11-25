@@ -6,6 +6,9 @@ Changelog
 Unreleased
 ----------
 
+* Preserve the primary static-site Micropub publication error while closing
+  all held directory descriptors. Report close failures after a successful
+  link as publication uncertainty.
 * Close the static-site Micropub staging descriptor if buffered stream
   setup fails.
 * Check that the Micropub staging name still refers to the open file before

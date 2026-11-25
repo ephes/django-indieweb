@@ -6431,3 +6431,11 @@ bundle.
   the fix and pass via
   `uv run pytest --no-cov -q tests/test_webmention_parse_isolation.py -k 'result_size or result_larger or receipt_must_match_admitted_size'`.
 - Updated the Webmention and configuration guides and changelog Unreleased.
+
+### Preserve static Micropub errors through directory teardown (round 201 B07)
+
+- Close all held directory descriptors in reverse order. Preserve the
+  initiating exception and attach close failures as diagnostics.
+- `uv run pytest --no-cov -q tests/test_static_site_micropub_examples.py -k retires_all_directories`:
+  the collision regression failed before the fix and both cases passed after it.
+- Updated the Micropub publication recovery guide and changelog Unreleased.

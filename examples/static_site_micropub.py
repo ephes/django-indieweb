@@ -260,6 +260,37 @@ def _open_stage(stage: str, directory: int) -> Iterator[tuple[int, os.stat_resul
                 primary.add_note(f"Static-site stage descriptor close failed: {exc}")
 
 
+@contextlib.contextmanager
+def _open_directory(path: str, *, ancestor: bool, dir_fd: int | None = None) -> Iterator[tuple[int, bool]]:
+    # Require POSIX no-follow/dir_fd support for all publication paths.
+    flags = os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        fd = os.open(path, os.O_RDONLY | flags, dir_fd=dir_fd)
+        readable = True
+    except PermissionError:
+        # A traverse-only ancestor above the content root can be opened for
+        # search on supported platforms. It cannot be synced by this writer.
+        search_flags = getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0)
+        if not ancestor or not search_flags:
+            raise
+        fd = os.open(path, search_flags | flags, dir_fd=dir_fd)
+        readable = False
+
+    primary: BaseException | None = None
+    try:
+        yield fd, readable
+    except BaseException as exc:
+        primary = exc
+        raise
+    finally:
+        try:
+            os.close(fd)
+        except OSError as exc:
+            if primary is None:
+                raise
+            primary.add_note(f"Static-site directory descriptor close failed: {exc}")
+
+
 def _sync_publication_directories(directories: list[int], error: OSError | None) -> None:
     # Sync children before the directory entries naming them.
     for directory in reversed(directories):
@@ -285,28 +316,11 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
     def _publication_directory(self, document: StaticPostDocument) -> Iterator[tuple[int, list[int]]]:
         if document.path.is_absolute() or ".." in document.path.parts or not document.path.name:
             raise ValueError("Static-site document path escaped the configured content root")
-        # Require POSIX no-follow/dir_fd support; never fall back to pathname writes.
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        # Ancestors above the content root may be traverse-only (for example a 0711 home
-        # directory). Descend through them with a search-only descriptor where the
-        # platform offers one; such a directory cannot be synced by this writer.
-        search_flags = getattr(os, "O_PATH", 0) or getattr(os, "O_SEARCH", 0)
         root_depth = len(self.content_root.parts) - 1
         with contextlib.ExitStack() as opened:
-
-            def open_directory(path: str, *, ancestor: bool, dir_fd: int | None = None) -> tuple[int, bool]:
-                try:
-                    fd = os.open(path, flags, dir_fd=dir_fd)
-                    readable = True
-                except PermissionError:
-                    if not ancestor or not search_flags:
-                        raise
-                    fd = os.open(path, search_flags | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-                    readable = False
-                opened.callback(os.close, fd)
-                return fd, readable
-
-            directory, readable = open_directory(self.content_root.anchor, ancestor=root_depth > 0)
+            directory, readable = opened.enter_context(
+                _open_directory(self.content_root.anchor, ancestor=root_depth > 0)
+            )
             chain = [(directory, readable)]
             # Sync the content root and everything below it (a concurrent writer may have
             # just created a post directory), plus the parent of every directory this
@@ -320,7 +334,9 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
                     pass
                 else:
                     sync_from = min(sync_from, depth - 1)
-                directory, readable = open_directory(part, ancestor=depth < root_depth, dir_fd=directory)
+                directory, readable = opened.enter_context(
+                    _open_directory(part, ancestor=depth < root_depth, dir_fd=directory)
+                )
                 chain.append((directory, readable))
             yield directory, [fd for fd, readable in chain[sync_from:] if readable]
 

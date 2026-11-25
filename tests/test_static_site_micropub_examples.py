@@ -15,6 +15,7 @@ from examples.static_site_micropub import (
     LocalFilesystemStaticSiteHandler,
     StaticPostDocument,
     StaticSitePostMapper,
+    StaticSitePublicationUncertainError,
     slugify_micropub_properties,
 )
 
@@ -190,6 +191,48 @@ def test_local_publication_preserves_refusal_when_stage_cleanup_fails(tmp_path, 
         assert target.read_text() == "Synthetic existing post"
     else:
         assert not target.exists()
+
+
+@pytest.mark.parametrize("collision", [True, False])
+def test_local_publication_retires_all_directories_when_close_fails(tmp_path, monkeypatch, collision):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"content": ["Synthetic new post"]})
+    target = tmp_path / document.path
+    if collision:
+        target.parent.mkdir(parents=True)
+        target.write_text("Synthetic existing post")
+
+    open_file, close = os.open, os.close
+    directories, closed = [], []
+
+    def track_open(path, flags, *args, **kwargs):
+        fd = open_file(path, flags, *args, **kwargs)
+        if flags & os.O_DIRECTORY:
+            directories.append(fd)
+        return fd
+
+    def fail_first_directory_close(fd):
+        close(fd)
+        if fd in directories:
+            closed.append(fd)
+            if len(closed) == 1:
+                raise OSError("Synthetic directory close failure")
+
+    with monkeypatch.context() as patches:
+        patches.setattr("examples.static_site_micropub.os.open", track_open)
+        patches.setattr("examples.static_site_micropub.os.close", fail_first_directory_close)
+        if collision:
+            with pytest.raises(FileExistsError, match="already exists") as caught:
+                handler.save_document(document, DummyUser())
+            assert any("Synthetic directory close failure" in note for note in caught.value.__notes__)
+        else:
+            with pytest.raises(StaticSitePublicationUncertainError, match="publication is uncertain") as caught:
+                handler.save_document(document, DummyUser())
+            assert "Synthetic directory close failure" in str(caught.value.__cause__)
+
+    assert closed == directories[::-1]
+    assert target.read_text() == ("Synthetic existing post" if collision else document.render_markdown())
+    assert not list(target.parent.glob(".micropub-*"))
 
 
 def test_local_filesystem_concurrent_creates_publish_one_complete_post(tmp_path, monkeypatch):
