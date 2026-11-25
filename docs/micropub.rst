@@ -241,6 +241,11 @@ remove abandoned stages only after ensuring the writer has stopped.
 The example does not roll back a published post, which readers may already
 have observed. Hosts must add their own idempotency/recovery policy.
 
+All three example handlers require a relative POSIX document path with a
+filename and no parent (``..``) components. Relative subdirectories are
+supported. Invalid paths raise ``ValueError`` before any write to the filesystem,
+Django storage or the Git adapter.
+
 If your publication workflow stores source files through Django storage, pass
 an explicit storage instance instead of teaching django-indieweb a new storage
 abstraction:

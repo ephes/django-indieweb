@@ -179,6 +179,11 @@ class StaticSitePostMapper:
         )
 
 
+def _validate_document_path(path: PurePosixPath) -> None:
+    if path.is_absolute() or ".." in path.parts or not path.name:
+        raise ValueError("Static-site document path escaped the configured content root")
+
+
 class StaticSiteMicropubHandler(MicropubContentHandler):
     """Base example for handlers that create static-site documents."""
 
@@ -314,8 +319,7 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
 
     @contextlib.contextmanager
     def _publication_directory(self, document: StaticPostDocument) -> Iterator[tuple[int, list[int]]]:
-        if document.path.is_absolute() or ".." in document.path.parts or not document.path.name:
-            raise ValueError("Static-site document path escaped the configured content root")
+        _validate_document_path(document.path)
         root_depth = len(self.content_root.parts) - 1
         with contextlib.ExitStack() as opened:
             directory, readable = opened.enter_context(
@@ -387,6 +391,7 @@ class DjangoStorageStaticSiteHandler(StaticSiteMicropubHandler):
         self.storage = storage
 
     def save_document(self, document: StaticPostDocument, user: AbstractBaseUser) -> None:
+        _validate_document_path(document.path)
         expected_name = document.path.as_posix()
         saved_name = self.storage.save(expected_name, ContentFile(document.render_markdown().encode("utf-8")))
         if saved_name != expected_name:
@@ -414,6 +419,7 @@ class GitBackedStaticSiteHandler(StaticSiteMicropubHandler):
         self.store = store
 
     def save_document(self, document: StaticPostDocument, user: AbstractBaseUser) -> None:
+        _validate_document_path(document.path)
         self.store.save_file(
             path=document.path.as_posix(),
             content=document.render_markdown(),

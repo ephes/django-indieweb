@@ -702,6 +702,36 @@ def test_git_backed_handler_delegates_to_host_adapter_without_git_operations():
     assert "Git body" in store.calls[0]["content"]
 
 
+@pytest.mark.parametrize(
+    "content_dir, filename_pattern",
+    [
+        ("/outside", "{slug}.md"),
+        ("../outside", "{slug}.md"),
+        ("content/posts", "../{slug}.md"),
+        (".", "."),
+    ],
+)
+@pytest.mark.parametrize("backend", ["django", "git"])
+def test_static_storage_rejects_invalid_paths_before_writing(backend, content_dir, filename_pattern):
+    url = "https://example.org/"
+    if backend == "django":
+        storage = FakeStorage()
+        handler = DjangoStorageStaticSiteHandler(storage=storage, public_base_url=url)
+        writes = storage.saved
+    else:
+        store = FakeGitStore()
+        handler = GitBackedStaticSiteHandler(store=store, public_base_url=url)
+        writes = store.calls
+    handler.mapper = StaticSitePostMapper(
+        public_base_url=url, content_dir=content_dir, filename_pattern=filename_pattern
+    )
+
+    with pytest.raises(ValueError, match="escaped the configured content root"):
+        handler.create_entry({"content": ["Synthetic post"]}, DummyUser())
+
+    assert not writes
+
+
 class FakeMediaIndex:
     def __init__(self):
         self.item = MicropubMediaItem(

@@ -6439,3 +6439,11 @@ bundle.
 - `uv run pytest --no-cov -q tests/test_static_site_micropub_examples.py -k retires_all_directories`:
   the collision regression failed before the fix and both cases passed after it.
 - Updated the Micropub publication recovery guide and changelog Unreleased.
+
+### Validate static Micropub paths before adapter writes (round 201 B07)
+
+- Reject absolute, parent-relative and empty document paths in all three
+  example handlers before writing.
+- `uv run pytest --no-cov -q tests/test_static_site_micropub_examples.py`
+  passed. All eight invalid-path cases failed before the fix.
+- Updated the Micropub storage examples guide and changelog Unreleased.
