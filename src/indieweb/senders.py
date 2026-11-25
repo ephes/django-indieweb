@@ -660,7 +660,11 @@ class WebmentionSender:
             return None
         finally:
             if close_client:
-                http_client.close()
+                try:
+                    http_client.close()
+                except Exception:
+                    with suppress(Exception):
+                        logger.warning("Failed to close Webmention source fetch client")
 
     def send_webmentions(
         self,

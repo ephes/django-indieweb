@@ -583,7 +583,9 @@ def test_fetch_content(sender, source_url, target_url):
         captured.append(request)
         return httpx.Response(200, text="<html><body>Test content</body></html>")
 
-    content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
+    with _make_test_client(handler) as client:
+        content = sender.fetch_content("https://example.com/page", client=client)
+        assert not client.is_closed
 
     assert content == "<html><body>Test content</body></html>"
     assert len(captured) == 1
@@ -704,6 +706,33 @@ def test_fetch_content_error(sender, source_url, target_url):
     content = sender.fetch_content("https://example.com/page", client=_make_test_client(handler))
 
     assert content is None
+
+
+@pytest.mark.parametrize("transport_fails", [False, True])
+@pytest.mark.parametrize("broken_logger", [False, True])
+def test_fetch_content_preserves_result_when_owned_close_fails(
+    sender, source_url, monkeypatch, transport_fails, broken_logger
+):
+    html = "<p>Source content</p>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if transport_fails:
+            raise httpx.ConnectError("Synthetic transport error", request=request)
+        return httpx.Response(200, text=html)
+
+    with _make_test_client(handler) as owned:
+        monkeypatch.setattr(senders.httpx, "Client", lambda **kwargs: owned)
+        monkeypatch.setattr(senders, "default_address_resolver", lambda host, port: ["93.184.216.34"])
+        warning_error = RuntimeError("Log sink unavailable") if broken_logger else None
+
+        with (
+            patch.object(owned, "close", side_effect=OSError("Synthetic cleanup details")) as close,
+            patch.object(senders.logger, "warning", side_effect=warning_error) as warning,
+        ):
+            assert sender.fetch_content(source_url) == (None if transport_fails else html)
+
+    close.assert_called_once_with()
+    warning.assert_called_once_with("Failed to close Webmention source fetch client")
 
 
 def test_send_webmentions_without_html_content(sender, source_url, target_url):

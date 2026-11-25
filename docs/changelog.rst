@@ -10,6 +10,8 @@ Unreleased
   resends can still select historical targets.
 * Report deadline exhaustion during endpoint discovery in ordinary
   Webmention dry runs, including discovery of the final target.
+* Preserve Webmention source fetch results when an internally created HTTP
+  client fails to close.
 * Parse source HTML once for link counting and target selection in the
   Webmention management command, including previews and Salmention resends.
 * Report an exhausted source deadline when Webmention send selection returns

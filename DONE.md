@@ -6552,3 +6552,11 @@ bundle.
 - The expired-budget case failed before the fix. Both it and the ordinary
   missing-endpoint case passed in the 26-test command suite.
 - Updated the management command guide in `docs/webmention.rst` and changelog Unreleased.
+
+### Preserve Webmention source fetch results on client close failure (round 208 B07)
+
+- Keep the HTML or failure result when closing a sender-owned client raises.
+  Emit a fixed warning and preserve the result even if the log sink fails.
+- All four close-failure cases raised before the fix. The source-fetch and
+  discovery cleanup checks passed after it, including caller-owned clients.
+- Updated the sender guide in `docs/webmention.rst` and changelog Unreleased.
