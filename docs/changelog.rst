@@ -22,6 +22,8 @@ Unreleased
 * Refuse draft creates before saving in the model-backed Micropub blog
   examples and remove the advertised draft capability.
 
+* Bind Webmention display projections and hydrated parent and child models
+  to the same read database so deferred loads keep the statement alias.
 * Reject Webmention parse results whose byte count exceeds the cap or
   differs from the file size observed before reading.
 * Count Webmention parse worker launch and result decoding against the

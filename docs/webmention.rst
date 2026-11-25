@@ -1783,8 +1783,11 @@ selects candidates: URL, status and requested mention-type strings are compared
 exactly in Python before display preparation, even with case-insensitive database
 collations. Parent ordering uses primary key as a stable tie-breaker; nested
 ordering and duplicate suppression retain their existing rules. Custom templates
-still receive model instances; accessing a deferred field lazily issues an extra query per instance. Hosts displaying ingestion
-metadata should load it explicitly in a host-owned queryset instead.
+still receive model instances. The tag resolves the read database once for
+both projections and binds the returned parents and children to that alias.
+Accessing a deferred field issues an extra query per instance using that
+alias by default. Hosts displaying ingestion metadata should load it
+explicitly in a host-owned queryset.
 
 Nested-response write batches
 ================================

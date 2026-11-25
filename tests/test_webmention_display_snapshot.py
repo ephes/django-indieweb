@@ -84,3 +84,51 @@ def test_render_is_one_statement_snapshot(concurrent_database, kind, size):
     fresh = show_webmentions(target, kind)
     assert {row.pk for row in fresh["webmentions"]} == after[0]
     assert not any(row.displayable_nested_responses for row in fresh["webmentions"])
+
+
+@pytest.mark.django_db(databases=["default", "other"])
+def test_display_snapshot_deferred_fields_use_the_statement_database(settings, django_assert_num_queries):
+    target = "https://target.example/routed-post"
+    now = timezone.now()
+    for alias in ("default", "other"):
+        Webmention.objects.using(alias).create(
+            pk=201,
+            source_url="https://source.example/parent",
+            target_url=target,
+            status="verified",
+            mention_type="reply",
+            content=f"Projected from {alias}",
+            spam_check_result={"replica": alias},
+        )
+        WebmentionNestedResponse.objects.using(alias).create(
+            pk=202,
+            webmention_id=201,
+            identity="https://source.example/child",
+            first_seen_at=now,
+            last_seen_at=now,
+            parsed_h_entry={"replica": alias},
+        )
+
+    class ChangingReadRouter:
+        def __init__(self):
+            self.lookups = []
+
+        def db_for_read(self, model, **hints):
+            if "instance" in hints:
+                return None  # Deferred loads fall back to the hydrated instance's database.
+            self.lookups.append(model)
+            # Allow the unpinned iterator to choose the same alias for cursor
+            # settings and for SQL, then simulate a change of preferred replica.
+            return "other" if len(self.lookups) <= 2 else "default"
+
+    router = ChangingReadRouter()
+    settings.DATABASE_ROUTERS = [router]
+
+    with django_assert_num_queries(1, using="other"), django_assert_num_queries(0, using="default"):
+        (parent,) = show_webmentions(target)["webmentions"]
+    (child,) = parent.displayable_nested_responses
+    assert parent.content == "Projected from other"
+    assert "spam_check_result" in parent.get_deferred_fields()
+    assert "parsed_h_entry" in child.get_deferred_fields()
+    assert (parent.spam_check_result, child.parsed_h_entry) == ({"replica": "other"}, {"replica": "other"})
+    assert router.lookups == [Webmention]

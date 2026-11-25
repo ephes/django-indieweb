@@ -196,8 +196,12 @@ def _display_webmention_snapshot(target_url: str) -> list[Webmention]:
         .annotate(**child_projection, child_order=Coalesce("published", "first_seen_at"))
         .values(*fields)
     )
-    rows = parent_rows.union(child_rows, all=True).order_by(
-        "-p_published", "-p_created", "p_id", "-child_order", "-c_first_seen_at", "-c_created", "c_id"
+    # Resolve routing once for the statement and for deferred model fields.
+    read_alias = parent_rows.db
+    rows = (
+        parent_rows.using(read_alias)
+        .union(child_rows.using(read_alias), all=True)
+        .order_by("-p_published", "-p_created", "p_id", "-child_order", "-c_first_seen_at", "-c_created", "c_id")
     )
     parents: dict[int, Webmention] = {}
     children: dict[int, list[WebmentionNestedResponse]] = {}
@@ -205,12 +209,12 @@ def _display_webmention_snapshot(target_url: str) -> list[Webmention]:
         if row["c_id"] is not None:
             if row["c_status"] == "verified":
                 child = WebmentionNestedResponse.from_db(
-                    rows.db, child_fields, [row[f"c_{field}"] for field in child_fields]
+                    read_alias, child_fields, [row[f"c_{field}"] for field in child_fields]
                 )
                 children.setdefault(row["p_id"], []).append(child)
         elif row["p_target_url"] == target_url and row["p_status"] == "verified":
             parents[row["p_id"]] = Webmention.from_db(
-                rows.db, parent_fields, [row[f"p_{field}"] for field in parent_fields]
+                read_alias, parent_fields, [row[f"p_{field}"] for field in parent_fields]
             )
     for pk, parent in parents.items():
         cast(Any, parent)._verified_nested_responses = children.get(pk, [])

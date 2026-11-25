@@ -6447,3 +6447,12 @@ bundle.
 - `uv run pytest --no-cov -q tests/test_static_site_micropub_examples.py`
   passed. All eight invalid-path cases failed before the fix.
 - Updated the Micropub storage examples guide and changelog Unreleased.
+
+### Bind Webmention display rows to the statement database (round 201 B08)
+
+- Resolve the read alias once and bind both projections and hydrated model
+  types to it, keeping the single-statement moderation snapshot.
+- `uv run pytest --no-cov --migrations -q tests/test_webmention_display_snapshot.py -k deferred_fields_use_the_statement_database`
+  failed before the fix because both deferred fields read the wrong replica.
+  The same test passed after the fix.
+- Updated the Webmention display query guide and changelog Unreleased.
