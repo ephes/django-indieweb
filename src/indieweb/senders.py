@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import time
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -787,8 +788,14 @@ class WebmentionSender:
         try:
             result = self._deliver_source_target(source, target_url, vouch, deadline, provenance)
         except Exception:
-            if row is not None:
-                self._release_historical_claim(row, claim)
+            if row is not None and claim is not None:
+                try:
+                    self._release_historical_claim(row, claim)
+                except Exception:
+                    # The claim can expire naturally. Even a broken log sink
+                    # must preserve the original delivery exception.
+                    with suppress(Exception):
+                        logger.warning("Failed to release Salmention resend claim")
             raise
         if "unattempted" in result:
             if row is not None:

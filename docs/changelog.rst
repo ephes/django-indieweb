@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Preserve the original Salmention delivery exception if releasing its resend
+  claim fails. The claim can expire normally.
 * Stop scanning the parsed HTML tree after the first matching rendered
   link during Webmention target and Vouch verification.
 * Start the Webmention parser's RSS watchdog when compatibility mode allows

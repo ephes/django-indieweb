@@ -6286,3 +6286,12 @@ bundle.
   `uv run sphinx-build -W -b html docs docs/_build/html` passed.
 - Docs: parser resource limits in the Webmention and configuration guides,
   plus changelog Unreleased.
+
+### Preserve Salmention delivery errors when claim cleanup fails (round 190 B02)
+
+- Attempt owner-checked cleanup after a delivery exception and emit a fixed
+  warning if cleanup fails. The original exception propagates and the lease
+  remains eligible for takeover after expiry.
+- Validation: `uv run pytest --no-cov -q tests/test_round90_outbound.py -k delivery_error_survives`
+  reproduced the masked exception before the fix and passed both cases after it.
+- Docs: historical resend reservations and changelog Unreleased.

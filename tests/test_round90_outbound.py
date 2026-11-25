@@ -1,11 +1,13 @@
 """Bounded source-run work and historical selection."""
 
+from datetime import timedelta
 from unittest.mock import Mock
 
 import httpx
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from indieweb import senders
 from indieweb.models import WebmentionOutboundTarget
@@ -190,11 +192,42 @@ def test_parallel_historical_resends_reserve_before_http(monkeypatch, concurrent
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("logging_fails", [False, True])
+def test_delivery_error_survives_claim_cleanup_failure(monkeypatch, caplog, logging_fails):
+    row = WebmentionOutboundTarget.objects.create(source_url=SOURCE, target_url="https://history.example/")
+    sender = WebmentionSender()
+    now = timezone.now()
+    monkeypatch.setattr(senders.timezone, "now", lambda: now)
+    delivery_error = RuntimeError("synthetic delivery failure")
+    deliver = Mock(side_effect=delivery_error)
+    release = Mock(side_effect=OSError("synthetic private cleanup detail"))
+    monkeypatch.setattr(sender, "_deliver_source_target", deliver)
+    monkeypatch.setattr(sender, "_release_historical_claim", release)
+    if logging_fails:
+        monkeypatch.setattr(senders.logger, "warning", Mock(side_effect=OSError("synthetic log failure")))
+
+    with pytest.raises(RuntimeError) as raised:
+        sender.resend_salmentions(SOURCE, "")
+    assert raised.value is delivery_error
+    row.refresh_from_db()
+    old_claim = row.resend_claim
+    assert old_claim is not None
+    assert release.call_args.args[0].pk == row.pk
+    assert release.call_args.args[1] == old_claim
+    assert row.last_attempted_at is None
+    if not logging_fails:
+        assert "Failed to release Salmention resend claim" in caplog.text
+        assert "synthetic private cleanup detail" not in caplog.text
+
+    _, skipped = sender._claim_historical_target(row, deadline=senders.time.monotonic() + 5)
+    assert skipped is not None and skipped["skip_reason"] == "claimed"
+    now = row.resend_claim_expires_at + timedelta(seconds=1)
+    new_claim, skipped = sender._claim_historical_target(row, deadline=senders.time.monotonic() + 5)
+    assert skipped is None and new_claim is not None and new_claim != old_claim
+
+
+@pytest.mark.django_db
 def test_expired_claim_recovery_fences_old_completion():
-    from datetime import timedelta
-
-    from django.utils import timezone
-
     row = WebmentionOutboundTarget.objects.create(source_url=SOURCE, target_url="https://history.example/")
     sender = WebmentionSender()
     old, skipped = sender._claim_historical_target(row, deadline=senders.time.monotonic() + 5)

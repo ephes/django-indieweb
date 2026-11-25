@@ -1828,7 +1828,10 @@ cooldown timestamp. Completion records history and clears the claim only for
 its live owner. A current-link attempt can update the shared history while
 the historical owner retains its claim. A replacement claim or deletion
 fences an older completion. Deadline refusals release only their own claim;
-already accepted deliveries retain their outcomes. A worker that continues
+already accepted deliveries retain their outcomes. If delivery raises, claim
+cleanup is best-effort. A cleanup failure is reported without URLs or exception
+details, the original delivery exception propagates, and the lease can expire
+naturally. A worker that continues
 past lease expiry cannot commit history, though the remote HTTP endpoint may
 already have accepted its request; delivery is not exactly once.
 
