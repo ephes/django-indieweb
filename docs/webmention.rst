@@ -1081,10 +1081,10 @@ Webmention row and suppresses the duplicate inline child when the child
 ``identity`` or ``response_url`` matches a verified top-level ``source_url`` for
 the same target. This suppression is type-agnostic: a direct top-level response
 can suppress a duplicate inline child even when ``show_webmentions`` is filtered
-to a different mention type. When the same stable child identity is discovered
-under more than one displayed parent for the same target, ``show_webmentions``
-renders that child only under the first parent in the existing top-level
-ordering and suppresses the later inline copies.
+to a different mention type. For inline copies, ``show_webmentions`` compares
+each verified child’s identity and nonempty response URL with those of
+children already selected for display. If any key matches, only the first
+copy in the existing parent and child order renders.
 
 Queued processing must keep the existing async receive boundary. The endpoint
 should continue to validate, create or reuse the submitted ``Webmention`` row,
@@ -1781,9 +1781,9 @@ the exact target share that statement snapshot with parents and children, so a c
 commit cannot mix generations during duplicate suppression. SQL equality only
 selects candidates: URL, status and requested mention-type strings are compared
 exactly in Python before display preparation, even with case-insensitive database
-collations. Parent ordering uses primary key as a stable tie-breaker; nested
-ordering and duplicate suppression retain their existing rules. Custom templates
-still receive model instances. The tag resolves the read database once for
+collations. Parent ordering uses primary key as a stable tie-breaker. Nested
+ordering and duplicate suppression follow the rendering rules above. Custom
+templates receive model instances. The tag resolves the read database once for
 both projections and binds the returned parents and children to that alias.
 Accessing a deferred field issues an extra query per instance using that
 alias by default. Hosts displaying ingestion metadata should load it

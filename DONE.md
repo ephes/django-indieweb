@@ -6456,3 +6456,13 @@ bundle.
   failed before the fix because both deferred fields read the wrong replica.
   The same test passed after the fix.
 - Updated the Webmention display query guide and changelog Unreleased.
+
+### Deduplicate nested Webmention display by URL alias (round 201 B08)
+
+- Compare each verified child's identity and response URL with the same keys
+  from earlier displayed children. Keep direct Webmention suppression and
+  render order.
+- `uv run pytest --no-cov --migrations -q tests/test_webmention_templatetags.py`
+  passed, including first-render priority and direct-source suppression.
+  The shared-response-URL case rendered twice before the fix.
+- Updated the Webmention rendering guide and changelog Unreleased.

@@ -24,6 +24,8 @@ Unreleased
 
 * Bind Webmention display projections and hydrated parent and child models
   to the same read database so deferred loads keep the statement alias.
+* Suppress later inline copies of verified nested Webmention responses when
+  their identity or response URL matches an earlier displayed child.
 * Reject Webmention parse results whose byte count exceeds the cap or
   differs from the file size observed before reading.
 * Count Webmention parse worker launch and result decoding against the

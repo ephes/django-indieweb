@@ -29,7 +29,7 @@ def _attach_displayable_nested_responses(
     direct_source_urls: set[str],
 ) -> list[Webmention]:
     """Attach template-ready nested responses while suppressing duplicate renders."""
-    displayed_child_identities: set[str] = set()
+    displayed_child_keys: set[str] = set()
     prepared_webmentions = []
 
     for webmention in webmentions:
@@ -38,12 +38,11 @@ def _attach_displayable_nested_responses(
 
         if webmention.mention_type == "reply":
             for nested_response in prefetched_children:
-                if _nested_response_keys(nested_response) & direct_source_urls:
-                    continue
-                if nested_response.identity in displayed_child_identities:
+                keys = _nested_response_keys(nested_response)
+                if keys & direct_source_urls or keys & displayed_child_keys:
                     continue
 
-                displayed_child_identities.add(nested_response.identity)
+                displayed_child_keys.update(keys)
                 displayable_nested_responses.append(_prepare_nested_response_for_display(nested_response))
 
         cast(Any, webmention).displayable_nested_responses = displayable_nested_responses

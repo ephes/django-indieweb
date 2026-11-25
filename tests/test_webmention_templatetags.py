@@ -455,8 +455,9 @@ def test_direct_top_level_suppression_ignores_current_type_filter(
     assert "Filtered inline duplicate content" not in rendered
 
 
-def test_duplicate_nested_identity_renders_once_under_first_displayed_parent(
-    target_url, render_webmentions, create_nested_response
+@pytest.mark.parametrize("shared_key", ["identity", "response_url"])
+def test_duplicate_nested_response_renders_once_under_first_displayed_parent(
+    target_url, render_webmentions, create_nested_response, shared_key
 ):
     """The first parent in top-level ordering owns a duplicated nested child."""
     now = timezone.now()
@@ -478,16 +479,24 @@ def test_duplicate_nested_identity_renders_once_under_first_displayed_parent(
         published=now + timedelta(days=2),
         status="verified",
     )
-    shared_identity = "https://comments.example/shared"
+    shared_url = "https://comments.example/shared"
+    if shared_key == "identity":
+        older_identity = newer_identity = shared_url
+        older_url, newer_url = f"{shared_url}#older", f"{shared_url}#newer"
+    else:
+        older_identity, newer_identity = f"{shared_url}#older", f"{shared_url}#newer"
+        older_url = newer_url = shared_url
     create_nested_response(
         older_parent,
-        shared_identity,
+        older_identity,
+        response_url=older_url,
         content="Child via older parent",
         content_html="<p>Child via older parent</p>",
     )
     create_nested_response(
         newer_parent,
-        shared_identity,
+        newer_identity,
+        response_url=newer_url,
         content="Child via newer parent",
         content_html="<p>Child via newer parent</p>",
     )
