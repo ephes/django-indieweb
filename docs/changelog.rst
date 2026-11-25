@@ -14,6 +14,8 @@ Unreleased
   cleanup also fails.
 * Attempt every required static-site Micropub directory sync after linking
   a post, even when stage cleanup or another directory sync fails.
+* Refuse draft creates before saving in the model-backed Micropub blog
+  examples and remove the advertised draft capability.
 
 * Reject Webmention parse results whose byte count exceeds the cap or
   differs from the file size observed before reading.

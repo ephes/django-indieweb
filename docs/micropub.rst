@@ -59,6 +59,9 @@ handler:
 
    class BlogPostMicropubHandler(MicropubContentHandler):
        def create_entry(self, properties, user):
+           if properties.get('post-status', ['published']) != ['published']:
+               raise ValueError('This handler only supports published posts')
+
            # Extract properties
            content = properties.get('content', [''])[0]
            name = properties.get('name', [''])[0]
@@ -201,11 +204,10 @@ cleanup. A directory renamed after opening remains the publication directory;
 host code must control directory permissions and reconcile such moves before
 serving the returned URL. POSIX name checks and hardlink or unlink operations
 are separate calls, so the post directories must be writable only by trusted
-writers. Unsupported platforms fail rather than falling back
-to pathname writes. The stage is created exclusively with mode 0666 filtered
-through the process umask (typically giving 0644), so the published post has
-the mode of a plain file create; the example
-never changes the umask. Adapt the umask to your build user.
+writers. The handler requires these POSIX primitives for all writes. It
+creates the stage exclusively with mode 0666 filtered through the process
+umask (typically giving 0644), so the published post has the mode of a plain
+file create. Set the umask for your build user.
 After linking, the handler attempts to remove the stage and then syncs the
 held publication directory and each parent up to and including the content
 root. It attempts every required directory sync even if stage cleanup or an
@@ -228,8 +230,9 @@ host's slug policy). If stage cleanup also fails, the handler preserves the
 original error and adds a diagnostic note. If directory syncing or stage
 cleanup fails after the link, the post remains in place and
 ``StaticSitePublicationUncertainError`` identifies its relative path. The
-underlying error retains any additional failures as diagnostic notes. Stop the writer, inspect the post and any ``.micropub-*.tmp`` stage,
-reconcile it with the request, repair storage and sync the directory chain
+underlying error retains any additional failures as diagnostic notes. Stop
+the writer, inspect the post and any ``.micropub-*.tmp`` stage, reconcile it
+with the request, repair storage and sync the directory chain
 before deciding whether to acknowledge or retry. A process kill can likewise
 leave a complete post or hidden stage without an acknowledgement; inspect and
 remove abandoned stages only after ensuring the writer has stopped.
@@ -406,6 +409,13 @@ requests so your configured ``MicropubContentHandler.create_entry()`` can make
 host-specific decisions. It does not execute those commands itself: it does
 not generate slugs, choose or route channels, attach ``mp-photo-alt`` to stored
 files, cross-post, enqueue syndication, or implement draft storage.
+
+The model-backed ``SimpleBlogHandler`` and ``DraftAwareBlogHandler`` examples
+in ``examples/handlers_example.py`` accept published creates and refuse
+drafts with ``400 invalid_request`` before saving a post. Their Micropub
+configuration omits draft capability. To enable it in an adapted handler,
+save drafts in a state that keeps them out of public views, feeds, and
+syndication before advertising support.
 
 Form-encoded creates normalize submitted command values to property arrays.
 Single values become one-item arrays:

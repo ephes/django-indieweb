@@ -44,6 +44,9 @@ Round 128 Webmention receive and nested-display database authority is recorded i
 Round 131 debug-client credential origin confinement and the Micropub bearer
 wire contract are recorded in `DONE.md`.
 
+Round 198 Micropub staging descriptor ownership, file identity, publication
+results, and draft refusal are recorded in `DONE.md`.
+
 ## Priority 1
 
 No current Priority 1 items.

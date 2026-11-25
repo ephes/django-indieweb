@@ -4,6 +4,13 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Refuse unsupported drafts in the Micropub blog examples (round 198 B16)
+
+- Refuse draft creates before writing a row and remove the draft configuration.
+- `uv run pytest --no-cov -q tests/test_micropub_blog_examples.py` covers both
+  handlers at the HTTP endpoint. Both published the draft before the fix.
+- Updated the Micropub guide and changelog Unreleased.
+
 ### Sync static-site publication after staging cleanup errors (round 198 B16)
 
 - Attempt the full directory sync chain after a successful link and keep

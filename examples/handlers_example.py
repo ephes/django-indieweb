@@ -48,6 +48,9 @@ class SimpleBlogHandler(MicropubContentHandler):
 
         from django.utils.text import slugify
 
+        if properties.get("post-status", ["published"]) != ["published"]:
+            raise ValueError("This example only supports published posts")
+
         # Extract content
         content = properties.get("content", [""])[0]
         name = properties.get("name", [""])[0]
@@ -139,34 +142,12 @@ class SimpleBlogHandler(MicropubContentHandler):
         raise ValueError("Undelete not supported")
 
 
-# Example 2: Multi-user site with draft support
+# Example 2: Multi-user site with custom post-type discovery
 class DraftAwareBlogHandler(SimpleBlogHandler):
-    """
-    Extended handler that supports draft posts and multiple users.
-    """
-
-    def create_entry(self, properties: dict[str, list[Any]], user: User) -> MicropubEntry:
-        # Check for draft status
-        post_status = properties.get("post-status", ["published"])[0]
-
-        # Create entry using parent method
-        entry = super().create_entry(properties, user)
-
-        # If draft, update the post
-        if post_status == "draft":
-            slug = entry.url.strip("/").split("/")[-1]
-            _post = SimpleBlogPost.objects.get(slug=slug)
-            # You'd add a status field to your model
-            # post.status = 'draft'
-            # post.save()
-
-        return entry
+    """Customize post-type discovery while rejecting unsupported draft creates."""
 
     def get_config(self, user: User) -> dict[str, Any]:
         config = super().get_config(user)
-
-        # Add draft support
-        config["post-status"] = ["published", "draft"]
 
         # Add supported vocabulary
         config["post-types"] = [
