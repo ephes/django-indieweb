@@ -5,6 +5,7 @@ import json
 import logging
 import subprocess
 import sys
+import tempfile
 import time
 from types import SimpleNamespace
 
@@ -351,6 +352,40 @@ def test_result_larger_than_the_limit_is_not_read(monkeypatch):
             parse_isolation.run_parse_worker({"operation": "vouch", "html": "", "source_url": SOURCE_URL})
 
     assert rejected.value.reason == "result size limit"
+
+
+@pytest.mark.parametrize(
+    ("limit", "changed_receipt"),
+    [(3, b"{}  "), (5, b"{}  "), (5, b"{}")],
+    ids=["over-limit-growth", "within-limit-growth", "shrinkage"],
+)
+def test_worker_receipt_must_match_admitted_size(monkeypatch, settings, limit, changed_receipt):
+    settings.INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES = limit
+    monkeypatch.setattr(parse_isolation, "_worker_command", worker_command_running("print('{}')"))
+    decoded = []
+
+    def decode(payload):
+        decoded.append(payload)
+        return json.loads(payload)
+
+    monkeypatch.setattr(parse_isolation, "json", SimpleNamespace(dumps=json.dumps, loads=decode))
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        files = iter((stdout, stderr))
+        monkeypatch.setattr(parse_isolation.tempfile, "TemporaryFile", lambda: next(files))
+        read = stdout.read
+
+        def read_changed_receipt(size):
+            stdout.write(changed_receipt)
+            stdout.truncate()
+            stdout.seek(0)
+            return read(size)
+
+        monkeypatch.setattr(stdout, "read", read_changed_receipt)
+        with pytest.raises(WebmentionSourceRejected) as rejected:
+            parse_isolation.run_parse_worker({})
+
+    assert rejected.value.reason == "result size limit"
+    assert not decoded
 
 
 @pytest.mark.django_db

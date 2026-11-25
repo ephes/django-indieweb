@@ -346,7 +346,8 @@ document, with these limits:
   encoding, worker launch and execution, and receipt decoding, starting
   after slot acquisition;
 * result size: ``INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES`` (checked by the
-  child, by the kernel as ``RLIMIT_FSIZE``, and by the receiving process);
+  child, by the kernel as ``RLIMIT_FSIZE``, and by the receiving process
+  against both the file size and the bytes read before decoding);
 * stored size: ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES`` for the parsed data
   that would be written to the database.
 

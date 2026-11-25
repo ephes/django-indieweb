@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Reject Webmention parse results whose byte count exceeds the cap or
+  differs from the file size observed before reading.
 * Count Webmention parse worker launch and result decoding against the
   wall-clock limit after slot acquisition.
 * Preserve Webmention discovery results when closing an internally created

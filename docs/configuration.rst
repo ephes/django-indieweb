@@ -1553,9 +1553,10 @@ fetched document.
 The parsed microformats of a document can be many times larger than the
 document. The child refuses to write a larger result, the kernel enforces the
 same value as its file-size limit (``RLIMIT_FSIZE``), and the receiving
-process checks the size before it reads the result. Over the limit the
-Webmention is marked ``failed``. Invalid or non-positive values fall back to
-the default.
+process checks the file size before reading. It decodes the result only if
+the number of bytes read matches that size and stays within the cap. A
+size violation marks the Webmention ``failed``. Invalid or non-positive
+values fall back to the default.
 
 INDIEWEB_WEBMENTION_MAX_STORED_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

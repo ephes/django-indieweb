@@ -6384,3 +6384,12 @@ bundle.
   They pass with the existing timeout and slot-release tests via
   `uv run pytest --no-cov -q tests/test_webmention_parse_isolation.py -k 'worker_wall_deadline_covers_launch_and_decode or wall_clock_limit_ends_the_analysis or parse_capacity_released_after_worker_failure'`.
 - Updated the Webmention and configuration guides and changelog Unreleased.
+
+### Recheck the Webmention parse result size after reading (round 197 B11)
+
+- Reject oversized receipts and receipts that differ from the measured file
+  size before decoding.
+- Growth past the cap, growth within the cap and shrinkage failed before
+  the fix and pass via
+  `uv run pytest --no-cov -q tests/test_webmention_parse_isolation.py -k 'result_size or result_larger or receipt_must_match_admitted_size'`.
+- Updated the Webmention and configuration guides and changelog Unreleased.

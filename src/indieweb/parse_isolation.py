@@ -349,10 +349,14 @@ def _receive_worker_result(request: dict[str, Any], limits: ParseLimits, slot: i
             _log_worker_stderr(reason, stderr)
             raise WebmentionSourceRejected(reason)
 
-        if os.fstat(stdout.fileno()).st_size > limits.max_result_bytes:
+        result_size = os.fstat(stdout.fileno()).st_size
+        if result_size > limits.max_result_bytes:
             raise WebmentionSourceRejected("result size limit")
         stdout.seek(0)
-        payload = stdout.read(limits.max_result_bytes + 1)
+        # The extra byte detects growth beyond the admitted size.
+        payload = stdout.read(result_size + 1)
+        if len(payload) != result_size:
+            raise WebmentionSourceRejected("result size limit")
         _remaining_parse_time(deadline)
 
         try:
