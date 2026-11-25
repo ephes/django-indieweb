@@ -247,6 +247,43 @@ def test_command_dry_run(mock_sender_class):
     mock_sender.resend_salmentions.assert_not_called()
 
 
+@pytest.mark.parametrize("deadline_exceeded", [False, True])
+def test_command_dry_run_checks_deadline_after_final_discovery(settings, monkeypatch, deadline_exceeded):
+    settings.INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS = 1
+    now = 100.0
+    first = "https://first.example/post"
+    final = "https://final.example/post"
+    endpoint = "https://first.example/webmention"
+    out = StringIO()
+
+    def discover(url, *, deadline):
+        nonlocal now
+        assert deadline == 101.0
+        if url == first:
+            return endpoint
+        assert url == final
+        if deadline_exceeded:
+            now = deadline + 1.0
+        return None
+
+    monkeypatch.setattr(senders.time, "monotonic", lambda: now)
+    with patch.object(senders.WebmentionSender, "discover_endpoint", side_effect=discover) as mock_discover:
+        options = {
+            "content": f'<a href="{first}">First</a><a href="{final}">Final</a>',
+            "dry_run": True,
+            "stdout": out,
+        }
+        if deadline_exceeded:
+            with pytest.raises(CommandError, match="Source deadline exceeded"):
+                call_command("send_webmentions", "https://source.example/post", **options)
+        else:
+            call_command("send_webmentions", "https://source.example/post", **options)
+
+    assert [call.args[0] for call in mock_discover.call_args_list] == [first, final]
+    assert f"{first} -> {endpoint}" in out.getvalue()
+    assert (f"{final} (no endpoint found)" in out.getvalue()) is not deadline_exceeded
+
+
 @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
 @patch("sys.stdin", StringIO('<a href="https://target.com">Link from stdin</a>'))
 def test_command_stdin_input(mock_sender_class):

@@ -205,6 +205,8 @@ class Command(BaseCommand):
             if time.monotonic() >= self.source_deadline:
                 raise CommandError("Source deadline exceeded; remaining targets unattempted")
             endpoint = sender.discover_endpoint(url, deadline=self.source_deadline)
+            if time.monotonic() >= self.source_deadline:
+                raise CommandError("Source deadline exceeded during endpoint discovery")
             if endpoint:
                 self.stdout.write(f"  - {redact_url(url)} -> {redact_url(endpoint)}")
             else:

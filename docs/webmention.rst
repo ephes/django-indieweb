@@ -1553,7 +1553,11 @@ distinct nonempty link hrefs in document order, before URL safety, same-host
 and fanout filtering. Both preview and delivery use those same links for
 selection. Salmention modes also consider the source's recorded history.
 In ordinary send mode, an empty selection that reaches the source deadline
-is reported as a deadline failure.
+is reported as a deadline failure. The ordinary dry run checks the deadline
+after each discovery, including the final target. If the deadline expires,
+the command raises ``CommandError`` and keeps the output from targets already
+reported. A completed discovery without an endpoint still prints
+``no endpoint found``.
 
 All command URL output, including fetch errors and both dry-run modes, uses
 the configured ``INDIEWEB_LOG_REDACTION`` policy. In ``passthrough`` mode,

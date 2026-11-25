@@ -6544,3 +6544,11 @@ bundle.
 - The empty-fetch preview regression failed before the fix and passed after
   it alongside the failed-fetch check in `tests/test_send_webmentions_command.py`.
 - Updated the management command guide in `docs/webmention.rst` and changelog Unreleased.
+
+### Report a deadline exceeded during the final dry-run discovery (round 208 B07)
+
+- Check the ordinary preview's budget again after discovery. A late result
+  raises a command error and preserves earlier target lines.
+- The expired-budget case failed before the fix. Both it and the ordinary
+  missing-endpoint case passed in the 26-test command suite.
+- Updated the management command guide in `docs/webmention.rst` and changelog Unreleased.

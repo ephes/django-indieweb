@@ -8,6 +8,8 @@ Unreleased
 
 * Accept successfully fetched empty Webmention sources so Salmention
   resends can still select historical targets.
+* Report deadline exhaustion during endpoint discovery in ordinary
+  Webmention dry runs, including discovery of the final target.
 * Parse source HTML once for link counting and target selection in the
   Webmention management command, including previews and Salmention resends.
 * Report an exhausted source deadline when Webmention send selection returns
