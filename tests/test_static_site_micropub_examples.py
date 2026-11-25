@@ -441,25 +441,30 @@ def test_local_publication_syncs_file_then_link_cleanup_and_all_directories(tmp_
             os.fstat(fd)
 
 
-@pytest.mark.parametrize("failure", ["file", "leaf", "ancestor", "cleanup"])
+@pytest.mark.parametrize("failure", ["file", "leaf", "ancestor", "cleanup", "cleanup_and_leaf"])
 def test_local_publication_failure_distinguishes_safe_retry_and_uncertainty(tmp_path, monkeypatch, failure):
     handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
     document = handler.mapper.build_document({"mp-slug": ["uncertain"], "content": ["Synthetic retained post"]})
     target = tmp_path / document.path
     sync, unlink = os.fsync, os.unlink
     synced_directories = []
+    sync_attempts = []
+    cleanup_fails = failure in {"cleanup", "cleanup_and_leaf"}
+    sync_failure_at = {"leaf": 1, "ancestor": 2, "cleanup_and_leaf": 1}.get(failure)
 
     def fail_sync(fd):
-        if stat.S_ISDIR(os.fstat(fd).st_mode):
+        info = os.fstat(fd)
+        sync_attempts.append(info.st_ino)
+        if stat.S_ISDIR(info.st_mode):
             synced_directories.append(fd)
-            if failure == "leaf" or (failure == "ancestor" and len(synced_directories) == 2):
+            if len(synced_directories) == sync_failure_at:
                 raise OSError("Synthetic directory sync failure")
         elif failure == "file":
             raise OSError("Synthetic file sync failure")
         sync(fd)
 
     def fail_cleanup(*args, **kwargs):
-        if failure == "cleanup":
+        if cleanup_fails:
             raise OSError("Synthetic cleanup failure")
         return unlink(*args, **kwargs)
 
@@ -478,13 +483,20 @@ def test_local_publication_failure_distinguishes_safe_retry_and_uncertainty(tmp_
         assert isinstance(caught.value.__cause__, OSError)
         assert document.path.as_posix() in str(caught.value)
         assert target.read_text() == document.render_markdown()
+        assert sync_attempts == [
+            path.stat().st_ino for path in (target, target.parent, target.parent.parent, tmp_path)
+        ]
+        if cleanup_fails:
+            assert "Synthetic cleanup failure" in str(caught.value.__cause__)
+            notes = getattr(caught.value.__cause__, "__notes__", [])
+            assert any("Synthetic directory sync failure" in note for note in notes) == (failure == "cleanup_and_leaf")
         monkeypatch.setattr("examples.static_site_micropub.os.fsync", sync)
         monkeypatch.setattr("examples.static_site_micropub.os.unlink", unlink)
         with pytest.raises(FileExistsError):
             handler.save_document(document, DummyUser())
     assert target.read_text() == document.render_markdown()
     stages = list(target.parent.glob(".micropub-*"))
-    assert len(stages) == (1 if failure == "cleanup" else 0)
+    assert len(stages) == int(cleanup_fails)
     for fd in synced_directories:
         with pytest.raises(OSError):
             os.fstat(fd)

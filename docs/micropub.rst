@@ -206,9 +206,10 @@ to pathname writes. The stage is created exclusively with mode 0666 filtered
 through the process umask (typically giving 0644), so the published post has
 the mode of a plain file create; the example
 never changes the umask. Adapt the umask to your build user.
-After linking and removing the stage, the handler syncs the held publication
-directory and each parent up to and including the content root, so new post
-directories are durable before success. Above the content root it syncs only
+After linking, the handler attempts to remove the stage and then syncs the
+held publication directory and each parent up to and including the content
+root. It attempts every required directory sync even if stage cleanup or an
+earlier directory sync fails. Above the content root it syncs only
 the parents of directories this call created; other pre-existing ancestors,
 possibly on other mounts, are left alone. The content root and its post
 directories must be readable by the writer. Ancestors above the content root
@@ -225,9 +226,9 @@ A failure before the exclusive link creates no final post and may be
 retried after fixing storage (an existing-post collision still requires the
 host's slug policy). If stage cleanup also fails, the handler preserves the
 original error and adds a diagnostic note. If directory syncing or stage
-cleanup fails after the link, ``StaticSitePublicationUncertainError`` retains the published post and
-identifies its relative path; it is an uncertain outcome, not a safe automatic
-retry. Stop the writer, inspect the post and any ``.micropub-*.tmp`` stage,
+cleanup fails after the link, the post remains in place and
+``StaticSitePublicationUncertainError`` identifies its relative path. The
+underlying error retains any additional failures as diagnostic notes. Stop the writer, inspect the post and any ``.micropub-*.tmp`` stage,
 reconcile it with the request, repair storage and sync the directory chain
 before deciding whether to acknowledge or retry. A process kill can likewise
 leave a complete post or hidden stage without an acknowledgement; inspect and

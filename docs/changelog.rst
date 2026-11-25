@@ -12,6 +12,8 @@ Unreleased
   linking it into place or removing it. Leave detected replacements untouched.
 * Keep the original static-site Micropub publication error when stage
   cleanup also fails.
+* Attempt every required static-site Micropub directory sync after linking
+  a post, even when stage cleanup or another directory sync fails.
 
 * Reject Webmention parse results whose byte count exceeds the cap or
   differs from the file size observed before reading.

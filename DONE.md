@@ -4,6 +4,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Sync static-site publication after staging cleanup errors (round 198 B16)
+
+- Attempt the full directory sync chain after a successful link and keep
+  additional failures on the cause of the publication uncertainty error.
+- The `cleanup` and `cleanup_and_leaf` cases of
+  `test_local_publication_failure_distinguishes_safe_retry_and_uncertainty`
+  failed before the fix and pass afterward.
+- Updated the Micropub guide and changelog Unreleased.
+
 ### Preserve the static-site Micropub publication refusal (round 198 B16)
 
 - Keep the original pre-publication exception and attach stage cleanup details.

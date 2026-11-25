@@ -260,6 +260,20 @@ def _open_stage(stage: str, directory: int) -> Iterator[tuple[int, os.stat_resul
                 primary.add_note(f"Static-site stage descriptor close failed: {exc}")
 
 
+def _sync_publication_directories(directories: list[int], error: OSError | None) -> None:
+    # Sync children before the directory entries naming them.
+    for directory in reversed(directories):
+        try:
+            os.fsync(directory)
+        except OSError as exc:
+            if error is None:
+                error = exc
+            else:
+                error.add_note(f"Static-site directory sync failed: {exc}")
+    if error is not None:
+        raise error
+
+
 class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
     """Example handler that writes new Markdown files under one configured root."""
 
@@ -268,7 +282,7 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
         self.content_root = Path(content_root).resolve()
 
     @contextlib.contextmanager
-    def _publication_directory(self, document: StaticPostDocument) -> Iterator[int]:
+    def _publication_directory(self, document: StaticPostDocument) -> Iterator[tuple[int, list[int]]]:
         if document.path.is_absolute() or ".." in document.path.parts or not document.path.name:
             raise ValueError("Static-site document path escaped the configured content root")
         # Require POSIX no-follow/dir_fd support; never fall back to pathname writes.
@@ -308,37 +322,39 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
                     sync_from = min(sync_from, depth - 1)
                 directory, readable = open_directory(part, ancestor=depth < root_depth, dir_fd=directory)
                 chain.append((directory, readable))
-            yield directory
-            # Persist the final entry and stage removal before acknowledging.
-            # Sync children before the entries naming them.
-            for directory, readable in reversed(chain[sync_from:]):
-                if readable:
-                    os.fsync(directory)
+            yield directory, [fd for fd, readable in chain[sync_from:] if readable]
 
     def save_document(self, document: StaticPostDocument, user: AbstractBaseUser) -> None:
         published = False
         try:
-            with self._publication_directory(document) as directory:
+            with self._publication_directory(document) as (directory, directories_to_sync):
                 stage = f".micropub-{secrets.token_hex(8)}.tmp"
-                with _open_stage(stage, directory) as (fd, identity):
-                    with os.fdopen(fd, "wb", closefd=False) as staged:
-                        staged.write(document.render_markdown().encode("utf-8"))
-                        staged.flush()
-                        os.fsync(staged.fileno())
-                    _require_stage_identity(stage, directory, identity)
-                    try:
-                        os.link(
-                            stage,
-                            document.path.name,
-                            src_dir_fd=directory,
-                            dst_dir_fd=directory,
-                            follow_symlinks=False,
-                        )
-                        published = True
-                    except FileExistsError as exc:
-                        raise FileExistsError(
-                            f"Static-site document already exists: {document.path.as_posix()}"
-                        ) from exc
+                cleanup_error = None
+                try:
+                    with _open_stage(stage, directory) as (fd, identity):
+                        with os.fdopen(fd, "wb", closefd=False) as staged:
+                            staged.write(document.render_markdown().encode("utf-8"))
+                            staged.flush()
+                            os.fsync(staged.fileno())
+                        _require_stage_identity(stage, directory, identity)
+                        try:
+                            os.link(
+                                stage,
+                                document.path.name,
+                                src_dir_fd=directory,
+                                dst_dir_fd=directory,
+                                follow_symlinks=False,
+                            )
+                            published = True
+                        except FileExistsError as exc:
+                            raise FileExistsError(
+                                f"Static-site document already exists: {document.path.as_posix()}"
+                            ) from exc
+                except OSError as exc:
+                    if not published:
+                        raise
+                    cleanup_error = exc
+                _sync_publication_directories(directories_to_sync, cleanup_error)
         except OSError as exc:
             if not published:
                 raise
