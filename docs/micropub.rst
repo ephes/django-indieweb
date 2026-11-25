@@ -223,8 +223,9 @@ handler creates.
 
 A failure before the exclusive link creates no final post and may be
 retried after fixing storage (an existing-post collision still requires the
-host's slug policy). If directory syncing or stage cleanup fails after the
-link, ``StaticSitePublicationUncertainError`` retains the published post and
+host's slug policy). If stage cleanup also fails, the handler preserves the
+original error and adds a diagnostic note. If directory syncing or stage
+cleanup fails after the link, ``StaticSitePublicationUncertainError`` retains the published post and
 identifies its relative path; it is an uncertain outcome, not a safe automatic
 retry. Stop the writer, inspect the post and any ``.micropub-*.tmp`` stage,
 reconcile it with the request, repair storage and sync the directory chain

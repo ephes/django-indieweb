@@ -228,6 +228,38 @@ def _require_stage_identity(stage: str, directory: int, identity: os.stat_result
         raise OSError(errno.ESTALE, "Static-site staging file changed", stage)
 
 
+@contextlib.contextmanager
+def _open_stage(stage: str, directory: int) -> Iterator[tuple[int, os.stat_result]]:
+    # A plain-file mode is filtered by the kernel through the process umask.
+    fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=directory)
+    identity = None
+    primary: BaseException | None = None
+    try:
+        identity = os.fstat(fd)
+        yield fd, identity
+    except BaseException as exc:
+        primary = exc
+        raise
+    finally:
+        try:
+            if identity is not None:
+                with contextlib.suppress(FileNotFoundError):
+                    _require_stage_identity(stage, directory, identity)
+                    os.unlink(stage, dir_fd=directory)
+        except OSError as exc:
+            if primary is None:
+                primary = exc
+                raise
+            primary.add_note(f"Static-site stage cleanup failed: {exc}")
+        finally:
+            try:
+                os.close(fd)
+            except OSError as exc:
+                if primary is None:
+                    raise
+                primary.add_note(f"Static-site stage descriptor close failed: {exc}")
+
+
 class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
     """Example handler that writes new Markdown files under one configured root."""
 
@@ -287,13 +319,8 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
         published = False
         try:
             with self._publication_directory(document) as directory:
-                # The hardlink publishes the stage's inode. Use a plain-file mode
-                # filtered by the kernel through the umask; never change the umask.
                 stage = f".micropub-{secrets.token_hex(8)}.tmp"
-                fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=directory)
-                identity = None
-                try:
-                    identity = os.fstat(fd)
+                with _open_stage(stage, directory) as (fd, identity):
                     with os.fdopen(fd, "wb", closefd=False) as staged:
                         staged.write(document.render_markdown().encode("utf-8"))
                         staged.flush()
@@ -312,14 +339,6 @@ class LocalFilesystemStaticSiteHandler(StaticSiteMicropubHandler):
                         raise FileExistsError(
                             f"Static-site document already exists: {document.path.as_posix()}"
                         ) from exc
-                finally:
-                    try:
-                        if identity is not None:
-                            with contextlib.suppress(FileNotFoundError):
-                                _require_stage_identity(stage, directory, identity)
-                                os.unlink(stage, dir_fd=directory)
-                    finally:
-                        os.close(fd)
         except OSError as exc:
             if not published:
                 raise

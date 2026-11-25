@@ -161,6 +161,37 @@ def test_local_filesystem_handler_rejects_slug_collisions(tmp_path):
         handler.create_entry(properties, DummyUser())
 
 
+@pytest.mark.parametrize("collision", [False, True])
+def test_local_publication_preserves_refusal_when_stage_cleanup_fails(tmp_path, monkeypatch, collision):
+    handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
+    document = handler.mapper.build_document({"content": ["Synthetic rejected post"]})
+    target = tmp_path / document.path
+
+    def fail_cleanup(*args, **kwargs):
+        raise PermissionError("Synthetic cleanup failure")
+
+    def fail_render(self):
+        raise ValueError("Synthetic rendering failure")
+
+    if collision:
+        target.parent.mkdir(parents=True)
+        target.write_text("Synthetic existing post")
+    else:
+        monkeypatch.setattr(StaticPostDocument, "render_markdown", fail_render)
+
+    with monkeypatch.context() as patches:
+        patches.setattr("examples.static_site_micropub.os.unlink", fail_cleanup)
+        error_type, message = (FileExistsError, "already exists") if collision else (ValueError, "rendering failure")
+        with pytest.raises(error_type, match=message) as caught:
+            handler.save_document(document, DummyUser())
+
+    assert any("Synthetic cleanup failure" in note for note in caught.value.__notes__)
+    if collision:
+        assert target.read_text() == "Synthetic existing post"
+    else:
+        assert not target.exists()
+
+
 def test_local_filesystem_concurrent_creates_publish_one_complete_post(tmp_path, monkeypatch):
     handler = LocalFilesystemStaticSiteHandler(content_root=tmp_path, public_base_url="https://example.org/")
     documents = [
