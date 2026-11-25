@@ -691,6 +691,8 @@ class WebmentionSender:
 
         # Extract deliverable target URLs from content
         target_urls = self.select_target_urls(source_url, html_content)
+        if not target_urls and time.monotonic() >= deadline:
+            return [_deadline_result(source_url)]
 
         # Send webmentions to each URL
         results = []

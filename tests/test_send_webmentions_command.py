@@ -262,6 +262,32 @@ def test_command_no_webmentions_sent(mock_sender_class):
     assert "No webmentions were sent (no valid targets found)" in output
 
 
+def test_command_reports_deadline_when_selection_returns_no_targets(settings, monkeypatch):
+    settings.INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS = 1
+    now = 100.0
+
+    def select_no_targets(sender, source_url, html_content):
+        nonlocal now
+        now += 2.0
+        return []
+
+    monkeypatch.setattr(senders.time, "monotonic", lambda: now)
+    monkeypatch.setattr(senders.WebmentionSender, "select_target_urls", select_no_targets)
+    out = StringIO()
+    with (
+        patch.object(senders.WebmentionSender, "discover_endpoint") as discover,
+        patch.object(senders.WebmentionSender, "send_webmention") as send,
+        pytest.raises(CommandError, match="1 Webmention deliveries failed"),
+    ):
+        call_command("send_webmentions", "https://source.example/post", content="<p>No links</p>", stdout=out)
+
+    assert "Source deadline exceeded" in out.getvalue()
+    assert "no valid targets found" not in out.getvalue()
+    discover.assert_not_called()
+    send.assert_not_called()
+    assert not WebmentionOutboundTarget.objects.exists()
+
+
 @patch("indieweb.management.commands.send_webmentions.WebmentionSender")
 def test_salmention_resend_calls_resend_sender_api(mock_sender_class):
     """Test Salmention resend mode calls the sender resend API instead of ordinary send."""

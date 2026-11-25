@@ -6524,3 +6524,15 @@ bundle.
   admission, privacy and sender suites then passed (282 tests).
 - `uv run pytest` passed with 4,068 tests and 94.50% coverage.
 - Updated `docs/webmention.rst` and changelog Unreleased.
+
+### Report an exhausted source budget after empty Webmention selection (round 205 B11)
+
+- Return the existing source deadline result when ordinary send selection
+  exhausts the budget and finds no targets. Keep target-specific deadline
+  receipts for nonempty selections.
+- `test_command_reports_deadline_when_selection_returns_no_targets` failed
+  when the command returned success before the fix.
+- `uv run --no-sync pytest --no-cov -q tests/test_send_webmentions_command.py
+  tests/test_round90_outbound.py` passed (44 passed, one storage-only test skipped).
+- The `py313-django52-migrations` tox lane passed with 4,069 tests.
+- Updated `docs/webmention.rst` and changelog Unreleased.

@@ -1549,6 +1549,8 @@ The command parses the source HTML once. The reported URL count includes all
 distinct nonempty link hrefs in document order, before URL safety, same-host
 and fanout filtering. Both preview and delivery use those same links for
 selection. Salmention modes also consider the source's recorded history.
+In ordinary send mode, an empty selection that reaches the source deadline
+is reported as a deadline failure.
 
 All command URL output, including fetch errors and both dry-run modes, uses
 the configured ``INDIEWEB_LOG_REDACTION`` policy. In ``passthrough`` mode,
@@ -1827,6 +1829,9 @@ of their normal request budget and the remaining monotonic source budget.
 Already accepted results remain recorded. Targets whose delivery cannot start
 before the deadline return ``unattempted=True`` with ``Source deadline
 exceeded``; these outcomes do not increment failure counters or remove history.
+If ordinary send selection reaches the deadline and returns no targets, the
+sender returns the same unattempted outcome with the source URL in
+``target``.
 Endpoint discovery that ends after the deadline, whatever its result, also
 returns this unattempted outcome, because no delivery started. A delivery POST
 that started but timed out without an HTTP response once the deadline passed
