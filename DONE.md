@@ -6375,3 +6375,12 @@ bundle.
 - `uv run pytest --no-cov -q tests/test_parse_slot_capabilities.py tests/test_parse_slot_limits.py`
   passed. All three injected slot-close cases failed before the fix.
 - Updated parse isolation documentation and changelog Unreleased.
+
+### Count worker launch and decoding in the parse wall limit (round 197 B11)
+
+- Start one monotonic deadline after slot acquisition. Give the child only
+  the time remaining after launch and reject results decoded at or after expiry.
+- The three launch, remaining-budget and decode cases failed before the fix.
+  They pass with the existing timeout and slot-release tests via
+  `uv run pytest --no-cov -q tests/test_webmention_parse_isolation.py -k 'worker_wall_deadline_covers_launch_and_decode or wall_clock_limit_ends_the_analysis or parse_capacity_released_after_worker_failure'`.
+- Updated the Webmention and configuration guides and changelog Unreleased.

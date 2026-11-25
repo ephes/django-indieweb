@@ -342,8 +342,9 @@ document, with these limits:
 * memory: ``INDIEWEB_WEBMENTION_PARSE_MEMORY_BYTES`` (``RLIMIT_AS`` and
   ``RLIMIT_DATA``; see the platform note below);
 * CPU time: ``INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS`` (``RLIMIT_CPU``);
-* wall-clock time: ``INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS``, enforced by the
-  receiving process, which kills the child on expiry;
+* wall-clock time: ``INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS`` covers request
+  encoding, worker launch and execution, and receipt decoding, starting
+  after slot acquisition;
 * result size: ``INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES`` (checked by the
   child, by the kernel as ``RLIMIT_FSIZE``, and by the receiving process);
 * stored size: ``INDIEWEB_WEBMENTION_MAX_STORED_BYTES`` for the parsed data

@@ -309,6 +309,62 @@ def _log_worker_stderr(reason: str, stderr: IO[bytes]) -> None:
     logger.warning("Webmention parse worker: %s: stderr %s", reason, text_fingerprint(stderr.read()))
 
 
+def _remaining_parse_time(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise WebmentionSourceRejected("wall-clock limit")
+    return remaining
+
+
+def _receive_worker_result(request: dict[str, Any], limits: ParseLimits, slot: int, deadline: float) -> dict[str, Any]:
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        command = _worker_command(limits)
+        payload = json.dumps(request).encode("ascii")
+        environment = _worker_environment()
+        _remaining_parse_time(deadline)
+        try:
+            with subprocess.Popen(  # noqa: S603 - fixed command, no shell
+                command,
+                stdin=subprocess.PIPE,
+                stdout=stdout,
+                stderr=stderr,
+                env=environment,
+                pass_fds=(slot,),
+            ) as worker:
+                try:
+                    worker.communicate(input=payload, timeout=_remaining_parse_time(deadline))
+                except BaseException:
+                    # The context manager reaps the child after it is killed.
+                    worker.kill()
+                    raise
+        except subprocess.TimeoutExpired:
+            raise WebmentionSourceRejected("wall-clock limit") from None
+        except OSError as exc:
+            logger.error("Webmention parse worker could not be started: %s", type(exc).__name__)
+            raise WebmentionSourceRejected("worker could not be started") from None
+
+        _remaining_parse_time(deadline)
+        if worker.returncode != 0:
+            reason = _exit_reason(worker.returncode)
+            _log_worker_stderr(reason, stderr)
+            raise WebmentionSourceRejected(reason)
+
+        if os.fstat(stdout.fileno()).st_size > limits.max_result_bytes:
+            raise WebmentionSourceRejected("result size limit")
+        stdout.seek(0)
+        payload = stdout.read(limits.max_result_bytes + 1)
+        _remaining_parse_time(deadline)
+
+        try:
+            result = json.loads(payload)
+        except (ValueError, RecursionError):
+            result = None
+        _remaining_parse_time(deadline)
+        if not isinstance(result, dict):
+            raise WebmentionSourceRejected("worker returned an unreadable result")
+        return result
+
+
 def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
     """Run one analysis request in a limited child process and return its result.
 
@@ -323,42 +379,9 @@ def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
         )
         raise WebmentionSourceRejected("resource limits unavailable")
 
-    with _parse_slot() as slot, tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-        try:
-            completed = subprocess.run(  # noqa: S603 - fixed command, no shell
-                _worker_command(limits),
-                input=json.dumps(request).encode("ascii"),
-                stdout=stdout,
-                stderr=stderr,
-                timeout=limits.wall_seconds,
-                env=_worker_environment(),
-                check=False,
-                pass_fds=(slot,),
-            )
-        except subprocess.TimeoutExpired:
-            # ``subprocess.run`` has killed and reaped the child.
-            raise WebmentionSourceRejected("wall-clock limit") from None
-        except OSError as exc:
-            logger.error("Webmention parse worker could not be started: %s", type(exc).__name__)
-            raise WebmentionSourceRejected("worker could not be started") from None
-
-        if completed.returncode != 0:
-            reason = _exit_reason(completed.returncode)
-            _log_worker_stderr(reason, stderr)
-            raise WebmentionSourceRejected(reason)
-
-        if os.fstat(stdout.fileno()).st_size > limits.max_result_bytes:
-            raise WebmentionSourceRejected("result size limit")
-        stdout.seek(0)
-        payload = stdout.read(limits.max_result_bytes + 1)
-
-        try:
-            result = json.loads(payload)
-        except (ValueError, RecursionError):
-            raise WebmentionSourceRejected("worker returned an unreadable result") from None
-        if not isinstance(result, dict):
-            raise WebmentionSourceRejected("worker returned an unreadable result")
-        return result
+    with _parse_slot() as slot:
+        deadline = time.monotonic() + limits.wall_seconds
+        return _receive_worker_result(request, limits, slot, deadline)
 
 
 def analyze_source(html_content: str, base_url: str, target_url: str) -> SourceAnalysis:

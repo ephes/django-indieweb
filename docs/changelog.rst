@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Count Webmention parse worker launch and result decoding against the
+  wall-clock limit after slot acquisition.
 * Preserve Webmention discovery results when closing an internally created
   HTTP client fails.
 * Recheck the Webmention discovery deadline after parsing and validating the

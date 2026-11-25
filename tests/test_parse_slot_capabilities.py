@@ -206,16 +206,13 @@ def test_slot_close_failure_retires_directory_and_preserves_worker_rejection(
             if descriptors[fd] == "slot":
                 raise OSError("synthetic close error")
 
-    def run_worker(command, *, stdout, **kwargs):
-        stdout.write(payload)
-        stdout.flush()
-        return subprocess.CompletedProcess(command, returncode)
+    script = f"import sys; sys.stdout.buffer.write({payload!r}); sys.exit({returncode})"
 
     try:
         with monkeypatch.context() as faults:
             faults.setattr(parse_isolation, "_claim_parse_slot", record_claim)
             faults.setattr(os, "close", close_with_fault)
-            faults.setattr(subprocess, "run", run_worker)
+            faults.setattr(parse_isolation, "_worker_command", lambda limits: [sys.executable, "-c", script])
             with pytest.raises(WebmentionSourceRejected) as rejection:
                 parse_isolation.run_parse_worker({})
             assert rejection.value.reason == reason

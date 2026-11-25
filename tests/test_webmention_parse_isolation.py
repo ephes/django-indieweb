@@ -286,6 +286,50 @@ def test_wall_clock_limit_ends_the_analysis():
     assert time.monotonic() - started < 5
 
 
+@pytest.mark.parametrize("delay", ["launch", "wait_budget", "decode"])
+def test_worker_wall_deadline_covers_launch_and_decode(monkeypatch, settings, delay):
+    settings.INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS = 10
+    now = 100.0
+    timeouts = []
+    processes = []
+    real_popen = subprocess.Popen
+    monkeypatch.setattr(parse_isolation, "time", SimpleNamespace(monotonic=lambda: now, sleep=time.sleep))
+    monkeypatch.setattr(parse_isolation, "_worker_command", worker_command_running("print('{}')"))
+
+    def popen(*args, **kwargs):
+        nonlocal now
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        communicate = process.communicate
+        now += {"launch": 10, "wait_budget": 3, "decode": 0}[delay]
+
+        def record_timeout(input=None, timeout=None):
+            timeouts.append(timeout)
+            return communicate(input=input, timeout=timeout)
+
+        process.communicate = record_timeout
+        return process
+
+    def decode(payload):
+        nonlocal now
+        result = json.loads(payload)
+        if delay == "decode":
+            now += 10
+        return result
+
+    monkeypatch.setattr(parse_isolation.subprocess, "Popen", popen)
+    monkeypatch.setattr(parse_isolation, "json", SimpleNamespace(dumps=json.dumps, loads=decode))
+    if delay == "wait_budget":
+        assert parse_isolation.run_parse_worker({}) == {}
+        assert timeouts == [7]
+    else:
+        with pytest.raises(WebmentionSourceRejected) as rejected:
+            parse_isolation.run_parse_worker({})
+        assert rejected.value.reason == "wall-clock limit"
+        assert timeouts == ([] if delay == "launch" else [10])
+    assert processes[0].returncode is not None
+
+
 def test_result_size_limit_ends_the_analysis():
     html = TARGET_LINK + '<div class="h-entry"><p class="p-name">' + "n" * 5000 + "</p></div>"
 
@@ -486,7 +530,7 @@ def test_child_does_not_inherit_the_application_environment(monkeypatch):
 
 def test_missing_resource_limits_fail_closed_by_default(monkeypatch, caplog):
     monkeypatch.setattr(webmention_parse_worker, "resource", None)
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("worker must not be started"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: pytest.fail("worker must not be started"))
 
     with pytest.raises(WebmentionSourceRejected) as rejected:
         parse_isolation.analyze_source(REPLY, SOURCE_URL, TARGET_URL)

@@ -1531,13 +1531,16 @@ INDIEWEB_WEBMENTION_PARSE_WALL_SECONDS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Wall-clock timeout in seconds (integer or float) for one analysis. The
-receiving process kills the child when it expires.
+budget starts once a parse slot is acquired and includes request encoding,
+worker launch and execution, and reading and decoding the result. The
+receiving process terminates a running child when it detects expiry and
+rejects a result decoded after the deadline.
 
 **Default:** ``30``
 
-Keep it above ``INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS``: this timeout is for a
-child that makes no progress, for example on an overloaded host. Invalid or
-non-positive values fall back to the default.
+Keep it above ``INDIEWEB_WEBMENTION_PARSE_CPU_SECONDS`` to allow for time
+spent outside the child's CPU budget. Invalid or non-positive values fall
+back to the default.
 
 INDIEWEB_WEBMENTION_PARSE_MAX_RESULT_BYTES
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
