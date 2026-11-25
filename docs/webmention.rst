@@ -1834,12 +1834,13 @@ worker therefore permits a later retry without inventing a delivery failure or
 cooldown timestamp. Completion records history and clears the claim only for
 its live owner. A current-link attempt can update the shared history while
 the historical owner retains its claim. A replacement claim or deletion
-fences an older completion. Deadline refusals release only their own claim;
-already accepted deliveries retain their outcomes. If delivery raises, claim
-cleanup is best-effort. A cleanup failure is reported without URLs or exception
-details, the original delivery exception propagates, and the lease can expire
-naturally. Completion checks the lease clock after acquiring the write
-reservation, so a claim that expires while waiting cannot settle history.
+fences an older completion. After a deadline refusal or delivery exception,
+the worker makes a best-effort attempt to release its own claim. A cleanup
+failure is reported without URLs or exception details, and the lease can
+expire naturally. The worker returns a deadline result without updating
+delivery history. If delivery raised, the original exception propagates.
+Completion checks the lease clock after acquiring the write reservation, so
+a claim that expires while waiting cannot settle history.
 The remote HTTP endpoint may already have accepted the request, so a retry
 after expiry can deliver it again.
 

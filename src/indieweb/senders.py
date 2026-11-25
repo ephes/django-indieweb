@@ -788,18 +788,10 @@ class WebmentionSender:
         try:
             result = self._deliver_source_target(source, target_url, vouch, deadline, provenance)
         except Exception:
-            if row is not None and claim is not None:
-                try:
-                    self._release_historical_claim(row, claim)
-                except Exception:
-                    # The claim can expire naturally. Even a broken log sink
-                    # must preserve the original delivery exception.
-                    with suppress(Exception):
-                        logger.warning("Failed to release Salmention resend claim")
+            self._release_historical_claim_best_effort(row, claim)
             raise
         if "unattempted" in result:
-            if row is not None:
-                self._release_historical_claim(row, claim)
+            self._release_historical_claim_best_effort(row, claim)
             return result
         target = self._record_outbound_target(
             attempt_started_at=started,
@@ -1132,7 +1124,18 @@ class WebmentionSender:
             row.target_url, reason, "Historical resend already claimed or history changed", dry_run=False
         )
 
-    def _release_historical_claim(self, row: WebmentionOutboundTarget, claim: UUID | None) -> None:
+    def _release_historical_claim_best_effort(self, row: WebmentionOutboundTarget | None, claim: UUID | None) -> None:
+        if row is None or claim is None:
+            return
+        try:
+            self._release_historical_claim(row, claim)
+        except Exception:
+            # The claim can expire naturally. A broken log sink must also
+            # preserve the delivery outcome.
+            with suppress(Exception):
+                logger.warning("Failed to release Salmention resend claim")
+
+    def _release_historical_claim(self, row: WebmentionOutboundTarget, claim: UUID) -> None:
         WebmentionOutboundTarget.objects.using(row._state.db).filter(pk=row.pk, resend_claim=claim).update(
             resend_claim=None, resend_claim_expires_at=None
         )

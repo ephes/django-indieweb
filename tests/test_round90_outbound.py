@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from django.db import connection
+from django.db import OperationalError, connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
@@ -224,6 +224,39 @@ def test_delivery_error_survives_claim_cleanup_failure(monkeypatch, caplog, logg
     now = row.resend_claim_expires_at + timedelta(seconds=1)
     new_claim, skipped = sender._claim_historical_target(row, deadline=senders.time.monotonic() + 5)
     assert skipped is None and new_claim is not None and new_claim != old_claim
+
+
+@pytest.mark.django_db
+def test_unattempted_resend_survives_claim_cleanup_failure(monkeypatch, caplog):
+    target = "https://history.example/"
+    row = WebmentionOutboundTarget.objects.create(source_url=SOURCE, target_url=target)
+    sender = WebmentionSender()
+    outcome = {
+        "target": target,
+        "endpoint": None,
+        "provenance": "history",
+        "success": False,
+        "status_code": None,
+        "error": "Source deadline exceeded",
+        "unattempted": True,
+    }
+    release = Mock(side_effect=OperationalError("synthetic private cleanup detail"))
+    record = Mock()
+    monkeypatch.setattr(sender, "_deliver_source_target", Mock(return_value=outcome))
+    monkeypatch.setattr(sender, "_release_historical_claim", release)
+    monkeypatch.setattr(sender, "_record_outbound_target", record)
+
+    [result] = sender.resend_salmentions(SOURCE, "")
+
+    assert result is outcome
+    row.refresh_from_db()
+    assert row.resend_claim is not None
+    assert row.resend_claim_expires_at > timezone.now()
+    release.assert_called_once_with(row, row.resend_claim)
+    record.assert_not_called()
+    assert row.last_attempted_at is None
+    assert "Failed to release Salmention resend claim" in caplog.text
+    assert "synthetic private cleanup detail" not in caplog.text
 
 
 @pytest.mark.django_db

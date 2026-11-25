@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Preserve the Salmention deadline result when releasing a resend claim
+  fails. Delivery history stays intact and the claim can expire normally.
 * Validate the source URL in ``send_webmentions`` before reading stdin,
   fetching or parsing content. Rejected sources raise a fixed command error
   in send and dry-run modes.

@@ -4,6 +4,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Preserve Salmention deadline outcomes during claim cleanup (round 191 B08)
+
+- Release historical claims best-effort after a deadline outcome or delivery
+  exception, keeping delivery history intact and preserving finite claim expiry
+  when cleanup fails.
+- Validation: outbound deadline and claim regression tests, the default suite
+  with Ruff and mypy, and local SQLite storage checks.
+- Documentation: updated `docs/webmention.rst` and the Unreleased changelog.
+
 ### Preflight the Webmention command source URL (round 191 B08)
 
 - Apply the sender's HTTP(S) admission before resolving command content in
