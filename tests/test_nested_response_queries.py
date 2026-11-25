@@ -1,15 +1,16 @@
 """Query and transaction bounds for synthetic nested replies."""
 
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
+from indieweb import processors
 from indieweb.models import Webmention, WebmentionNestedResponse
-from indieweb.processors import WebmentionProcessor
+from indieweb.processors import WebmentionProcessor, webmention_received
 from tests.test_webmention_processor import _nested_candidate
 
 pytestmark = pytest.mark.django_db
@@ -109,7 +110,9 @@ def _source_html(target, identities):
     return f'<div class="h-entry"><a href="{target}">Target</a>{children}</div>'
 
 
-def test_processor_nested_failure_rolls_back_children_only(django_capture_on_commit_callbacks):
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("logging_fails", [False, True])
+def test_processor_nested_failure_rolls_back_children_only(monkeypatch, logging_fails):
     from tests.test_webmention_processor import _processor_client, _source_response
 
     processor = WebmentionProcessor()
@@ -131,18 +134,37 @@ def test_processor_nested_failure_rolls_back_children_only(django_capture_on_com
             raise IntegrityError("synthetic nested write failure")
         return result
 
-    with (
-        patch.object(QuerySet, "bulk_update", fail_after_update),
-        _processor_client(
-            processor, return_value=_source_response(status_code=200, text=_source_html(target, [old, new]))
-        ),
-        django_capture_on_commit_callbacks(execute=True),
-    ):
-        processor.process_webmention(source, target)
+    new_html = _source_html(target, [old, new])
+    previous_receive = parent.last_received_at
+    if logging_fails:
+        fail_log = Mock(side_effect=OSError("synthetic log sink failure"))
+        monkeypatch.setattr(processors.logger, "error", fail_log)
+
+    notified = []
+
+    def receive(sender, webmention, **kwargs):
+        stored = Webmention.objects.get(pk=webmention.pk)
+        notified.append((stored.pk, stored.status, stored.source_snapshot.raw_source_html))
+
+    webmention_received.connect(receive)
+    try:
+        with (
+            patch.object(QuerySet, "bulk_update", fail_after_update),
+            _processor_client(processor, return_value=_source_response(status_code=200, text=new_html)),
+        ):
+            processor.process_webmention(source, target)
+    finally:
+        webmention_received.disconnect(receive)
+
     assert calls == [1]
+    if logging_fails:
+        fail_log.assert_called_once()
     parent.refresh_from_db()
     assert parent.status == "verified"
+    assert parent.last_received_at > previous_receive
     assert list(parent.nested_responses.values()) == [before]
+    assert parent.source_snapshot.raw_source_html == new_html
+    assert notified == [(parent.pk, "verified", new_html)]
 
 
 def test_processor_stale_parent_cannot_replace_newer_nested_batch():

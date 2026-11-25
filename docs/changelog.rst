@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Preserve verified Webmention results, source snapshots and notifications
+  when logging a nested response write failure also fails.
 * Keep queued Webmention processing on the original row and write database.
   A deleted row raises ``Webmention.DoesNotExist``.
 * Preserve the original Salmention delivery exception if releasing its resend

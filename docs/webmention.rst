@@ -970,12 +970,12 @@ after the parent ``Webmention`` has been saved as ``verified``.
 
 Child writes follow the same non-destructive failure stance as source
 snapshots. If child response synchronization fails after otherwise successful
-parent verification, the processor logs the child sync failure and leaves the
-parent Webmention verified. All writes from that child-sync attempt roll back
-together, preserving the previous complete child set. Snapshot persistence is
-independent and may advance even when child sync failed. A subsequent successful
-receive reconciles all current children and retirements, including when the
-snapshot already contains the latest identities.
+parent verification, all writes from that child-sync attempt roll back
+together, preserving the previous complete child set. The processor attempts
+to log a redacted diagnostic and continues with source snapshot persistence
+and the post-commit notification even if logging raises. A subsequent
+successful receive reconciles all current children and retirements, including
+when the snapshot already contains the latest identities.
 
 When a stable child is seen again, its stored display fields are refreshed from
 the latest parsed nested ``h-entry``. If the latest verified parse omits

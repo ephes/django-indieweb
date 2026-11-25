@@ -6304,3 +6304,12 @@ bundle.
   passed all seven cases. The replacement-row regression failed before the fix.
 - Docs: Webmention queue integration, receive database routing, and changelog
   Unreleased.
+
+### Preserve parent verification when child error logging fails (round 190 B03)
+
+- Roll back the child savepoint, guard the redacted diagnostic, and continue
+  with the parent snapshot and post-commit notification.
+- Validation: `uv run pytest --no-cov -q tests/test_nested_response_queries.py -k processor_nested_failure`.
+  The failure with a broken log sink reproduced before the fix. Both cases
+  passed after it, including the committed parent and notification.
+- Docs: nested response write failures and changelog Unreleased.

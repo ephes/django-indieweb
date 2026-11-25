@@ -12,6 +12,7 @@ import logging
 import math
 import re
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
@@ -1206,9 +1207,14 @@ class WebmentionProcessor:
                     seen_at=seen_at,
                 )
         except Exception:
-            logger.error(
-                f"Failed to sync nested responses for webmention {webmention.pk}", exc_info=exc_info_without_messages()
-            )
+            # The child savepoint has rolled back. A broken log sink must
+            # leave the parent free to commit and send its notification.
+            with suppress(Exception):
+                logger.error(
+                    "Failed to sync nested responses for webmention %s",
+                    webmention.pk,
+                    exc_info=exc_info_without_messages(),
+                )
 
     def _sync_nested_responses(
         self,
