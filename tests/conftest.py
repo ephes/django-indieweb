@@ -63,3 +63,20 @@ def concurrent_database():
         if os.environ.get("DJANGO_INDIEWEB_REQUIRE_STORAGE_TESTS") == "1":
             pytest.fail(message)
         pytest.skip(message)
+
+
+@pytest.fixture
+def sqlite_wal(concurrent_database):
+    """Enable WAL on a real file and restore the original journal mode."""
+    from django.db import connection
+
+    if connection.vendor != "sqlite":
+        pytest.skip("SQLite WAL regression")
+    with connection.cursor() as cursor:
+        cursor.execute("PRAGMA journal_mode")
+        (previous_mode,) = cursor.fetchone()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        assert cursor.fetchone() == ("wal",)
+    yield connection
+    with connection.cursor() as cursor:
+        cursor.execute(f"PRAGMA journal_mode={previous_mode}")

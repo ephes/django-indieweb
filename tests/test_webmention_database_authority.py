@@ -1,5 +1,6 @@
 """Webmention receive persistence stays on its authoritative writer database."""
 
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -9,7 +10,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from django.db import IntegrityError, connections
+from django.db import IntegrityError, OperationalError, connection, connections
 from django.utils import timezone
 
 from indieweb.models import Webmention, WebmentionNestedResponse, WebmentionSourceSnapshot
@@ -371,3 +372,51 @@ def test_queued_processing_does_not_settle_replacement_row(monkeypatch):
     assert replacement.status == "pending" and replacement.last_received_at is None
     assert not WebmentionNestedResponse.objects.exists()
     assert not WebmentionSourceSnapshot.objects.exists()
+
+
+def test_sqlite_reserves_writer_before_reloading_receive(sqlite_wal, monkeypatch):
+    Webmention.objects.create(source_url=SOURCE, target_url=TARGET)
+    newer_at = timezone.now()
+    older_at = newer_at - timedelta(seconds=1)
+    older = WebmentionProcessor()
+    newer = WebmentionProcessor()
+    for processor, received_at in ((older, older_at), (newer, newer_at)):
+        outcome = _WebmentionOutcome(status="failed", received_at=received_at, log=("info", "Synthetic outcome"))
+        monkeypatch.setattr(processor, "_collect_webmention_outcome", lambda *args, outcome=outcome: outcome)
+
+    main_connection = sqlite_wal.connection
+
+    def competing_receive():
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("PRAGMA busy_timeout=0")
+            assert connection.connection is not main_connection
+            return older.process_webmention(SOURCE, TARGET).last_received_at
+        except OperationalError as exc:
+            # The first competing write must be blocked if the newer receive
+            # reserved the writer before taking its read snapshot.
+            assert exc.__cause__.sqlite_errorcode == sqlite3.SQLITE_BUSY
+            return None
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        competed = []
+
+        def compete_after_reload(execute, sql, params, many, context):
+            result = execute(sql, params, many, context)
+            if (
+                not competed
+                and sqlite_wal.in_atomic_block
+                and sql.startswith("SELECT")
+                and "indieweb_webmention" in sql
+            ):
+                competed.append(pool.submit(competing_receive).result(timeout=5))
+            return result
+
+        with sqlite_wal.execute_wrapper(compete_after_reload):
+            assert newer.process_webmention(SOURCE, TARGET).last_received_at == newer_at
+        assert competed == [None]
+        assert pool.submit(competing_receive).result(timeout=5) == newer_at
+
+    assert Webmention.objects.get().last_received_at == newer_at

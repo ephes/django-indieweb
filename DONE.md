@@ -6466,3 +6466,12 @@ bundle.
   passed, including first-render priority and direct-source suppression.
   The shared-response-URL case rendered twice before the fix.
 - Updated the Webmention rendering guide and changelog Unreleased.
+
+### Reserve the SQLite writer before reloading a Webmention (round 202 B05)
+
+- Acquire the writer reservation before reading the current row on SQLite.
+  Preserve receipt ordering and keep outcome collection outside the transaction.
+- The two-connection WAL regression failed with a locked database before the
+  change and passed in `tests/test_webmention_database_authority.py` with
+  `DJANGO_INDIEWEB_TEST_SQLITE_PATH` set to a temporary file.
+- Updated the receive database routing guide and changelog Unreleased.

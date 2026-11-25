@@ -943,9 +943,11 @@ tables together and permit their model relations on that database.
 
 Fetching, parsing and spam/Vouch checks remain outside the processor's
 persistence transaction. The parent is then reloaded with ``select_for_update``
-inside an atomic block on its writer. Older outcomes cannot replace a newer
-committed receive. Child synchronization and snapshot storage each have their
-own savepoint on this same connection: an isolated helper failure rolls back
+inside an atomic block on its writer. SQLite reserves the writer before the
+reload so a competing receive cannot commit between the reload and the outcome
+write. Older outcomes cannot replace a newer committed receive. Child
+synchronization and snapshot storage each have their own savepoint on this
+same connection: an isolated helper failure rolls back
 its complete partial write set while allowing the verified parent and the
 other helper to persist. An outer transaction failure rolls back the whole
 attempt and suppresses the success notification, which runs only after the

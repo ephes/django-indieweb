@@ -23,7 +23,8 @@ import httpx
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.exceptions import ValidationError
-from django.db import router, transaction
+from django.db import connections, router, transaction
+from django.db.models import F
 from django.dispatch import Signal
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -442,7 +443,12 @@ class WebmentionProcessor:
         # the pre-lock snapshot — a concurrent receive for the same pair may
         # have committed updates to fields we did not intend to touch.
         with transaction.atomic(using=using):
-            locked = Webmention.objects.using(using).select_for_update().get(pk=webmention.pk)
+            admitted = Webmention.objects.using(using).filter(pk=webmention.pk)
+            # SQLite has no row locks. Reserve its writer before the first read
+            # so a concurrent commit cannot invalidate the settlement snapshot.
+            if connections[using].vendor == "sqlite":
+                admitted.update(modified=F("modified"))
+            locked = admitted.select_for_update().get()
 
             # Freshness gate: if a concurrent receive has already committed an
             # outcome computed after ours, skip our writes entirely. The lock
