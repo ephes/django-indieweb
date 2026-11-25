@@ -366,10 +366,13 @@ wait budget; an expired attempt starts no child. Exhaustion raises
 ``WebmentionParseCapacityError`` with reason
 ``parse capacity`` without changing stored state. Synchronous receives return
 HTTP 503 with ``Retry-After: 1``. Queued hosts should retry the exception using
-their task backend's policy. Slots use POSIX advisory file locks and are released on
-worker success, failure or timeout. The child inherits its slot lock, so a
-receiver crash keeps that slot occupied until the child exits. Capacity is unavailable on
-platforms without POSIX file locks, even if OS resource limits are disabled.
+their task backend's policy. Slots use POSIX advisory file locks. After the
+worker finishes, cleanup attempts to close both the slot and lock-directory
+descriptors even if one close fails. A close error preserves any existing
+parser rejection or reports ``parse capacity unavailable`` after a successful
+parse. The child inherits its slot lock, so a receiver crash keeps that slot
+occupied until the child exits. Capacity is unavailable on platforms without
+POSIX file locks, even if OS resource limits are disabled.
 
 ``INDIEWEB_WEBMENTION_PARSE_LOCK_DIR`` optionally selects a private directory
 owned by the application user (mode 0700). Each slot must be a regular file

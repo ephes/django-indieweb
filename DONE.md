@@ -6350,3 +6350,11 @@ bundle.
 - `uv run pytest --no-cov -q tests/test_webmention_sender.py -k 'total_timeout or falls_back_before_creating_owned_client or expired_deadline_does_not_create_client'`
   passed. Both new ownership tests failed before the fix.
 - Updated outbound timeout configuration, Webmention usage and changelog Unreleased.
+
+### Retire both Webmention parse-slot descriptors (round 192 B21)
+
+- Attempt both closes, preserve the worker rejection and report a cleanup
+  fault after a successful parse as unavailable capacity.
+- `uv run pytest --no-cov -q tests/test_parse_slot_capabilities.py tests/test_parse_slot_limits.py`
+  passed. All three injected slot-close cases failed before the fix.
+- Updated parse isolation documentation and changelog Unreleased.

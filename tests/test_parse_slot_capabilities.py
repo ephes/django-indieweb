@@ -173,3 +173,57 @@ def test_regular_private_slot_works_and_closes(settings, tmp_path, monkeypatch):
         assert stat.S_ISREG(os.fstat(fd).st_mode)
     with pytest.raises(OSError):
         os.fstat(fd)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "payload", "reason"),
+    [
+        (parse_isolation.webmention_parse_worker.EXIT_MEMORY_LIMIT, b"", "memory limit"),
+        (0, b"invalid JSON", "worker returned an unreadable result"),
+        (0, b"{}", "parse capacity unavailable"),
+    ],
+)
+def test_slot_close_failure_retires_directory_and_preserves_worker_rejection(
+    settings, tmp_path, monkeypatch, returncode, payload, reason
+):
+    settings.INDIEWEB_WEBMENTION_PARSE_LOCK_DIR = str(tmp_path)
+    settings.INDIEWEB_WEBMENTION_PARSE_MAX_CONCURRENT = 1
+    descriptors = {}
+    closed = []
+    real_claim = parse_isolation._claim_parse_slot
+    real_close = os.close
+
+    def record_claim(directory, directory_fd, *args):
+        slot = real_claim(directory, directory_fd, *args)
+        descriptors[directory_fd] = "directory"
+        descriptors[slot] = "slot"
+        return slot
+
+    def close_with_fault(fd):
+        real_close(fd)
+        if fd in descriptors:
+            closed.append(descriptors[fd])
+            if descriptors[fd] == "slot":
+                raise OSError("synthetic close error")
+
+    def run_worker(command, *, stdout, **kwargs):
+        stdout.write(payload)
+        stdout.flush()
+        return subprocess.CompletedProcess(command, returncode)
+
+    try:
+        with monkeypatch.context() as faults:
+            faults.setattr(parse_isolation, "_claim_parse_slot", record_claim)
+            faults.setattr(os, "close", close_with_fault)
+            faults.setattr(subprocess, "run", run_worker)
+            with pytest.raises(WebmentionSourceRejected) as rejection:
+                parse_isolation.run_parse_worker({})
+            assert rejection.value.reason == reason
+    finally:
+        for fd, name in descriptors.items():
+            if name not in closed:
+                real_close(fd)
+
+    assert closed == ["slot", "directory"]
+    with parse_isolation._parse_slot():
+        pass

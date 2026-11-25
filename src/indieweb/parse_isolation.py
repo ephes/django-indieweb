@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import IO, Any
 
@@ -239,9 +239,21 @@ def _claim_parse_slot(directory: str, directory_fd: int, maximum: int, locks: An
     return None
 
 
+def _close_parse_slot(slot: int | None, directory_fd: int | None) -> OSError | None:
+    """Attempt each close once and retain the first error for diagnostics."""
+    close_error = None
+    for fd in (slot, directory_fd):
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError as exc:
+                close_error = close_error or exc
+    return close_error
+
+
 @contextmanager
 def _parse_slot() -> Iterator[int]:
-    """Hold a host-local slot across threads and processes until the child is reaped."""
+    """Hold a host-local slot across child execution and result validation."""
     try:
         import fcntl
     except ImportError:
@@ -254,6 +266,7 @@ def _parse_slot() -> Iterator[int]:
     )
     slot = None
     directory_fd = None
+    work_completed = False
     try:
         try:
             deadline = time.monotonic() + wait
@@ -271,11 +284,14 @@ def _parse_slot() -> Iterator[int]:
             logger.error("Webmention parse capacity unavailable: %s", type(exc).__name__)
             raise WebmentionSourceRejected("parse capacity unavailable") from None
         yield slot
+        work_completed = True
     finally:
-        if slot is not None:
-            os.close(slot)
-        if directory_fd is not None:
-            os.close(directory_fd)
+        close_error = _close_parse_slot(slot, directory_fd)
+        if close_error is not None:
+            with suppress(Exception):
+                logger.error("Webmention parse slot cleanup failed: %s", type(close_error).__name__)
+            if work_completed:
+                raise WebmentionSourceRejected("parse capacity unavailable") from None
 
 
 def _log_worker_stderr(reason: str, stderr: IO[bytes]) -> None:
@@ -296,8 +312,8 @@ def _log_worker_stderr(reason: str, stderr: IO[bytes]) -> None:
 def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
     """Run one analysis request in a limited child process and return its result.
 
-    Raises :class:`WebmentionSourceRejected` unless the child finished within
-    all limits and returned a well-formed result.
+    Raises :class:`WebmentionSourceRejected` if the child exceeded a limit,
+    returned an invalid result, or capacity could not be acquired or retired.
     """
     limits = parse_limits()
     if limits.require_os_limits and webmention_parse_worker.resource is None:
@@ -336,13 +352,13 @@ def run_parse_worker(request: dict[str, Any]) -> dict[str, Any]:
         stdout.seek(0)
         payload = stdout.read(limits.max_result_bytes + 1)
 
-    try:
-        result = json.loads(payload)
-    except (ValueError, RecursionError):
-        raise WebmentionSourceRejected("worker returned an unreadable result") from None
-    if not isinstance(result, dict):
-        raise WebmentionSourceRejected("worker returned an unreadable result")
-    return result
+        try:
+            result = json.loads(payload)
+        except (ValueError, RecursionError):
+            raise WebmentionSourceRejected("worker returned an unreadable result") from None
+        if not isinstance(result, dict):
+            raise WebmentionSourceRejected("worker returned an unreadable result")
+        return result
 
 
 def analyze_source(html_content: str, base_url: str, target_url: str) -> SourceAnalysis:
