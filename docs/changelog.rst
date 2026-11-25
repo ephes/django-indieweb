@@ -6,6 +6,34 @@ Changelog
 Unreleased
 ----------
 
+0.8.0 (2026-11-25)
+------------------
+
+Upgrade notes:
+
+* Apply migration ``indieweb.0033`` (new in this release) before running the
+  upgraded Webmention senders or Salmention workers: the new code reads
+  ``WebmentionOutboundTarget.failure_attempts`` and fails on a database
+  without that column. ``0033`` adds it as a non-null column without a
+  database default, so code older than this release cannot insert outbound
+  targets once it is applied. To roll back, stop the outbound workers and,
+  still with this release installed, reverse the migration
+  (``manage.py migrate indieweb 0032``) before starting the older code; this
+  drops the per-attempt history and keeps the aggregate failure count.
+* Previously accepted inputs that are now refused: WebSub publisher
+  configurations with more than 16 hub entries raise ``ValueError`` during
+  discovery and publishing, and pruning WebSub delivery attempts with a naive
+  reference time fails when ``USE_TZ=True``.
+* New system checks report malformed endpoint rate limits (``indieweb.E004``),
+  a non-boolean WebSub signature policy (``indieweb.E005``) and invalid
+  ``INDIEWEB_WEBSUB_DELIVERY_ALLOWED_TYPES`` (``indieweb.E006``: use a string
+  or a reusable iterable of bare media type names, not a one-shot iterator, or
+  ``None``); Micropub
+  canonical origins with empty query or fragment delimiters fail
+  ``indieweb.E001``.
+
+Changes:
+
 * Close the static-site Micropub staging descriptor if buffered stream
   setup fails.
 * Check that the Micropub staging name still refers to the open file before

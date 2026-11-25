@@ -4,6 +4,18 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-25
 
+### Prepare the 0.8.0 release
+
+- Moved the ``Unreleased`` changelog entries (Micropub staging and example
+  fixes, Webmention/Salmention deadline and parser bounds, WebSub signature
+  and hub limits, guarded HTTP redirect handling, configuration checks
+  ``indieweb.E004``/``indieweb.E005``) under ``0.8.0 (2026-11-25)`` with
+  upgrade notes; the version files and the editable ``uv.lock`` entry say
+  0.8.0. Minor release because previously accepted inputs (more than 16
+  WebSub hubs, naive pruning reference times with ``USE_TZ=True``) are now
+  refused and migration ``0033`` must run before the new code.
+- Documentation: changelog only.
+
 ### Refuse unsupported drafts in the Micropub blog examples (round 198 B16)
 
 - Refuse draft creates before writing a row and remove the draft configuration.
