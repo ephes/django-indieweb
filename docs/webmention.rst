@@ -404,6 +404,11 @@ Platform notes:
 * **Windows** and other platforms without POSIX ``fcntl`` locks: parsing is
   rejected even when ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS=False``.
 
+When OS limit setup fails and ``INDIEWEB_WEBMENTION_PARSE_REQUIRE_OS_LIMITS``
+is explicitly ``False``, the child uses the same RSS watchdog if the
+``resource`` module is available. The default policy rejects the document
+before parsing when required OS limits cannot be applied.
+
 The child is started with ``subprocess``, so it also works inside daemonic
 worker processes that cannot use ``multiprocessing``. Set
 ``INDIEWEB_WEBMENTION_PARSE_PYTHON`` if ``sys.executable`` is not a Python

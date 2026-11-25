@@ -1585,9 +1585,11 @@ limit its own CPU time and output size.
 Platforms without the POSIX ``resource`` module (Windows) cannot apply these
 limits. With the default, every received Webmention is then marked ``failed``
 and an error is logged, instead of parsing untrusted HTML without limits. Set
-this to exactly ``False`` to omit memory and CPU limits while retaining the
-wall-clock timeout and result size cap. POSIX ``fcntl`` locks are still
-required for concurrency control, so this does not enable Windows parsing.
+this to exactly ``False`` to allow parsing when OS limit setup fails. The
+child uses the peak RSS watchdog when the ``resource`` module is available,
+and the parent still enforces the wall-clock timeout and result size cap.
+POSIX ``fcntl`` locks are still required for concurrency control, so this
+does not enable Windows parsing.
 Any other value keeps the resource limits required. Do not disable this on
 a public receiver.
 

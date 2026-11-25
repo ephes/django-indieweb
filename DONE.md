@@ -6272,3 +6272,17 @@ bundle.
   All 21 focused tests passed after the fix, including malformed-head and
   hidden-ancestor cases.
 - Docs: Webmention source link verification and changelog Unreleased.
+
+### Run the parser memory watchdog in compatibility mode (round 188 B24)
+
+- Start the RSS backstop when OS limit setup fails in compatibility mode and
+  the resource module can measure RSS. The default policy still refuses
+  before parsing.
+- Validation: the compatibility regression with RSS available failed before
+  the fix. All 14 focused worker entry point and watchdog tests passed after
+  the fix.
+- Shared bundle gates on Python 3.13: `just check` (3972 passed, 78 skipped,
+  94.83% coverage), `just hooks` (with a workspace `PREK_HOME`), and
+  `uv run sphinx-build -W -b html docs docs/_build/html` passed.
+- Docs: parser resource limits in the Webmention and configuration guides,
+  plus changelog Unreleased.

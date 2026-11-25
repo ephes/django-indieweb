@@ -546,6 +546,7 @@ def test_worker_main_applies_the_limits_and_writes_the_result(monkeypatch, capsy
 
 
 def test_worker_main_watches_memory_itself_when_the_kernel_does_not(monkeypatch, capsys):
+    monkeypatch.setattr(webmention_parse_worker, "resource", SimpleNamespace())
     status, _output, _applied, watchdogs = run_main(monkeypatch, capsys, VOUCH_REQUEST, limits=False)
 
     assert status == 0
@@ -555,15 +556,24 @@ def test_worker_main_watches_memory_itself_when_the_kernel_does_not(monkeypatch,
 def test_worker_main_refuses_to_run_without_limits(monkeypatch, capsys):
     unavailable = webmention_parse_worker.LimitsUnavailable("no limits here")
 
-    status, output, _applied, _watchdogs = run_main(monkeypatch, capsys, VOUCH_REQUEST, limits=unavailable)
+    def unexpected_parse(request):
+        pytest.fail("strict mode must refuse before parsing")
+
+    monkeypatch.setattr(webmention_parse_worker, "handle_request", unexpected_parse)
+    status, output, _applied, watchdogs = run_main(monkeypatch, capsys, VOUCH_REQUEST, limits=unavailable)
 
     assert status == webmention_parse_worker.EXIT_LIMITS_UNAVAILABLE
     assert output.out == ""
     assert "no limits here" in output.err
+    assert watchdogs == []
 
 
-def test_worker_main_runs_without_limits_only_when_told_to(monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "resource_module,expected_watchdogs", [(SimpleNamespace(), [1000]), (None, [])], ids=["with-rss", "without-rss"]
+)
+def test_worker_main_runs_without_limits_only_when_told_to(monkeypatch, capsys, resource_module, expected_watchdogs):
     unavailable = webmention_parse_worker.LimitsUnavailable("no limits here")
+    monkeypatch.setattr(webmention_parse_worker, "resource", resource_module)
 
     status, output, _applied, watchdogs = run_main(
         monkeypatch, capsys, VOUCH_REQUEST, "--allow-missing-os-limits", limits=unavailable
@@ -571,7 +581,7 @@ def test_worker_main_runs_without_limits_only_when_told_to(monkeypatch, capsys):
 
     assert status == 0
     assert json.loads(output.out) == {"links_to_source_domain": True}
-    assert watchdogs == []
+    assert watchdogs == expected_watchdogs
 
 
 @pytest.mark.parametrize(

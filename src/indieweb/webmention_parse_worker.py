@@ -486,9 +486,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.allow_missing_os_limits:
             print(f"refusing to parse without resource limits: {exc}", file=sys.stderr)
             return EXIT_LIMITS_UNAVAILABLE
-    else:
-        if not memory_limited:
-            start_memory_watchdog(args.memory_bytes)
+        memory_limited = False
+    if not memory_limited and resource is not None:
+        start_memory_watchdog(args.memory_bytes)
 
     try:
         request = json.loads(sys.stdin.buffer.read())
