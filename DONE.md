@@ -6635,3 +6635,10 @@ bundle.
   fails. The WebSub guide and changelog Unreleased document the result.
 - The write and flush regressions failed before the fix. Validated with
   `uv run --frozen pytest --no-cov -q tests/test_notify_websub_command.py`.
+
+### Restore WebSub subscription state before failure logging (round 215 B02)
+
+- Record the failure and restore the active subscription before warning about
+  a failed hub request. The WebSub guide and changelog Unreleased cover it.
+- The warning regression failed before the fix. Validated with
+  `uv run --frozen pytest --no-cov -q tests/test_websub_subscriber.py`.

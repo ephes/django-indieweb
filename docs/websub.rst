@@ -247,7 +247,8 @@ The helper sends WebSub-compatible form fields to the hub:
 ``hub.lease_seconds``/``hub.secret``. A ``2xx`` hub response records the
 request and leaves the row pending until callback verification completes.
 Network failures and non-``2xx`` responses are captured in the returned result
-and on the subscription row.
+and on the subscription row. The helper saves the request failure before
+logging it and returns the result even if the warning handler raises.
 
 Calling ``request_websub_subscription()`` for an already-active subscription is
 a renewal request. The row stays ``active`` while verification is pending so

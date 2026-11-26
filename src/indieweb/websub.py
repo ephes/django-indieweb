@@ -838,9 +838,6 @@ def request_websub_subscription(
             HTTPResponseTooLarge,
         ) as exc:
             request_error = type(exc).__name__
-            logger.warning(
-                f"WebSub subscription request failed for hub={redact_url(subscription.hub_url)!r}: {request_error}"
-            )
             _save_subscription_request_failure(
                 subscription,
                 mode=validated_mode,
@@ -850,6 +847,10 @@ def request_websub_subscription(
                 status_code=None,
                 error=request_error,
             )
+            with suppress(Exception):
+                logger.warning(
+                    f"WebSub subscription request failed for hub={redact_url(subscription.hub_url)!r}: {request_error}"
+                )
             return WebSubSubscriptionRequestResult(
                 subscription=subscription,
                 mode=validated_mode,

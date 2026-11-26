@@ -2022,3 +2022,38 @@ def test_callback_get_rejections_do_not_reveal_whether_token_exists(client, subs
 
     assert known.status_code == unknown.status_code == 404
     assert known.content == unknown.content
+
+
+@pytest.mark.django_db
+def test_failed_unsubscribe_restores_state_before_warning(subscription, monkeypatch):
+    expiry = timezone.now() + timedelta(hours=1)
+    subscription.lease_expires_at = expiry
+    subscription.confirmed_lease_seconds = 3600
+    subscription.save()
+
+    def unavailable_hub(request):
+        raise httpx.ConnectError("synthetic connection failure", request=request)
+
+    state_at_warning = []
+
+    def unavailable_warning(*args, **kwargs):
+        subscription.refresh_from_db()
+        state_at_warning.append((subscription.state, subscription.pending_mode, subscription.last_request_error))
+        raise RuntimeError("synthetic logging failure")
+
+    monkeypatch.setattr("indieweb.websub.logger.warning", unavailable_warning)
+    with httpx.Client(transport=httpx.MockTransport(unavailable_hub)) as hub:
+        result = request_websub_subscription(
+            subscription.topic_url,
+            subscription.hub_url,
+            mode=WebSubSubscription.MODE_UNSUBSCRIBE,
+            callback_base_url="https://example.org/indieweb/websub",
+            client=hub,
+        )
+
+    assert state_at_warning == [(WebSubSubscription.STATE_ACTIVE, "", "ConnectError")]
+    assert result.success is False
+    assert result.error == "ConnectError"
+    assert result.subscription.lease_expires_at == expiry
+    assert result.subscription.confirmed_lease_seconds == 3600
+    assert result.subscription.last_request_mode == WebSubSubscription.MODE_UNSUBSCRIBE

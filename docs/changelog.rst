@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Restore WebSub subscription state before logging a network failure and
+  preserve the request result if the warning handler raises.
 * Report accepted and failed hub notification totals if ``notify_websub``
   cannot write or flush its output.
 * Keep the failed WebSub hub result and continue notifying the remaining hubs
