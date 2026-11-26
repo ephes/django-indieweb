@@ -817,8 +817,11 @@ the latest request diagnostics record the failure. Only an earlier request
 whose hub POST completed is restored. Preparing a request clears
 ``last_request_at`` until that request completes, so an overlapping retry that
 is still in flight is never restored. With two or more overlapping retries,
-a failed retry therefore cannot restore an earlier accepted request, and its
-callback is refused, as it was before this restore existed. Lease values changed while the failed
+a failed retry therefore cannot restore an earlier accepted request. When that
+failure clears the pending mode, the earlier callback is refused, as it was
+before this restore existed. While a newer retry still has a matching pending
+verification, the shared callback token lets any callback for that mode
+complete it against the newer retry's staged lease and secret. Lease values changed while the failed
 request was in flight, for example by an admin save, are kept. A legacy pending
 state with no matching verification mode settles to ``denied`` on a failed
 request.
