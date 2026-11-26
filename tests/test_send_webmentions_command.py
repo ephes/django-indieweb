@@ -1,14 +1,74 @@
+from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
-from unittest.mock import ANY, Mock, patch
+from threading import Event, local
+from types import SimpleNamespace
+from unittest.mock import ANY, Mock, call, patch
 
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from indieweb import senders
+from indieweb.management.commands import send_webmentions as command
 from indieweb.models import WebmentionOutboundTarget
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+def test_reused_command_keeps_its_invocation_deadline(settings, monkeypatch, overlap):
+    settings.INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS = 10
+    first_source = "https://source.example/first"
+    second_source = "https://source.example/second"
+    first_fetch_started = Event()
+    second_fetch_started = Event()
+    worker = local()
+    clock = SimpleNamespace(monotonic=lambda: worker.now)
+    monkeypatch.setattr(command, "time", clock)
+    monkeypatch.setattr(senders, "time", clock)
+
+    def fetch(source, *, deadline):
+        if overlap and source == first_source:
+            first_fetch_started.set()
+            assert second_fetch_started.wait(timeout=5)
+        elif overlap:
+            second_fetch_started.set()
+        return "<p>synthetic</p>"
+
+    sender = Mock()
+    sender.fetch_content.side_effect = fetch
+    sender.extract_urls.return_value = []
+    sender.send_webmentions.return_value = []
+    monkeypatch.setattr(command, "WebmentionSender", lambda: sender)
+    instance = command.Command(stdout=StringIO())
+
+    def run(source, start):
+        worker.now = start
+        call_command(instance, source)
+
+    if overlap:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(run, first_source, 100.0)
+            assert first_fetch_started.wait(timeout=5)
+            second = pool.submit(run, second_source, 200.0)
+            first.result(timeout=5)
+            second.result(timeout=5)
+    else:
+        run(first_source, 100.0)
+        run(second_source, 200.0)
+
+    assert sender.fetch_content.call_args_list == [
+        call(first_source, deadline=110.0),
+        call(second_source, deadline=210.0),
+    ]
+    assert sender.send_webmentions.call_count == 2
+    sender.send_webmentions.assert_has_calls(
+        [
+            call(first_source, [], vouch_url=None, deadline=110.0),
+            call(second_source, [], vouch_url=None, deadline=210.0),
+        ],
+        any_order=True,
+    )
 
 
 @pytest.mark.parametrize("dry_run", [False, True])

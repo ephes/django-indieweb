@@ -1549,6 +1549,10 @@ input that finishes after the deadline fails before parsing or sending. Descript
 readiness must be supported by the platform; unsupported stdin streams fail
 with a fixed error (use direct ``--content`` instead).
 
+Each invocation gets its own source deadline, including when callers reuse
+a command instance. Content acquisition, discovery and delivery share that
+invocation's deadline.
+
 The command parses the source HTML once. The reported URL count includes all
 distinct nonempty link hrefs in document order, before URL safety, same-host
 and fanout filtering. Both preview and delivery use those same links for

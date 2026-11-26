@@ -36,6 +36,20 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - `uv run pytest` passed with 4,091 tests. Ruff and mypy passed.
 - Updated the Webmention guide and changelog Unreleased.
 
+### Capture the Webmention command deadline per invocation (round 211 B05)
+
+- Pass the same invocation-local deadline through source admission,
+  discovery and delivery in each command mode.
+- The overlap regression reproduced delivery with the other invocation's
+  deadline. Its sequential control and both command test modules passed
+  after the fix (`uv run pytest --no-cov -q tests/test_send_webmentions_command.py
+  tests/test_send_webmentions_admission.py`).
+- `uv run pytest -q` passed with 4,093 tests and 95.04% coverage.
+  Ruff, mypy, the configured hooks and the strict Sphinx build passed.
+- All 12 default `uv run tox -p 2` lanes passed, including migrations and
+  file-backed SQLite. The sandbox blocked PostgreSQL startup at `shmget`.
+- Updated the Webmention guide and changelog Unreleased.
+
 ## 2026-11-25
 
 ### Make Webmention display null ordering portable (round 204 B12)

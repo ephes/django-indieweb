@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Keep the source deadline local to each ``send_webmentions`` invocation when
+  calls overlap on a reused command instance.
 * Bound each ``send_webmentions`` stdin readiness wait to prevent platform
   timeout overflow with large source budgets.
 * Return Webmention delivery receipts when outbound history recording raises.
