@@ -4,6 +4,13 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Reject incomplete Micropub upload spool writes (round 222 B05)
+
+- A partial spool write now returns HTTP 500 before publishing any file in the request.
+- `uv run pytest --no-cov -q tests/test_micropub_media.py::test_micropub_create_rejects_short_spool_write_before_storage`
+  reproduced HTTP 201 before the fix and passed afterward.
+- Updated the Micropub guide and changelog Unreleased.
+
 ### Isolate lease warnings and count committed prune batches (round 220 review)
 
 - Compute WebSub lease bounds without logging and log each warning in its own

@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from tempfile import SpooledTemporaryFile
 from urllib.parse import urlparse
 
 import pytest
@@ -1176,6 +1177,37 @@ def test_micropub_create_rejects_disallowed_photo_content_type(client, user, mic
 
     assert response.status_code == 415
     assert response.content.decode("utf-8") == "invalid_request"
+
+
+@pytest.mark.django_db
+def test_micropub_create_rejects_short_spool_write_before_storage(client, monkeypatch, user, micropub_url):
+    class ShortWritingSpool(SpooledTemporaryFile):
+        def write(self, chunk):
+            return super().write(chunk[:-1] if self.tell() else chunk)
+
+    storage_calls = []
+
+    def save(name, content):
+        storage_calls.append(name)
+        return name
+
+    monkeypatch.setattr("indieweb.views.SpooledTemporaryFile", ShortWritingSpool)
+    monkeypatch.setattr("indieweb.views.default_storage.exists", lambda name: False)
+    monkeypatch.setattr("indieweb.views.default_storage.save", save)
+    monkeypatch.setattr("indieweb.views.get_micropub_handler", InMemoryMicropubHandler)
+    token = _make_token(user, "create")
+    response = client.post(
+        micropub_url,
+        data={
+            "h": "entry",
+            "photo": [_upload(), _upload(name="second.jpg", content=JPEG_BYTES + b"x" * (64 * 1024))],
+        },
+        Authorization=f"Bearer {token.key}",
+    )
+
+    assert response.status_code == 500
+    assert "Location" not in response
+    assert storage_calls == []
 
 
 @pytest.mark.django_db

@@ -648,7 +648,8 @@ def _snapshot_micropub_media_upload(upload: UploadedFile, stack: ExitStack, rema
         size += len(chunk)
         if limit is not None and size > limit:
             raise _MicropubMediaUploadError(413)
-        snapshot.write(chunk)
+        if snapshot.write(chunk) != len(chunk):
+            raise OSError("Incomplete write to Micropub media upload spool")
     snapshot.seek(0)
     return UploadedFile(file=snapshot, name=upload.name, content_type=upload.content_type, size=size)
 

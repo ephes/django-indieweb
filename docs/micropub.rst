@@ -1505,7 +1505,8 @@ supported. Validation and storage consume that same snapshot, so rewinding a
 custom upload stream cannot substitute a later generation after sniffing.
 Snapshots spool to a temporary file above 1 MiB, honoring Django's
 ``FILE_UPLOAD_TEMP_DIR``, and close on success, refusal, or storage/URL failure.
-All files pass validation before the first storage write; existing compensation
-of owned storage keys still applies. Setting a byte limit
+All files pass validation before the first storage write. An incomplete
+snapshot write returns an empty ``500`` response before any file reaches
+storage. Existing compensation of owned storage keys still applies. Setting a byte limit
 to ``None`` disables that limit during copying too; configure equivalent host
 limits before opting out.
