@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Settle WebSub requests when the subscription was removed (round 216 B02)
+
+- Return a failure result if the prepared row disappears during the hub
+  request. Keep the hub HTTP status when available.
+- The regression reproduced `DoesNotExist` after HTTP acceptance, rejection
+  and a transport failure. All three cases passed after the fix, including
+  with migrations and file-backed SQLite. `just check`, `just hooks` and the
+  strict Sphinx build passed.
+- Updated the WebSub guide and changelog Unreleased.
+
 ### Report committed WebSub delivery-attempt pruning after failure (round 216 B02)
 
 - Count deletions after each batch commits on the write database. The command

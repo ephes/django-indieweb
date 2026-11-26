@@ -587,7 +587,6 @@ def _save_subscription_request_success(
         last_request_error="",
         modified=timezone.now(),
     )
-    subscription.refresh_from_db(using=using)
 
 
 def _save_subscription_request_failure(
@@ -621,7 +620,6 @@ def _save_subscription_request_failure(
         ),
         modified=timezone.now(),
     )
-    subscription.refresh_from_db(using=using)
 
 
 def _prepare_subscription_request(
@@ -784,6 +782,10 @@ def request_websub_subscription(
     the request and should later verify the callback; verification state is
     confirmed by the callback view.
 
+    If the subscription is removed before finalization, the result reports a
+    failure with the hub's HTTP status if available. Its subscription is the
+    in-memory instance prepared for the request.
+
     The write database must be in autocommit mode so the callback can see
     the prepared row. An enclosing transaction raises ``RuntimeError``.
     """
@@ -828,6 +830,7 @@ def request_websub_subscription(
         )
     )
     try:
+        status_code: int | None
         try:
             response = _post_subscription_request(
                 hub_url=subscription.hub_url,
@@ -847,7 +850,15 @@ def request_websub_subscription(
             WebmentionRedirectError,
             HTTPResponseTooLarge,
         ) as exc:
-            request_error = type(exc).__name__
+            status_code = None
+            error = type(exc).__name__
+        else:
+            status_code = response.status_code
+            error = "" if response.is_success else hub_response_error(response)
+
+        if status_code is not None and not error:
+            _save_subscription_request_success(subscription, using=using, mode=validated_mode, status_code=status_code)
+        else:
             _save_subscription_request_failure(
                 subscription,
                 using=using,
@@ -855,47 +866,23 @@ def request_websub_subscription(
                 previous_state=previous_state,
                 previous_pending_secret=previous_pending_secret,
                 previous_pending_secret_set=previous_pending_secret_set,
-                status_code=None,
-                error=request_error,
+                status_code=status_code,
+                error=error,
             )
+        try:
+            subscription.refresh_from_db(using=using)
+        except WebSubSubscription.DoesNotExist:
+            error = "WebSub subscription was removed during the request"
+        if status_code is None:
             with suppress(Exception):
                 logger.warning(
-                    f"WebSub subscription request failed for hub={redact_url(subscription.hub_url)!r}: {request_error}"
+                    f"WebSub subscription request failed for hub={redact_url(subscription.hub_url)!r}: {error}"
                 )
-            return WebSubSubscriptionRequestResult(
-                subscription=subscription,
-                mode=validated_mode,
-                success=False,
-                error=request_error,
-            )
-
-        if response.is_success:
-            _save_subscription_request_success(
-                subscription, using=using, mode=validated_mode, status_code=response.status_code
-            )
-            return WebSubSubscriptionRequestResult(
-                subscription=subscription,
-                mode=validated_mode,
-                success=True,
-                status_code=response.status_code,
-            )
-
-        error = hub_response_error(response)
-        _save_subscription_request_failure(
-            subscription,
-            using=using,
-            mode=validated_mode,
-            previous_state=previous_state,
-            previous_pending_secret=previous_pending_secret,
-            previous_pending_secret_set=previous_pending_secret_set,
-            status_code=response.status_code,
-            error=error,
-        )
         return WebSubSubscriptionRequestResult(
             subscription=subscription,
             mode=validated_mode,
-            success=False,
-            status_code=response.status_code,
+            success=not error,
+            status_code=status_code,
             error=error,
         )
     finally:

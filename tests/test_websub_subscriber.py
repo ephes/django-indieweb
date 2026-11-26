@@ -11,6 +11,7 @@ import django
 import httpx
 import pytest
 from django.core.management import call_command
+from django.db import router
 from django.http import HttpRequest
 from django.test import Client
 from django.urls import reverse
@@ -181,6 +182,37 @@ def test_request_websub_subscription_records_hub_rejection():
     assert result.subscription.state == WebSubSubscription.STATE_DENIED
     assert result.subscription.last_request_status_code == 400
     assert result.subscription.last_request_error == _hub_error(result.status_code, b"bad topic")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("status_code", [202, 400, None])
+def test_request_websub_subscription_settles_when_row_is_removed(status_code):
+    subscriptions = WebSubSubscription.objects.using(router.db_for_write(WebSubSubscription))
+    removed_ids = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        row = subscriptions.get(pending_mode=WebSubSubscription.MODE_SUBSCRIBE)
+        removed_ids.append(row.pk)
+        subscriptions.filter(pk=row.pk).delete()
+        if status_code is None:
+            raise httpx.ConnectError("synthetic transport failure", request=request)
+        return httpx.Response(status_code)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        result = request_websub_subscription(
+            "https://source.example/feed",
+            "https://hub.example/sub",
+            callback_base_url="https://example.org/indieweb/websub",
+            secret=STORED_SECRET,
+            client=http_client,
+        )
+
+    assert not result.success
+    assert result.mode == WebSubSubscription.MODE_SUBSCRIBE
+    assert result.status_code == status_code
+    assert result.error == "WebSub subscription was removed during the request"
+    assert removed_ids == [result.subscription.pk]
+    assert not subscriptions.exists()
 
 
 @pytest.mark.django_db(transaction=True)

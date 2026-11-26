@@ -250,6 +250,14 @@ Network failures and non-``2xx`` responses are captured in the returned result
 and on the subscription row. The helper saves the request failure before
 logging it and returns the result even if the warning handler raises.
 
+If the subscription is removed while the hub request is in flight, the row
+stays absent. The result has ``success=False`` and
+``error="WebSub subscription was removed during the request"``. Its
+``subscription`` is the in-memory instance prepared for the request, and
+``status_code`` holds the hub's HTTP status when a response was received.
+A ``2xx`` status in this result means the hub accepted the request before
+local finalization found the row missing.
+
 Calling ``request_websub_subscription()`` for an already-active subscription is
 a renewal request. The row stays ``active`` while verification is pending so
 current deliveries remain accepted until the existing lease expires. If the
