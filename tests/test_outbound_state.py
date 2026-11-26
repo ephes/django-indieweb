@@ -407,3 +407,34 @@ def test_claim_release_error_keeps_caller_transaction_usable():
     release.assert_called_once()
     assert result["history_error"] == "Outbound history update failed"
     assert WebmentionOutboundTarget.objects.filter(source_url=source).count() == 1
+
+
+@pytest.mark.django_db
+def test_failure_drop_error_keeps_receipt_and_caller_transaction_usable(settings):
+    settings.INDIEWEB_SALMENTION_MAX_CONSECUTIVE_FAILURES = 2
+    source = "https://source.example/"
+    failing = "https://failing.example/"
+    healthy = "https://healthy.example/"
+    WebmentionOutboundTarget.objects.create(source_url=source, target_url=failing, consecutive_failures=1)
+    WebmentionOutboundTarget.objects.create(source_url=source, target_url=healthy)
+    sender = WebmentionSender()
+
+    def broken_drop(row):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT synthetic_missing_column FROM indieweb_webmentionoutboundtarget")
+
+    with (
+        patch.object(sender, "discover_endpoint", side_effect=lambda url, **kwargs: None if url == failing else url),
+        patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 202}),
+        patch.object(sender, "_delete_failed_outbound_target", side_effect=broken_drop) as drop,
+    ):
+        assert connection.in_atomic_block
+        first, second = sender.resend_salmentions(source, "")
+
+    drop.assert_called_once()
+    assert first["target"] == failing and first["error"] == "No endpoint found"
+    assert first["history_error"] == "Outbound history update failed" and "dropped" not in first
+    assert second["target"] == healthy and second["success"] is True and "history_error" not in second
+    rows = {row.target_url: row for row in WebmentionOutboundTarget.objects.filter(source_url=source)}
+    assert rows[failing].consecutive_failures == 2
+    assert rows[healthy].last_status_code == 202

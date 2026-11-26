@@ -1872,8 +1872,9 @@ is silently sent.
 Outbound history write failures
 ================================
 
-If an outbound history write raises after an attempt, the affected receipt
-from ``send_webmentions`` or ``resend_salmentions`` includes
+If an outbound history write raises after an attempt, including the
+historical failure drop of a resend, the affected receipt from
+``send_webmentions`` or ``resend_salmentions`` includes
 ``history_error="Outbound history update failed"``. The receipt keeps the
 original ``success``, ``status_code`` and any delivery ``error``. The sender
 attempts to log a warning with the exception class only. It then processes

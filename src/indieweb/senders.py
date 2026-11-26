@@ -97,6 +97,14 @@ def _savepoint_in_caller_transaction(using: str) -> AbstractContextManager[Any]:
     return nullcontext()
 
 
+def _mark_history_error(result: dict, error: Exception) -> None:
+    """Attach a local history failure to a receipt and log only its class."""
+    # URLs and database details stay out of the log.
+    with suppress(Exception):
+        logger.warning(f"Failed to record outbound Webmention history: {type(error).__name__}")
+    result["history_error"] = _OUTBOUND_HISTORY_ERROR
+
+
 def _source_deadline(deadline: float | None = None) -> float:
     budget = _positive_int_setting(
         "INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS", DEFAULT_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS
@@ -827,7 +835,7 @@ class WebmentionSender:
             row is not None
             and target is not None
             and not result["success"]
-            and self._delete_failed_outbound_target(target)
+            and self._drop_failed_history(target, result)
         ):
             result.update(attempted=True, dropped=True, skipped=True, skip_reason="failure_drop")
             result["error"] = f"{result.get('error', 'Delivery failed')}; historical target dropped"
@@ -1010,12 +1018,18 @@ class WebmentionSender:
                     using=using,
                 )
         except Exception as error:
-            # Report only the error class: URLs and database details stay private.
-            with suppress(Exception):
-                logger.warning(f"Failed to record outbound Webmention history: {type(error).__name__}")
+            _mark_history_error(result, error)
             self._release_historical_claim_best_effort(row, claim)
-            result["history_error"] = _OUTBOUND_HISTORY_ERROR
             return None
+
+    def _drop_failed_history(self, target: WebmentionOutboundTarget, result: dict) -> bool:
+        """Apply the failure drop without losing the delivery receipt on a write error."""
+        try:
+            with _savepoint_in_caller_transaction(target._state.db or router.db_for_write(WebmentionOutboundTarget)):
+                return self._delete_failed_outbound_target(target)
+        except Exception as error:
+            _mark_history_error(result, error)
+            return False
 
     def _record_outbound_target(
         self,
