@@ -395,12 +395,18 @@ def _warn_unsigned_subscription(subscription: WebSubSubscription) -> None:
         )
 
 
+def _warn_lease_bounds(message: str, *args: object) -> None:
+    # A failing log handler must not prevent verification with safe lease bounds.
+    with suppress(Exception):
+        logger.warning(message, *args)
+
+
 def _configured_positive_int(name: str, *, default: int, label: str) -> int:
     configured = getattr(settings, name, default)
     try:
         parsed = _positive_int(configured, label=label)
     except ValueError:
-        logger.warning("Ignoring invalid %s value; using the default", name)
+        _warn_lease_bounds("Ignoring invalid %s value; using the default", name)
         return default
     return parsed if parsed is not None else default
 
@@ -414,7 +420,7 @@ def _clamp_to_lease_range(value: int, *, setting_name: str) -> int:
     leases).
     """
     if value < WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS:
-        logger.warning(
+        _warn_lease_bounds(
             "Clamping %s=%d to WebSub lease floor of %d seconds",
             setting_name,
             value,
@@ -422,7 +428,7 @@ def _clamp_to_lease_range(value: int, *, setting_name: str) -> int:
         )
         return WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS
     if value > WEBSUB_LEASE_BOUNDS_CEILING_SECONDS:
-        logger.warning(
+        _warn_lease_bounds(
             "Clamping %s=%d to WebSub lease ceiling of %d seconds",
             setting_name,
             value,
@@ -450,7 +456,7 @@ def _confirmed_lease_bounds() -> tuple[int, int]:
         setting_name="INDIEWEB_WEBSUB_MAX_LEASE_SECONDS",
     )
     if minimum > maximum:
-        logger.warning("Ignoring invalid WebSub lease bounds; using the defaults")
+        _warn_lease_bounds("Ignoring invalid WebSub lease bounds; using the defaults")
         return DEFAULT_WEBSUB_MIN_LEASE_SECONDS, DEFAULT_WEBSUB_MAX_LEASE_SECONDS
     return minimum, maximum
 

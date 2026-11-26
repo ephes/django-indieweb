@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Keep WebSub callback verification using the configured fallback or clamped
+  lease bounds when logging a lease configuration warning fails.
 * Preserve the WebSub delivery-attempt prune count, cutoff and commit status
   when the command cannot write or flush its receipt.
 * Report committed WebSub delivery-attempt deletions when a later prune batch

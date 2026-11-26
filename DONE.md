@@ -4,6 +4,13 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Preserve WebSub verification when lease-bound warnings fail (round 220 B19)
+
+- Keep the existing lease defaults and clamping when a warning handler raises.
+- All four warning-failure cases failed before the fix and passed with
+  `uv run pytest --no-cov tests/test_websub_subscriber.py`.
+- Updated the WebSub guide and changelog Unreleased.
+
 ### Preserve the WebSub prune outcome when receipt output fails (round 220 B19)
 
 - Report the cutoff and the committed, pending, or dry-run count on receipt

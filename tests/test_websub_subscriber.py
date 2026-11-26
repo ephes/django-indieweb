@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 from datetime import timedelta
 from io import StringIO
 from sys import int_info
@@ -655,6 +656,57 @@ def test_callback_verification_clamps_confirmed_lease(client, lease_seconds, exp
     subscription.refresh_from_db()
     assert response.status_code == 200
     assert subscription.confirmed_lease_seconds == expected_confirmed
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("minimum", "maximum", "lease_seconds", "expected_confirmed", "warning"),
+    [
+        ("invalid", 3600, "30", 300, "Ignoring invalid INDIEWEB_WEBSUB_MIN_LEASE_SECONDS"),
+        (1, 3600, "30", 60, "Clamping INDIEWEB_WEBSUB_MIN_LEASE_SECONDS"),
+        (300, 10**12, str(10**11), 90 * 24 * 60 * 60, "Clamping INDIEWEB_WEBSUB_MAX_LEASE_SECONDS"),
+        (3600, 300, "30", 300, "Ignoring invalid WebSub lease bounds"),
+    ],
+)
+def test_callback_verification_survives_lease_bound_warning_failure(
+    settings, client, monkeypatch, caplog, minimum, maximum, lease_seconds, expected_confirmed, warning
+):
+    settings.INDIEWEB_WEBSUB_MIN_LEASE_SECONDS = minimum
+    settings.INDIEWEB_WEBSUB_MAX_LEASE_SECONDS = maximum
+    messages = []
+
+    class FailingHandler(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+            raise RuntimeError("synthetic logging failure")
+
+    logger = logging.getLogger("indieweb.websub")
+    caplog.set_level(logging.WARNING, logger=logger.name)
+    monkeypatch.setattr(logger, "handlers", [FailingHandler()])
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+
+    response = client.get(
+        _callback_url(subscription),
+        data={
+            "hub.mode": "subscribe",
+            "hub.topic": subscription.topic_url,
+            "hub.challenge": "abc123",
+            "hub.lease_seconds": lease_seconds,
+        },
+    )
+
+    subscription.refresh_from_db()
+    assert response.status_code == 200
+    assert response.content == b"abc123"
+    assert subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert subscription.confirmed_lease_seconds == expected_confirmed
+    assert len(messages) == 1
+    assert messages[0].startswith(warning)
 
 
 @pytest.mark.django_db
