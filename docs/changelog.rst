@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Reserve the SQLite writer before reading WebSub subscription state so
+  overlapping preparations can serialize on the routed write database.
 * Restore WebSub subscription state before logging a network failure and
   preserve the request result if the warning handler raises.
 * Report accepted and failed hub notification totals if ``notify_websub``

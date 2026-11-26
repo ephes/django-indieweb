@@ -3,12 +3,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from itertools import permutations
-from threading import Barrier
+from threading import Barrier, Event
 from unittest.mock import patch
 
 import httpx
 import pytest
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, connections
 from django.utils import timezone
 
 from indieweb.models import WebmentionOutboundTarget, WebSubSubscription
@@ -51,6 +51,67 @@ def test_old_subscription_result_preserves_new_generation(newer, response):
     else:
         assert stored.state == "active"
         assert stored.get_secret() == "older-synthetic-secret-20x"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_sqlite_overlapping_subscription_preparations(sqlite_wal, monkeypatch):
+    row = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/",
+        topic_url="https://topic.example/",
+        state=WebSubSubscription.STATE_ACTIVE,
+    )
+    first_has_read, second_is_writing = Event(), Event()
+    generations = {}
+    save = WebSubSubscription.save
+
+    def pause_first_save(subscription, *args, **kwargs):
+        lease = subscription.requested_lease_seconds
+        if lease == 3600:
+            first_has_read.set()
+            assert second_is_writing.wait(timeout=10)
+        generations[lease] = subscription.request_generation
+        return save(subscription, *args, **kwargs)
+
+    def signal_second_write(execute, sql, params, many, context):
+        if sql.startswith('UPDATE "indieweb_websubsubscription"'):
+            second_is_writing.set()
+        return execute(sql, params, many, context)
+
+    def respond(request):
+        assert connection.get_autocommit()
+        return httpx.Response(202)
+
+    def renew(lease):
+        try:
+            with httpx.Client(transport=httpx.MockTransport(respond)) as hub:
+                return request_websub_subscription(
+                    row.topic_url,
+                    row.hub_url,
+                    lease_seconds=lease,
+                    secret="synthetic-renewal-secret",
+                    callback_base_url="https://callback.example/",
+                    client=hub,
+                )
+        finally:
+            connections.close_all()
+
+    def renew_second():
+        with connection.execute_wrapper(signal_second_write):
+            return renew(7200)
+
+    monkeypatch.setattr(WebSubSubscription, "save", pause_first_save)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(renew, 3600)
+        assert first_has_read.wait(timeout=10)
+        second = pool.submit(renew_second)
+        assert first.result(timeout=15).success
+        assert second.result(timeout=15).success
+
+    row.refresh_from_db()
+    assert row.state == WebSubSubscription.STATE_ACTIVE
+    assert row.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
+    assert row.requested_lease_seconds == 7200
+    assert row.request_generation == generations[7200] != generations[3600]
 
 
 def _record(*, success=False, **kwargs):

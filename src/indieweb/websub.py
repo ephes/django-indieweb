@@ -573,10 +573,10 @@ def build_websub_callback_url(
 def _save_subscription_request_success(
     subscription: WebSubSubscription,
     *,
+    using: str,
     mode: str,
     status_code: int,
 ) -> None:
-    using = _subscription_write_db(subscription)
     WebSubSubscription.objects.using(using).filter(
         pk=subscription.pk,
         request_generation=subscription.request_generation,
@@ -593,6 +593,7 @@ def _save_subscription_request_success(
 def _save_subscription_request_failure(
     subscription: WebSubSubscription,
     *,
+    using: str,
     mode: str,
     previous_state: str,
     previous_pending_secret: str,
@@ -600,7 +601,6 @@ def _save_subscription_request_failure(
     status_code: int | None,
     error: str,
 ) -> None:
-    using = _subscription_write_db(subscription)
     # One conditional write: callbacks and newer preparations retire our ownership.
     WebSubSubscription.objects.using(using).filter(
         pk=subscription.pk,
@@ -628,6 +628,7 @@ def _prepare_subscription_request(
     topic_url: str,
     hub_url: str,
     *,
+    using: str,
     mode: str,
     lease_seconds: int | None,
     secret: str | None,
@@ -640,18 +641,18 @@ def _prepare_subscription_request(
         raise ValueError("requested lease seconds exceeds the supported database integer range")
     validated_secret = _validate_websub_secret(secret) if validated_mode == WebSubSubscription.MODE_SUBSCRIBE else None
 
+    subscriptions = WebSubSubscription.objects.using(using)
+    # SQLite needs the writer reservation before reading the current state.
+    if connections[using].vendor == "sqlite":
+        subscriptions.filter(hub_url=validated_hub_url, topic_url=validated_topic_url).update(modified=F("modified"))
+    subscriptions = subscriptions.select_for_update()
     if validated_mode == WebSubSubscription.MODE_UNSUBSCRIBE:
         try:
-            subscription = WebSubSubscription.objects.select_for_update().get(
-                hub_url=validated_hub_url, topic_url=validated_topic_url
-            )
+            subscription = subscriptions.get(hub_url=validated_hub_url, topic_url=validated_topic_url)
         except WebSubSubscription.DoesNotExist as exc:
             raise ValueError("cannot unsubscribe an unknown WebSub subscription") from exc
     else:
-        subscription, _created = WebSubSubscription.objects.select_for_update().get_or_create(
-            hub_url=validated_hub_url,
-            topic_url=validated_topic_url,
-        )
+        subscription, _created = subscriptions.get_or_create(hub_url=validated_hub_url, topic_url=validated_topic_url)
 
     previous_state = subscription.state
     previous_pending_secret = subscription.pending_secret
@@ -670,6 +671,7 @@ def _prepare_subscription_request(
         subscription.set_pending_secret(validated_secret or "")
         subscription.pending_secret_set = validated_secret is not None
     subscription.save(
+        using=using,
         update_fields=[
             "state",
             "pending_mode",
@@ -680,7 +682,7 @@ def _prepare_subscription_request(
             "pending_secret",
             "pending_secret_set",
             "modified",
-        ]
+        ],
     )
     return subscription, validated_mode, previous_state, previous_pending_secret, previous_pending_secret_set
 
@@ -787,7 +789,8 @@ def request_websub_subscription(
     if secret and mode == WebSubSubscription.MODE_SUBSCRIBE and urlparse(hub_url).scheme.lower() != "https":
         raise WebSubSecretRequiresHTTPSError("WebSub subscription with hub.secret requires an https hub_url")
     # Callback construction depends on the token. Roll back preparation if it fails.
-    with transaction.atomic(using=router.db_for_write(WebSubSubscription)):
+    using = router.db_for_write(WebSubSubscription)
+    with transaction.atomic(using=using):
         (
             subscription,
             validated_mode,
@@ -797,6 +800,7 @@ def request_websub_subscription(
         ) = _prepare_subscription_request(
             topic_url,
             hub_url,
+            using=using,
             mode=mode,
             lease_seconds=lease_seconds,
             secret=secret,
@@ -840,6 +844,7 @@ def request_websub_subscription(
             request_error = type(exc).__name__
             _save_subscription_request_failure(
                 subscription,
+                using=using,
                 mode=validated_mode,
                 previous_state=previous_state,
                 previous_pending_secret=previous_pending_secret,
@@ -859,7 +864,9 @@ def request_websub_subscription(
             )
 
         if response.is_success:
-            _save_subscription_request_success(subscription, mode=validated_mode, status_code=response.status_code)
+            _save_subscription_request_success(
+                subscription, using=using, mode=validated_mode, status_code=response.status_code
+            )
             return WebSubSubscriptionRequestResult(
                 subscription=subscription,
                 mode=validated_mode,
@@ -870,6 +877,7 @@ def request_websub_subscription(
         error = hub_response_error(response)
         _save_subscription_request_failure(
             subscription,
+            using=using,
             mode=validated_mode,
             previous_state=previous_state,
             previous_pending_secret=previous_pending_secret,

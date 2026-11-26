@@ -6642,3 +6642,11 @@ bundle.
   a failed hub request. The WebSub guide and changelog Unreleased cover it.
 - The warning regression failed before the fix. Validated with
   `uv run --frozen pytest --no-cov -q tests/test_websub_subscriber.py`.
+
+### Reserve the SQLite writer before WebSub preparation (round 215 B03)
+
+- Pin subscription preparation and request result writes to one write
+  alias. Take the SQLite writer reservation before reading the row.
+  Updated the WebSub guide and changelog Unreleased.
+- The two-connection file SQLite regression failed with a lock upgrade
+  error before the fix and passed with migrations enabled afterward.

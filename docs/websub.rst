@@ -266,7 +266,9 @@ at rest.
 
 Set ``mode=WebSubSubscription.MODE_UNSUBSCRIBE`` to ask the hub to cancel an
 existing subscription. Unknown subscriptions are rejected before any network
-request is made.
+request is made. Preparation uses the subscription's routed write database
+and reserves the SQLite writer before reading the row. The hub request runs
+after the preparation block has exited.
 
 ``request_websub_subscription()`` also accepts an optional ``client`` keyword
 for tests and tightly controlled integrations. See the injected-client warning
