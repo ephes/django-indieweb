@@ -126,6 +126,96 @@ def test_failed_subscription_retry_restores_prior_verification(
         assert row.confirmed_lease_seconds == 3600
 
 
+def _accepted_subscribe(row, secret):
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(202))) as hub:
+        result = request_websub_subscription(
+            row.topic_url,
+            row.hub_url,
+            mode="subscribe",
+            lease_seconds=3600,
+            secret=secret,
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert result.success
+    return result
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_retry_does_not_restore_overlapping_in_flight_retry(client):
+    row = WebSubSubscription.objects.create(hub_url="https://hub.example/", topic_url="https://topic.example/")
+    original = _accepted_subscribe(row, "original-synthetic-secret")
+
+    def newest_retry_fails_first(request):
+        with httpx.Client(transport=httpx.MockTransport(lambda inner: httpx.Response(503))) as inner_hub:
+            newest = request_websub_subscription(
+                row.topic_url,
+                row.hub_url,
+                mode="subscribe",
+                secret="newest-synthetic-secret-x",
+                callback_base_url="https://callback.example/",
+                client=inner_hub,
+            )
+        assert not newest.success
+        return httpx.Response(503)
+
+    with httpx.Client(transport=httpx.MockTransport(newest_retry_fails_first)) as hub:
+        overlapped = request_websub_subscription(
+            row.topic_url,
+            row.hub_url,
+            mode="subscribe",
+            secret="rejected-synthetic-secret",
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert not overlapped.success
+    row.refresh_from_db()
+    # The in-flight retry's staged secret must not become verifiable.
+    assert row.pending_mode == ""
+    assert row.state == WebSubSubscription.STATE_DENIED
+
+    response = client.get(
+        reverse("indieweb:websub-callback", args=[original.subscription.callback_token]),
+        {"hub.mode": "subscribe", "hub.topic": row.topic_url, "hub.challenge": "original-challenge"},
+    )
+    assert response.status_code != 200
+    row.refresh_from_db()
+    assert row.state == WebSubSubscription.STATE_DENIED
+    assert row.secret == ""
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_retry_keeps_lease_edits_saved_while_in_flight():
+    row = WebSubSubscription.objects.create(hub_url="https://hub.example/", topic_url="https://topic.example/")
+    _accepted_subscribe(row, "original-synthetic-secret")
+    edited_expiry = timezone.now() + timedelta(hours=3)
+
+    def edit_then_fail(request):
+        # Mirrors an admin save: lease fields change, the request generation does not.
+        WebSubSubscription.objects.filter(pk=row.pk).update(
+            requested_lease_seconds=5000,
+            confirmed_lease_seconds=1234,
+            lease_expires_at=edited_expiry,
+        )
+        return httpx.Response(503)
+
+    with httpx.Client(transport=httpx.MockTransport(edit_then_fail)) as hub:
+        retry = request_websub_subscription(
+            row.topic_url,
+            row.hub_url,
+            mode="subscribe",
+            lease_seconds=7200,
+            secret="retry-synthetic-secret-x",
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert not retry.success
+    assert retry.subscription.pending_mode == "subscribe"
+    assert retry.subscription.requested_lease_seconds == 5000
+    assert retry.subscription.confirmed_lease_seconds == 1234
+    assert retry.subscription.lease_expires_at == edited_expiry
+
+
 @pytest.mark.django_db(transaction=True)
 def test_failed_unsubscribe_retry_settles_orphaned_pending_state():
     row = WebSubSubscription.objects.create(

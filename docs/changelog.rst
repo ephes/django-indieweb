@@ -9,7 +9,10 @@ Unreleased
 * Return HTTP 500 before writing any Micropub media to storage if the upload
   spool accepts fewer bytes than requested.
 * Keep an earlier WebSub verification pending when a newer hub request fails,
-  restoring its mode, lease data, and staged secret.
+  restoring its mode, lease data, and staged secret. Only a completed earlier
+  request is restored, never an overlapping in-flight retry, and lease edits
+  saved during the failed request are kept. ``last_request_at`` is empty while
+  a subscription request is in flight.
 * Keep WebSub callback verification using the configured fallback or clamped
   lease bounds when logging a lease configuration warning fails. The bounds are
   computed without logging, and each warning is logged in its own atomic block

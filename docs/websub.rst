@@ -812,8 +812,13 @@ these transactions. Apply migrations before using this behavior.
 If a new hub request fails while an earlier request still awaits verification,
 the subscriber restores the earlier pending mode and its staged lease and
 secret data. The original callback can still complete verification, and
-the latest request diagnostics record the failure. A legacy pending state with
-no matching verification mode settles to ``denied`` on a failed request.
+the latest request diagnostics record the failure. Only an earlier request
+whose hub POST completed is restored. Preparing a request clears
+``last_request_at`` until that request completes, so an overlapping retry that
+is still in flight is never restored. Lease values changed while the failed
+request was in flight, for example by an admin save, are kept. A legacy pending
+state with no matching verification mode settles to ``denied`` on a failed
+request.
 
 Replay transactions and multiple databases
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

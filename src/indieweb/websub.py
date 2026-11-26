@@ -25,7 +25,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.db import DatabaseError, IntegrityError, connections, router, transaction
-from django.db.models import F, Q, QuerySet
+from django.db.models import Case, F, Field, Q, QuerySet, Value, When
 from django.http import HttpResponseBase
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -621,6 +621,16 @@ class _PreviousSubscriptionRequest:
     requested_lease_seconds: int | None
     confirmed_lease_seconds: int | None
     lease_expires_at: datetime | None
+    # The earlier request completed (no POST in flight), so its hub response is known.
+    completed: bool
+
+
+def _restore_unchanged(field: str, prepared: Any, previous: Any) -> Case:
+    """Restore ``previous`` only while ``field`` still holds the value preparation wrote."""
+    condition = Q(**{f"{field}__isnull": True}) if prepared is None else Q(**{field: prepared})
+    output_field = WebSubSubscription._meta.get_field(field)
+    assert isinstance(output_field, Field)
+    return Case(When(condition, then=Value(previous, output_field=output_field)), default=F(field))
 
 
 def _save_subscription_request_failure(
@@ -633,20 +643,28 @@ def _save_subscription_request_failure(
     error: str,
 ) -> None:
     state = previous.state
-    restore_pending = (
-        previous.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
-        and state in {WebSubSubscription.STATE_PENDING_SUBSCRIBE, WebSubSubscription.STATE_ACTIVE}
-    ) or (
-        previous.pending_mode == WebSubSubscription.MODE_UNSUBSCRIBE
-        and state == WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
+    # Restore only a completed earlier request: an overlapping in-flight POST
+    # may still be rejected, and its own failure is fenced by our generation.
+    restore_pending = previous.completed and (
+        (
+            previous.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
+            and state in {WebSubSubscription.STATE_PENDING_SUBSCRIBE, WebSubSubscription.STATE_ACTIVE}
+        )
+        or (
+            previous.pending_mode == WebSubSubscription.MODE_UNSUBSCRIBE
+            and state == WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
+        )
     )
-    lease_fields: dict[str, datetime | int | None] = {}
+    lease_fields: dict[str, Case] = {}
     if restore_pending:
-        lease_fields["requested_lease_seconds"] = previous.requested_lease_seconds
+        # Lease values edited while the request was in flight are kept.
+        lease_fields["requested_lease_seconds"] = _restore_unchanged(
+            "requested_lease_seconds", subscription.requested_lease_seconds, previous.requested_lease_seconds
+        )
         if mode == WebSubSubscription.MODE_SUBSCRIBE and state != WebSubSubscription.STATE_ACTIVE:
             # Preparing this subscribe cleared the prior confirmed lease.
-            lease_fields["confirmed_lease_seconds"] = previous.confirmed_lease_seconds
-            lease_fields["lease_expires_at"] = previous.lease_expires_at
+            for field in ("confirmed_lease_seconds", "lease_expires_at"):
+                lease_fields[field] = _restore_unchanged(field, getattr(subscription, field), getattr(previous, field))
     elif state in {WebSubSubscription.STATE_PENDING_SUBSCRIBE, WebSubSubscription.STATE_PENDING_UNSUBSCRIBE} or (
         mode == WebSubSubscription.MODE_SUBSCRIBE and state != WebSubSubscription.STATE_ACTIVE
     ):
@@ -710,6 +728,7 @@ def _prepare_subscription_request(
         requested_lease_seconds=subscription.requested_lease_seconds,
         confirmed_lease_seconds=subscription.confirmed_lease_seconds,
         lease_expires_at=subscription.lease_expires_at,
+        completed=subscription.last_request_at is not None,
     )
     if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
         if previous.state != WebSubSubscription.STATE_ACTIVE:
@@ -719,6 +738,8 @@ def _prepare_subscription_request(
     else:
         subscription.state = WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
     subscription.request_generation = uuid.uuid4()
+    # Cleared until this request completes, marking it as in flight.
+    subscription.last_request_at = None
     subscription.pending_mode = validated_mode
     subscription.requested_lease_seconds = validated_lease_seconds
     if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
@@ -735,6 +756,7 @@ def _prepare_subscription_request(
             "lease_expires_at",
             "pending_secret",
             "pending_secret_set",
+            "last_request_at",
             "modified",
         ],
     )

@@ -73,7 +73,17 @@ No current Priority 3 items.
 
 ### WebSub Enhancements
 
-No current WebSub Enhancements items.
+#### Per-request staged secret for overlapping subscribe retries
+
+All subscribe requests for one subscription share its callback token, and each
+preparation in `websub._prepare_subscription_request` replaces the staged
+`pending_secret`. When the hub verifies an earlier accepted subscribe while a
+retry with a different `hub.secret` is still in flight, the callback activates
+the retry's secret, so deliveries signed with the earlier secret fail
+verification. A failed retry cannot repair this afterward, because the callback
+already cleared `pending_mode`. A fix needs request-scoped verification state,
+such as a token or staged secret per request generation, plus a migration.
+Found in the round 222 merge review. The behavior predates that round.
 
 ### Micropub Enhancements and Extensions
 

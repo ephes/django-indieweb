@@ -17,6 +17,13 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   hub request. Keep the newer generation and failure diagnostics.
 - `uv run pytest --no-cov -q tests/test_outbound_state.py -k 'failed_subscription_retry or failed_unsubscribe_retry or old_subscription_result'`
   passed after all five new regression cases failed before the fix.
+- Merge review follow-up: restore only an earlier request whose POST
+  completed, because preparation clears `last_request_at` while a request is in
+  flight. Keep lease edits saved during the failed request.
+  `test_failed_retry_does_not_restore_overlapping_in_flight_retry` and
+  `test_failed_retry_keeps_lease_edits_saved_while_in_flight` failed before this
+  follow-up and pass afterward. The shared staged secret across overlapping
+  subscribe retries predates this round and is tracked in `BACKLOG.md`.
 - Updated the WebSub guide and changelog Unreleased.
 
 ### Isolate lease warnings and count committed prune batches (round 220 review)
