@@ -1106,6 +1106,7 @@ class WebSubDeliveryAttemptPruneResult:
     matched: int
     deleted: int
     dry_run: bool
+    committed: bool = False
 
 
 class WebSubDeliveryAttemptPruneError(DatabaseError):
@@ -1206,6 +1207,7 @@ def prune_websub_delivery_attempts(
         matched=matched,
         deleted=deleted,
         dry_run=dry_run,
+        committed=owns_transactions,
     )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from unittest.mock import patch
@@ -9,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import DatabaseError, connection, connections
+from django.db import DatabaseError, connection, connections, transaction
 from django.test.utils import CaptureQueriesContext
 
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
@@ -194,6 +195,40 @@ def test_command_deletes_and_reports_cutoff(attempts):
         f"Deleted 2 WebSub delivery attempts received before {CUTOFF.isoformat()} (retention: 30 days)"
     )
     assert _remaining(attempts) == {"at_cutoff", "recent"}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("dry_run", "enclosing_transaction", "fail_on", "stream_error", "outcome"),
+    [
+        (False, False, "write", ValueError, "Committed deletions: 2"),
+        (False, False, "flush", OSError, "Committed deletions: 2"),
+        (False, True, "write", RuntimeError, "Deletions pending caller commit: 2"),
+        (True, False, "write", OSError, "Dry run: would delete 2"),
+    ],
+)
+def test_command_retains_prune_outcome_on_receipt_failure(
+    attempts, monkeypatch, dry_run, enclosing_transaction, fail_on, stream_error, outcome
+):
+    def fail_output(*args):
+        raise stream_error("synthetic output failure")
+
+    out = StringIO()
+    monkeypatch.setattr(out, fail_on, fail_output)
+    monkeypatch.setattr("indieweb.websub.timezone.now", lambda: NOW)
+
+    with transaction.atomic() if enclosing_transaction else nullcontext():
+        with pytest.raises(CommandError) as error:
+            call_command("prune_websub_delivery_attempts", days=30, batch_size=1, dry_run=dry_run, stdout=out)
+
+        assert outcome in str(error.value)
+        assert f"received before {CUTOFF.isoformat()} (retention: 30 days)" in str(error.value)
+        assert isinstance(error.value.__cause__, stream_error)
+        assert _remaining(attempts) == (set(attempts) if dry_run else {"at_cutoff", "recent"})
+        if enclosing_transaction:
+            transaction.set_rollback(True)
+
+    assert _remaining(attempts) == (set(attempts) if dry_run or enclosing_transaction else {"at_cutoff", "recent"})
 
 
 @pytest.mark.django_db(transaction=True)

@@ -50,6 +50,17 @@ class Command(BaseCommand):
 
         window = f"received before {result.cutoff.isoformat()} (retention: {result.retention_days} days)"
         if result.dry_run:
-            self.stdout.write(f"Dry run: would delete {result.matched} WebSub delivery attempts {window}")
+            receipt = f"Dry run: would delete {result.matched} WebSub delivery attempts {window}"
         else:
-            self.stdout.write(self.style.SUCCESS(f"Deleted {result.deleted} WebSub delivery attempts {window}"))
+            receipt = self.style.SUCCESS(f"Deleted {result.deleted} WebSub delivery attempts {window}")
+
+        try:
+            self.stdout.write(receipt)
+            self.stdout.flush()
+        except Exception as exc:
+            if result.dry_run:
+                outcome = receipt
+            else:
+                status = "Committed deletions" if result.committed else "Deletions pending caller commit"
+                outcome = f"{status}: {result.deleted} WebSub delivery attempts {window}"
+            raise CommandError(f"Could not print WebSub prune results. {outcome}") from exc

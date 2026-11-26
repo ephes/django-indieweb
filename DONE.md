@@ -4,6 +4,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Preserve the WebSub prune outcome when receipt output fails (round 220 B19)
+
+- Report the cutoff and the committed, pending, or dry-run count on receipt
+  write or flush failure.
+- All four receipt-failure cases failed before the fix and passed with
+  `uv run pytest --no-cov tests/test_prune_websub_delivery_attempts.py`.
+- Updated the README, WebSub guide and changelog Unreleased.
+
 ### Settle WebSub requests when the subscription was removed (round 216 B02)
 
 - Return a failure result if the prepared row disappears during the hub

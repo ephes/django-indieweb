@@ -610,6 +610,10 @@ with ``--dry-run``, would delete.
 If a database error follows committed deletions, the command exits with an
 error that reports how many deletions committed before the failure. A retry
 processes the remaining expired attempts.
+If writing or flushing the receipt fails, the command raises ``CommandError``
+with the retention cutoff and the number of committed deletions. When the
+caller owns the transaction, the error reports the count pending the caller's
+commit. In dry-run mode, the error reports how many rows matched.
 
 django-indieweb does not schedule the command and never deletes attempts on
 its own. Run it from your scheduler, for example daily from cron:
@@ -620,7 +624,8 @@ its own. Run it from your scheduler, for example daily from cron:
 
 Host code can call ``indieweb.websub.prune_websub_delivery_attempts()``
 directly; it takes ``retention_days``, ``now``, ``batch_size`` and ``dry_run``
-and returns the cutoff with the ``matched`` and ``deleted`` counts. With
+and returns the cutoff with the ``matched`` and ``deleted`` counts. The result's
+``committed`` flag is true for an apply run that committed its own batches. With
 ``USE_TZ=True``, pass a timezone-aware ``now`` or omit it to use Django's
 current time. A naive ``now`` raises ``ValueError`` before any database query,
 including in dry-run mode. With ``USE_TZ=False``, naive reference times are

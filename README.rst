@@ -195,3 +195,4 @@ origin/path descriptions without credentials, queries, fragments or terminal
 controls. Delivery-attempt pruning caps each transaction at 1,000 IDs and the
 write database's SQL parameter limit. If a later batch fails, the command reports
 the number of committed deletions and a retry processes the remaining expired attempts.
+If the command cannot write its receipt, the error includes the count and retention cutoff.

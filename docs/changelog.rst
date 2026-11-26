@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Preserve the WebSub delivery-attempt prune count, cutoff and commit status
+  when the command cannot write or flush its receipt.
 * Report committed WebSub delivery-attempt deletions when a later prune batch
   fails on the write database.
 * Return a WebSub subscription request failure when the subscription is removed
