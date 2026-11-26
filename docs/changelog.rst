@@ -8,6 +8,8 @@ Unreleased
 
 * Return HTTP 500 before writing any Micropub media to storage if the upload
   spool accepts fewer bytes than requested.
+* Keep an earlier WebSub verification pending when a newer hub request fails,
+  restoring its mode, lease data, and staged secret.
 * Keep WebSub callback verification using the configured fallback or clamped
   lease bounds when logging a lease configuration warning fails. The bounds are
   computed without logging, and each warning is logged in its own atomic block

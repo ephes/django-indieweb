@@ -57,6 +57,96 @@ def test_old_subscription_result_preserves_new_generation(newer, response):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("original_mode", "retry_mode", "initial_state", "pending_state", "verified_state"),
+    [
+        ("unsubscribe", "unsubscribe", "active", "pending_unsubscribe", "unsubscribed"),
+        ("unsubscribe", "subscribe", "active", "pending_unsubscribe", "unsubscribed"),
+        ("subscribe", "unsubscribe", "pending_subscribe", "pending_subscribe", "active"),
+        ("subscribe", "subscribe", "active", "active", "active"),
+    ],
+)
+def test_failed_subscription_retry_restores_prior_verification(
+    client, original_mode, retry_mode, initial_state, pending_state, verified_state
+):
+    original_secret = "original-synthetic-secret"
+    row = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/",
+        topic_url="https://topic.example/",
+        state=initial_state,
+        confirmed_lease_seconds=3600 if initial_state == "active" else None,
+        lease_expires_at=timezone.now() + timedelta(hours=1) if initial_state == "active" else None,
+    )
+
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(202))) as hub:
+        original = request_websub_subscription(
+            row.topic_url,
+            row.hub_url,
+            mode=original_mode,
+            lease_seconds=3600,
+            secret=original_secret if original_mode == "subscribe" else None,
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert original.success
+    assert original.subscription.state == pending_state
+    assert original.subscription.pending_mode == original_mode
+
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(503))) as hub:
+        retry = request_websub_subscription(
+            row.topic_url,
+            row.hub_url,
+            mode=retry_mode,
+            lease_seconds=7200,
+            secret="retry-synthetic-secret" if retry_mode == "subscribe" else None,
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert not retry.success
+    assert retry.subscription.state == pending_state
+    assert retry.subscription.pending_mode == original_mode
+    assert retry.subscription.requested_lease_seconds == 3600
+    assert retry.subscription.confirmed_lease_seconds == original.subscription.confirmed_lease_seconds
+    assert retry.subscription.lease_expires_at == original.subscription.lease_expires_at
+    assert retry.subscription.request_generation != original.subscription.request_generation
+    assert retry.subscription.last_request_mode == retry_mode
+    assert retry.subscription.last_request_status_code == 503
+
+    response = client.get(
+        reverse("indieweb:websub-callback", args=[original.subscription.callback_token]),
+        {"hub.mode": original_mode, "hub.topic": row.topic_url, "hub.challenge": "original-challenge"},
+    )
+    assert response.status_code == 200
+    assert response.content == b"original-challenge"
+    row.refresh_from_db()
+    assert row.state == verified_state
+    assert row.pending_mode == ""
+    if original_mode == "subscribe":
+        assert row.get_secret() == original_secret
+        assert row.confirmed_lease_seconds == 3600
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_unsubscribe_retry_settles_orphaned_pending_state():
+    row = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/",
+        topic_url="https://topic.example/",
+        state=WebSubSubscription.STATE_PENDING_UNSUBSCRIBE,
+    )
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(503))) as hub:
+        retry = request_websub_subscription(
+            row.topic_url,
+            row.hub_url,
+            mode="unsubscribe",
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert not retry.success
+    assert retry.subscription.state == WebSubSubscription.STATE_DENIED
+    assert retry.subscription.pending_mode == ""
+
+
+@pytest.mark.django_db(transaction=True)
 def test_sqlite_overlapping_subscription_preparations(sqlite_wal, monkeypatch):
     row = WebSubSubscription.objects.create(
         hub_url="https://hub.example/",

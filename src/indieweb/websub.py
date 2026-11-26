@@ -612,18 +612,48 @@ def _save_subscription_request_success(
     )
 
 
+@dataclass(frozen=True)
+class _PreviousSubscriptionRequest:
+    state: str
+    pending_mode: str
+    pending_secret: str
+    pending_secret_set: bool
+    requested_lease_seconds: int | None
+    confirmed_lease_seconds: int | None
+    lease_expires_at: datetime | None
+
+
 def _save_subscription_request_failure(
     subscription: WebSubSubscription,
     *,
     using: str,
     mode: str,
-    previous_state: str,
-    previous_pending_secret: str,
-    previous_pending_secret_set: bool,
+    previous: _PreviousSubscriptionRequest,
     status_code: int | None,
     error: str,
 ) -> None:
+    state = previous.state
+    restore_pending = (
+        previous.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
+        and state in {WebSubSubscription.STATE_PENDING_SUBSCRIBE, WebSubSubscription.STATE_ACTIVE}
+    ) or (
+        previous.pending_mode == WebSubSubscription.MODE_UNSUBSCRIBE
+        and state == WebSubSubscription.STATE_PENDING_UNSUBSCRIBE
+    )
+    lease_fields: dict[str, datetime | int | None] = {}
+    if restore_pending:
+        lease_fields["requested_lease_seconds"] = previous.requested_lease_seconds
+        if mode == WebSubSubscription.MODE_SUBSCRIBE and state != WebSubSubscription.STATE_ACTIVE:
+            # Preparing this subscribe cleared the prior confirmed lease.
+            lease_fields["confirmed_lease_seconds"] = previous.confirmed_lease_seconds
+            lease_fields["lease_expires_at"] = previous.lease_expires_at
+    elif state in {WebSubSubscription.STATE_PENDING_SUBSCRIBE, WebSubSubscription.STATE_PENDING_UNSUBSCRIBE} or (
+        mode == WebSubSubscription.MODE_SUBSCRIBE and state != WebSubSubscription.STATE_ACTIVE
+    ):
+        state = WebSubSubscription.STATE_DENIED
+
     # One conditional write: callbacks and newer preparations retire our ownership.
+    # Keep the new generation even when restoring the previous callback intent.
     WebSubSubscription.objects.using(using).filter(
         pk=subscription.pk,
         request_generation=subscription.request_generation,
@@ -633,15 +663,12 @@ def _save_subscription_request_failure(
         last_request_mode=mode,
         last_request_status_code=status_code,
         last_request_error=error[:500],
-        pending_mode="",
-        pending_secret=previous_pending_secret,
-        pending_secret_set=previous_pending_secret_set,
-        state=(
-            WebSubSubscription.STATE_DENIED
-            if mode == WebSubSubscription.MODE_SUBSCRIBE and previous_state != WebSubSubscription.STATE_ACTIVE
-            else previous_state
-        ),
+        pending_mode=previous.pending_mode if restore_pending else "",
+        pending_secret=previous.pending_secret,
+        pending_secret_set=previous.pending_secret_set,
+        state=state,
         modified=timezone.now(),
+        **lease_fields,
     )
 
 
@@ -653,7 +680,7 @@ def _prepare_subscription_request(
     mode: str,
     lease_seconds: int | None,
     secret: str | None,
-) -> tuple[WebSubSubscription, str, str, str, bool]:
+) -> tuple[WebSubSubscription, str, _PreviousSubscriptionRequest]:
     validated_topic_url = _validate_url(topic_url, label="topic URL")
     validated_hub_url = _validate_url(hub_url, label="hub URL")
     validated_mode = _validate_subscription_mode(mode)
@@ -675,11 +702,17 @@ def _prepare_subscription_request(
     else:
         subscription, _created = subscriptions.get_or_create(hub_url=validated_hub_url, topic_url=validated_topic_url)
 
-    previous_state = subscription.state
-    previous_pending_secret = subscription.pending_secret
-    previous_pending_secret_set = subscription.pending_secret_set
+    previous = _PreviousSubscriptionRequest(
+        state=subscription.state,
+        pending_mode=subscription.pending_mode,
+        pending_secret=subscription.pending_secret,
+        pending_secret_set=subscription.pending_secret_set,
+        requested_lease_seconds=subscription.requested_lease_seconds,
+        confirmed_lease_seconds=subscription.confirmed_lease_seconds,
+        lease_expires_at=subscription.lease_expires_at,
+    )
     if validated_mode == WebSubSubscription.MODE_SUBSCRIBE:
-        if previous_state != WebSubSubscription.STATE_ACTIVE:
+        if previous.state != WebSubSubscription.STATE_ACTIVE:
             subscription.state = WebSubSubscription.STATE_PENDING_SUBSCRIBE
             subscription.confirmed_lease_seconds = None
             subscription.lease_expires_at = None
@@ -705,7 +738,7 @@ def _prepare_subscription_request(
             "modified",
         ],
     )
-    return subscription, validated_mode, previous_state, previous_pending_secret, previous_pending_secret_set
+    return subscription, validated_mode, previous
 
 
 def _post_subscription_request(
@@ -822,13 +855,7 @@ def request_websub_subscription(
         raise WebSubSecretRequiresHTTPSError("WebSub subscription with hub.secret requires an https hub_url")
     # Callback construction depends on the token. Roll back preparation if it fails.
     with transaction.atomic(using=using):
-        (
-            subscription,
-            validated_mode,
-            previous_state,
-            previous_pending_secret,
-            previous_pending_secret_set,
-        ) = _prepare_subscription_request(
+        subscription, validated_mode, previous = _prepare_subscription_request(
             topic_url,
             hub_url,
             using=using,
@@ -886,9 +913,7 @@ def request_websub_subscription(
                 subscription,
                 using=using,
                 mode=validated_mode,
-                previous_state=previous_state,
-                previous_pending_secret=previous_pending_secret,
-                previous_pending_secret_set=previous_pending_secret_set,
+                previous=previous,
                 status_code=status_code,
                 error=error,
             )

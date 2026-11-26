@@ -11,6 +11,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   reproduced HTTP 201 before the fix and passed afterward.
 - Updated the Micropub guide and changelog Unreleased.
 
+### Restore earlier WebSub verification after failed retries (round 222 B05)
+
+- Restore a valid pending mode, staged secret, and lease data after a failed
+  hub request. Keep the newer generation and failure diagnostics.
+- `uv run pytest --no-cov -q tests/test_outbound_state.py -k 'failed_subscription_retry or failed_unsubscribe_retry or old_subscription_result'`
+  passed after all five new regression cases failed before the fix.
+- Updated the WebSub guide and changelog Unreleased.
+
 ### Isolate lease warnings and count committed prune batches (round 220 review)
 
 - Compute WebSub lease bounds without logging and log each warning in its own

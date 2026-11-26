@@ -809,6 +809,12 @@ replace a newer request's diagnostics. Preparation locks the current subscriptio
 row, and completion uses a conditional database update. Network I/O runs outside
 these transactions. Apply migrations before using this behavior.
 
+If a new hub request fails while an earlier request still awaits verification,
+the subscriber restores the earlier pending mode and its staged lease and
+secret data. The original callback can still complete verification, and
+the latest request diagnostics record the failure. A legacy pending state with
+no matching verification mode settles to ``denied`` on a failed request.
+
 Replay transactions and multiple databases
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
