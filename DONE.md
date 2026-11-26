@@ -19,7 +19,9 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   passed after all five new regression cases failed before the fix.
 - Merge review follow-up: restore only an earlier request whose POST
   completed, because preparation clears `last_request_at` while a request is in
-  flight. Keep lease edits saved during the failed request.
+  flight. Keep lease edits saved during the failed request. A request that
+  fails after its own callback verified it still records its diagnostics
+  (`test_failed_request_after_callback_records_completion`).
   `test_failed_retry_does_not_restore_overlapping_in_flight_retry` and
   `test_failed_retry_keeps_lease_edits_saved_while_in_flight` failed before this
   follow-up and pass afterward. The shared staged secret across overlapping

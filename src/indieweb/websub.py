@@ -670,17 +670,20 @@ def _save_subscription_request_failure(
     ):
         state = WebSubSubscription.STATE_DENIED
 
-    # One conditional write: callbacks and newer preparations retire our ownership.
-    # Keep the new generation even when restoring the previous callback intent.
-    WebSubSubscription.objects.using(using).filter(
+    diagnostics = {
+        "last_request_at": timezone.now(),
+        "last_request_mode": mode,
+        "last_request_status_code": status_code,
+        "last_request_error": error[:500],
+    }
+    owned = WebSubSubscription.objects.using(using).filter(
         pk=subscription.pk,
         request_generation=subscription.request_generation,
-        pending_mode=mode,
-    ).update(
-        last_request_at=timezone.now(),
-        last_request_mode=mode,
-        last_request_status_code=status_code,
-        last_request_error=error[:500],
+    )
+    # One conditional write: callbacks and newer preparations retire our ownership.
+    # Keep the new generation even when restoring the previous callback intent.
+    settled = owned.filter(pending_mode=mode).update(
+        **diagnostics,
         pending_mode=previous.pending_mode if restore_pending else "",
         pending_secret=previous.pending_secret,
         pending_secret_set=previous.pending_secret_set,
@@ -688,6 +691,9 @@ def _save_subscription_request_failure(
         modified=timezone.now(),
         **lease_fields,
     )
+    if not settled:
+        # A callback already settled this generation; still record the completed request.
+        owned.update(**diagnostics, modified=timezone.now())
 
 
 def _prepare_subscription_request(

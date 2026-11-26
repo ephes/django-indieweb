@@ -12,7 +12,8 @@ Unreleased
   restoring its mode, lease data, and staged secret. Only a completed earlier
   request is restored, never an overlapping in-flight retry, and lease edits
   saved during the failed request are kept. ``last_request_at`` is empty while
-  a subscription request is in flight.
+  a subscription request is in flight, and a request that fails after its
+  callback verified it now records its failure diagnostics.
 * Keep WebSub callback verification using the configured fallback or clamped
   lease bounds when logging a lease configuration warning fails. The bounds are
   computed without logging, and each warning is logged in its own atomic block

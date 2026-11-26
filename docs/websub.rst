@@ -805,7 +805,8 @@ validate, even when weaker signatures are valid.
 
 Outgoing request results own a unique pending generation. A late error cannot
 undo callback verification or a newer staged request; a late HTTP success cannot
-replace a newer request's diagnostics. Preparation locks the current subscription
+replace a newer request's diagnostics. A request that fails after its own
+callback verified it still records its failure diagnostics. Preparation locks the current subscription
 row, and completion uses a conditional database update. Network I/O runs outside
 these transactions. Apply migrations before using this behavior.
 
@@ -815,7 +816,9 @@ secret data. The original callback can still complete verification, and
 the latest request diagnostics record the failure. Only an earlier request
 whose hub POST completed is restored. Preparing a request clears
 ``last_request_at`` until that request completes, so an overlapping retry that
-is still in flight is never restored. Lease values changed while the failed
+is still in flight is never restored. With two or more overlapping retries,
+a failed retry therefore cannot restore an earlier accepted request, and its
+callback is refused, as it was before this restore existed. Lease values changed while the failed
 request was in flight, for example by an admin save, are kept. A legacy pending
 state with no matching verification mode settles to ``denied`` on a failed
 request.

@@ -49,8 +49,19 @@ def test_old_subscription_result_preserves_new_generation(newer, response):
             topic, hub, callback_base_url=base, secret="older-synthetic-secret-20x", client=c
         )
     stored = WebSubSubscription.objects.get(pk=result.subscription.pk)
-    if newer == "pending" or response != "accepted":
+    if newer == "pending":
         assert WebSubSubscription.objects.values().get(pk=stored.pk) == snapshots[0]
+    elif response != "accepted":
+        # The callback keeps its verified state; the failed POST still records its completion.
+        diagnostics = {"last_request_at", "last_request_mode", "last_request_status_code", "last_request_error"}
+        current = WebSubSubscription.objects.values().get(pk=stored.pk)
+        ignored = diagnostics | {"modified"}
+        assert {k: v for k, v in current.items() if k not in ignored} == {
+            k: v for k, v in snapshots[0].items() if k not in ignored
+        }
+        assert current["last_request_at"] is not None
+        assert current["last_request_status_code"] == (None if response == "timeout" else 400)
+        assert current["last_request_error"]
     else:
         assert stored.state == "active"
         assert stored.get_secret() == "older-synthetic-secret-20x"
@@ -182,6 +193,36 @@ def test_failed_retry_does_not_restore_overlapping_in_flight_retry(client):
     row.refresh_from_db()
     assert row.state == WebSubSubscription.STATE_DENIED
     assert row.secret == ""
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_request_after_callback_records_completion(client):
+    row = WebSubSubscription.objects.create(hub_url="https://hub.example/", topic_url="https://topic.example/")
+
+    def verify_then_fail(request):
+        prepared = WebSubSubscription.objects.get(pk=row.pk)
+        assert prepared.last_request_at is None
+        response = client.get(
+            reverse("indieweb:websub-callback", args=[prepared.callback_token]),
+            {"hub.mode": "subscribe", "hub.topic": row.topic_url, "hub.challenge": "early-challenge"},
+        )
+        assert response.status_code == 200
+        return httpx.Response(503)
+
+    with httpx.Client(transport=httpx.MockTransport(verify_then_fail)) as hub:
+        result = request_websub_subscription(
+            row.topic_url,
+            row.hub_url,
+            mode="subscribe",
+            lease_seconds=3600,
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert not result.success
+    assert result.subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert result.subscription.pending_mode == ""
+    assert result.subscription.last_request_at is not None
+    assert result.subscription.last_request_status_code == 503
 
 
 @pytest.mark.django_db(transaction=True)

@@ -81,7 +81,9 @@ preparation in `websub._prepare_subscription_request` replaces the staged
 retry with a different `hub.secret` is still in flight, the callback activates
 the retry's secret, so deliveries signed with the earlier secret fail
 verification. A failed retry cannot repair this afterward, because the callback
-already cleared `pending_mode`. A fix needs request-scoped verification state,
+already cleared `pending_mode`. For the same reason, two overlapping retries
+that both fail cannot restore an earlier accepted request: each failure sees
+only the request directly before it, which is still in flight. A fix needs request-scoped verification state,
 such as a token or staged secret per request generation, plus a migration.
 Found in the round 222 merge review. The behavior predates that round.
 
