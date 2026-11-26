@@ -8,6 +8,8 @@ Unreleased
 
 * Keep the failed WebSub hub result and continue notifying the remaining hubs
   when reporting a hub request failure raises in a logging handler.
+* Preserve WebSub hub results and ``notify_websub`` output when an internally
+  created HTTP client fails to close.
 * Keep the source deadline local to each ``send_webmentions`` invocation when
   calls overlap on a reused command instance.
 * Bound each ``send_webmentions`` stdin readiness wait to prevent platform

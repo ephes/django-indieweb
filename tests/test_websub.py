@@ -1,5 +1,6 @@
 import logging
 import ssl
+from unittest.mock import Mock
 
 import httpcore
 import httpx
@@ -85,6 +86,7 @@ def test_notify_hubs_posts_websub_publish_parameters(settings):
         client=client,
     )
 
+    assert not client.is_closed
     assert [result.success for result in results] == [True, True]
     assert [result.status_code for result in results] == [204, 204]
     assert [str(request.url) for request in requests] == ["https://hub.example/", "https://backup.example/websub"]
@@ -311,6 +313,25 @@ def test_owned_publisher_resolves_once_per_hop(monkeypatch):
     assert [result.status_code for result in results] == [204]
     assert lookups == [("hub.example", 443)] * 2
     assert requests == [("93.184.216.34", "/publish"), ("93.184.216.34", "/notify")]
+
+
+def test_owned_publisher_preserves_active_error_when_close_and_warning_raise(monkeypatch):
+    delivery_error = RuntimeError("unexpected delivery error")
+    request = Mock(side_effect=delivery_error)
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(204)))
+    close = Mock(side_effect=OSError("close failed"))
+    warning = Mock(side_effect=RuntimeError("logging unavailable"))
+    monkeypatch.setattr(client, "close", close)
+    monkeypatch.setattr("indieweb.websub.httpx.Client", lambda **kwargs: client)
+    monkeypatch.setattr("indieweb.websub.request_with_safe_redirects", request)
+    monkeypatch.setattr("indieweb.websub.logger.warning", warning)
+
+    with pytest.raises(RuntimeError) as caught:
+        notify_hubs("https://topic.example/feed", "https://hub.example/publish")
+
+    assert caught.value is delivery_error
+    close.assert_called_once_with()
+    warning.assert_called_once()
 
 
 @pytest.mark.parametrize("publisher_action", ["notify", "link"])

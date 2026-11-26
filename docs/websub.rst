@@ -108,6 +108,11 @@ without opening an HTTP client. The shared HTTP helper handles redirects for
 both package-created and injected clients, and refuses redirects to a
 different origin.
 
+If an internally created client fails to close, ``notify_hubs()`` attempts to
+log a warning and keeps the hub results available to callers. An exception
+already raised during notification still propagates. Callers are responsible
+for closing any client they supplied.
+
 .. _websub-injected-client-warning:
 
 .. warning::
@@ -160,7 +165,8 @@ hub is configured. All hubs are attempted and every redacted result is
 printed before any delivery error is raised. If any notification failed,
 the command then raises ``CommandError`` (nonzero shell exit), including
 partially successful batches. Successful empty-body 2xx responses still count
-as successes.
+as successes. The command bases its output and exit status on the delivery
+outcomes even if closing the notification client fails.
 
 Subscriber Lease Inspection
 ---------------------------

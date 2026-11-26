@@ -1,6 +1,7 @@
 from io import StringIO
 from unittest.mock import patch
 
+import httpx
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -64,6 +65,37 @@ def test_notify_websub_command_accepts_repeated_hub_arguments(mock_notify_hubs):
         ["https://hub.example/", "https://backup.example/websub"],
         timeout=2.5,
     )
+
+
+def test_notify_websub_command_keeps_mixed_results_when_owned_client_close_raises(monkeypatch, caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202 if request.url.path == "/accept" else 503)
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    monkeypatch.setattr("indieweb.websub.httpx.Client", lambda **kwargs: client)
+    monkeypatch.setattr("indieweb.websub.default_address_resolver", lambda host, port: ("93.184.216.34",))
+
+    out = StringIO()
+    with (
+        patch.object(transport, "close", side_effect=OSError("private transport detail")) as close,
+        pytest.raises(CommandError, match="1 WebSub hub notifications failed"),
+    ):
+        call_command(
+            "notify_websub",
+            "https://example.com/feed",
+            hub=["https://hub.example/accept", "https://backup.example/refuse"],
+            stdout=out,
+        )
+
+    close.assert_called_once_with()
+    assert out.getvalue().splitlines() == [
+        "Notified 1/2 WebSub hubs for https://example.com/feed",
+        "✓ https://hub.example/accept (HTTP 202)",
+        "✗ https://backup.example/refuse (HTTP 503)",
+    ]
+    assert "Failed to close WebSub notification client" in caplog.messages
+    assert "private transport detail" not in caplog.text
 
 
 @patch("indieweb.management.commands.notify_websub.notify_hubs")

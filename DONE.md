@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Preserve WebSub results on client close failure (round 213 B11)
+
+- Keep settled publisher results and an active notification error when
+  closing an owned client raises. Callers keep ownership of injected clients.
+- Both new regressions reproduced the close error before the fix.
+  `uv run pytest --no-cov -q tests/test_websub.py tests/test_notify_websub_command.py`
+  passed after the fix. `just check` passed with 95.05% coverage, and the
+  configured hooks and strict Sphinx build passed.
+- Updated the WebSub guide and changelog Unreleased.
+
 ### Keep WebSub hub failures local when logging raises (round 213 B11)
 
 - Record the failed hub before attempting the warning and continue notifying

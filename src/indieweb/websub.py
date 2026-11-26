@@ -1829,6 +1829,8 @@ def notify_hubs(
     ``hub.url=<topic_url>``. Network failures and non-2xx hub responses are
     captured in the returned results instead of being raised. The shared HTTP
     helper applies the same redirect policy with an injected ``client``.
+    Closing an internally created client is best effort. Callers retain
+    ownership of injected clients.
     """
     validated_topic_url = _validate_url(topic_url, label="topic URL")
     hub_urls = get_websub_hubs(hubs)
@@ -1839,16 +1841,18 @@ def notify_hubs(
     data = {"hub.mode": "publish", "hub.url": validated_topic_url}
 
     close_client = client is None
-    http_client = client or disable_client_cookies(
-        httpx.Client(
-            timeout=request_timeout,
-            follow_redirects=False,
-            verify=True,
-            trust_env=False,
-            limits=SAFE_HTTP_DEFAULT_LIMITS,
-            headers={"User-Agent": outbound_user_agent()},
+    http_client = client
+    if http_client is None:
+        http_client = disable_client_cookies(
+            httpx.Client(
+                timeout=request_timeout,
+                follow_redirects=False,
+                verify=True,
+                trust_env=False,
+                limits=SAFE_HTTP_DEFAULT_LIMITS,
+                headers={"User-Agent": outbound_user_agent()},
+            )
         )
-    )
     resolver = default_address_resolver if close_client else None
     results: list[WebSubNotificationResult] = []
     try:
@@ -1890,6 +1894,10 @@ def notify_hubs(
             )
     finally:
         if close_client:
-            http_client.close()
+            try:
+                http_client.close()
+            except Exception:
+                with suppress(Exception):
+                    logger.warning("Failed to close WebSub notification client")
 
     return results
