@@ -37,6 +37,8 @@ from .models import WebmentionOutboundTarget
 
 logger = logging.getLogger(__name__)
 
+_OUTBOUND_HISTORY_ERROR = "Outbound history update failed"
+
 DEFAULT_WEBMENTION_SENDER_FETCH_MAX_BYTES = 1024 * 1024
 DEFAULT_WEBMENTION_SENDER_HEAD_MAX_BYTES = 64 * 1024
 DEFAULT_WEBMENTION_SENDER_RESPONSE_MAX_BYTES = 1024 * 1024
@@ -684,7 +686,8 @@ class WebmentionSender:
             record_history: Whether to record attempted deliveries in outbound target history
 
         Returns:
-            List of results for each webmention attempt
+            List of results for each webmention attempt. A local history write
+            failure adds `history_error` without changing the delivery outcome.
         """
         deadline = _source_deadline(deadline)
         # Fetch content if not provided
@@ -721,16 +724,7 @@ class WebmentionSender:
                 result["endpoint"] = endpoint
                 results.append(result)
                 if record_history:
-                    self._record_outbound_target(
-                        attempt_started_at=attempt_started_at,
-                        source_url=source_url,
-                        target_url=target_url,
-                        endpoint=endpoint,
-                        result=result,
-                        vouch_url=vouch_url,
-                        seen_in_source=True,
-                        sent=True,
-                    )
+                    self._record_delivery_history(source_url, result, vouch_url, attempt_started_at)
 
         return results
 
@@ -750,7 +744,9 @@ class WebmentionSender:
             vouch_url: Optional Vouch URL to include with each sent Webmention
 
         Returns:
-            List of results for each current or historical target, including provenance
+            List of results for each current or historical target, including
+            provenance. A local history write failure adds `history_error`
+            without changing the delivery outcome.
         """
         deadline = _source_deadline(deadline)
         if html_content is None:
@@ -814,17 +810,8 @@ class WebmentionSender:
         if "unattempted" in result:
             self._release_historical_claim_best_effort(row, claim)
             return result
-        target = self._record_outbound_target(
-            attempt_started_at=started,
-            source_url=source,
-            target_url=target_url,
-            endpoint=result["endpoint"],
-            result=result,
-            vouch_url=vouch,
-            seen_in_source=provenance != "history",
-            sent=result["endpoint"] is not None,
-            claim=claim,
-            using=using,
+        target = self._record_delivery_history(
+            source, result, vouch, started, seen_in_source=provenance != "history", row=row, claim=claim, using=using
         )
         if (
             row is not None
@@ -983,6 +970,37 @@ class WebmentionSender:
             host_counts[host] = host_counts.get(host, 0) + 1
             limited.append(target_url)
         return limited
+
+    def _record_delivery_history(
+        self,
+        source_url: str,
+        result: dict,
+        vouch_url: str | None,
+        started: datetime,
+        *,
+        seen_in_source: bool = True,
+        row: WebmentionOutboundTarget | None = None,
+        claim: UUID | None = None,
+        using: str | None = None,
+    ) -> WebmentionOutboundTarget | None:
+        """Record an attempt without losing its delivery receipt on a write error."""
+        try:
+            return self._record_outbound_target(
+                attempt_started_at=started,
+                source_url=source_url,
+                target_url=result["target"],
+                endpoint=result["endpoint"],
+                result=result,
+                vouch_url=vouch_url,
+                seen_in_source=seen_in_source,
+                sent=result["endpoint"] is not None,
+                claim=claim,
+                using=using,
+            )
+        except Exception:
+            self._release_historical_claim_best_effort(row, claim)
+            result["history_error"] = _OUTBOUND_HISTORY_ERROR
+            return None
 
     def _record_outbound_target(
         self,

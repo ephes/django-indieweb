@@ -1833,9 +1833,10 @@ Bounded source runs and history selection
 integer seconds) limits one ``send_webmentions`` or ``resend_salmentions`` run,
 including its optional source fetch. Discovery and delivery receive the lesser
 of their normal request budget and the remaining monotonic source budget.
-Already accepted results remain recorded. Targets whose delivery cannot start
-before the deadline return ``unattempted=True`` with ``Source deadline
-exceeded``; these outcomes do not increment failure counters or remove history.
+Already accepted results remain in the returned receipts. Targets whose
+delivery cannot start before the deadline return ``unattempted=True`` with
+``Source deadline exceeded``. These outcomes do not increment failure counters
+or remove history.
 If ordinary send selection reaches the deadline and returns no targets, the
 sender returns the same unattempted outcome with the source URL in
 ``target``.
@@ -1868,6 +1869,18 @@ selection message before network work. Previews use the same selector. Increase
 the limit deliberately or reduce history before retrying; no partial selection
 is silently sent.
 
+Outbound history write failures
+================================
+
+If an outbound history write raises after an attempt, the affected receipt
+from ``send_webmentions`` or ``resend_salmentions`` includes
+``history_error="Outbound history update failed"``. The receipt keeps the
+original ``success``, ``status_code`` and any delivery ``error``. The sender
+processes remaining targets within the source budget and sends no additional
+POST for the affected receipt in that run. The management command prints the
+delivery result and history failure and exits with an error. A later run can
+deliver the Webmention again if history could not record the first attempt.
+
 Historical resend reservations
 ==============================
 
@@ -1882,11 +1895,12 @@ worker therefore permits a later retry without inventing a delivery failure or
 cooldown timestamp. Completion records history and clears the claim only for
 its live owner. A current-link attempt can update the shared history while
 the historical owner retains its claim. A replacement claim or deletion
-fences an older completion. After a deadline refusal or delivery exception,
-the worker makes a best-effort attempt to release its own claim. A cleanup
-failure is reported without URLs or exception details, and the lease can
-expire naturally. The worker returns a deadline result without updating
-delivery history. If delivery raised, the original exception propagates.
+fences an older completion. If delivery is refused by the deadline, delivery
+raises, or the history write raises, the worker makes a best-effort attempt
+to release its own claim. The sender attempts to log cleanup failures without
+URLs or exception details, and the lease can expire naturally. A deadline
+refusal returns a deadline result and leaves delivery history untouched. If
+delivery raised, the original exception propagates.
 Completion checks the lease clock after acquiring the write reservation, so
 a claim that expires while waiting cannot settle history.
 The remote HTTP endpoint may already have accepted the request, so a retry

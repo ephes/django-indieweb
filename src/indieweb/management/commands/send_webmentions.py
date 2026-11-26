@@ -58,11 +58,22 @@ def _result_detail(result: dict[str, Any]) -> str:
     """
     status = result.get("status_code")
     if type(status) is int and 100 <= status <= 599:
-        return f"HTTP {status}"
-    error = result.get("error", "Unknown error")
-    if isinstance(error, str) and error.endswith(DROPPED_SUFFIX):
-        error = error.removesuffix(DROPPED_SUFFIX)
-    return _error_category(error)
+        detail = f"HTTP {status}"
+    else:
+        error = result.get("error", "Unknown error")
+        if isinstance(error, str) and error.endswith(DROPPED_SUFFIX):
+            error = error.removesuffix(DROPPED_SUFFIX)
+        detail = _error_category(error)
+    if result.get("history_error"):
+        detail += ", outbound history update failed"
+    return detail
+
+
+def _raise_history_errors(results: list[dict]) -> None:
+    count = sum(bool(result.get("history_error")) for result in results)
+    if count:
+        targets = "target" if count == 1 else "targets"
+        raise CommandError(f"Could not update outbound history for {count} {targets}")
 
 
 def _provenance(result: dict[str, Any]) -> str:
@@ -243,6 +254,7 @@ class Command(BaseCommand):
 
         if success_count < len(sent_results):
             raise CommandError(f"{len(sent_results) - success_count} Webmention deliveries failed")
+        _raise_history_errors(sent_results)
 
     def _handle_salmention_dry_run(self, sender: WebmentionSender, source_url: str, urls: list[str]) -> None:
         """Show the Salmention resend target union without sending or recording history."""
@@ -301,6 +313,7 @@ class Command(BaseCommand):
 
         if success_count < len(sent_results):
             raise CommandError(f"{len(sent_results) - success_count} Salmention deliveries failed")
+        _raise_history_errors(sent_results)
 
     def _format_salmention_result(self, result: dict[str, Any]) -> str:
         """Format one provenance-aware resend result."""

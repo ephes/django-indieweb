@@ -13,6 +13,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   suite, Ruff, mypy and Sphinx passed.
 - Updated the Webmention guide and changelog Unreleased.
 
+### Return Webmention receipts on local history write failures (round 209 B40)
+
+- Preserve delivery outcomes and continue sending to other eligible targets
+  when recording an outcome raises. Use the existing exact-claim cleanup
+  for affected historical resends.
+- Focused pytest cases reproduced the lost receipts and missing command
+  diagnostics before the fix. They cover continued delivery and claim fencing.
+  `uv run pytest -q` and all twelve default `uv run tox` lanes passed.
+- Updated the Webmention guide and changelog Unreleased.
+
 ## 2026-11-25
 
 ### Make Webmention display null ordering portable (round 204 B12)

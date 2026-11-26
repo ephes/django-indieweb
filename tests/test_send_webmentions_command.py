@@ -50,6 +50,37 @@ def test_command_parses_source_once_for_count_and_selection(dry_run, salmention_
     parse.assert_called_once_with(content, "html.parser")
 
 
+@pytest.mark.parametrize("salmention_resend", [False, True])
+def test_command_reports_history_recording_errors_separately(salmention_resend):
+    source = "https://source.example/post"
+    target = "https://target.example/post"
+    method = "resend_salmentions" if salmention_resend else "send_webmentions"
+    receipt = {
+        "target": target,
+        "endpoint": "https://target.example/webmention",
+        "provenance": "current",
+        "success": True,
+        "status_code": 202,
+        "history_error": "Outbound history update failed",
+    }
+    out = StringIO()
+    with (
+        patch.object(senders.WebmentionSender, method, return_value=[receipt]),
+        pytest.raises(CommandError, match="Could not update outbound history for 1 target"),
+    ):
+        call_command(
+            "send_webmentions",
+            source,
+            content=f'<a href="{target}">Link</a>',
+            salmention_resend=salmention_resend,
+            stdout=out,
+        )
+
+    assert "1/1" in out.getvalue()
+    assert "HTTP 202" in out.getvalue()
+    assert "outbound history update failed" in out.getvalue()
+
+
 def test_command_with_invalid_url():
     """Test command with invalid source URL."""
     with pytest.raises(CommandError) as exc:

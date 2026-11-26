@@ -6,6 +6,9 @@ Changelog
 Unreleased
 ----------
 
+* Return Webmention delivery receipts when outbound history recording raises.
+  Report the local failure separately and release historical resend claims
+  where possible.
 * Preserve Webmention POST outcomes when an internally created HTTP client
   fails to close, so batch sends can still record the delivery attempt.
 * Accept successfully fetched empty Webmention sources so Salmention

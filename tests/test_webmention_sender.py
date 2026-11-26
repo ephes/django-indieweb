@@ -2,9 +2,11 @@ from collections.abc import Callable
 from datetime import timedelta
 from unittest.mock import ANY, Mock, patch
 from urllib.parse import parse_qs
+from uuid import uuid4
 
 import httpx
 import pytest
+from django.db import OperationalError
 from django.test import override_settings
 from django.utils import timezone
 
@@ -897,6 +899,104 @@ def test_send_webmentions_records_outbound_target_history(sender, source_url, ta
     assert target.last_error == ""
     assert target.consecutive_failures == 0
     assert target.last_seen_in_source_at == sent_at
+
+
+@pytest.mark.parametrize("first_status", [202, 503])
+def test_send_webmentions_returns_receipts_when_history_recording_fails(sender, source_url, target_url, first_status):
+    next_target = "https://next.example/post"
+    requests = []
+
+    def post(request):
+        requests.append(request)
+        return httpx.Response(first_status if len(requests) == 1 else 201)
+
+    record = sender._record_outbound_target
+
+    def record_history(**kwargs):
+        if kwargs["target_url"] == target_url:
+            assert len(requests) == 1
+            raise OperationalError("Synthetic private database details")
+        return record(**kwargs)
+
+    with _make_test_client(post) as client:
+        send = sender.send_webmention
+        with (
+            patch.object(sender, "discover_endpoint", side_effect=lambda url, **kwargs: url + "/wm"),
+            patch.object(
+                sender, "send_webmention", side_effect=lambda *args, **kwargs: send(*args, client=client, **kwargs)
+            ),
+            patch.object(sender, "_record_outbound_target", side_effect=record_history),
+        ):
+            first, second = sender.send_webmentions(source_url, [target_url, next_target])
+
+    expected = {
+        "target": target_url,
+        "endpoint": target_url + "/wm",
+        "success": first_status == 202,
+        "status_code": first_status,
+        "history_error": "Outbound history update failed",
+    }
+    if first_status == 503:
+        expected["error"] = "HTTP 503"
+    assert first == expected
+    assert second == {"target": next_target, "endpoint": next_target + "/wm", "success": True, "status_code": 201}
+    assert [request.method for request in requests] == ["POST", "POST"]
+    assert [_form_body(request)["target"] for request in requests] == [[target_url], [next_target]]
+    saved = WebmentionOutboundTarget.objects.get(source_url=source_url)
+    assert (saved.target_url, saved.last_status_code) == (next_target, 201)
+
+
+@pytest.mark.parametrize("claim_replaced", [False, True])
+def test_resend_salmentions_returns_receipt_and_releases_only_its_claim_on_history_error(
+    sender, source_url, claim_replaced
+):
+    target = "https://first.example/post"
+    next_target = "https://next.example/post"
+    row = WebmentionOutboundTarget.objects.create(source_url=source_url, target_url=target)
+    next_row = WebmentionOutboundTarget.objects.create(source_url=source_url, target_url=next_target)
+    new_claim = uuid4()
+    new_expiry = timezone.now() + timedelta(minutes=5)
+    record = sender._record_outbound_target
+
+    def record_history(**kwargs):
+        if kwargs["target_url"] == target:
+            row.refresh_from_db()
+            assert row.resend_claim is not None and row.resend_claim == kwargs["claim"]
+            if claim_replaced:
+                WebmentionOutboundTarget.objects.filter(pk=row.pk).update(
+                    resend_claim=new_claim, resend_claim_expires_at=new_expiry
+                )
+            raise OperationalError("Synthetic private database details")
+        return record(**kwargs)
+
+    with (
+        patch.object(sender, "discover_endpoint", side_effect=lambda url, **kwargs: url + "/wm"),
+        patch.object(
+            sender, "send_webmention", side_effect=lambda *args, **kwargs: {"success": True, "status_code": 202}
+        ) as send,
+        patch.object(sender, "_record_outbound_target", side_effect=record_history),
+        patch.object(sender, "_release_historical_claim", wraps=sender._release_historical_claim) as release,
+    ):
+        first, second = sender.resend_salmentions(source_url, "")
+
+    assert first == {
+        "target": target,
+        "endpoint": target + "/wm",
+        "provenance": "history",
+        "success": True,
+        "status_code": 202,
+        "history_error": "Outbound history update failed",
+    }
+    assert second["target"] == next_target and second["success"] is True and "history_error" not in second
+    assert [call.args[1] for call in send.call_args_list] == [target, next_target]
+    release.assert_called_once_with(row, row.resend_claim)
+    row.refresh_from_db()
+    assert row.last_attempted_at is None
+    assert (row.resend_claim, row.resend_claim_expires_at) == (
+        (new_claim, new_expiry) if claim_replaced else (None, None)
+    )
+    next_row.refresh_from_db()
+    assert next_row.last_status_code == 202 and next_row.resend_claim is None
 
 
 def test_send_webmentions_repeated_send_updates_existing_history_row(sender, source_url, target_url):
