@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Bound each ``send_webmentions`` stdin readiness wait to prevent platform
+  timeout overflow with large source budgets.
 * Return Webmention delivery receipts when outbound history recording raises.
   Report the local failure separately and release historical resend claims
   where possible. Inside a caller's transaction the history write and the

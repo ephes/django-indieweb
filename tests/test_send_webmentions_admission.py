@@ -145,6 +145,19 @@ def test_stalled_pipe_uses_remaining_deadline(settings, monkeypatch, sender):
     sender.send_webmentions.assert_not_called()
 
 
+def test_pipe_accepts_content_with_large_source_timeout(settings, monkeypatch, sender):
+    settings.INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS = 10**30
+    monkeypatch.setattr(command.time, "monotonic", lambda: 100.0)
+    content = "<p>synthetic</p>"
+    read_fd, write_fd = os.pipe()
+    with os.fdopen(write_fd, "wb") as writer:
+        writer.write(content.encode())
+    with os.fdopen(read_fd, encoding="utf-8") as stream:
+        monkeypatch.setattr(command.sys, "stdin", stream)
+        call_command("send_webmentions", "https://source.example/post", content="-", stdout=StringIO())
+    sender.extract_urls.assert_called_once_with(content)
+
+
 @pytest.mark.parametrize("data", ["é".encode() * 4, b"x" * 9, b"\xff"])
 def test_binary_pipe_admission(settings, monkeypatch, sender, data):
     settings.INDIEWEB_WEBMENTION_FETCH_MAX_BYTES = 8

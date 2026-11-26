@@ -1543,8 +1543,9 @@ content are accepted. Oversized or invalid UTF-8 content raises
 Pipe rendered HTML as UTF-8. The command reads stdin incrementally and waits
 for pipe/terminal input only within the remaining
 ``INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS`` budget (default 120
-seconds), which starts before content acquisition. A stalled pipe or input
-that finishes after the deadline fails before parsing or sending. Descriptor
+seconds), which starts before content acquisition. Each readiness wait lasts
+at most one second, even with a large configured timeout. A stalled pipe or
+input that finishes after the deadline fails before parsing or sending. Descriptor
 readiness must be supported by the platform; unsupported stdin streams fail
 with a fixed error (use direct ``--content`` instead).
 

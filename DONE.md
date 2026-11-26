@@ -27,6 +27,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   before the fix.
 - Updated the Webmention guide and changelog Unreleased.
 
+### Bound Webmention stdin readiness waits (round 211 B05)
+
+- Limit each readiness wait to one second within the source deadline.
+- The new pipe test reproduced an `OverflowError` with a large timeout
+  before the fix. All 59 tests in `tests/test_send_webmentions_admission.py`
+  passed after it, including the real stalled-pipe deadline check.
+- `uv run pytest` passed with 4,091 tests. Ruff and mypy passed.
+- Updated the Webmention guide and changelog Unreleased.
+
 ## 2026-11-25
 
 ### Make Webmention display null ordering portable (round 204 B12)

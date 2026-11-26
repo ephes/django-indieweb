@@ -22,6 +22,7 @@ from indieweb.senders import (
 )
 
 CONTENT_CHUNK_SIZE = 16 * 1024
+STDIN_READY_WAIT_SECONDS = 1.0
 SAFE_RESULT_ERRORS = frozenset(
     {
         "No endpoint found",
@@ -192,7 +193,8 @@ class Command(BaseCommand):
             data = bytearray()
             while True:
                 self._check_source_deadline()
-                ready, _, _ = select.select([fd], [], [], max(0, self.source_deadline - time.monotonic()))
+                remaining = max(0, self.source_deadline - time.monotonic())
+                ready, _, _ = select.select([fd], [], [], min(remaining, STDIN_READY_WAIT_SECONDS))
                 self._check_source_deadline()
                 if not ready:
                     continue
