@@ -1009,7 +1009,10 @@ class WebmentionSender:
                     claim=claim,
                     using=using,
                 )
-        except Exception:
+        except Exception as error:
+            # Report only the error class: URLs and database details stay private.
+            with suppress(Exception):
+                logger.warning(f"Failed to record outbound Webmention history: {type(error).__name__}")
             self._release_historical_claim_best_effort(row, claim)
             result["history_error"] = _OUTBOUND_HISTORY_ERROR
             return None

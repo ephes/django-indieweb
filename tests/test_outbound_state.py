@@ -369,9 +369,14 @@ def test_history_write_error_keeps_caller_transaction_usable():
         patch.object(sender, "discover_endpoint", return_value="https://endpoint.example/"),
         patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 202}),
         patch.object(sender, "_record_outbound_target", side_effect=broken_history),
+        patch("indieweb.senders.logger.warning") as warning,
     ):
         assert connection.in_atomic_block
         (result,) = sender.send_webmentions(source, [target])
+
+    (message,) = (call.args[0] for call in warning.call_args_list)
+    assert message.startswith("Failed to record outbound Webmention history: ")
+    assert "synthetic_missing_column" not in message and source not in message
 
     assert result["history_error"] == "Outbound history update failed"
     assert result["success"] is True

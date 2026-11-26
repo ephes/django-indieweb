@@ -1876,8 +1876,9 @@ If an outbound history write raises after an attempt, the affected receipt
 from ``send_webmentions`` or ``resend_salmentions`` includes
 ``history_error="Outbound history update failed"``. The receipt keeps the
 original ``success``, ``status_code`` and any delivery ``error``. The sender
-processes remaining targets within the source budget and sends no additional
-POST for the affected receipt in that run. The management command prints the
+attempts to log a warning with the exception class only. It then processes
+remaining targets within the source budget and sends no additional POST for
+the affected receipt in that run. The management command prints the
 delivery result and history failure and exits with an error. A later run can
 deliver the Webmention again if history could not record the first attempt.
 When the sender runs inside a caller's database transaction, the history
