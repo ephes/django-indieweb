@@ -53,18 +53,25 @@ class Command(BaseCommand):
             raise CommandError("No WebSub hubs configured; set INDIEWEB_WEBSUB_HUBS or pass --hub")
 
         success_count = sum(1 for result in results if result.success)
-        self.stdout.write(f"Notified {success_count}/{len(results)} WebSub hubs for {redact_url(topic_url)}")
+        failure_count = len(results) - success_count
+        try:
+            self.stdout.write(f"Notified {success_count}/{len(results)} WebSub hubs for {redact_url(topic_url)}")
 
-        for result in results:
-            displayed_hub = redact_url(result.hub_url)
-            if result.success:
-                self.stdout.write(self.style.SUCCESS(f"✓ {displayed_hub} (HTTP {result.status_code})"))
-            else:
-                if result.status_code is not None:
-                    detail = f"HTTP {result.status_code}"
+            for result in results:
+                displayed_hub = redact_url(result.hub_url)
+                if result.success:
+                    self.stdout.write(self.style.SUCCESS(f"✓ {displayed_hub} (HTTP {result.status_code})"))
                 else:
-                    detail = result.error
-                self.stdout.write(self.style.ERROR(f"✗ {displayed_hub} ({detail})"))
+                    if result.status_code is not None:
+                        detail = f"HTTP {result.status_code}"
+                    else:
+                        detail = result.error
+                    self.stdout.write(self.style.ERROR(f"✗ {displayed_hub} ({detail})"))
+            self.stdout.flush()
+        except (OSError, ValueError) as exc:
+            raise CommandError(
+                f"Could not print WebSub notification results ({success_count} accepted, {failure_count} failed)"
+            ) from exc
 
-        if success_count < len(results):
-            raise CommandError(f"{len(results) - success_count} WebSub hub notifications failed")
+        if failure_count:
+            raise CommandError(f"{failure_count} WebSub hub notifications failed")

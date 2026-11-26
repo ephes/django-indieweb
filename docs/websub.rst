@@ -166,7 +166,9 @@ printed before any delivery error is raised. If any notification failed,
 the command then raises ``CommandError`` (nonzero shell exit), including
 partially successful batches. Successful empty-body 2xx responses still count
 as successes. The command bases its output and exit status on the delivery
-outcomes even if closing the notification client fails.
+outcomes even if closing the notification client fails. If writing or flushing
+stdout fails, the command raises ``CommandError`` with the number of accepted
+and failed notifications from the completed batch.
 
 Subscriber Lease Inspection
 ---------------------------

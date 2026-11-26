@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Report accepted and failed hub notification totals if ``notify_websub``
+  cannot write or flush its output.
 * Keep the failed WebSub hub result and continue notifying the remaining hubs
   when reporting a hub request failure raises in a logging handler.
 * Preserve WebSub hub results and ``notify_websub`` output when an internally

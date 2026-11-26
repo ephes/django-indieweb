@@ -6626,3 +6626,12 @@ bundle.
 - All four close-failure cases raised before the fix. The source-fetch and
   discovery cleanup checks passed after it, including caller-owned clients.
 - Updated the sender guide in `docs/webmention.rst` and changelog Unreleased.
+
+## 2026-11-26
+
+### Preserve WebSub notification totals on output failure (round 215 B02)
+
+- Report settled delivery totals if writing or flushing the command output
+  fails. The WebSub guide and changelog Unreleased document the result.
+- The write and flush regressions failed before the fix. Validated with
+  `uv run --frozen pytest --no-cov -q tests/test_notify_websub_command.py`.

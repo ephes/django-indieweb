@@ -174,3 +174,24 @@ def test_notify_websub_command_keeps_http_status_in_redact_mode(mock_notify_hubs
 
     assert "(HTTP 503)" in out.getvalue()
     assert "body-marker" not in out.getvalue()
+
+
+@pytest.mark.parametrize("operation", ["write", "flush"])
+@patch("indieweb.management.commands.notify_websub.notify_hubs")
+def test_notify_websub_preserves_totals_on_output_failure(mock_notify_hubs, operation):
+    topic = "https://example.com/feed"
+    mock_notify_hubs.return_value = [
+        WebSubNotificationResult(hub_url="https://hub.example/", topic_url=topic, success=True, status_code=204),
+        WebSubNotificationResult(hub_url="https://backup.example/", topic_url=topic, success=False, status_code=503),
+    ]
+    error = OSError("private stream detail")
+    out = StringIO()
+    with (
+        patch.object(out, operation, side_effect=error),
+        pytest.raises(CommandError, match="1 accepted, 1 failed") as caught,
+    ):
+        call_command("notify_websub", topic, stdout=out)
+
+    assert caught.value.__cause__ is error
+    assert "private stream detail" not in str(caught.value)
+    mock_notify_hubs.assert_called_once_with(topic, None, timeout=None)
