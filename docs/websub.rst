@@ -310,8 +310,15 @@ Both bounds are themselves clamped to a range of 60 seconds to 90 days.
 An out-of-range value is pulled to the nearest in-range value. If a value
 cannot be parsed as a positive integer, verification uses its default. If the
 resulting bounds are reversed, verification uses both defaults. These
-configuration warnings are best effort. Verification still applies the
-clamped or default bounds if a logging handler fails.
+configuration warnings are best effort. The bounds are computed without
+logging, and each warning is logged before the verification transaction in its
+own atomic block on the subscription's write database. Verification still
+applies the clamped or default bounds if a logging handler fails, also when its
+database write on that database fails or fails at the commit of the warning's
+own block. Inside a host transaction, a handler write on another database, or
+one whose deferred constraint is only checked at the host transaction's commit,
+is outside this guarantee: such writes belong to the host's transactions, and
+their failures surface there as for any other write in them.
 
 For ``unsubscribe`` verification, it marks the row ``unsubscribed`` and clears
 active lease fields. Missing, mismatched, or out-of-state verification
@@ -609,8 +616,13 @@ is left, so a single run drains a large backlog without one unbounded
 ``DELETE``. The command prints the cutoff and the number of rows it deleted or,
 with ``--dry-run``, would delete.
 If a database error follows committed deletions, the command exits with an
-error that reports how many deletions committed before the failure. A retry
-processes the remaining expired attempts.
+error that reports how many deletions committed before the failure. A batch
+counts as committed as soon as its transaction commits, also when an
+``on_commit`` callback that a delete signal handler registered raises a database
+error afterwards. Other exceptions from such callbacks carry no count: the
+command turns a ``ValueError`` into a plain ``CommandError`` and lets any other
+exception propagate, even when batches committed before it.
+A retry processes the remaining expired attempts.
 If writing or flushing the receipt fails, the command raises ``CommandError``
 with the retention cutoff and the number of committed deletions. When the
 caller owns the transaction, the error reports the count pending the caller's
@@ -632,7 +644,7 @@ current time. A naive ``now`` raises ``ValueError`` before any database query,
 including in dry-run mode. With ``USE_TZ=False``, naive reference times are
 accepted. With database routers, it counts, selects and deletes on the write
 database of ``WebSubDeliveryAttempt``, so a lagging read replica cannot
-influence a run. In autocommit mode on that database, a failure after committed
+influence a run. In autocommit mode on that database, a database error after committed
 deletions raises ``WebSubDeliveryAttemptPruneError`` with the committed count
 in ``deleted`` and the original database error as its cause. Inside a host
 transaction, the database error propagates and the host controls the commit.

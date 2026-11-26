@@ -4,6 +4,16 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Isolate lease warnings and count committed prune batches (round 220 review)
+
+- Compute WebSub lease bounds without logging and log each warning in its own
+  atomic block, so a handler's failed database write or commit cannot break
+  verification on the subscription's write database.
+- Count a committed prune batch through the first `on_commit` callback, so a
+  host callback's database error cannot hide it.
+- New regression tests failed before the repair; full pytest and
+  `tox -e storage-postgres` passed.
+
 ### Preserve WebSub verification when lease-bound warnings fail (round 220 B19)
 
 - Keep the existing lease defaults and clamping when a warning handler raises.

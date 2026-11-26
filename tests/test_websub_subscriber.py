@@ -709,6 +709,64 @@ def test_callback_verification_survives_lease_bound_warning_failure(
     assert messages[0].startswith(warning)
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("host_transaction", "handler_failure"),
+    # Inside a host transaction, an on_commit callback runs at the host's commit.
+    [(False, "write"), (True, "write"), (False, "on_commit")],
+)
+def test_verification_survives_lease_warning_handler_database_failure(
+    settings, monkeypatch, host_transaction, handler_failure
+):
+    from contextlib import nullcontext
+
+    from django.db import IntegrityError, transaction
+
+    from indieweb.websub import confirm_websub_verification
+
+    settings.INDIEWEB_WEBSUB_MIN_LEASE_SECONDS = "invalid"
+
+    class FailingDatabaseHandler(logging.Handler):
+        def emit(self, record):
+            if handler_failure == "on_commit":
+
+                def fail_on_commit():
+                    raise IntegrityError("synthetic handler commit failure")
+
+                transaction.on_commit(fail_on_commit)
+                return
+            # Model.save() reports a failed write the same way.
+            with transaction.mark_for_rollback_on_error():
+                raise IntegrityError("synthetic handler write failure")
+
+    logger = logging.getLogger("indieweb.websub")
+    monkeypatch.setattr(logger, "handlers", [FailingDatabaseHandler()])
+    monkeypatch.setattr(logger, "level", logging.WARNING)
+    subscription = WebSubSubscription.objects.create(
+        hub_url="https://hub.example/sub",
+        topic_url="https://source.example/feed",
+        state=WebSubSubscription.STATE_PENDING_SUBSCRIBE,
+        pending_mode=WebSubSubscription.MODE_SUBSCRIBE,
+    )
+
+    with transaction.atomic() if host_transaction else nullcontext():
+        unrelated = WebSubSubscription.objects.create(
+            hub_url="https://hub.example/sub", topic_url="https://source.example/other"
+        )
+        confirm_websub_verification(
+            subscription,
+            mode="subscribe",
+            topic_url=subscription.topic_url,
+            challenge="abc123",
+            lease_seconds="30",
+        )
+
+    subscription.refresh_from_db()
+    assert subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert subscription.confirmed_lease_seconds == 300
+    assert WebSubSubscription.objects.filter(pk=unrelated.pk).exists()
+
+
 @pytest.mark.django_db
 def test_callback_verification_applies_pending_secret(client):
     subscription = WebSubSubscription.objects.create(

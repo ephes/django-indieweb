@@ -7,7 +7,13 @@ Unreleased
 ----------
 
 * Keep WebSub callback verification using the configured fallback or clamped
-  lease bounds when logging a lease configuration warning fails.
+  lease bounds when logging a lease configuration warning fails. The bounds are
+  computed without logging, and each warning is logged in its own atomic block
+  on the subscription's write database, so a warning handler whose write there
+  fails, or fails at that block's commit, cannot break the verification.
+* Count a committed WebSub delivery-attempt prune batch when a host
+  ``on_commit`` callback registered by a delete signal handler raises a
+  database error.
 * Preserve the WebSub delivery-attempt prune count, cutoff and commit status
   when the command cannot write or flush its receipt.
 * Report committed WebSub delivery-attempt deletions when a later prune batch

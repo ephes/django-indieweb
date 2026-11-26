@@ -253,6 +253,34 @@ def test_command_reports_only_committed_batches_after_commit_failure(attempts, m
     assert _remaining(attempts) == {"at_cutoff", "recent"}
 
 
+@pytest.mark.django_db(transaction=True)
+def test_prune_counts_committed_batch_when_a_host_on_commit_callback_fails(attempts):
+    from django.db.models.signals import post_delete
+
+    from indieweb.websub import WebSubDeliveryAttemptPruneError
+
+    deletes = 0
+
+    def fail_after_second_commit():
+        raise DatabaseError("synthetic host on_commit failure")
+
+    def register_host_callback(sender, **kwargs):
+        nonlocal deletes
+        deletes += 1
+        if deletes == 2:
+            transaction.on_commit(fail_after_second_commit)
+
+    post_delete.connect(register_host_callback, sender=WebSubDeliveryAttempt)
+    try:
+        with pytest.raises(WebSubDeliveryAttemptPruneError) as error:
+            prune_websub_delivery_attempts(retention_days=30, now=NOW, batch_size=1)
+    finally:
+        post_delete.disconnect(register_host_callback, sender=WebSubDeliveryAttempt)
+
+    assert error.value.deleted == 2
+    assert _remaining(attempts) == {"at_cutoff", "recent"}
+
+
 def test_command_dry_run_is_inert(attempts):
     output = _run_command("--days", "30", "--dry-run")
 

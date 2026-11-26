@@ -395,23 +395,33 @@ def _warn_unsigned_subscription(subscription: WebSubSubscription) -> None:
         )
 
 
-def _warn_lease_bounds(message: str, *args: object) -> None:
-    # A failing log handler must not prevent verification with safe lease bounds.
-    with suppress(Exception):
-        logger.warning(message, *args)
+LeaseBoundWarnings = list[tuple[str, tuple[object, ...]]]
 
 
-def _configured_positive_int(name: str, *, default: int, label: str) -> int:
+def _emit_lease_bound_warnings(warnings: LeaseBoundWarnings, *, using: str) -> None:
+    """Log lease configuration warnings on a best-effort basis.
+
+    Each warning runs in its own atomic block inside the exception boundary,
+    so a handler that fails, or whose database write breaks the block or fails
+    when it commits, neither stops verification nor leaves a transaction
+    marked for rollback.
+    """
+    for message, args in warnings:
+        with suppress(Exception), transaction.atomic(using=using):
+            logger.warning(message, *args)
+
+
+def _configured_positive_int(name: str, *, default: int, label: str, warnings: LeaseBoundWarnings) -> int:
     configured = getattr(settings, name, default)
     try:
         parsed = _positive_int(configured, label=label)
     except ValueError:
-        _warn_lease_bounds("Ignoring invalid %s value; using the default", name)
+        warnings.append(("Ignoring invalid %s value; using the default", (name,)))
         return default
     return parsed if parsed is not None else default
 
 
-def _clamp_to_lease_range(value: int, *, setting_name: str) -> int:
+def _clamp_to_lease_range(value: int, *, setting_name: str, warnings: LeaseBoundWarnings) -> int:
     """Clamp ``value`` to ``[WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS, WEBSUB_LEASE_BOUNDS_CEILING_SECONDS]``.
 
     Out-of-range values produce a warning and are pulled to the nearest in-range bound so a
@@ -420,55 +430,62 @@ def _clamp_to_lease_range(value: int, *, setting_name: str) -> int:
     leases).
     """
     if value < WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS:
-        _warn_lease_bounds(
-            "Clamping %s=%d to WebSub lease floor of %d seconds",
-            setting_name,
-            value,
-            WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS,
+        warnings.append(
+            (
+                "Clamping %s=%d to WebSub lease floor of %d seconds",
+                (setting_name, value, WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS),
+            )
         )
         return WEBSUB_LEASE_BOUNDS_FLOOR_SECONDS
     if value > WEBSUB_LEASE_BOUNDS_CEILING_SECONDS:
-        _warn_lease_bounds(
-            "Clamping %s=%d to WebSub lease ceiling of %d seconds",
-            setting_name,
-            value,
-            WEBSUB_LEASE_BOUNDS_CEILING_SECONDS,
+        warnings.append(
+            (
+                "Clamping %s=%d to WebSub lease ceiling of %d seconds",
+                (setting_name, value, WEBSUB_LEASE_BOUNDS_CEILING_SECONDS),
+            )
         )
         return WEBSUB_LEASE_BOUNDS_CEILING_SECONDS
     return value
 
 
-def _confirmed_lease_bounds() -> tuple[int, int]:
+def _confirmed_lease_bounds(warnings: LeaseBoundWarnings) -> tuple[int, int]:
+    """Return the clamped lease bounds and collect configuration warnings."""
     minimum = _clamp_to_lease_range(
         _configured_positive_int(
             "INDIEWEB_WEBSUB_MIN_LEASE_SECONDS",
             default=DEFAULT_WEBSUB_MIN_LEASE_SECONDS,
             label="WebSub minimum lease seconds",
+            warnings=warnings,
         ),
         setting_name="INDIEWEB_WEBSUB_MIN_LEASE_SECONDS",
+        warnings=warnings,
     )
     maximum = _clamp_to_lease_range(
         _configured_positive_int(
             "INDIEWEB_WEBSUB_MAX_LEASE_SECONDS",
             default=DEFAULT_WEBSUB_MAX_LEASE_SECONDS,
             label="WebSub maximum lease seconds",
+            warnings=warnings,
         ),
         setting_name="INDIEWEB_WEBSUB_MAX_LEASE_SECONDS",
+        warnings=warnings,
     )
     if minimum > maximum:
-        _warn_lease_bounds("Ignoring invalid WebSub lease bounds; using the defaults")
+        warnings.append(("Ignoring invalid WebSub lease bounds; using the defaults", ()))
         return DEFAULT_WEBSUB_MIN_LEASE_SECONDS, DEFAULT_WEBSUB_MAX_LEASE_SECONDS
     return minimum, maximum
 
 
-def _clamp_confirmed_lease_seconds(lease_seconds: int | None) -> int | None:
+def _clamp_confirmed_lease_seconds(lease_seconds: int | None, bounds: tuple[int, int]) -> int | None:
     if lease_seconds is None:
         return None
-    minimum, maximum = _confirmed_lease_bounds()
+    minimum, maximum = bounds
     return min(max(lease_seconds, minimum), maximum)
 
 
-def _ratchet_renewal_lease(subscription: WebSubSubscription, confirmed_lease: int | None) -> int | None:
+def _ratchet_renewal_lease(
+    subscription: WebSubSubscription, confirmed_lease: int | None, bounds: tuple[int, int]
+) -> int | None:
     """Floor a renewal lease at half of the prior confirmed value.
 
     Prevents a hostile-but-trusted hub from amplifying our renewal traffic
@@ -480,7 +497,7 @@ def _ratchet_renewal_lease(subscription: WebSubSubscription, confirmed_lease: in
         or confirmed_lease is None
     ):
         return confirmed_lease
-    floor_minimum, _ = _confirmed_lease_bounds()
+    floor_minimum, _ = bounds
     ratchet_floor = max(floor_minimum, subscription.confirmed_lease_seconds // 2)
     if confirmed_lease < ratchet_floor:
         return ratchet_floor
@@ -943,6 +960,11 @@ def confirm_websub_verification(
     ``ValueError`` and changes nothing.
     """
     using = _subscription_write_db(subscription)
+    # The bounds never depend on logging. Their warnings are emitted before the
+    # verification transaction, each isolated from it (see the helper).
+    lease_warnings: LeaseBoundWarnings = []
+    lease_bounds = _confirmed_lease_bounds(lease_warnings)
+    _emit_lease_bound_warnings(lease_warnings, using=using)
     with transaction.atomic(using=using):
         _lock_current_subscription(subscription, using=using)
         _apply_websub_verification(
@@ -951,6 +973,7 @@ def confirm_websub_verification(
             topic_url=topic_url,
             challenge=challenge,
             lease_seconds=lease_seconds,
+            lease_bounds=lease_bounds,
         )
 
 
@@ -961,6 +984,7 @@ def _apply_websub_verification(
     topic_url: str,
     challenge: str,
     lease_seconds: str | int | None,
+    lease_bounds: tuple[int, int],
 ) -> None:
     validated_mode = _validate_subscription_mode(mode)
     if not challenge:
@@ -979,8 +1003,8 @@ def _apply_websub_verification(
         confirmed_lease = _positive_int(lease_seconds, label="lease seconds")
         if confirmed_lease is None:
             confirmed_lease = subscription.requested_lease_seconds
-        confirmed_lease = _clamp_confirmed_lease_seconds(confirmed_lease)
-        confirmed_lease = _ratchet_renewal_lease(subscription, confirmed_lease)
+        confirmed_lease = _clamp_confirmed_lease_seconds(confirmed_lease, lease_bounds)
+        confirmed_lease = _ratchet_renewal_lease(subscription, confirmed_lease, lease_bounds)
         subscription.state = WebSubSubscription.STATE_ACTIVE
         subscription.confirmed_lease_seconds = confirmed_lease
         subscription.lease_expires_at = (
@@ -1147,6 +1171,48 @@ def websub_delivery_attempt_retention_days(retention_days: int | str | None = No
     return parsed
 
 
+def _delete_expired_websub_attempts(
+    attempts: QuerySet[WebSubDeliveryAttempt],
+    expired: QuerySet[WebSubDeliveryAttempt],
+    *,
+    alias: str,
+    batch_size: int,
+    owns_transactions: bool,
+) -> int:
+    connection = connections[alias]
+    deleted = 0
+    batch_deleted = 0
+
+    def count_committed_batch() -> None:
+        nonlocal deleted
+        deleted += batch_deleted
+
+    try:
+        while True:
+            batch_deleted = 0
+            with transaction.atomic(using=alias):
+                if owns_transactions:
+                    # Registered before the delete, so it runs right after the
+                    # commit and ahead of any on_commit callback that delete
+                    # signal handlers add. A failing host callback then cannot
+                    # hide a committed batch from the reported count.
+                    transaction.on_commit(count_committed_batch, using=alias)
+                if connection.vendor == "sqlite":
+                    # Reserve the writer before reading IDs. The impossible PK
+                    # predicate acquires the reservation without updating any row.
+                    attempts.filter(pk__isnull=True).update(modified=F("modified"))
+                batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
+                if not batch:
+                    return deleted
+                batch_deleted = attempts.filter(pk__in=batch).delete()[0]
+            if not owns_transactions:
+                deleted += batch_deleted
+    except DatabaseError as exc:
+        if owns_transactions and deleted:
+            raise WebSubDeliveryAttemptPruneError(deleted) from exc
+        raise
+
+
 def prune_websub_delivery_attempts(
     *,
     retention_days: int | str | None = None,
@@ -1190,23 +1256,13 @@ def prune_websub_delivery_attempts(
     expired = attempts.filter(received_at__lt=cutoff)
     matched = expired.count()
     owns_transactions = not dry_run and connection.get_autocommit()
-    deleted = 0
-    try:
-        while not dry_run:
-            with transaction.atomic(using=alias):
-                if connection.vendor == "sqlite":
-                    # Reserve the writer before reading IDs. The impossible PK
-                    # predicate acquires the reservation without updating any row.
-                    attempts.filter(pk__isnull=True).update(modified=F("modified"))
-                batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
-                if not batch:
-                    break
-                batch_deleted = attempts.filter(pk__in=batch).delete()[0]
-            deleted += batch_deleted
-    except DatabaseError as exc:
-        if owns_transactions and deleted:
-            raise WebSubDeliveryAttemptPruneError(deleted) from exc
-        raise
+    deleted = (
+        0
+        if dry_run
+        else _delete_expired_websub_attempts(
+            attempts, expired, alias=alias, batch_size=batch_size, owns_transactions=owns_transactions
+        )
+    )
     return WebSubDeliveryAttemptPruneResult(
         retention_days=days,
         cutoff=cutoff,
