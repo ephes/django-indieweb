@@ -5,7 +5,7 @@ import math
 import re
 import time
 from collections.abc import Sequence
-from contextlib import suppress
+from contextlib import AbstractContextManager, nullcontext, suppress
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -85,6 +85,16 @@ def _close_sender_client(client: httpx.Client, operation: str) -> None:
     except Exception:
         with suppress(Exception):
             logger.warning(f"Failed to close Webmention {operation} client")
+
+
+def _savepoint_in_caller_transaction(using: str) -> AbstractContextManager[Any]:
+    """Keep a swallowed database error from aborting a caller's transaction.
+
+    Autocommit callers get no outer transaction, so their locking order stays.
+    """
+    if transaction.get_connection(using).in_atomic_block:
+        return transaction.atomic(using=using)
+    return nullcontext()
 
 
 def _source_deadline(deadline: float | None = None) -> float:
@@ -984,19 +994,21 @@ class WebmentionSender:
         using: str | None = None,
     ) -> WebmentionOutboundTarget | None:
         """Record an attempt without losing its delivery receipt on a write error."""
+        using = using or router.db_for_write(WebmentionOutboundTarget)
         try:
-            return self._record_outbound_target(
-                attempt_started_at=started,
-                source_url=source_url,
-                target_url=result["target"],
-                endpoint=result["endpoint"],
-                result=result,
-                vouch_url=vouch_url,
-                seen_in_source=seen_in_source,
-                sent=result["endpoint"] is not None,
-                claim=claim,
-                using=using,
-            )
+            with _savepoint_in_caller_transaction(using):
+                return self._record_outbound_target(
+                    attempt_started_at=started,
+                    source_url=source_url,
+                    target_url=result["target"],
+                    endpoint=result["endpoint"],
+                    result=result,
+                    vouch_url=vouch_url,
+                    seen_in_source=seen_in_source,
+                    sent=result["endpoint"] is not None,
+                    claim=claim,
+                    using=using,
+                )
         except Exception:
             self._release_historical_claim_best_effort(row, claim)
             result["history_error"] = _OUTBOUND_HISTORY_ERROR
@@ -1167,7 +1179,8 @@ class WebmentionSender:
         if row is None or claim is None:
             return
         try:
-            self._release_historical_claim(row, claim)
+            with _savepoint_in_caller_transaction(row._state.db or router.db_for_write(WebmentionOutboundTarget)):
+                self._release_historical_claim(row, claim)
         except Exception:
             # The claim can expire naturally. A broken log sink must also
             # preserve the delivery outcome.

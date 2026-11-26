@@ -962,12 +962,18 @@ def test_resend_salmentions_returns_receipt_and_releases_only_its_claim_on_histo
         if kwargs["target_url"] == target:
             row.refresh_from_db()
             assert row.resend_claim is not None and row.resend_claim == kwargs["claim"]
-            if claim_replaced:
-                WebmentionOutboundTarget.objects.filter(pk=row.pk).update(
-                    resend_claim=new_claim, resend_claim_expires_at=new_expiry
-                )
             raise OperationalError("Synthetic private database details")
         return record(**kwargs)
+
+    release_claim = sender._release_historical_claim
+
+    def release_after_replacement(claimed_row, claim):
+        # A competing worker replaces the claim after the failed history write.
+        if claim_replaced:
+            WebmentionOutboundTarget.objects.filter(pk=row.pk).update(
+                resend_claim=new_claim, resend_claim_expires_at=new_expiry
+            )
+        release_claim(claimed_row, claim)
 
     with (
         patch.object(sender, "discover_endpoint", side_effect=lambda url, **kwargs: url + "/wm"),
@@ -975,7 +981,7 @@ def test_resend_salmentions_returns_receipt_and_releases_only_its_claim_on_histo
             sender, "send_webmention", side_effect=lambda *args, **kwargs: {"success": True, "status_code": 202}
         ) as send,
         patch.object(sender, "_record_outbound_target", side_effect=record_history),
-        patch.object(sender, "_release_historical_claim", wraps=sender._release_historical_claim) as release,
+        patch.object(sender, "_release_historical_claim", side_effect=release_after_replacement) as release,
     ):
         first, second = sender.resend_salmentions(source_url, "")
 

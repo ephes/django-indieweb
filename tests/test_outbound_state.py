@@ -351,3 +351,54 @@ def test_concurrent_failure_drop_never_recreates_history(monkeypatch, settings):
     assert not WebmentionOutboundTarget.objects.exists()
     assert results[0]["skip_reason"] == "history_changed"
     assert not results[0].get("dropped")
+
+
+@pytest.mark.django_db
+def test_history_write_error_keeps_caller_transaction_usable():
+    source = "https://source.example/"
+    target = "https://target.example/"
+    sender = WebmentionSender()
+
+    def broken_history(**kwargs):
+        # A real database error aborts the surrounding PostgreSQL transaction
+        # unless the history write runs in its own savepoint.
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT synthetic_missing_column FROM indieweb_webmentionoutboundtarget")
+
+    with (
+        patch.object(sender, "discover_endpoint", return_value="https://endpoint.example/"),
+        patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 202}),
+        patch.object(sender, "_record_outbound_target", side_effect=broken_history),
+    ):
+        assert connection.in_atomic_block
+        (result,) = sender.send_webmentions(source, [target])
+
+    assert result["history_error"] == "Outbound history update failed"
+    assert result["success"] is True
+    WebmentionOutboundTarget.objects.create(source_url=source, target_url=target)
+    assert WebmentionOutboundTarget.objects.filter(source_url=source).count() == 1
+
+
+@pytest.mark.django_db
+def test_claim_release_error_keeps_caller_transaction_usable():
+    source = "https://source.example/"
+    target = "https://target.example/"
+    WebmentionOutboundTarget.objects.create(source_url=source, target_url=target)
+    sender = WebmentionSender()
+
+    def broken_query(*args, **kwargs):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT synthetic_missing_column FROM indieweb_webmentionoutboundtarget")
+
+    with (
+        patch.object(sender, "discover_endpoint", return_value="https://endpoint.example/"),
+        patch.object(sender, "send_webmention", return_value={"success": True, "status_code": 202}),
+        patch.object(sender, "_record_outbound_target", side_effect=broken_query),
+        patch.object(sender, "_release_historical_claim", side_effect=broken_query) as release,
+    ):
+        assert connection.in_atomic_block
+        (result,) = sender.resend_salmentions(source, "")
+
+    release.assert_called_once()
+    assert result["history_error"] == "Outbound history update failed"
+    assert WebmentionOutboundTarget.objects.filter(source_url=source).count() == 1

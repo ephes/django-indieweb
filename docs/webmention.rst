@@ -1880,6 +1880,9 @@ processes remaining targets within the source budget and sends no additional
 POST for the affected receipt in that run. The management command prints the
 delivery result and history failure and exits with an error. A later run can
 deliver the Webmention again if history could not record the first attempt.
+When the sender runs inside a caller's database transaction, the history
+write and the best-effort claim release each use their own savepoint, so a
+failure in either does not abort that transaction.
 
 Historical resend reservations
 ==============================

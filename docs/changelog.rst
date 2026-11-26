@@ -8,7 +8,8 @@ Unreleased
 
 * Return Webmention delivery receipts when outbound history recording raises.
   Report the local failure separately and release historical resend claims
-  where possible.
+  where possible. Inside a caller's transaction the history write and the
+  claim release use savepoints, so a failure does not abort that transaction.
 * Preserve Webmention POST outcomes when an internally created HTTP client
   fails to close, so batch sends can still record the delivery attempt.
 * Accept successfully fetched empty Webmention sources so Salmention

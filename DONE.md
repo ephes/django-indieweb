@@ -21,6 +21,10 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 - Focused pytest cases reproduced the lost receipts and missing command
   diagnostics before the fix. They cover continued delivery and claim fencing.
   `uv run pytest -q` and all twelve default `uv run tox` lanes passed.
+- Run the history write and the best-effort claim release in savepoints
+  when the caller is already inside a transaction. PostgreSQL storage
+  regressions showed the swallowed errors aborting the caller's transaction
+  before the fix.
 - Updated the Webmention guide and changelog Unreleased.
 
 ## 2026-11-25
