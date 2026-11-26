@@ -6,7 +6,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from indieweb.websub import prune_websub_delivery_attempts
+from indieweb.websub import WebSubDeliveryAttemptPruneError, prune_websub_delivery_attempts
 
 
 class Command(BaseCommand):
@@ -45,7 +45,7 @@ class Command(BaseCommand):
                 batch_size=options["batch_size"],
                 dry_run=options["dry_run"],
             )
-        except ValueError as exc:
+        except (ValueError, WebSubDeliveryAttemptPruneError) as exc:
             raise CommandError(str(exc)) from exc
 
         window = f"received before {result.cutoff.isoformat()} (retention: {result.retention_days} days)"

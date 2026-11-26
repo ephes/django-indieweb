@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Report committed WebSub delivery-attempt deletions when a later prune batch
+  fails on the write database.
 * Require autocommit on the WebSub subscription write database so preparation
   commits before the hub can verify the callback.
 * Reserve the SQLite writer before reading WebSub subscription state so

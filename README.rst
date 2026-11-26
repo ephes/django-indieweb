@@ -193,4 +193,5 @@ h-card extensions must contain portable JSON values with finite numbers.
 Lease inspection streams metadata in chunks of 500 rows and prints URL
 origin/path descriptions without credentials, queries, fragments or terminal
 controls. Delivery-attempt pruning caps each transaction at 1,000 IDs and the
-write database's SQL parameter limit; a failed batch rolls back and can be retried.
+write database's SQL parameter limit. If a later batch fails, the command reports
+the number of committed deletions and a retry processes the remaining expired attempts.

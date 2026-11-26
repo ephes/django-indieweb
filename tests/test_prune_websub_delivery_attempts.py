@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connection, connections
+from django.db import DatabaseError, connection, connections
 from django.test.utils import CaptureQueriesContext
 
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
@@ -193,6 +193,28 @@ def test_command_deletes_and_reports_cutoff(attempts):
     assert output.strip() == (
         f"Deleted 2 WebSub delivery attempts received before {CUTOFF.isoformat()} (retention: 30 days)"
     )
+    assert _remaining(attempts) == {"at_cutoff", "recent"}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_command_reports_only_committed_batches_after_commit_failure(attempts, monkeypatch):
+    commit = connection.commit
+    commits = 0
+
+    def fail_second_commit():
+        nonlocal commits
+        commits += 1
+        if commits == 2:
+            raise DatabaseError("synthetic second-batch commit failure")
+        commit()
+
+    with monkeypatch.context() as patch_commit:
+        patch_commit.setattr(connection, "commit", fail_second_commit)
+        with pytest.raises(CommandError, match=r"committed deletions is 1\.$"):
+            _run_command("--days", "30", "--batch-size", "1")
+
+    assert _remaining(attempts) == {"just_before", "at_cutoff", "recent"}
+    assert "Deleted 1 WebSub delivery attempts" in _run_command("--days", "30", "--batch-size", "1")
     assert _remaining(attempts) == {"at_cutoff", "recent"}
 
 

@@ -4,6 +4,15 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Report committed WebSub delivery-attempt pruning after failure (round 216 B02)
+
+- Count deletions after each batch commits on the write database. The command
+  reports the committed count when a later batch fails.
+- The focused commit-failure regression failed before the fix and passed after
+  it. Validated with `just check`, `just hooks` and
+  `uv run sphinx-build -W -b html docs docs/_build/html`.
+- Updated the README, WebSub guide and changelog Unreleased.
+
 ### Preserve WebSub results on client close failure (round 213 B11)
 
 - Keep settled publisher results and an active notification error when

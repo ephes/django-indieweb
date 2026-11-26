@@ -24,7 +24,7 @@ import httpx
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
-from django.db import IntegrityError, connections, router, transaction
+from django.db import DatabaseError, IntegrityError, connections, router, transaction
 from django.db.models import F, Q, QuerySet
 from django.http import HttpResponseBase
 from django.utils import timezone
@@ -1121,6 +1121,14 @@ class WebSubDeliveryAttemptPruneResult:
     dry_run: bool
 
 
+class WebSubDeliveryAttemptPruneError(DatabaseError):
+    """A database failure after one or more prune batches committed."""
+
+    def __init__(self, deleted: int) -> None:
+        self.deleted = deleted
+        super().__init__(f"WebSub delivery attempt pruning failed. The number of committed deletions is {deleted}.")
+
+
 def websub_delivery_attempt_retention_days(retention_days: int | str | None = None) -> int:
     """Return the validated delivery-attempt retention in days.
 
@@ -1164,7 +1172,9 @@ def prune_websub_delivery_attempts(
     replay-protection rows are never touched. Every query runs on the
     database that ``WebSubDeliveryAttempt`` is written to
     (``router.db_for_write``). Nothing calls this automatically: run it from the ``prune_websub_delivery_attempts``
-    management command or a host job.
+    management command or a host job. In autocommit mode, a database error
+    after committed deletions raises ``WebSubDeliveryAttemptPruneError`` with
+    the committed count in ``deleted``.
     """
     days = websub_delivery_attempt_retention_days(retention_days)
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
@@ -1185,17 +1195,24 @@ def prune_websub_delivery_attempts(
     attempts = WebSubDeliveryAttempt.objects.using(alias)
     expired = attempts.filter(received_at__lt=cutoff)
     matched = expired.count()
+    owns_transactions = not dry_run and connection.get_autocommit()
     deleted = 0
-    while not dry_run:
-        with transaction.atomic(using=alias):
-            if connection.vendor == "sqlite":
-                # Reserve the writer before reading IDs. The impossible PK
-                # predicate acquires the reservation without updating any row.
-                attempts.filter(pk__isnull=True).update(modified=F("modified"))
-            batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
-            if not batch:
-                break
-            deleted += attempts.filter(pk__in=batch).delete()[0]
+    try:
+        while not dry_run:
+            with transaction.atomic(using=alias):
+                if connection.vendor == "sqlite":
+                    # Reserve the writer before reading IDs. The impossible PK
+                    # predicate acquires the reservation without updating any row.
+                    attempts.filter(pk__isnull=True).update(modified=F("modified"))
+                batch = list(expired.order_by("pk").values_list("pk", flat=True)[:batch_size])
+                if not batch:
+                    break
+                batch_deleted = attempts.filter(pk__in=batch).delete()[0]
+            deleted += batch_deleted
+    except DatabaseError as exc:
+        if owns_transactions and deleted:
+            raise WebSubDeliveryAttemptPruneError(deleted) from exc
+        raise
     return WebSubDeliveryAttemptPruneResult(
         retention_days=days,
         cutoff=cutoff,

@@ -599,6 +599,9 @@ are deleted in primary-key batches (``--batch-size``, default 1000) until none
 is left, so a single run drains a large backlog without one unbounded
 ``DELETE``. The command prints the cutoff and the number of rows it deleted or,
 with ``--dry-run``, would delete.
+If a database error follows committed deletions, the command exits with an
+error that reports how many deletions committed before the failure. A retry
+processes the remaining expired attempts.
 
 django-indieweb does not schedule the command and never deletes attempts on
 its own. Run it from your scheduler, for example daily from cron:
@@ -615,7 +618,11 @@ current time. A naive ``now`` raises ``ValueError`` before any database query,
 including in dry-run mode. With ``USE_TZ=False``, naive reference times are
 accepted. With database routers, it counts, selects and deletes on the write
 database of ``WebSubDeliveryAttempt``, so a lagging read replica cannot
-influence a run. The older ``examples.websub_workflows.prune_websub_delivery_attempts()``
+influence a run. In autocommit mode on that database, a failure after committed
+deletions raises ``WebSubDeliveryAttemptPruneError`` with the committed count
+in ``deleted`` and the original database error as its cause. Inside a host
+transaction, the database error propagates and the host controls the commit.
+The older ``examples.websub_workflows.prune_websub_delivery_attempts()``
 example still works for hosts that keep the retention window in their own code.
 
 Pruning is independent of replay protection. ``WebSubAcceptedDelivery`` rows,
