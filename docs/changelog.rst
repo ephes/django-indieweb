@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Require autocommit on the WebSub subscription write database so preparation
+  commits before the hub can verify the callback.
 * Reserve the SQLite writer before reading WebSub subscription state so
   overlapping preparations can serialize on the routed write database.
 * Restore WebSub subscription state before logging a network failure and

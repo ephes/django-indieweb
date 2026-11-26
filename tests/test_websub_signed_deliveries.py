@@ -119,7 +119,7 @@ def test_signed_delivery_is_accepted_by_default(client, settings, active_subscri
     assert len(websub_hooks.DELIVERIES) == 1
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_subscribing_without_secret_warns_that_deliveries_will_be_rejected(caplog):
     with caplog.at_level(logging.WARNING, logger=SUBSCRIPTION_LOGGER):
         result = request_websub_subscription(
@@ -137,7 +137,7 @@ def test_subscribing_without_secret_warns_that_deliveries_will_be_rejected(caplo
     assert "INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False" in messages[0]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_subscribing_without_secret_after_opt_out_warns_about_unsigned_content(settings, caplog):
     settings.INDIEWEB_WEBSUB_REQUIRE_SIGNED_DELIVERIES = False
 
@@ -154,7 +154,7 @@ def test_subscribing_without_secret_after_opt_out_warns_about_unsigned_content(s
     assert "unsigned deliveries will be accepted" in messages[0]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_subscribing_with_secret_does_not_warn(caplog):
     with caplog.at_level(logging.WARNING, logger=SUBSCRIPTION_LOGGER):
         request_websub_subscription(
@@ -168,7 +168,7 @@ def test_subscribing_with_secret_does_not_warn(caplog):
     assert not [record for record in caplog.records if record.name == SUBSCRIPTION_LOGGER]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_renewal_that_keeps_stored_secret_does_not_warn(active_subscription, caplog):
     active_subscription.secret = SECRET
     active_subscription.save()
@@ -184,7 +184,7 @@ def test_renewal_that_keeps_stored_secret_does_not_warn(active_subscription, cap
     assert not [record for record in caplog.records if record.name == SUBSCRIPTION_LOGGER]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_unsubscribe_without_secret_does_not_warn(active_subscription, caplog):
     with caplog.at_level(logging.WARNING, logger=SUBSCRIPTION_LOGGER):
         request_websub_subscription(

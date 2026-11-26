@@ -38,7 +38,7 @@ def _assert_no_free_text(text: str) -> None:
         assert private not in text
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("mode", ["passthrough", "redact"])
 def test_websub_subscription_failure_stores_and_logs_exception_class_only(settings, caplog, mode):
     settings.INDIEWEB_LOG_REDACTION = mode
@@ -59,7 +59,7 @@ def test_websub_subscription_failure_stores_and_logs_exception_class_only(settin
     _assert_no_free_text(caplog.text)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_websub_hub_rejection_body_is_stored_as_a_fingerprint():
     body = f"bad request, retry with {LEAKY_URL}"
 

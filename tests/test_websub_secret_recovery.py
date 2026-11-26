@@ -11,7 +11,7 @@ from indieweb.websub import request_websub_subscription
 CORRUPT = "fernet$synthetic-☃-secret"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("field", ["secret", "pending_secret"])
 def test_nonascii_ciphertext_read_and_request_save(client, admin_user, field, caplog):
     row = WebSubSubscription.objects.create(

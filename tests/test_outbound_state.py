@@ -1,6 +1,7 @@
 """Synthetic overlapping outgoing requests must preserve newer state."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import timedelta
 from itertools import permutations
 from threading import Barrier, Event
@@ -8,7 +9,9 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from django.db import close_old_connections, connection, connections
+from django.db import close_old_connections, connection, connections, transaction
+from django.test import Client
+from django.urls import reverse
 from django.utils import timezone
 
 from indieweb.models import WebmentionOutboundTarget, WebSubSubscription
@@ -16,7 +19,7 @@ from indieweb.senders import OUTBOUND_FAILURE_ATTEMPTS_LIMIT, WebmentionSender
 from indieweb.websub import confirm_websub_verification, request_websub_subscription
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("newer", ["confirmed", "pending"])
 @pytest.mark.parametrize("response", ["timeout", "rejected", "accepted"])
 def test_old_subscription_result_preserves_new_generation(newer, response):
@@ -112,6 +115,85 @@ def test_sqlite_overlapping_subscription_preparations(sqlite_wal, monkeypatch):
     assert row.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
     assert row.requested_lease_seconds == 7200
     assert row.request_generation == generations[7200] != generations[3600]
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "other"])
+@pytest.mark.parametrize("outer_transaction", ["atomic", "manual"])
+def test_subscription_request_refuses_open_write_transaction(settings, outer_transaction):
+    class SubscriptionRouter:
+        def db_for_write(self, model, **hints):
+            if model is WebSubSubscription:
+                return "other"
+            return None
+
+    settings.DATABASE_ROUTERS = [SubscriptionRouter()]
+    other = connections["other"]
+    row = WebSubSubscription.objects.using("other").create(
+        hub_url="https://hub.example/",
+        topic_url="https://topic.example/",
+        state=WebSubSubscription.STATE_ACTIVE,
+    )
+    subscriptions = WebSubSubscription.objects.using("other").filter(pk=row.pk)
+    original = subscriptions.values().get()
+    manually_managed = outer_transaction == "manual"
+    if manually_managed:
+        other.set_autocommit(False)
+    try:
+        with (
+            nullcontext() if manually_managed else transaction.atomic(using="other"),
+            patch("indieweb.websub.httpx.Client") as client_factory,
+            patch("indieweb.websub._post_subscription_request", return_value=httpx.Response(202)) as post,
+        ):
+            with pytest.raises(RuntimeError, match="require autocommit"):
+                request_websub_subscription(
+                    row.topic_url,
+                    row.hub_url,
+                    secret="synthetic-renewal-secret",
+                    callback_base_url="https://callback.example/",
+                )
+            assert subscriptions.values().get() == original
+            client_factory.assert_not_called()
+            post.assert_not_called()
+    finally:
+        if manually_managed:
+            other.rollback()
+            other.set_autocommit(True)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_hub_can_verify_subscription_on_independent_connection(concurrent_database):
+    topic = "https://topic.example/"
+    hub_url = "https://hub.example/"
+
+    def verify():
+        try:
+            row = WebSubSubscription.objects.get(topic_url=topic, hub_url=hub_url)
+            assert row.pending_mode == WebSubSubscription.MODE_SUBSCRIBE
+            response = Client().get(
+                reverse("indieweb:websub-callback", args=[row.callback_token]),
+                {"hub.mode": "subscribe", "hub.topic": topic, "hub.challenge": "challenge", "hub.lease_seconds": 3600},
+            )
+            assert response.status_code == 200
+            assert response.content == b"challenge"
+        finally:
+            connections.close_all()
+
+    def respond(request):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(verify).result(timeout=10)
+        return httpx.Response(202)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as hub:
+        result = request_websub_subscription(
+            topic,
+            hub_url,
+            secret="synthetic-renewal-secret",
+            callback_base_url="https://callback.example/",
+            client=hub,
+        )
+    assert result.success
+    assert result.subscription.state == WebSubSubscription.STATE_ACTIVE
+    assert result.subscription.pending_mode == ""
 
 
 def _record(*, success=False, **kwargs):

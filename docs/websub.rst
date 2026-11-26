@@ -267,8 +267,18 @@ at rest.
 Set ``mode=WebSubSubscription.MODE_UNSUBSCRIBE`` to ask the hub to cancel an
 existing subscription. Unknown subscriptions are rejected before any network
 request is made. Preparation uses the subscription's routed write database
-and reserves the SQLite writer before reading the row. The hub request runs
-after the preparation block has exited.
+and reserves the SQLite writer before reading the row. Preparation commits
+before the hub POST, allowing a verification callback on another connection
+to see the pending request.
+
+Call this helper with autocommit enabled on the routed write database. It
+raises ``RuntimeError`` before changing subscription state or contacting the
+hub if that database is already in a transaction. In a view that uses
+``ATOMIC_REQUESTS``, schedule the call with
+``transaction.on_commit(..., using=write_alias)`` and consume the hub result
+inside the callback. If the view needs the result synchronously, call from
+outside the transaction, for instance from a view marked
+``@transaction.non_atomic_requests(using=write_alias)``.
 
 ``request_websub_subscription()`` also accepts an optional ``client`` keyword
 for tests and tightly controlled integrations. See the injected-client warning

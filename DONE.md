@@ -68,6 +68,39 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
   file-backed SQLite. The sandbox blocked PostgreSQL startup at `shmget`.
 - Updated the Webmention guide and changelog Unreleased.
 
+### Preserve WebSub notification totals on output failure (round 215 B02)
+
+- Report settled delivery totals if writing or flushing the command output
+  fails. The WebSub guide and changelog Unreleased document the result.
+- The write and flush regressions failed before the fix. Validated with
+  `uv run --frozen pytest --no-cov -q tests/test_notify_websub_command.py`.
+
+### Restore WebSub subscription state before failure logging (round 215 B02)
+
+- Record the failure and restore the active subscription before warning about
+  a failed hub request. The WebSub guide and changelog Unreleased cover it.
+- The warning regression failed before the fix. Validated with
+  `uv run --frozen pytest --no-cov -q tests/test_websub_subscriber.py`.
+
+### Reserve the SQLite writer before WebSub preparation (round 215 B03)
+
+- Pin subscription preparation and request result writes to one write
+  alias. Take the SQLite writer reservation before reading the row.
+  Updated the WebSub guide and changelog Unreleased.
+- The two-connection file SQLite regression failed with a lock upgrade
+  error before the fix and passed afterward with file SQLite and
+  `uv run pytest --migrations --no-cov -q tests/test_outbound_state.py`.
+
+### Commit WebSub subscription preparation before the hub POST (round 215 B03)
+
+- Refuse enclosing write transactions before preparation or transport.
+  The WebSub guide covers autocommit and transactional request wrappers.
+  Updated changelog Unreleased.
+- Both transaction-ownership regressions failed before the fix. A separate
+  connection verifies the committed pending request during the hub POST.
+  Validated with file SQLite and
+  `uv run pytest --migrations --no-cov -q tests/test_outbound_state.py`.
+
 ## 2026-11-25
 
 ### Make Webmention display null ordering portable (round 204 B12)
@@ -6626,27 +6659,3 @@ bundle.
 - All four close-failure cases raised before the fix. The source-fetch and
   discovery cleanup checks passed after it, including caller-owned clients.
 - Updated the sender guide in `docs/webmention.rst` and changelog Unreleased.
-
-## 2026-11-26
-
-### Preserve WebSub notification totals on output failure (round 215 B02)
-
-- Report settled delivery totals if writing or flushing the command output
-  fails. The WebSub guide and changelog Unreleased document the result.
-- The write and flush regressions failed before the fix. Validated with
-  `uv run --frozen pytest --no-cov -q tests/test_notify_websub_command.py`.
-
-### Restore WebSub subscription state before failure logging (round 215 B02)
-
-- Record the failure and restore the active subscription before warning about
-  a failed hub request. The WebSub guide and changelog Unreleased cover it.
-- The warning regression failed before the fix. Validated with
-  `uv run --frozen pytest --no-cov -q tests/test_websub_subscriber.py`.
-
-### Reserve the SQLite writer before WebSub preparation (round 215 B03)
-
-- Pin subscription preparation and request result writes to one write
-  alias. Take the SQLite writer reservation before reading the row.
-  Updated the WebSub guide and changelog Unreleased.
-- The two-connection file SQLite regression failed with a lock upgrade
-  error before the fix and passed with migrations enabled afterward.

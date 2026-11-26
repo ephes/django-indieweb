@@ -55,7 +55,7 @@ def test_valid_strongest_among_malformed_signatures(client, settings):
     assert len(websub_hooks.DELIVERIES) == 1
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize(
     "kwargs",
@@ -88,7 +88,7 @@ def test_invalid_preflight_never_writes(existing, kwargs):
 
 
 @pytest.mark.parametrize("operation", ["publish", "subscribe"])
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_total_budget_expires_trickle_and_next_hub_runs(monkeypatch, operation):
     clock = [0.0]
     monkeypatch.setattr("indieweb.http_client.time.monotonic", lambda: clock[0])
@@ -125,7 +125,7 @@ def test_total_budget_expires_trickle_and_next_hub_runs(monkeypatch, operation):
             assert result.subscription.state == WebSubSubscription.STATE_DENIED
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_callback_construction_failure_rolls_back_preparation(monkeypatch):
     def fail(*args):
         assert WebSubSubscription.objects.filter(pending_mode="subscribe").exists()
@@ -139,7 +139,7 @@ def test_callback_construction_failure_rolls_back_preparation(monkeypatch):
     assert not WebSubSubscription.objects.exists()
 
 
-@pytest.mark.django_db(databases=["default", "other"])
+@pytest.mark.django_db(transaction=True, databases=["default", "other"])
 def test_routed_callback_failure_rolls_back_preparation(monkeypatch, settings):
     class SubscriptionRouter:
         def db_for_read(self, model, **hints):
@@ -162,7 +162,7 @@ def test_routed_callback_failure_rolls_back_preparation(monkeypatch, settings):
     assert not WebSubSubscription.objects.using("default").exists()
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize(
     "kwargs",
@@ -206,7 +206,7 @@ def test_numeric_notification_preflight_has_no_network_effects(timeout):
     assert calls == []
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_numeric_request_strings_remain_supported():
     calls = []
     with httpx.Client(

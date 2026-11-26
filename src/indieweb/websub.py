@@ -783,13 +783,19 @@ def request_websub_subscription(
     for subscribe requests. A successful HTTP response means the hub accepted
     the request and should later verify the callback; verification state is
     confirmed by the callback view.
+
+    The write database must be in autocommit mode so the callback can see
+    the prepared row. An enclosing transaction raises ``RuntimeError``.
     """
+    using = router.db_for_write(WebSubSubscription)
+    if not transaction.get_autocommit(using=using):
+        raise RuntimeError("WebSub subscription requests require autocommit on the write database")
+
     configured_timeout = timeout if timeout is not None else getattr(settings, "INDIEWEB_WEBSUB_TIMEOUT", None)
     request_timeout = _websub_timeout(configured_timeout)
     if secret and mode == WebSubSubscription.MODE_SUBSCRIBE and urlparse(hub_url).scheme.lower() != "https":
         raise WebSubSecretRequiresHTTPSError("WebSub subscription with hub.secret requires an https hub_url")
     # Callback construction depends on the token. Roll back preparation if it fails.
-    using = router.db_for_write(WebSubSubscription)
     with transaction.atomic(using=using):
         (
             subscription,

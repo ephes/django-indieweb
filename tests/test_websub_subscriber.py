@@ -97,7 +97,7 @@ def _post_delivery(
     )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_posts_subscribe_form(settings):
     settings.INDIEWEB_WEBSUB_TIMEOUT = 5
     requests: list[httpx.Request] = []
@@ -137,7 +137,7 @@ def test_request_websub_subscription_posts_subscribe_form(settings):
     }
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_rejects_private_hub_without_posting():
     requests: list[httpx.Request] = []
 
@@ -161,7 +161,7 @@ def test_request_websub_subscription_rejects_private_hub_without_posting():
     assert requests == []
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_records_hub_rejection():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, text="bad topic")
@@ -183,7 +183,7 @@ def test_request_websub_subscription_records_hub_rejection():
     assert result.subscription.last_request_error == _hub_error(result.status_code, b"bad topic")
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_preserves_active_subscription_on_renewal_failure(subscription):
     subscription.secret = STORED_SECRET
     subscription.confirmed_lease_seconds = 3600
@@ -213,7 +213,7 @@ def test_request_websub_subscription_preserves_active_subscription_on_renewal_fa
     assert result.subscription.last_request_error == _hub_error(result.status_code, b"try later")
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_restores_pending_secret_on_renewal_failure(subscription):
     subscription.secret = OLD_SECRET
     subscription.confirmed_lease_seconds = 3600
@@ -242,7 +242,7 @@ def test_request_websub_subscription_restores_pending_secret_on_renewal_failure(
     assert result.subscription.pending_secret_set is False
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_keeps_old_secret_until_renewal_verification(subscription):
     subscription.secret = OLD_SECRET
     subscription.confirmed_lease_seconds = 3600
@@ -271,7 +271,7 @@ def test_request_websub_subscription_keeps_old_secret_until_renewal_verification
     assert result.subscription.pending_secret_set is True
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_preserves_stored_secret_when_renewal_omits_secret(subscription):
     subscription.secret = STORED_SECRET
     subscription.save()
@@ -297,7 +297,7 @@ def test_request_websub_subscription_preserves_stored_secret_when_renewal_omits_
     assert result.subscription.pending_secret_set is False
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_clears_stale_pending_secret_when_renewal_omits_secret(subscription):
     subscription.secret = ACTIVE_SECRET
     subscription.pending_secret = "stale-secret-value-20"
@@ -323,7 +323,7 @@ def test_request_websub_subscription_clears_stale_pending_secret_when_renewal_om
     assert result.subscription.pending_secret_set is False
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_rejects_empty_secret(subscription):
     subscription.secret = ACTIVE_SECRET
     subscription.save()
@@ -342,7 +342,7 @@ def test_request_websub_subscription_rejects_empty_secret(subscription):
     assert subscription.pending_secret_set is False
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_rejects_overlong_secret():
     with pytest.raises(ValueError, match="secret must be at most 200 bytes"):
         request_websub_subscription(
@@ -357,7 +357,7 @@ def test_request_websub_subscription_rejects_overlong_secret():
     ).exists()
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_rejects_multibyte_secret_over_byte_limit():
     with pytest.raises(ValueError, match="secret must be at most 200 bytes"):
         request_websub_subscription(
@@ -373,7 +373,7 @@ def test_request_websub_subscription_rejects_multibyte_secret_over_byte_limit():
     ).exists()
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_rejects_reserved_secret_prefix():
     with pytest.raises(ValueError, match="reserved prefix"):
         request_websub_subscription(
@@ -389,7 +389,7 @@ def test_request_websub_subscription_rejects_reserved_secret_prefix():
     ).exists()
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_subscription_rejects_short_secret():
     with pytest.raises(ValueError, match="secret must be at least 20 bytes"):
         request_websub_subscription(
@@ -405,7 +405,7 @@ def test_request_websub_subscription_rejects_short_secret():
     ).exists()
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_request_websub_unsubscribe_posts_unsubscribe_form(subscription):
     requests: list[httpx.Request] = []
 
@@ -2024,7 +2024,7 @@ def test_callback_get_rejections_do_not_reveal_whether_token_exists(client, subs
     assert known.content == unknown.content
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_failed_unsubscribe_restores_state_before_warning(subscription, monkeypatch):
     expiry = timezone.now() + timedelta(hours=1)
     subscription.lease_expires_at = expiry
