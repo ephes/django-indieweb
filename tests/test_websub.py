@@ -1,3 +1,4 @@
+import logging
 import ssl
 
 import httpcore
@@ -129,6 +130,33 @@ def test_notify_hubs_reports_request_errors_without_raising():
     assert results[0].success is False
     assert results[0].status_code is None
     assert results[0].error == "ConnectError"
+
+
+def test_notify_hubs_preserves_result_order_when_warning_handler_raises(settings, monkeypatch, caplog):
+    failed_hub = "https://hub.example/"
+    accepted_hub = "https://backup.example/websub"
+    settings.INDIEWEB_WEBSUB_HUBS = (failed_hub, accepted_hub)
+
+    class FailingHandler(logging.Handler):
+        def emit(self, record):
+            raise RuntimeError("logging unavailable")
+
+    logger = logging.getLogger("indieweb.websub")
+    caplog.set_level(logging.WARNING, logger=logger.name)
+    monkeypatch.setattr(logger, "handlers", [FailingHandler()])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == failed_hub:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(204)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        results = notify_hubs("https://example.com/feed", client=client)
+
+    assert [(result.hub_url, result.success, result.status_code, result.error) for result in results] == [
+        (failed_hub, False, None, "ConnectError"),
+        (accepted_hub, True, 204, ""),
+    ]
 
 
 def test_notify_hubs_rejects_private_hub_without_posting():

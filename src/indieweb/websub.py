@@ -12,6 +12,7 @@ import string
 import uuid
 import warnings
 from collections.abc import Iterable, Iterator, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -1865,7 +1866,6 @@ def notify_hubs(
                 )
                 response = delivered.response
             except (httpx.RequestError, UnsafeHTTPUrlError, WebmentionRedirectError, HTTPResponseTooLarge) as exc:
-                logger.warning(f"WebSub hub notification failed for {redact_url(hub_url)!r}: {type(exc).__name__}")
                 results.append(
                     WebSubNotificationResult(
                         hub_url=hub_url,
@@ -1874,6 +1874,8 @@ def notify_hubs(
                         error=type(exc).__name__,
                     )
                 )
+                with suppress(Exception):
+                    logger.warning(f"WebSub hub notification failed for {redact_url(hub_url)!r}: {type(exc).__name__}")
                 continue
 
             success = response.is_success

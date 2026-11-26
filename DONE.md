@@ -4,6 +4,14 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Keep WebSub hub failures local when logging raises (round 213 B11)
+
+- Record the failed hub before attempting the warning and continue notifying
+  the remaining hubs in order if a logging handler raises.
+- The focused pytest regression reproduced the handler exception before the
+  fix and passed after it. `just check` passed with 95.04% coverage.
+- Updated the WebSub guide and changelog Unreleased.
+
 ### Preserve Webmention POST outcomes on client close failure (round 209 B40)
 
 - Apply the owned-client cleanup policy to POST delivery and keep the resulting

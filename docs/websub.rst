@@ -100,6 +100,9 @@ crashing their publish workflow. Configuration and validation errors, such as
 malformed topic or hub URLs, raise ``ValueError`` before any network request is
 made.
 
+If a warning about a hub's request failure cannot be logged, the failed result
+is still returned and the remaining hubs are notified in order.
+
 When no hubs are configured or passed, ``notify_hubs()`` returns an empty list
 without opening an HTTP client. The shared HTTP helper handles redirects for
 both package-created and injected clients, and refuses redirects to a
