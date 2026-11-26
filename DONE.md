@@ -4,6 +4,21 @@ Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but i
 
 ## 2026-11-26
 
+### Webmention metadata admission (round 224 B07)
+
+- `reject-unrepresentable-microformat-published-instants`: `_extract_published`
+  drops a parsed timestamp whose UTC instant (or, for a naive value, its
+  default-zone reading) is outside the calendar or within a day of its edges, so the mention verifies with
+  an empty `published` instead of an `OverflowError` on save.
+- `resolve-author-fragments-only-against-their-document`: the local `id`
+  lookup for an author fragment runs only when the defragmented reference
+  matches the final fetched source URL; URL matching and fallbacks are
+  unchanged.
+- `uv run pytest --no-cov -q tests/test_webmention_processor.py` — the nine
+  new regression cases failed before the fix and pass afterward.
+- Updated the Webmention guide (authorship, published dates) and changelog
+  Unreleased.
+
 ### Reject incomplete Micropub upload spool writes (round 222 B05)
 
 - A partial spool write now returns HTTP 500 before publishing any file in the request.

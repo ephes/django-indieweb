@@ -6,6 +6,15 @@ Changelog
 Unreleased
 ----------
 
+* Drop a Webmention ``dt-published`` value whose instant falls outside the
+  UTC calendar or within a day of its edges (for example
+  ``0001-01-01T00:30:00+01:00``) instead of failing the database write or a
+  later local-time display. The mention is still verified with an empty
+  ``published``; naive timestamps are checked in the default time zone.
+* Resolve a Webmention author fragment such as ``#author`` to a local ``h-card``
+  ``id`` only when the reference identifies the fetched document. A link to
+  another page's ``#author`` no longer picks up an unrelated card on the source
+  page.
 * Return HTTP 500 before writing any Micropub media to storage if the upload
   spool accepts fewer bytes than requested.
 * Keep an earlier WebSub verification pending when a newer hub request fails,

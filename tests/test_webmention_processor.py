@@ -3369,3 +3369,133 @@ def test_get_local_profile_site_domain_with_default_port():
 
     processor = WebmentionProcessor()
     assert processor._get_local_profile("http://localhost:80/me/", source_url="http://localhost:80/p") == profile
+
+
+_UNREPRESENTABLE_PUBLISHED_HTML = """
+<html>
+<body>
+    <article class="h-entry">
+        <div class="p-author h-card"><a class="p-name u-url" href="https://example.com">Jane</a></div>
+        <div class="e-content"><p>Nice <a href="{target_url}">post</a></p></div>
+        <time class="dt-published" datetime="{published}">Then</time>
+    </article>
+</body>
+</html>
+"""
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "published",
+    [
+        "0001-01-01T00:30:00+01:00",  # before datetime.min once converted to UTC
+        "9999-12-31T23:30:00-01:00",  # after datetime.max once converted to UTC
+        "0001-01-01T00:30:00+0100",
+        "9999-12-31T23:30:00Z",  # storable in UTC, but overflows in any eastern display zone
+        "0001-01-01T00:30:00-01:00",  # storable in UTC, but underflows in any western display zone
+    ],
+)
+def test_processor_drops_published_instants_outside_the_utc_calendar(published):
+    """A well-formed offset timestamp whose UTC instant is unrepresentable is not stored."""
+    processor = WebmentionProcessor()
+    source_url = "https://example.com/post"
+    target_url = "https://mysite.com/article"
+    html_content = _UNREPRESENTABLE_PUBLISHED_HTML.format(target_url=target_url, published=published)
+
+    with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
+        webmention = processor.process_webmention(source_url, target_url)
+
+    webmention.refresh_from_db()
+    assert webmention.status == "verified"
+    assert webmention.author_name == "Jane"
+    assert webmention.published is None
+
+
+def test_extract_published_keeps_representable_year_boundary_instants():
+    """Year-boundary instants more than a day inside the UTC calendar are still parsed."""
+    processor = WebmentionProcessor()
+
+    early = processor._extract_published({"properties": {"published": ["0001-01-02T23:30:00-01:00"]}})
+    late = processor._extract_published({"properties": {"published": ["9999-12-30T00:30:00+01:00"]}})
+
+    assert early is not None and early.isoformat() == "0001-01-02T23:30:00-01:00"
+    assert late is not None and late.isoformat() == "9999-12-30T00:30:00+01:00"
+
+
+_AUTHOR_FRAGMENT_HTML = """
+<html>
+<head>{head}</head>
+<body>
+    <div id="author" class="h-card">
+        <a class="p-name u-url" href="/authors/local">Local Card</a>
+    </div>
+    <div class="h-card"><a class="p-name u-url" href="/authors/other">Second Card</a></div>
+    <article class="h-entry">
+        {author}
+        <a class="u-in-reply-to" href="{target_url}">Reply</a>
+        <div class="e-content">Reply content</div>
+    </article>
+</body>
+</html>
+"""
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("head", "author"),
+    [
+        ("", '<a class="u-author" href="https://other.example/profile#author">Other</a>'),
+        ("", '<a class="u-author" href="/about#author">About</a>'),
+        ('<link rel="author" href="https://other.example/profile#author">', ""),
+    ],
+)
+def test_processor_ignores_same_named_local_card_for_other_document_author_fragment(head, author):
+    """An author reference to another document's #author must not pick up this page's #author card."""
+    processor = WebmentionProcessor()
+    source_url = "https://example.com/posts/source"
+    target_url = "https://mysite.com/article"
+    html_content = _AUTHOR_FRAGMENT_HTML.format(head=head, author=author, target_url=target_url)
+
+    with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
+        webmention = processor.process_webmention(source_url, target_url)
+
+    assert webmention.status == "verified"
+    # Two page-level cards keep the single-card fallback out of the picture.
+    assert webmention.author_name not in ("Local Card", "Second Card")
+    assert webmention.author_url != "https://example.com/authors/local"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("head", "author"),
+    [
+        ("", '<a class="u-author" href="#author">Me</a>'),
+        ("", '<a class="u-author" href="https://example.com/posts/source#author">Me</a>'),
+        ('<link rel="author" href="https://example.com/posts/source#author">', ""),
+    ],
+)
+def test_processor_resolves_same_document_author_fragment_to_local_card(head, author):
+    """Fragment references that identify the fetched document still resolve to its card."""
+    processor = WebmentionProcessor()
+    source_url = "https://example.com/posts/source"
+    target_url = "https://mysite.com/article"
+    html_content = _AUTHOR_FRAGMENT_HTML.format(head=head, author=author, target_url=target_url)
+
+    with _processor_client(processor, return_value=_source_response(status_code=200, text=html_content)):
+        webmention = processor.process_webmention(source_url, target_url)
+
+    assert webmention.status == "verified"
+    assert webmention.author_name == "Local Card"
+    assert webmention.author_url == "https://example.com/authors/local"
+
+
+@override_settings(TIME_ZONE="Europe/Berlin")
+def test_extract_published_drops_naive_instant_unrepresentable_in_default_zone():
+    """Naive dates keep their default-zone interpretation, and are dropped when that leaves the calendar."""
+    processor = WebmentionProcessor()
+
+    dropped = processor._extract_published({"properties": {"published": ["0001-01-01T00:30:00"]}})
+    kept = processor._extract_published({"properties": {"published": ["2026-05-01T10:00:00"]}})
+
+    assert dropped is None
+    assert kept is not None and kept.tzinfo is None and kept.isoformat() == "2026-05-01T10:00:00"

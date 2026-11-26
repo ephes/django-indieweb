@@ -1267,6 +1267,12 @@ authorship fallback chain:
   present in the same parsed document using that same conservative URL policy.
   Same-page fragment links such as ``href="#author"`` can match an ``h-card``
   with the corresponding HTML ``id``.
+* A fragment is only looked up by HTML ``id`` when the reference, without its
+  fragment, identifies the fetched document itself (for example ``#author`` or
+  the final source URL plus ``#author``). A reference to another document such
+  as ``/about#author`` or ``https://other.example/#author`` never selects a
+  local ``h-card`` by ``id``; it can still match an ``h-card`` by URL, and
+  otherwise the usual fallbacks apply.
 * If neither explicit author data nor ``rel=author`` yields an author, a single
   unambiguous page-level ``h-card`` outside the ``h-entry`` is used as a
   fallback author. If multiple page-level ``h-card`` items are present, no
@@ -1296,6 +1302,20 @@ trailing slash, so ``https://Example.COM:443/me/`` matches a profile stored as
 the normalised URLs are compared in Python (no extra database field). If more
 than one profile matches, no profile is used, a warning is logged, and the
 parsed author fields are kept.
+
+Published Dates
+---------------
+
+The ``dt-published`` value of the selected ``h-entry`` (and of nested
+responses) is parsed as an ISO 8601 timestamp. ``Z`` and offsets without a colon
+such as ``+0100`` are accepted. A value that parses but whose UTC instant lies
+outside the calendar or within one day of its edges, such as
+``0001-01-01T00:30:00+01:00`` or ``9999-12-31T23:30:00Z``, is dropped and
+logged, so ``published`` stays empty while the mention is still verified. The
+margin keeps every stored value displayable in any time zone.
+Timestamps without an offset keep their existing meaning: with ``USE_TZ`` they
+are read in the default time zone, and they are dropped when that reading
+falls outside the calendar or within one day of its edges.
 
 django-indieweb does not fetch remote author pages during Webmention receiving.
 ``rel=author`` support is limited to author ``h-card`` data already available in

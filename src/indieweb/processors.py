@@ -15,9 +15,9 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urldefrag, urljoin, urlparse, urlunparse
 
 import httpx
 from django.conf import settings
@@ -118,6 +118,9 @@ WRAPPING_TEXT_URL_PUNCTUATION = {
     ">": "<",
 }
 ISO8601_OFFSET_WITHOUT_COLON_RE = re.compile(r"([+-]\d{2})(\d{2})$")
+# Published instants (in UTC) that stay representable in every time zone.
+PUBLISHED_INSTANT_MIN = datetime.min + timedelta(days=1)
+PUBLISHED_INSTANT_MAX = datetime.max - timedelta(days=1)
 
 
 def _positive_int_setting(name: str, default: int) -> int:
@@ -1565,7 +1568,10 @@ class WebmentionProcessor:
             return None
         parsed_url = urlparse(resolved_url)
 
-        if parsed_url.fragment:
+        # A fragment only names an element of this page when the reference
+        # identifies the fetched document itself; ``/about#author`` names an
+        # element of another document and must not match a local ``id``.
+        if parsed_url.fragment and _urls_match(urldefrag(resolved_url).url, urldefrag(base_url).url):
             h_card = self._find_h_card_by_id(parsed, parsed_url.fragment)
             if h_card:
                 return h_card
@@ -1758,7 +1764,11 @@ class WebmentionProcessor:
                         published = published[:-1] + "+00:00"
                     else:
                         published = ISO8601_OFFSET_WITHOUT_COLON_RE.sub(r"\1:\2", published)
-                    return datetime.fromisoformat(published)
+                    parsed_published = datetime.fromisoformat(published)
+                    if not _published_instant_is_representable(parsed_published):
+                        logger.warning(f"Dropped unrepresentable published date ({text_fingerprint(str(published))})")
+                        return None
+                    return parsed_published
             except ValueError:
                 logger.warning(f"Failed to parse published date ({text_fingerprint(str(published))})")
 
@@ -1825,6 +1835,29 @@ class WebmentionProcessor:
             return None
 
         return _lookup_profile_by_canonical_url(author_url, author_key)
+
+
+def _published_instant_is_representable(value: datetime) -> bool:
+    """Return whether ``value`` can be stored and later shown in any time zone.
+
+    A well-formed offset timestamp near ``datetime.min``/``datetime.max`` can
+    parse but fall outside the calendar once shifted to UTC, which makes the
+    database write raise ``OverflowError``; a UTC instant right at the edge can
+    still overflow when a template converts it to a local zone. Instants within
+    one day of either edge are therefore rejected (real UTC offsets stay below
+    a day). Naive values keep their existing interpretation: with ``USE_TZ``
+    Django reads them in the default time zone, so they are checked in that
+    zone and returned unchanged.
+    """
+    try:
+        if timezone.is_naive(value):
+            if not settings.USE_TZ:
+                return True
+            value = value.replace(tzinfo=timezone.get_default_timezone())
+        instant = value.astimezone(UTC).replace(tzinfo=None)
+    except (OverflowError, ValueError):
+        return False
+    return PUBLISHED_INSTANT_MIN <= instant <= PUBLISHED_INSTANT_MAX
 
 
 def _resolve_author_url(base_url: str, value: str) -> str:
