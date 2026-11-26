@@ -397,6 +397,51 @@ def test_send_webmention_success(sender, source_url, target_url):
     assert _form_body(captured[0]) == {"source": [source_url], "target": [target_url]}
 
 
+@pytest.mark.parametrize("status_code", [202, 503])
+@pytest.mark.parametrize("broken_logger", [False, True])
+def test_send_webmentions_preserves_post_outcome_when_owned_close_fails(
+    sender, source_url, target_url, monkeypatch, status_code, broken_logger
+):
+    endpoint = "https://target.com/webmention"
+    handler = Mock(side_effect=lambda request: httpx.Response(status_code))
+    monkeypatch.setattr(sender, "discover_endpoint", lambda *args, **kwargs: endpoint)
+    monkeypatch.setattr(senders, "default_address_resolver", lambda host, port: ["93.184.216.34"])
+    warning_error = RuntimeError("Log sink unavailable") if broken_logger else None
+
+    with _make_test_client(handler) as owned:
+        monkeypatch.setattr(senders.httpx, "Client", lambda **kwargs: owned)
+        with (
+            patch.object(owned, "close", side_effect=OSError("Synthetic cleanup details")) as close,
+            patch.object(senders.logger, "warning", side_effect=warning_error) as warning,
+        ):
+            results = sender.send_webmentions(source_url, [target_url])
+
+    success = status_code == 202
+    expected = {"success": success, "status_code": status_code, "target": target_url, "endpoint": endpoint}
+    if not success:
+        expected["error"] = "HTTP 503"
+    assert results == [expected]
+    close.assert_called_once_with()
+    warning.assert_called_once_with("Failed to close Webmention delivery client")
+    handler.assert_called_once()
+    assert handler.call_args.args[0].method == "POST"
+    target = WebmentionOutboundTarget.objects.get(source_url=source_url, target_url=target_url)
+    assert target.last_success is success
+    assert target.last_status_code == status_code
+    assert target.last_error == expected.get("error", "")
+    assert target.consecutive_failures == int(not success)
+
+
+def test_send_webmention_leaves_injected_client_open(sender, source_url, target_url):
+    with _make_test_client(lambda request: httpx.Response(202)) as client:
+        with patch.object(client, "close", side_effect=OSError("Caller owns cleanup")) as close:
+            result = sender.send_webmention(source_url, target_url, "https://target.com/webmention", client=client)
+
+        close.assert_not_called()
+        assert not client.is_closed
+    assert result == {"success": True, "status_code": 202}
+
+
 def test_send_webmention_includes_vouch_when_provided(sender, source_url, target_url):
     """Test sender can opt in to including a Vouch URL."""
     captured: list[httpx.Request] = []

@@ -1850,6 +1850,10 @@ The optional ``deadline`` keyword on sender methods accepts an absolute
 ``time.monotonic()`` deadline so a host can share one budget across earlier work.
 The existing transport budget is cooperative, not a hard process interrupt.
 
+A close failure in an internally created HTTP client leaves the POST outcome
+available for the receipt and outbound history. The sender attempts to log a
+warning. Callers retain ownership of injected clients.
+
 The sender's ``html_content`` argument accepts HTML or a sequence of already
 extracted link hrefs. Supplied hrefs are deduplicated in order and go through
 the same URL safety, same-host and fanout checks as hrefs extracted from HTML.

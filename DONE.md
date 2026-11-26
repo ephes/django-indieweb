@@ -2,6 +2,17 @@
 
 Completed backlog items move here from `BACKLOG.md`. Keep entries concise, but include validation and documentation/changelog notes so future contributors can understand what changed.
 
+## 2026-11-26
+
+### Preserve Webmention POST outcomes on client close failure (round 209 B40)
+
+- Apply the owned-client cleanup policy to POST delivery and keep the resulting
+  success or failure available for outbound history.
+- Four focused pytest cases reproduced the cleanup error before the fix.
+  Also checked that injected clients stay open. The full `uv run pytest -q`
+  suite, Ruff, mypy and Sphinx passed.
+- Updated the Webmention guide and changelog Unreleased.
+
 ## 2026-11-25
 
 ### Make Webmention display null ordering portable (round 204 B12)

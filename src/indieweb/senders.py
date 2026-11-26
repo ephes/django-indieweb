@@ -77,6 +77,14 @@ def _webmention_send_total_timeout() -> float:
     return DEFAULT_WEBMENTION_SEND_TOTAL_TIMEOUT_SECONDS
 
 
+def _close_sender_client(client: httpx.Client, operation: str) -> None:
+    try:
+        client.close()
+    except Exception:
+        with suppress(Exception):
+            logger.warning(f"Failed to close Webmention {operation} client")
+
+
 def _source_deadline(deadline: float | None = None) -> float:
     budget = _positive_int_setting(
         "INDIEWEB_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS", DEFAULT_WEBMENTION_SOURCE_TOTAL_TIMEOUT_SECONDS
@@ -437,11 +445,7 @@ class WebmentionSender:
             return None
         finally:
             if close_client:
-                try:
-                    http_client.close()
-                except Exception:
-                    with suppress(Exception):
-                        logger.warning("Failed to close Webmention discovery client")
+                _close_sender_client(http_client, "discovery")
 
     def _endpoint_from_link_header(
         self, discovered: RedirectedResponse, *, resolver: AddressResolver | None
@@ -613,7 +617,7 @@ class WebmentionSender:
             return {"success": False, "status_code": None, "error": type(e).__name__}
         finally:
             if close_client:
-                http_client.close()
+                _close_sender_client(http_client, "delivery")
 
     def fetch_content(
         self, url: str, *, client: httpx.Client | None = None, deadline: float | None = None
@@ -660,11 +664,7 @@ class WebmentionSender:
             return None
         finally:
             if close_client:
-                try:
-                    http_client.close()
-                except Exception:
-                    with suppress(Exception):
-                        logger.warning("Failed to close Webmention source fetch client")
+                _close_sender_client(http_client, "source fetch")
 
     def send_webmentions(
         self,
