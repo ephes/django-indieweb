@@ -920,8 +920,8 @@ but does not clear or replace the last successful source snapshot or create
 child rows from the failed source. A later verified reprocessing updates the
 same snapshot row rather than creating a second submitted ``Webmention`` row.
 If a source snapshot cannot be stored after otherwise successful verification,
-the processor attempts to log a redacted diagnostic and leaves the parent
-Webmention verified. A logging handler failure leaves verification, successful
+the processor leaves the parent Webmention verified and attempts to log a
+redacted diagnostic after the receive transaction commits. A logging handler failure leaves verification, successful
 child writes, and the post-commit notification intact. The snapshot can still
 describe the earlier source. Retrying a successful receive rewrites the
 snapshot and upserts every current child, retaining stable identities and

@@ -1098,13 +1098,21 @@ class WebmentionProcessor:
                     h_entry=h_entry,
                 )
         except Exception:
-            # Isolate the diagnostic in case a logging handler writes to the same database.
-            with suppress(Exception), transaction.atomic(using=webmention._state.db):
-                logger.error(
-                    "Failed to store source snapshot for webmention %s",
-                    webmention.pk,
-                    exc_info=exc_info_without_messages(),
-                )
+            # Log after the receive commits: a logging handler that writes to
+            # the same database (or registers its own commit hooks) must not
+            # roll back verification or block the received notification.
+            exc_info = exc_info_without_messages()
+            webmention_pk = webmention.pk
+
+            def log_snapshot_failure() -> None:
+                with suppress(Exception):
+                    logger.error(
+                        "Failed to store source snapshot for webmention %s",
+                        webmention_pk,
+                        exc_info=exc_info,
+                    )
+
+            transaction.on_commit(log_snapshot_failure, using=webmention._state.db, robust=True)
 
     def _normalize_snapshot_json(self, value: dict[str, Any]) -> dict[str, Any]:
         """Return a JSON-safe parsed snapshot without mutating the parser result."""

@@ -6763,3 +6763,8 @@ bundle.
   fix. `uv run pytest --no-cov -q tests/test_prune_websub_delivery_attempts.py`
   passed all 47 cases after the fix, including rollback and committed-count checks.
 - Updated the pruning guide in `docs/websub.rst` and changelog Unreleased.
+- Review follow-up: the snapshot diagnostic now runs in a robust commit hook
+  after the receive commits, so a handler that writes to the same database
+  cannot roll back verification. A batch that committed with zero deletions
+  also reports its count when its host callback raises. Both regressions failed
+  before the follow-up.

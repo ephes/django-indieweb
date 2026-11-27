@@ -1264,7 +1264,9 @@ def _delete_expired_websub_attempts(
             if not owns_transactions:
                 deleted += batch_deleted
     except Exception as exc:
-        if owns_transactions and deleted and (batch_committed or isinstance(exc, DatabaseError)):
+        # A committed current batch is reported even when it deleted no row
+        # (another transaction removed the collected rows first).
+        if owns_transactions and (batch_committed or (deleted and isinstance(exc, DatabaseError))):
             raise WebSubDeliveryAttemptPruneError(deleted) from exc
         raise
 

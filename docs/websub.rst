@@ -617,11 +617,14 @@ is left, so a single run drains a large backlog without one unbounded
 with ``--dry-run``, would delete.
 If a database error follows committed deletions, the command exits with an
 error that reports how many deletions committed before the failure. A batch
-counts as committed as soon as its transaction commits, also when an
-``on_commit`` callback that a delete signal handler registered raises a database
-error afterwards. Other exceptions from such callbacks carry no count: the
+counts as committed as soon as its transaction commits. When an ``on_commit``
+callback that a delete signal handler registered raises any exception after its
+batch commits, the command also exits with an error that reports the committed
+count (possibly zero, when concurrent deletes removed the batch's rows first).
+An exception other than a database error raised before the current batch
+commits, for example from a delete signal handler, carries no count: the
 command turns a ``ValueError`` into a plain ``CommandError`` and lets any other
-exception propagate, even when batches committed before it.
+exception propagate, even when earlier batches committed.
 A retry processes the remaining expired attempts.
 If writing or flushing the receipt fails, the command raises ``CommandError``
 with the retention cutoff and the number of committed deletions. When the

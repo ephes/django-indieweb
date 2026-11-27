@@ -11,7 +11,7 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import DatabaseError, connection, connections, transaction
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 from django.test.utils import CaptureQueriesContext
 
 from indieweb.models import WebSubAcceptedDelivery, WebSubDeliveryAttempt, WebSubSubscription
@@ -286,6 +286,31 @@ def test_prune_counts_committed_batch_when_a_host_on_commit_callback_fails(attem
     if fail_on == 1:
         remaining.add("just_before")
     assert _remaining(attempts) == remaining
+
+
+@pytest.mark.django_db(transaction=True)
+def test_prune_reports_zero_count_committed_batch_when_its_callback_fails(attempts):
+    host_error = RuntimeError("synthetic host on_commit failure")
+
+    def remove_row_then_register_callback(sender, instance, using, **kwargs):
+        # Another writer removed the collected row before the batch DELETE.
+        WebSubDeliveryAttempt.objects.using(using).filter(pk=instance.pk)._raw_delete(using)
+
+        def fail_after_commit():
+            raise host_error
+
+        transaction.on_commit(fail_after_commit, using=using)
+
+    pre_delete.connect(remove_row_then_register_callback, sender=WebSubDeliveryAttempt)
+    try:
+        with pytest.raises(WebSubDeliveryAttemptPruneError) as error:
+            prune_websub_delivery_attempts(retention_days=30, now=NOW, batch_size=1)
+    finally:
+        pre_delete.disconnect(remove_row_then_register_callback, sender=WebSubDeliveryAttempt)
+
+    assert error.value.deleted == 0
+    assert error.value.__cause__ is host_error
+    assert _remaining(attempts) == {"just_before", "at_cutoff", "recent"}
 
 
 @pytest.mark.django_db(transaction=True)

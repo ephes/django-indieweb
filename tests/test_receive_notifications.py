@@ -4,6 +4,7 @@ import logging
 
 import httpx
 import pytest
+from django.db import connection
 
 from indieweb.models import Webmention, WebmentionSourceSnapshot
 from indieweb.processors import WebmentionProcessor, webmention_received
@@ -79,7 +80,7 @@ def test_snapshot_write_and_logging_failures_preserve_verified_receive(monkeypat
 
     class FailingHandler(logging.Handler):
         def emit(self, record):
-            logged.append(record.getMessage())
+            logged.append((record.getMessage(), connection.in_atomic_block))
             raise RuntimeError("synthetic logging failure")
 
     logger = logging.getLogger("indieweb.processors")
@@ -106,5 +107,6 @@ def test_snapshot_write_and_logging_failures_preserve_verified_receive(monkeypat
     assert parent.verified_at is not None
     assert list(parent.nested_responses.values_list("identity", "status")) == [(child, "verified")]
     assert not WebmentionSourceSnapshot.objects.filter(webmention=parent).exists()
-    assert logged == [f"Failed to store source snapshot for webmention {parent.pk}"]
+    # The diagnostic runs after the receive commits, outside its transaction.
+    assert logged == [(f"Failed to store source snapshot for webmention {parent.pk}", False)]
     assert notifications == [(parent.pk, "verified")]

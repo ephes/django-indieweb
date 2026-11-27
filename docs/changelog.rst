@@ -7,7 +7,8 @@ Unreleased
 ----------
 
 * Preserve Webmention verification, child writes, and notification when a
-  logging handler raises while reporting a source snapshot write failure.
+  logging handler raises while reporting a source snapshot write failure. The
+  diagnostic is now logged after the receive transaction commits.
 * Drop a Webmention ``dt-published`` value whose instant falls outside the
   UTC calendar or within a day of its edges (for example
   ``0001-01-01T00:30:00+01:00``) instead of failing the database write or a
@@ -31,8 +32,9 @@ Unreleased
   on the subscription's write database, so a warning handler whose write there
   fails, or fails at that block's commit, cannot break the verification.
 * Report the committed WebSub delivery-attempt prune count when a host
-  ``on_commit`` callback registered by a delete signal handler raises, and
-  retain the original exception as the cause.
+  ``on_commit`` callback registered by a delete signal handler raises, also
+  when that batch deleted no row, and retain the original exception as the
+  cause.
 * Preserve the WebSub delivery-attempt prune count, cutoff and commit status
   when the command cannot write or flush its receipt.
 * Report committed WebSub delivery-attempt deletions when a later prune batch
