@@ -6753,3 +6753,13 @@ bundle.
   the fix. It passed with the receive notification and ordinary snapshot
   failure tests using `uv run pytest --no-cov -q tests/test_receive_notifications.py tests/test_webmention_processor.py::TestWebmentionProcessor::test_processor_preserves_verified_status_when_source_snapshot_write_fails`.
 - Updated the snapshot recovery guide in `docs/webmention.rst` and changelog Unreleased.
+
+### Keep the WebSub prune receipt after a host commit hook fails (round 232 B07)
+
+- Report the committed deletion count when an ordinary exception escapes a
+  host commit hook and chain the original exception. A runtime error before
+  the current batch commits still propagates directly.
+- The new runtime-error callback case raised without a receipt before the
+  fix. `uv run pytest --no-cov -q tests/test_prune_websub_delivery_attempts.py`
+  passed all 47 cases after the fix, including rollback and committed-count checks.
+- Updated the pruning guide in `docs/websub.rst` and changelog Unreleased.

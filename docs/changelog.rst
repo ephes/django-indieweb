@@ -30,9 +30,9 @@ Unreleased
   computed without logging, and each warning is logged in its own atomic block
   on the subscription's write database, so a warning handler whose write there
   fails, or fails at that block's commit, cannot break the verification.
-* Count a committed WebSub delivery-attempt prune batch when a host
-  ``on_commit`` callback registered by a delete signal handler raises a
-  database error.
+* Report the committed WebSub delivery-attempt prune count when a host
+  ``on_commit`` callback registered by a delete signal handler raises, and
+  retain the original exception as the cause.
 * Preserve the WebSub delivery-attempt prune count, cutoff and commit status
   when the command cannot write or flush its receipt.
 * Report committed WebSub delivery-attempt deletions when a later prune batch

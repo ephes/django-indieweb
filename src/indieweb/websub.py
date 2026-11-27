@@ -1193,7 +1193,7 @@ class WebSubDeliveryAttemptPruneResult:
 
 
 class WebSubDeliveryAttemptPruneError(DatabaseError):
-    """A database failure after one or more prune batches committed."""
+    """A database or commit-hook failure after one or more prune batches committed."""
 
     def __init__(self, deleted: int) -> None:
         self.deleted = deleted
@@ -1235,14 +1235,17 @@ def _delete_expired_websub_attempts(
     connection = connections[alias]
     deleted = 0
     batch_deleted = 0
+    batch_committed = False
 
     def count_committed_batch() -> None:
-        nonlocal deleted
+        nonlocal deleted, batch_committed
         deleted += batch_deleted
+        batch_committed = True
 
     try:
         while True:
             batch_deleted = 0
+            batch_committed = False
             with transaction.atomic(using=alias):
                 if owns_transactions:
                     # Registered before the delete, so it runs right after the
@@ -1260,8 +1263,8 @@ def _delete_expired_websub_attempts(
                 batch_deleted = attempts.filter(pk__in=batch).delete()[0]
             if not owns_transactions:
                 deleted += batch_deleted
-    except DatabaseError as exc:
-        if owns_transactions and deleted:
+    except Exception as exc:
+        if owns_transactions and deleted and (batch_committed or isinstance(exc, DatabaseError)):
             raise WebSubDeliveryAttemptPruneError(deleted) from exc
         raise
 
@@ -1286,8 +1289,9 @@ def prune_websub_delivery_attempts(
     database that ``WebSubDeliveryAttempt`` is written to
     (``router.db_for_write``). Nothing calls this automatically: run it from the ``prune_websub_delivery_attempts``
     management command or a host job. In autocommit mode, a database error
-    after committed deletions raises ``WebSubDeliveryAttemptPruneError`` with
-    the committed count in ``deleted``.
+    after committed deletions or an exception from a callback after the batch
+    commits raises ``WebSubDeliveryAttemptPruneError`` with the committed count
+    in ``deleted`` and the original exception as its cause.
     """
     days = websub_delivery_attempt_retention_days(retention_days)
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:

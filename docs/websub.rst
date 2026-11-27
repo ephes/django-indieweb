@@ -644,10 +644,11 @@ current time. A naive ``now`` raises ``ValueError`` before any database query,
 including in dry-run mode. With ``USE_TZ=False``, naive reference times are
 accepted. With database routers, it counts, selects and deletes on the write
 database of ``WebSubDeliveryAttempt``, so a lagging read replica cannot
-influence a run. In autocommit mode on that database, a database error after committed
-deletions raises ``WebSubDeliveryAttemptPruneError`` with the committed count
-in ``deleted`` and the original database error as its cause. Inside a host
-transaction, the database error propagates and the host controls the commit.
+influence a run. In autocommit mode on that database, a database error after
+committed deletions or an exception from a host ``on_commit`` callback after a
+batch commits raises ``WebSubDeliveryAttemptPruneError`` with the committed
+count in ``deleted`` and the original exception as its cause. Inside a host
+transaction, the host controls the commit and receives its callback errors.
 The older ``examples.websub_workflows.prune_websub_delivery_attempts()``
 example still works for hosts that keep the retention window in their own code.
 
