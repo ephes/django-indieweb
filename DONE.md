@@ -6742,3 +6742,14 @@ bundle.
 - All four close-failure cases raised before the fix. The source-fetch and
   discovery cleanup checks passed after it, including caller-owned clients.
 - Updated the sender guide in `docs/webmention.rst` and changelog Unreleased.
+
+## 2026-11-27
+
+### Preserve verification when snapshot error logging fails (round 232 B07)
+
+- Isolate a failing snapshot diagnostic from the writer transaction so the
+  verified parent, synchronized children, and receive notification survive.
+- The new transactional regression raised the logging handler's error before
+  the fix. It passed with the receive notification and ordinary snapshot
+  failure tests using `uv run pytest --no-cov -q tests/test_receive_notifications.py tests/test_webmention_processor.py::TestWebmentionProcessor::test_processor_preserves_verified_status_when_source_snapshot_write_fails`.
+- Updated the snapshot recovery guide in `docs/webmention.rst` and changelog Unreleased.

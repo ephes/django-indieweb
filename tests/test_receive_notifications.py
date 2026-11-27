@@ -56,3 +56,55 @@ def test_postcommit_notification_failure_is_robust_and_redacted(caplog):
     finally:
         for receiver in receivers:
             webmention_received.disconnect(receiver)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_snapshot_write_and_logging_failures_preserve_verified_receive(monkeypatch):
+    source = "https://source.example/parent"
+    target = "https://target.example/post"
+    child = "https://source.example/child"
+    html = (
+        f'<article class="h-entry"><a class="u-in-reply-to" href="{target}">reply</a>'
+        f'<article class="h-entry"><a class="u-url" href="{child}">child</a>'
+        '<div class="e-content">synthetic child</div></article></article>'
+    )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+    )
+    notifications = []
+    logged = []
+
+    def receive(sender, webmention, **kwargs):
+        notifications.append((webmention.pk, webmention.status))
+
+    class FailingHandler(logging.Handler):
+        def emit(self, record):
+            logged.append(record.getMessage())
+            raise RuntimeError("synthetic logging failure")
+
+    logger = logging.getLogger("indieweb.processors")
+    handler = FailingHandler(level=logging.ERROR)
+    logger.addHandler(handler)
+    webmention_received.connect(receive)
+    try:
+        with httpx.Client(transport=transport) as client:
+            processor = WebmentionProcessor(client=client)
+            store_snapshot = processor._store_source_snapshot
+
+            def write_then_fail(**kwargs):
+                store_snapshot(**kwargs)
+                raise RuntimeError("synthetic snapshot write failure")
+
+            monkeypatch.setattr(processor, "_store_source_snapshot", write_then_fail)
+            parent = processor.process_webmention(source, target)
+    finally:
+        webmention_received.disconnect(receive)
+        logger.removeHandler(handler)
+
+    parent.refresh_from_db()
+    assert parent.status == "verified"
+    assert parent.verified_at is not None
+    assert list(parent.nested_responses.values_list("identity", "status")) == [(child, "verified")]
+    assert not WebmentionSourceSnapshot.objects.filter(webmention=parent).exists()
+    assert logged == [f"Failed to store source snapshot for webmention {parent.pk}"]
+    assert notifications == [(parent.pk, "verified")]

@@ -6,6 +6,8 @@ Changelog
 Unreleased
 ----------
 
+* Preserve Webmention verification, child writes, and notification when a
+  logging handler raises while reporting a source snapshot write failure.
 * Drop a Webmention ``dt-published`` value whose instant falls outside the
   UTC calendar or within a day of its edges (for example
   ``0001-01-01T00:30:00+01:00``) instead of failing the database write or a

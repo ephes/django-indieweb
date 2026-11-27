@@ -1098,9 +1098,13 @@ class WebmentionProcessor:
                     h_entry=h_entry,
                 )
         except Exception:
-            logger.error(
-                f"Failed to store source snapshot for webmention {webmention.pk}", exc_info=exc_info_without_messages()
-            )
+            # Isolate the diagnostic in case a logging handler writes to the same database.
+            with suppress(Exception), transaction.atomic(using=webmention._state.db):
+                logger.error(
+                    "Failed to store source snapshot for webmention %s",
+                    webmention.pk,
+                    exc_info=exc_info_without_messages(),
+                )
 
     def _normalize_snapshot_json(self, value: dict[str, Any]) -> dict[str, Any]:
         """Return a JSON-safe parsed snapshot without mutating the parser result."""
