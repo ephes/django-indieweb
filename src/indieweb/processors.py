@@ -1101,8 +1101,11 @@ class WebmentionProcessor:
             # Log after the receive commits: a logging handler that writes to
             # the same database (or registers its own commit hooks) must not
             # roll back verification or block the received notification.
-            exc_info = exc_info_without_messages()
             webmention_pk = webmention.pk
+            exc_info: Any = False
+            # Preparing the redacted traceback must not break the receive either.
+            with suppress(Exception):
+                exc_info = exc_info_without_messages()
 
             def log_snapshot_failure() -> None:
                 with suppress(Exception):
@@ -1112,7 +1115,8 @@ class WebmentionProcessor:
                         exc_info=exc_info,
                     )
 
-            transaction.on_commit(log_snapshot_failure, using=webmention._state.db, robust=True)
+            with suppress(Exception):
+                transaction.on_commit(log_snapshot_failure, using=webmention._state.db, robust=True)
 
     def _normalize_snapshot_json(self, value: dict[str, Any]) -> dict[str, Any]:
         """Return a JSON-safe parsed snapshot without mutating the parser result."""

@@ -6,6 +6,7 @@ import httpx
 import pytest
 from django.db import connection
 
+from indieweb import processors
 from indieweb.models import Webmention, WebmentionSourceSnapshot
 from indieweb.processors import WebmentionProcessor, webmention_received
 
@@ -60,7 +61,8 @@ def test_postcommit_notification_failure_is_robust_and_redacted(caplog):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_snapshot_write_and_logging_failures_preserve_verified_receive(monkeypatch):
+@pytest.mark.parametrize("redaction_fails", [False, True])
+def test_snapshot_write_and_logging_failures_preserve_verified_receive(monkeypatch, redaction_fails):
     source = "https://source.example/parent"
     target = "https://target.example/post"
     child = "https://source.example/child"
@@ -97,6 +99,12 @@ def test_snapshot_write_and_logging_failures_preserve_verified_receive(monkeypat
                 raise RuntimeError("synthetic snapshot write failure")
 
             monkeypatch.setattr(processor, "_store_source_snapshot", write_then_fail)
+            if redaction_fails:
+
+                def fail_redaction(*args, **kwargs):
+                    raise TypeError("synthetic redaction failure")
+
+                monkeypatch.setattr(processors, "exc_info_without_messages", fail_redaction)
             parent = processor.process_webmention(source, target)
     finally:
         webmention_received.disconnect(receive)
